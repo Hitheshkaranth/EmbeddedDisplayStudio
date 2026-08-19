@@ -1,0 +1,62 @@
+{
+  "daemon": {
+    "poll_interval_ms": 100,
+    "cmd_port": 5000,
+    "telemetry_sink": "127.0.0.1:5001",
+    "subscriber_ttl_s": 5,
+    "log_level": "INFO"
+  },
+  "gpio": {
+    "chip": "/dev/gpiochip3",
+    "consumer": "hmi-hwd",
+    "outputs": {
+      "do.relay1": {
+        "offset": 1,
+        "active_low": false,
+        "safe_state": 0
+      },
+      "do.led": {
+        "offset": 6,
+        "active_low": false,
+        "safe_state": 0
+      }
+    },
+    "inputs": {
+      "di.estop": {
+        "offset": 5,
+        "active_low": true
+      },
+      "di.button": {
+        "offset": 0,
+        "active_low": true
+      }
+    }
+  },
+  "adc": {
+    "iio_device_name": "ads1015",
+    "channels": {
+      "ai.pot": {
+        "channel_file": "in_voltage0_raw",
+        "offset_file": "in_voltage0_offset",
+        "scale_file": "in_voltage0_scale",
+        "gain": 1.0,
+        "transform_offset": 0.0
+      },
+      "ai.rail24": {
+        "channel_file": "in_voltage1_raw",
+        "offset_file": "in_voltage1_offset",
+        "scale_file": "in_voltage1_scale",
+        "gain": 11.0,
+        "transform_offset": 0.0
+      }
+    }
+  },
+  "uart": {
+    "port": "/dev/verdin-uart3",
+    "baudrate": 115200,
+    "bytesize": 8,
+    "parity": "N",
+    "stopbits": 1,
+    "timeout_s": 0.1
+  }
+}

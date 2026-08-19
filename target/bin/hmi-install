@@ -1,0 +1,957 @@
+#!/bin/sh
+# /usr/bin/hmi-install
+# =====================================================================
+# HMI Atomic Bundle Installer
+# =====================================================================
+#
+# PURPOSE
+#   Target-side installer for BYOA HMI application bundles.  Implements
+#   CONTRACT section 6: unpack, validate, atomically swap, verify, and
+#   self-rollback if the GUI fails to come up.
+#
+# USAGE
+#   hmi-install install <bundle.tar.gz>
+#   hmi-install rollback
+#   hmi-install list
+#   hmi-install status
+#   hmi-install help
+#
+# EXIT CODES
+#   0  -- success
+#   1  -- general / validation error
+#   2  -- usage error
+#   3  -- locked (another install is running)
+#
+# MACHINE-READABLE OUTPUT
+#   Every step prints a line:  STEP <tag> <ok|fail> [detail]
+#   Tags are stable across versions; two other agents parse them.
+#   See target/README.md for the full vocabulary.
+#
+# ENVIRONMENT
+#   HMI_ROOT          -- path prefix for all fs paths (empty in prod)
+#   HMI_RESTART_CMD   -- override for `systemctl restart hmi-gui.service`
+#                        (for off-target testing without systemd)
+#   HMI_SKIP_GUI_WAIT -- if set to "1", skip waiting for gui-ready
+#                        (for off-target testing)
+#
+# SAFETY
+#   The script uses flock(2) to serialise concurrent invocations.
+#   The `current` symlink is swapped atomically via a python3
+#   os.replace() call on a temporary symlink.  rm-then-ln and ln -sfnT
+#   are deliberately avoided; see the swap_current_symlink function.
+#
+# =====================================================================
+
+set -eu
+
+# ---- Globals ---------------------------------------------------------
+# Every global is annotated with its purpose and what breaks without it.
+
+# HMI_ROOT: filesystem prefix for off-target testing.
+# In production this is always empty; every absolute path in the script
+# is written as "${HMI_ROOT}/real/path" so the whole tree can be
+# relocated into a temp directory on a dev host.
+HMI_ROOT="${HMI_ROOT:-}"
+
+# Base directory for all HMI application releases.
+# Contains releases/<name>/, the `current` symlink, and the `previous`
+# symlink.  Without this variable the script has no target for installs.
+APPS_BASE="${HMI_ROOT}/opt/hmi_apps"
+
+# Directory where individual release directories live.
+RELEASES_DIR="${APPS_BASE}/releases"
+
+# Symlink pointing to the active release.  The GUI loader reads this.
+CURRENT_LINK="${APPS_BASE}/current"
+
+# Symlink pointing to the release that was active before the last install.
+# Used by the rollback subcommand and automatic rollback on GUI failure.
+PREVIOUS_LINK="${APPS_BASE}/previous"
+
+# Upload landing zone.  Bundles are only accepted from this directory
+# to limit exposure when hmi-install is used as a forced SSH command.
+UPLOAD_DIR="${HMI_ROOT}/tmp/hmi_upload"
+
+# Runtime directory on tmpfs for locks and sentinels.
+RUN_DIR="${HMI_ROOT}/run/hmi"
+
+# Flock file preventing concurrent installs.
+LOCK_FILE="${RUN_DIR}/install.lock"
+
+# Readiness sentinel created by the GUI loader once the UI is live.
+READY_FILE="${RUN_DIR}/gui-ready"
+
+# How long (seconds) to wait for the GUI to signal readiness after a
+# restart.  If the GUI is not ready by this deadline the install is
+# considered failed and the previous release is restored.
+GUI_READY_TIMEOUT=25
+
+# Maximum acceptable bundle size in bytes (500 MB).  Reject anything
+# larger to prevent filling the rootfs.  Adjust if bundles are
+# legitimately larger.
+MAX_BUNDLE_SIZE=524288000
+
+# Command used to restart the GUI service.  Overridable for off-target
+# testing where systemd is unavailable.
+HMI_RESTART_CMD="${HMI_RESTART_CMD:-systemctl restart hmi-gui.service}"
+
+# When set to "1", skip waiting for the gui-ready file and skip
+# restarting the GUI.  Used only in off-target testing.
+HMI_SKIP_GUI_WAIT="${HMI_SKIP_GUI_WAIT:-0}"
+
+# Number of historical releases to keep beyond `current` and `previous`.
+# The pruning step keeps the 3 newest plus whatever current and previous
+# point at.
+KEEP_RELEASES=3
+
+# ---- Functions -------------------------------------------------------
+
+##
+# step -- emit a machine-readable step line plus optional human text
+#
+# Format: STEP <tag> <ok|fail> [detail]
+# The tag is a stable identifier parsed by host-side deploy tools.
+# The detail is free-form human text.
+#
+# Args:
+#   $1  tag     -- step identifier (e.g. "verify-sha256")
+#   $2  status  -- "ok" or "fail"
+#   $*  detail  -- optional human-readable description
+#
+# Returns: 0
+# Exits:   never
+# Side effects: writes to stdout
+##
+step() {
+    _tag="$1"; shift
+    _stat="$1"; shift
+    printf 'STEP %s %s %s\n' "$_tag" "$_stat" "$*"
+}
+
+##
+# log -- emit a timestamped informational message to stderr
+#
+# Args:
+#   $1  severity  -- "INFO", "WARN", or "ERROR"
+#   $*  message   -- free-form text
+#
+# Returns: 0
+# Exits:   never
+# Side effects: writes to stderr
+##
+log() {
+    _sev="$1"; shift
+    printf '[hmi-install] %s: %s\n' "$_sev" "$*" >&2
+}
+
+##
+# die -- log an error, emit a STEP fail line, and exit
+#
+# Args:
+#   $1  exit_code  -- numeric exit code
+#   $2  tag        -- step tag for the machine-readable line
+#   $*  message    -- error description
+#
+# Returns: does not return
+# Exits:   with $1
+# Side effects: writes to stdout and stderr
+##
+die() {
+    _rc="$1"; shift
+    _tag="$1"; shift
+    step "$_tag" "fail" "$*"
+    log "ERROR" "$*"
+    exit "$_rc"
+}
+
+##
+# cleanup_upload_dir -- remove all files from the upload landing zone
+#
+# Called on both success and failure to prevent stale bundles from
+# accumulating on the tmpfs.  Silently succeeds if the directory does
+# not exist or is already empty.
+#
+# Args:   none
+# Returns: 0
+# Exits:   never
+# Side effects: deletes all files under UPLOAD_DIR
+##
+cleanup_upload_dir() {
+    if [ -d "$UPLOAD_DIR" ]; then
+        rm -rf "${UPLOAD_DIR:?}"/*
+        log "INFO" "cleaned upload directory ${UPLOAD_DIR}"
+    fi
+}
+
+##
+# validate_bundle_path -- verify the bundle path is safe to process
+#
+# Security checks:
+#   1. The resolved (realpath) bundle must reside under UPLOAD_DIR.
+#      This prevents path-traversal attacks when hmi-install is used
+#      as a forced SSH command.
+#   2. The path must not be a symbolic link (prevents symlink attacks
+#      that could trick the script into reading outside UPLOAD_DIR).
+#   3. The file size must be under MAX_BUNDLE_SIZE to prevent filling
+#      the root filesystem.
+#   4. The file must actually exist and be a regular file.
+#
+# Args:
+#   $1  bundle_path  -- path to the bundle tarball
+#
+# Returns: 0 if valid
+# Exits:   1 if any check fails
+# Side effects: none
+##
+validate_bundle_path() {
+    _bp="$1"
+
+    # Must exist.
+    if [ ! -e "$_bp" ]; then
+        die 1 "validate-path" "bundle does not exist: ${_bp}"
+    fi
+
+    # Must be a regular file, not a symlink, device, directory, etc.
+    if [ -L "$_bp" ]; then
+        die 1 "validate-path" "bundle is a symbolic link (rejected for safety): ${_bp}"
+    fi
+    if [ ! -f "$_bp" ]; then
+        die 1 "validate-path" "bundle is not a regular file: ${_bp}"
+    fi
+
+    # Resolve to an absolute path and verify it is under UPLOAD_DIR.
+    # We use python3 because busybox `realpath` may not be available on
+    # minimal Yocto images, and we need a reliable canonicalisation.
+    _resolved=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$_bp")
+    _upload_resolved=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$UPLOAD_DIR")
+
+    case "$_resolved" in
+        "${_upload_resolved}"/*)
+            : # good -- path is under UPLOAD_DIR
+            ;;
+        *)
+            die 1 "validate-path" "bundle path resolves outside upload dir: ${_resolved} is not under ${_upload_resolved}"
+            ;;
+    esac
+
+    # Size check.
+    _size=$(wc -c < "$_bp")
+    if [ "$_size" -gt "$MAX_BUNDLE_SIZE" ]; then
+        die 1 "validate-path" "bundle too large: ${_size} bytes (max ${MAX_BUNDLE_SIZE})"
+    fi
+
+    step "validate-path" "ok" "${_bp} (${_size} bytes)"
+}
+
+##
+# verify_sha256 -- verify the SHA-256 sidecar checksum
+#
+# The sidecar file must be named <bundle>.sha256 and contain a single
+# line in the format:  <hex-digest>  <filename>
+# (two-space separator, as produced by sha256sum).
+#
+# Args:
+#   $1  bundle_path  -- path to the bundle tarball
+#
+# Returns: 0 if checksum matches
+# Exits:   1 if sidecar is missing or checksum does not match
+# Side effects: none
+##
+verify_sha256() {
+    _bp="$1"
+    _sidecar="${_bp}.sha256"
+
+    if [ ! -f "$_sidecar" ]; then
+        die 1 "verify-sha256" "SHA-256 sidecar not found: ${_sidecar}"
+    fi
+
+    # Extract the expected digest from the sidecar.
+    _expected=$(awk '{print $1}' "$_sidecar")
+    if [ -z "$_expected" ]; then
+        die 1 "verify-sha256" "sidecar is empty or malformed: ${_sidecar}"
+    fi
+
+    # Compute the actual digest.  sha256sum is provided by coreutils
+    # on all Yocto images (busybox or full).
+    _actual=$(sha256sum "$_bp" | awk '{print $1}')
+
+    if [ "$_expected" != "$_actual" ]; then
+        die 1 "verify-sha256" "checksum mismatch: expected=${_expected} actual=${_actual}"
+    fi
+
+    step "verify-sha256" "ok" "$_actual"
+}
+
+##
+# extract_bundle -- extract the tarball into a staging directory
+#
+# Creates a new directory under RELEASES_DIR named after the bundle
+# (minus the .tar.gz suffix) and extracts the tarball into it.
+#
+# Sets the global STAGING_DIR variable to the extraction directory.
+#
+# Args:
+#   $1  bundle_path  -- path to the bundle tarball
+#
+# Returns: 0 on success
+# Exits:   1 on extraction failure
+# Side effects: creates directory and extracts files; sets STAGING_DIR
+##
+extract_bundle() {
+    _bp="$1"
+
+    # Derive the release name from the tarball filename, stripping
+    # the .tar.gz suffix.  E.g. "myapp-1.2.3.tar.gz" -> "myapp-1.2.3".
+    _basename="${_bp##*/}"
+    _release_name="${_basename%.tar.gz}"
+
+    STAGING_DIR="${RELEASES_DIR}/${_release_name}"
+
+    # If a previous failed install left a partial staging dir, remove it.
+    if [ -d "$STAGING_DIR" ]; then
+        log "WARN" "removing stale staging directory: ${STAGING_DIR}"
+        rm -rf "$STAGING_DIR"
+    fi
+
+    mkdir -p "$STAGING_DIR"
+
+    # Extract.  --strip-components=0 is the default but stated
+    # explicitly for clarity: the tarball's internal structure is
+    # preserved as-is under STAGING_DIR.
+    if ! tar -xzf "$_bp" -C "$STAGING_DIR"; then
+        rm -rf "$STAGING_DIR"
+        die 1 "extract" "tar extraction failed for ${_bp}"
+    fi
+
+    step "extract" "ok" "${STAGING_DIR}"
+}
+
+##
+# validate_manifest -- validate manifest.json per CONTRACT section 4
+#
+# Uses python3 to parse and validate the manifest because shell-based
+# JSON parsing is fragile and the contract requires schema validation.
+#
+# Checks:
+#   1. manifest.json exists in the staging directory.
+#   2. It is valid JSON.
+#   3. Required fields: name (string), version (string), entry (string).
+#   4. name matches ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ (CONTRACT regex).
+#   5. entry is a relative path (no leading /) with no ".." components.
+#   6. The file pointed to by entry actually exists in the staging dir.
+#   7. No file in the tarball has an absolute path or ".." traversal.
+#
+# Args:   none (reads STAGING_DIR global)
+# Returns: 0 if manifest is valid
+# Exits:   1 if any check fails
+# Side effects: none
+##
+validate_manifest() {
+    _manifest="${STAGING_DIR}/manifest.json"
+
+    if [ ! -f "$_manifest" ]; then
+        die 1 "validate-manifest" "manifest.json not found in ${STAGING_DIR}"
+    fi
+
+    # Delegate to python3 for robust JSON parsing and validation.
+    # The heredoc is the validation script; it exits non-zero on any
+    # failure and prints the error message to stdout.
+    _result=$(python3 - "$STAGING_DIR" "$_manifest" <<'PYEOF'
+import json
+import os
+import re
+import sys
+
+staging_dir = sys.argv[1]
+manifest_path = sys.argv[2]
+
+try:
+    with open(manifest_path, 'r') as f:
+        m = json.load(f)
+except json.JSONDecodeError as e:
+    print(f"manifest.json is not valid JSON: {e}")
+    sys.exit(1)
+
+# Schema version, per CONTRACT section 4.
+#
+# This check has to exist HERE, not only in the host-side tooling. The target
+# is the last line of defence: a bundle can reach /tmp/hmi_upload without ever
+# passing through deploy_to_hmi.sh or the deployer GUI (a plain scp, a forced
+# SSH command, a CI job), and CONTRACT section 4 requires validation to happen
+# twice for exactly that reason. Without it, a bundle written against a future
+# schema installs cleanly and then fails to render, which is the situation the
+# two-stage validation exists to prevent.
+SUPPORTED_SCHEMA = 1
+if 'schema' not in m:
+    print("manifest.json missing required field: schema")
+    sys.exit(1)
+if m['schema'] != SUPPORTED_SCHEMA:
+    print(f"manifest.json unsupported schema {m['schema']!r}; this image supports {SUPPORTED_SCHEMA}")
+    sys.exit(1)
+
+# Required fields with type checks.
+for field in ('name', 'version', 'entry'):
+    if field not in m:
+        print(f"manifest.json missing required field: {field}")
+        sys.exit(1)
+    if not isinstance(m[field], str):
+        print(f"manifest.json field '{field}' must be a string")
+        sys.exit(1)
+
+# Name regex per CONTRACT section 4.
+# Exactly the CONTRACT section 4 pattern. It previously read
+# ^[a-zA-Z0-9][a-zA-Z0-9_-]*$, which disagreed with every other validator in
+# both directions: it accepted "MyApp" (uppercase, contract-invalid) and
+# rejected "my.app" (dotted, contract-valid). A bundle could therefore install
+# from one tool and be refused by another.
+if not re.match(r'^[a-z0-9][a-z0-9._-]{0,63}$', m['name']):
+    print(f"manifest.json 'name' does not match required pattern: {m['name']}")
+    sys.exit(1)
+
+# Entry must be relative (no leading /) and must not contain "..".
+entry = m['entry']
+if os.path.isabs(entry):
+    print(f"manifest.json 'entry' must be a relative path: {entry}")
+    sys.exit(1)
+if '..' in entry.split('/'):
+    print(f"manifest.json 'entry' contains path traversal: {entry}")
+    sys.exit(1)
+
+# Entry file must exist in the staging directory.
+entry_path = os.path.join(staging_dir, entry)
+if not os.path.isfile(entry_path):
+    print(f"manifest.json 'entry' points to non-existent file: {entry}")
+    sys.exit(1)
+
+# Walk the staging directory and reject any file whose relative path
+# contains ".." or is absolute.  This catches malicious tarballs that
+# might have slipped absolute or traversal paths into the archive.
+for dirpath, dirnames, filenames in os.walk(staging_dir):
+    for name in filenames + dirnames:
+        full = os.path.join(dirpath, name)
+        rel = os.path.relpath(full, staging_dir)
+        if '..' in rel.split(os.sep):
+            print(f"path traversal detected in archive: {rel}")
+            sys.exit(1)
+        if os.path.isabs(name):
+            print(f"absolute path detected in archive entry: {name}")
+            sys.exit(1)
+
+print("OK")
+sys.exit(0)
+PYEOF
+    )
+
+    if [ "$_result" != "OK" ]; then
+        die 1 "validate-manifest" "$_result"
+    fi
+
+    step "validate-manifest" "ok" "${_manifest}"
+}
+
+##
+# swap_current_symlink -- atomically replace the `current` symlink
+#
+# CRITICAL: This function uses python3 os.replace() on a temporary
+# symlink to achieve atomic swap.  The alternatives are worse:
+#
+#   ln -sfnT <target> <link>
+#     -- busybox coreutils on some Yocto images lack the -T flag.
+#        Without -T, ln -sf follows an existing symlink and creates
+#        a nested link inside the target directory instead of
+#        replacing the symlink itself.  This is a silent data
+#        corruption bug.
+#
+#   rm <link> && ln -s <target> <link>
+#     -- leaves a window (however brief) where the symlink does not
+#        exist.  If the GUI or any monitoring tool reads `current`
+#        during that window, the panel has no UI.  On a busy system
+#        under I/O pressure the window can be hundreds of milliseconds.
+#
+#   mv -T <tmp_link> <link>
+#     -- busybox mv also lacks -T on some images.
+#
+# The python3 os.replace() approach:
+#   1. Create a temporary symlink next to `current` (same filesystem,
+#      guaranteed by being in the same directory).
+#   2. os.replace() the temp symlink onto `current`.  On Linux this is
+#      a single rename(2) syscall which is atomic within a directory
+#      on any POSIX filesystem.
+#   3. If step 2 fails, remove the temp symlink and exit non-zero.
+#
+# Args:
+#   $1  target_dir  -- absolute path to the release directory
+#
+# Returns: 0 on success
+# Exits:   1 on failure
+# Side effects: replaces CURRENT_LINK; creates/removes temp symlink
+##
+swap_current_symlink() {
+    _target="$1"
+
+    python3 -c "
+import os, sys, tempfile
+
+target = sys.argv[1]
+link   = sys.argv[2]
+link_dir = os.path.dirname(link)
+
+# Create a temporary symlink in the same directory as 'current' so
+# os.replace() is a same-directory rename (atomic on POSIX).
+fd, tmp = tempfile.mkstemp(dir=link_dir, prefix='.current_swap_')
+os.close(fd)
+os.unlink(tmp)           # mkstemp creates a regular file; remove it
+os.symlink(target, tmp)  # create the temp symlink
+
+try:
+    os.replace(tmp, link)  # atomic rename(2)
+except Exception as e:
+    # Clean up the temp symlink on failure.
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    print(f'atomic symlink swap failed: {e}', file=sys.stderr)
+    sys.exit(1)
+" "$_target" "$CURRENT_LINK"
+
+    if [ $? -ne 0 ]; then
+        die 1 "swap-symlink" "failed to atomically swap current symlink to ${_target}"
+    fi
+
+    step "swap-symlink" "ok" "current -> ${_target}"
+}
+
+##
+# save_previous -- record the current release as `previous` before swap
+#
+# Reads the current symlink target and creates/replaces the `previous`
+# symlink to point at it.  If there is no current symlink (first ever
+# install), this is a no-op.
+#
+# Args:   none
+# Returns: 0
+# Exits:   never
+# Side effects: creates or replaces PREVIOUS_LINK
+##
+save_previous() {
+    if [ -L "$CURRENT_LINK" ]; then
+        _prev_target=$(readlink "$CURRENT_LINK")
+        # Use the same atomic swap technique for the previous symlink.
+        python3 -c "
+import os, sys, tempfile
+target = sys.argv[1]
+link   = sys.argv[2]
+link_dir = os.path.dirname(link)
+fd, tmp = tempfile.mkstemp(dir=link_dir, prefix='.prev_swap_')
+os.close(fd)
+os.unlink(tmp)
+os.symlink(target, tmp)
+try:
+    os.replace(tmp, link)
+except Exception:
+    try: os.unlink(tmp)
+    except OSError: pass
+" "$_prev_target" "$PREVIOUS_LINK"
+        step "save-previous" "ok" "previous -> ${_prev_target}"
+    else
+        step "save-previous" "ok" "no previous release (first install)"
+    fi
+}
+
+##
+# restart_gui -- restart the GUI service and wait for readiness
+#
+# Removes the gui-ready sentinel, restarts the GUI via the configured
+# restart command, then polls for the sentinel to reappear within
+# GUI_READY_TIMEOUT seconds.
+#
+# If HMI_SKIP_GUI_WAIT is "1", the restart and wait are skipped entirely.
+# This is used for off-target testing where systemd is not available.
+#
+# Args:   none
+# Returns:
+#   0 if the GUI came up within the timeout (or wait was skipped)
+#   1 if the GUI did not come up
+# Exits:   never
+# Side effects: restarts the GUI service; removes/checks READY_FILE
+##
+restart_gui() {
+    if [ "$HMI_SKIP_GUI_WAIT" = "1" ]; then
+        step "restart-gui" "ok" "skipped (HMI_SKIP_GUI_WAIT=1)"
+        return 0
+    fi
+
+    # Remove the readiness sentinel so we can detect when the new
+    # instance creates it.
+    rm -f "$READY_FILE"
+
+    log "INFO" "restarting GUI via: ${HMI_RESTART_CMD}"
+    if ! eval "$HMI_RESTART_CMD"; then
+        step "restart-gui" "fail" "restart command failed"
+        return 1
+    fi
+
+    # Poll for the readiness sentinel.
+    _elapsed=0
+    while [ "$_elapsed" -lt "$GUI_READY_TIMEOUT" ]; do
+        if [ -f "$READY_FILE" ]; then
+            step "restart-gui" "ok" "GUI ready after ${_elapsed}s"
+            return 0
+        fi
+        sleep 1
+        _elapsed=$(( _elapsed + 1 ))
+    done
+
+    step "restart-gui" "fail" "GUI did not become ready within ${GUI_READY_TIMEOUT}s"
+    return 1
+}
+
+##
+# rollback_to_previous -- restore the previous release after a failed deploy
+#
+# Reads the `previous` symlink and swaps `current` back to it.
+# Then restarts the GUI (best-effort; if this also fails, the operator
+# must intervene manually).
+#
+# Args:   none
+# Returns: 0 on success, 1 if no previous release exists
+# Exits:   never (caller decides whether to exit)
+# Side effects: replaces CURRENT_LINK; restarts GUI
+##
+rollback_to_previous() {
+    if [ ! -L "$PREVIOUS_LINK" ]; then
+        step "rollback" "fail" "no previous release to roll back to"
+        return 1
+    fi
+
+    _prev_target=$(readlink "$PREVIOUS_LINK")
+    log "INFO" "rolling back current -> ${_prev_target}"
+    swap_current_symlink "$_prev_target"
+
+    step "rollback" "ok" "current -> ${_prev_target}"
+
+    # Best-effort restart after rollback.
+    if [ "$HMI_SKIP_GUI_WAIT" != "1" ]; then
+        rm -f "$READY_FILE"
+        eval "$HMI_RESTART_CMD" || true
+    fi
+
+    return 0
+}
+
+##
+# prune_releases -- remove old releases beyond the retention policy
+#
+# Keeps the KEEP_RELEASES newest releases (by directory mtime) plus
+# whatever `current` and `previous` point at (even if they are older
+# than the newest KEEP_RELEASES).  Removes everything else.
+#
+# Args:   none
+# Returns: 0
+# Exits:   never
+# Side effects: deletes directories under RELEASES_DIR
+##
+prune_releases() {
+    if [ ! -d "$RELEASES_DIR" ]; then
+        step "prune" "ok" "no releases directory"
+        return 0
+    fi
+
+    # Resolve current and previous targets to absolute paths so we can
+    # protect them from pruning regardless of age.
+    _protect_current=""
+    _protect_previous=""
+
+    if [ -L "$CURRENT_LINK" ]; then
+        _protect_current=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$CURRENT_LINK")
+    fi
+    if [ -L "$PREVIOUS_LINK" ]; then
+        _protect_previous=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$PREVIOUS_LINK")
+    fi
+
+    # Build a list of all release directories sorted by mtime (newest
+    # first).  We use python3 to get reliable mtime sorting since
+    # busybox ls may lack --sort=time or produce inconsistent output.
+    _pruned=$(python3 -c "
+import os, sys
+
+releases_dir  = sys.argv[1]
+keep_count    = int(sys.argv[2])
+protect_set   = set(filter(None, sys.argv[3:]))
+
+if not os.path.isdir(releases_dir):
+    sys.exit(0)
+
+# List all immediate subdirectories with their mtime.
+entries = []
+for name in os.listdir(releases_dir):
+    full = os.path.join(releases_dir, name)
+    if os.path.isdir(full):
+        entries.append((os.path.getmtime(full), full))
+
+# Sort by mtime descending (newest first).
+entries.sort(key=lambda e: e[0], reverse=True)
+
+# Keep the newest keep_count plus anything in the protect set.
+kept = 0
+for mtime, full in entries:
+    real = os.path.realpath(full)
+    if real in protect_set:
+        continue  # always keep, does not count toward keep_count
+    if kept < keep_count:
+        kept += 1
+        continue  # keep as one of the newest
+    # This release is beyond retention and not protected: prune it.
+    print(full)
+" "$RELEASES_DIR" "$KEEP_RELEASES" "$_protect_current" "$_protect_previous")
+
+    _prune_count=0
+    if [ -n "$_pruned" ]; then
+        echo "$_pruned" | while IFS= read -r _dir; do
+            rm -rf "$_dir"
+            log "INFO" "pruned old release: ${_dir}"
+        done
+        _prune_count=$(echo "$_pruned" | wc -l)
+    fi
+
+    step "prune" "ok" "removed ${_prune_count} old release(s)"
+}
+
+##
+# cmd_install -- the `install` subcommand
+#
+# Full install pipeline: validate, verify, extract, validate manifest,
+# save previous, swap symlink, restart GUI, rollback on failure, prune.
+#
+# Args:
+#   $1  bundle_path  -- path to the bundle tarball
+#
+# Returns: 0 on success
+# Exits:   1 on any failure (after rollback attempt)
+# Side effects: modifies RELEASES_DIR, CURRENT_LINK, PREVIOUS_LINK;
+#               restarts GUI service; cleans UPLOAD_DIR
+##
+cmd_install() {
+    if [ $# -lt 1 ]; then
+        die 2 "usage" "usage: hmi-install install <bundle.tar.gz>"
+    fi
+    _bundle="$1"
+
+    step "install-start" "ok" "bundle=${_bundle}"
+
+    # -- Validate the bundle path is safe ---
+    validate_bundle_path "$_bundle"
+
+    # -- Verify checksum ---
+    verify_sha256 "$_bundle"
+
+    # -- Extract ---
+    extract_bundle "$_bundle"
+
+    # -- Validate manifest ---
+    validate_manifest
+    # STAGING_DIR is now set by extract_bundle.
+
+    # -- Save current as previous ---
+    save_previous
+
+    # -- Atomic symlink swap ---
+    swap_current_symlink "$STAGING_DIR"
+
+    # -- Restart GUI and verify ---
+    if ! restart_gui; then
+        log "ERROR" "GUI failed to start with new release; initiating rollback"
+        step "auto-rollback-start" "ok" "GUI did not come up"
+
+        rollback_to_previous
+
+        # Clean up the failed release directory.
+        if [ -d "$STAGING_DIR" ]; then
+            rm -rf "$STAGING_DIR"
+            log "INFO" "removed failed release: ${STAGING_DIR}"
+        fi
+
+        cleanup_upload_dir
+        die 1 "install-complete" "deployment FAILED -- rolled back to previous release"
+    fi
+
+    # -- Prune old releases ---
+    prune_releases
+
+    # -- Clean up upload directory ---
+    cleanup_upload_dir
+
+    step "install-complete" "ok" "deployment successful: $(readlink "$CURRENT_LINK")"
+}
+
+##
+# cmd_rollback -- the `rollback` subcommand
+#
+# Manually rolls back to the previous release.
+#
+# Args:   none
+# Returns: 0 on success
+# Exits:   1 if no previous release exists
+# Side effects: modifies CURRENT_LINK; restarts GUI; cleans UPLOAD_DIR
+##
+cmd_rollback() {
+    step "rollback-start" "ok" ""
+
+    if ! rollback_to_previous; then
+        cleanup_upload_dir
+        die 1 "rollback-complete" "rollback FAILED -- no previous release"
+    fi
+
+    cleanup_upload_dir
+    step "rollback-complete" "ok" "rolled back to $(readlink "$CURRENT_LINK")"
+}
+
+##
+# cmd_list -- the `list` subcommand
+#
+# Lists all installed releases, marking which is current and which is
+# previous.
+#
+# Args:   none
+# Returns: 0
+# Exits:   never
+# Side effects: writes to stdout
+##
+cmd_list() {
+    if [ ! -d "$RELEASES_DIR" ]; then
+        step "list" "ok" "no releases installed"
+        return 0
+    fi
+
+    _current_real=""
+    _previous_real=""
+    if [ -L "$CURRENT_LINK" ]; then
+        _current_real=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$CURRENT_LINK")
+    fi
+    if [ -L "$PREVIOUS_LINK" ]; then
+        _previous_real=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$PREVIOUS_LINK")
+    fi
+
+    for _dir in "$RELEASES_DIR"/*/; do
+        # Skip if glob did not expand.
+        [ -d "$_dir" ] || continue
+
+        _real=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$_dir")
+        _name="${_dir%/}"
+        _name="${_name##*/}"
+        _marker=""
+
+        if [ "$_real" = "$_current_real" ]; then
+            _marker=" [current]"
+        fi
+        if [ "$_real" = "$_previous_real" ]; then
+            _marker="${_marker} [previous]"
+        fi
+
+        printf '  %s%s\n' "$_name" "$_marker"
+    done
+
+    step "list" "ok" ""
+}
+
+##
+# cmd_status -- the `status` subcommand
+#
+# Shows the current and previous release, and whether the GUI is ready.
+#
+# Args:   none
+# Returns: 0
+# Exits:   never
+# Side effects: writes to stdout
+##
+cmd_status() {
+    if [ -L "$CURRENT_LINK" ]; then
+        printf 'current:  %s\n' "$(readlink "$CURRENT_LINK")"
+    else
+        printf 'current:  (none)\n'
+    fi
+
+    if [ -L "$PREVIOUS_LINK" ]; then
+        printf 'previous: %s\n' "$(readlink "$PREVIOUS_LINK")"
+    else
+        printf 'previous: (none)\n'
+    fi
+
+    if [ -f "$READY_FILE" ]; then
+        printf 'gui:      ready\n'
+    else
+        printf 'gui:      not ready\n'
+    fi
+
+    step "status" "ok" ""
+}
+
+##
+# cmd_help -- the `help` subcommand
+#
+# Prints usage information to stdout.
+#
+# Args:   none
+# Returns: 0
+# Exits:   never
+# Side effects: writes to stdout
+##
+cmd_help() {
+    cat <<'EOF'
+hmi-install -- HMI Atomic Bundle Installer
+
+USAGE
+  hmi-install install <bundle.tar.gz>   Install a new application bundle
+  hmi-install rollback                  Roll back to the previous release
+  hmi-install list                      List installed releases
+  hmi-install status                    Show current/previous release and GUI state
+  hmi-install help                      Show this help
+
+ENVIRONMENT
+  HMI_ROOT           Path prefix for all filesystem paths (testing only)
+  HMI_RESTART_CMD    Override the systemctl restart command (testing)
+  HMI_SKIP_GUI_WAIT  Set to "1" to skip GUI restart/wait (testing)
+
+EXIT CODES
+  0  Success
+  1  Validation or runtime error
+  2  Usage error
+  3  Lock contention (another install is running)
+EOF
+}
+
+# ---- Ensure runtime directories exist --------------------------------
+# These would normally be created by systemd-tmpfiles at boot, but when
+# running off-target with HMI_ROOT set the directories may not exist.
+mkdir -p "$RUN_DIR" "$UPLOAD_DIR" "$RELEASES_DIR"
+
+# ---- Serialise concurrent installs with flock(2) ---------------------
+# The lock file lives on tmpfs (/run/hmi) so it is automatically cleaned
+# on reboot.  We use file descriptor 9 for the lock; it is held for the
+# entire duration of the script.
+
+# Open (or create) the lock file on FD 9.
+# exec is used to associate the FD with the file without spawning a
+# subshell, which would release the lock when it exits.
+exec 9>"$LOCK_FILE"
+
+# Attempt a non-blocking exclusive lock.  If another instance holds the
+# lock, exit immediately with a clear message rather than queueing.
+if ! flock -n 9; then
+    die 3 "lock" "another hmi-install is already running (lock: ${LOCK_FILE})"
+fi
+
+# ---- Dispatch subcommand ---------------------------------------------
+
+_cmd="${1:-help}"
+shift || true
+
+case "$_cmd" in
+    install)    cmd_install "$@" ;;
+    rollback)   cmd_rollback ;;
+    list)       cmd_list ;;
+    status)     cmd_status ;;
+    help)       cmd_help ;;
+    *)          die 2 "usage" "unknown command: ${_cmd}.  Run 'hmi-install help'." ;;
+esac

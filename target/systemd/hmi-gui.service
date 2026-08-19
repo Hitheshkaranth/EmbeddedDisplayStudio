@@ -1,0 +1,78 @@
+# /etc/systemd/system/hmi-gui.service
+# =====================================================================
+# HMI GUI Service -- the user-facing graphical application running
+# under Weston on the Verdin i.MX8M Plus panel.
+#
+# This unit starts the Wayland environment resolver (hmi-gui-launch)
+# which auto-detects the compositor socket, sets up the Qt environment
+# and exec's the Python GUI loader.
+#
+# Ordering:
+#   After=weston.service   -- the compositor must be running first.
+#   After=hmi-hwd.service  -- prefer HW data to be ready, but not
+#                             mandatory (see Wants= vs Requires=).
+#
+# Dependency strength:
+#   Requires=weston.service  -- if weston is not active the GUI
+#                               cannot display anything, so this is
+#                               a hard dependency: if weston stops
+#                               or fails, the GUI is stopped too.
+#   Wants=hmi-hwd.service    -- the GUI SHOULD have HW data but MUST
+#                               survive the daemon being absent (e.g.
+#                               during firmware update or on a dev
+#                               board with no sensors attached).
+#                               Using Requires= here would pull down
+#                               the GUI whenever the HW daemon crashes.
+# =====================================================================
+
+[Unit]
+# Short description shown by `systemctl status`.
+Description=HMI GUI Application (Wayland)
+
+# Ordering dependencies.  Both must have started (or failed) before
+# this unit's ExecStart runs.
+After=weston.service hmi-hwd.service
+
+# Hard dependency on the compositor.  Without weston there is no
+# display server and the GUI would crash immediately.  If weston
+# stops, systemd will also stop this unit.
+Requires=weston.service
+
+# Soft dependency on the hardware daemon.  systemd will try to start
+# hmi-hwd.service but will not fail this unit if it is unavailable.
+Wants=hmi-hwd.service
+
+[Service]
+# --- Execution ---
+
+# Type=simple (default): systemd considers the service started as
+# soon as ExecStart forks.  The GUI launcher does not implement
+# sd_notify so Type=notify is not appropriate.
+Type=simple
+
+# Load environment overrides if the file exists.  The leading dash
+# means "do not fail if the file is missing".  Operators can set
+# QT_SCALE_FACTOR, HMI_LOG_LEVEL, etc. without editing this unit.
+EnvironmentFile=-/etc/default/hmi-gui
+
+# The launcher script handles Wayland detection and exec's the
+# Python GUI loader.  See hmi-gui-launch for details.
+ExecStart=/usr/bin/hmi-gui-launch
+
+# --- Restart policy ---
+
+# Always restart on any exit so the panel never shows a dead screen
+# for more than a few seconds.  Combined with the installer's
+# rollback logic this ensures the operator always has a UI.
+Restart=always
+
+# Match the HW daemon's restart delay for consistency and to avoid
+# a thundering-herd scenario where both services restart at high
+# frequency simultaneously.
+RestartSec=2
+
+[Install]
+# Start at normal multi-user boot.  On the Verdin image, weston.service
+# is also WantedBy=multi-user.target, so the ordering declared above
+# is sufficient.
+WantedBy=multi-user.target

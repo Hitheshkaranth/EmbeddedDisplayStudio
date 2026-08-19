@@ -1,0 +1,22 @@
+module Shadcn
+singleton Theme 1.0 Theme.qml
+ShButton 1.0 ShButton.qml
+ShInput 1.0 ShInput.qml
+ShCard 1.0 ShCard.qml
+ShCardHeader 1.0 ShCardHeader.qml
+ShCardTitle 1.0 ShCardTitle.qml
+ShCardDescription 1.0 ShCardDescription.qml
+ShCardContent 1.0 ShCardContent.qml
+ShBadge 1.0 ShBadge.qml
+ShSwitch 1.0 ShSwitch.qml
+ShProgress 1.0 ShProgress.qml
+ShSeparator 1.0 ShSeparator.qml
+ShAlert 1.0 ShAlert.qml
+ShTabs 1.0 ShTabs.qml
+ShLabel 1.0 ShLabel.qml
+ShSkeleton 1.0 ShSkeleton.qml
+ShDialog 1.0 ShDialog.qml
+ShGauge 1.0 ShGauge.qml
+ShStatDot 1.0 ShStatDot.qml
+ShValueTile 1.0 ShValueTile.qml
+ShIcon 1.0 ShIcon.qml

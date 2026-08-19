@@ -1,0 +1,29 @@
+# Line endings are not cosmetic in this repository.
+#
+# Everything here is deployed to an embedded Linux target. A CRLF in a shell
+# script breaks its shebang ("bad interpreter: /bin/bash^M") and a CRLF in a
+# systemd unit or a bitbake recipe is silently mis-parsed. Contributors on
+# Windows must not be able to introduce them by accident, so every text file is
+# normalised to LF in the repository and checked out as LF regardless of
+# core.autocrlf.
+
+* text=auto eol=lf
+
+# Executables that must keep LF even if a tool guesses otherwise.
+target/bin/hmi-install   text eol=lf
+target/bin/hmi-gui-launch text eol=lf
+*.sh                     text eol=lf
+*.service                text eol=lf
+*.conf                   text eol=lf
+*.bb                     text eol=lf
+*.bbappend               text eol=lf
+*.qml                    text eol=lf
+*.js                     text eol=lf
+*.py                     text eol=lf
+*.json                   text eol=lf
+qmldir                   text eol=lf
+
+# Binary assets: never touch these.
+*.png binary
+*.ico binary
+*.tar.gz binary

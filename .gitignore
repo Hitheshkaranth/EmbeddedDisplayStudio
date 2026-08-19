@@ -1,0 +1,43 @@
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# --- Qt / QML ---------------------------------------------------------------
+# Qt caches compiled QML next to the source on some configurations.
+*.qmlc
+*.jsc
+.qmlls.ini
+
+# --- Local tooling ----------------------------------------------------------
+# Claude Code's per-machine permission list: contains absolute local paths and
+# is explicitly a local override, never shared.
+.claude/settings.local.json
+
+# --- Editors / OS -----------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# --- Build and test output --------------------------------------------------
+# Screenshots and renders produced by the gallery, the deployer's bezel capture
+# and the test suite. Regenerate them; do not commit them.
+/*.png
+/gui-ready*
+/tmp/
+build/
+dist/
+
+# --- Yocto ------------------------------------------------------------------
+# Recipe files/ directories are populated from this repository by the commands
+# in yocto/README.md, so their contents are derived, not source.
+yocto/meta-hmi/recipes-*/*/files/
+tmp-glibc/
+sstate-cache/
+downloads/

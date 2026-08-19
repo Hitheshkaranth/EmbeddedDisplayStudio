@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "name": "demo-app",
+  "version": "1.0.0",
+  "entry": "main.qml",
+  "screen": {
+    "width": 1280,
+    "height": 800
+  },
+  "tags_required": [
+    "ai.pot",
+    "di.estop",
+    "do.relay1"
+  ],
+  "qt": ">=6.5"
+}

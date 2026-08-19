@@ -1,0 +1,228 @@
+#!/bin/sh
+# /usr/bin/hmi-gui-launch
+# =====================================================================
+# Wayland Environment Resolver and GUI Launcher
+# =====================================================================
+#
+# PURPOSE
+#   Detect the Wayland compositor socket, configure the Qt environment
+#   for Wayland rendering, and exec the HMI GUI loader (main.py).
+#
+#   BSPs differ: weston may run as root (XDG_RUNTIME_DIR=/run/user/0)
+#   or as a dedicated 'weston' user (e.g. /run/user/1000).  This script
+#   scans for a live socket rather than hard-coding any UID.
+#
+# USAGE
+#   /usr/bin/hmi-gui-launch [extra args forwarded to main.py ...]
+#   Normally invoked by hmi-gui.service; not called directly.
+#
+# EXIT CODES
+#   0   -- never returned (exec replaces this process)
+#   1   -- Wayland socket not found within timeout
+#   2   -- configuration / environment error
+#
+# ENVIRONMENT (all optional; see /etc/default/hmi-gui)
+#   XDG_RUNTIME_DIR, WAYLAND_DISPLAY, QT_SCALE_FACTOR,
+#   QT_QPA_PLATFORM, QT_WAYLAND_DISABLE_WINDOWDECORATION,
+#   HMI_GUI_EXTRA_ARGS, HMI_LOG_LEVEL, HMI_ROOT
+#
+# =====================================================================
+
+set -eu
+
+# ---- Globals --------------------------------------------------------
+
+# HMI_ROOT: path prefix for all filesystem paths.  Empty in production.
+# Allows off-target testing against a temp tree on a dev host.
+HMI_ROOT="${HMI_ROOT:-}"
+
+# Maximum seconds to wait for a Wayland socket to appear.
+# Weston may still be initialising during early boot.
+WAYLAND_WAIT_TIMEOUT=30
+
+# Default path to the environment overrides file.
+# This file is also loaded by systemd's EnvironmentFile= but we
+# re-source it here to pick up any variables that systemd does not
+# export (e.g. because the unit was started manually).
+HMI_GUI_DEFAULTS="${HMI_ROOT}/etc/default/hmi-gui"
+
+# Path to the GUI loader, per CONTRACT section 5.
+GUI_LOADER="${HMI_ROOT}/usr/lib/hmi/gui/main.py"
+
+# Directory containing deployed HMI application bundles.
+APPS_DIR="${HMI_ROOT}/opt/hmi_apps/current"
+
+# Readiness sentinel: created by the loader once the GUI is live,
+# checked by hmi-install during deploy verification.
+READY_FILE="${HMI_ROOT}/run/hmi/gui-ready"
+
+# ---- Functions -------------------------------------------------------
+
+##
+# log -- emit a timestamped message to stderr (appears in the journal)
+#
+# Args:
+#   $1  severity  -- "INFO", "WARN", or "ERROR"
+#   $*  message   -- free-form human text
+#
+# Returns: 0
+# Exits:   never
+# Side effects: writes to stderr
+##
+log() {
+    _sev="$1"; shift
+    printf '[hmi-gui-launch] %s: %s\n' "$_sev" "$*" >&2
+}
+
+##
+# die -- log an error message and exit
+#
+# Args:
+#   $1  exit_code  -- numeric exit code
+#   $*  message    -- error description
+#
+# Returns: does not return
+# Exits:   with $1
+# Side effects: writes to stderr
+##
+die() {
+    _rc="$1"; shift
+    log "ERROR" "$@"
+    exit "$_rc"
+}
+
+##
+# find_wayland_socket -- scan /run/user/*/wayland-* for a live socket
+#
+# Iterates over all user runtime directories looking for a Wayland
+# socket.  Sets two variables on success:
+#   _found_xdg_runtime_dir  -- e.g. /run/user/0
+#   _found_wayland_display  -- e.g. wayland-0
+#
+# Args:   none
+# Returns:
+#   0 if a socket was found (variables are set)
+#   1 if no socket was found
+# Exits:  never
+# Side effects: sets _found_xdg_runtime_dir, _found_wayland_display
+##
+find_wayland_socket() {
+    _found_xdg_runtime_dir=""
+    _found_wayland_display=""
+
+    # Use a glob to find wayland sockets across all user runtime dirs.
+    # The glob may produce no matches; the inner test -S handles that.
+    for _sock in "${HMI_ROOT}"/run/user/*/wayland-*; do
+        # Skip if the glob did not expand (no match).
+        [ -e "$_sock" ] || continue
+
+        # Accept only actual sockets, not regular files.
+        if [ -S "$_sock" ]; then
+            # Extract the directory and filename from the matched path.
+            _dir="${_sock%/*}"
+            _name="${_sock##*/}"
+
+            # Strip HMI_ROOT prefix for the real XDG_RUNTIME_DIR that
+            # the compositor and clients use.
+            if [ -n "$HMI_ROOT" ]; then
+                _found_xdg_runtime_dir="${_dir#"$HMI_ROOT"}"
+            else
+                _found_xdg_runtime_dir="$_dir"
+            fi
+            _found_wayland_display="$_name"
+
+            log "INFO" "found Wayland socket: ${_found_xdg_runtime_dir}/${_found_wayland_display}"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+##
+# wait_for_wayland -- block until a Wayland socket appears or timeout
+#
+# Calls find_wayland_socket in a polling loop (1 s interval) up to
+# WAYLAND_WAIT_TIMEOUT seconds.
+#
+# Args:   none
+# Returns:
+#   0 if a socket was found within the timeout
+#   1 if the timeout elapsed without finding a socket
+# Exits:  never
+# Side effects: sleeps; sets _found_xdg_runtime_dir, _found_wayland_display
+##
+wait_for_wayland() {
+    _elapsed=0
+    while [ "$_elapsed" -lt "$WAYLAND_WAIT_TIMEOUT" ]; do
+        if find_wayland_socket; then
+            return 0
+        fi
+        sleep 1
+        _elapsed=$(( _elapsed + 1 ))
+    done
+    return 1
+}
+
+# ---- Main ------------------------------------------------------------
+
+# If the caller has already set both XDG_RUNTIME_DIR and WAYLAND_DISPLAY
+# (e.g. via /etc/default/hmi-gui), trust them and skip auto-detection.
+# Otherwise, wait for the compositor to create a socket.
+
+if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    log "INFO" "using pre-configured XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}, WAYLAND_DISPLAY=${WAYLAND_DISPLAY}"
+else
+    log "INFO" "auto-detecting Wayland socket (timeout: ${WAYLAND_WAIT_TIMEOUT}s)..."
+    if ! wait_for_wayland; then
+        die 1 "no Wayland socket found under ${HMI_ROOT}/run/user/*/wayland-* after ${WAYLAND_WAIT_TIMEOUT}s -- is weston running?"
+    fi
+
+    # Export the discovered values.
+    XDG_RUNTIME_DIR="$_found_xdg_runtime_dir"
+    WAYLAND_DISPLAY="$_found_wayland_display"
+fi
+
+export XDG_RUNTIME_DIR
+export WAYLAND_DISPLAY
+
+# Qt must use the Wayland QPA plugin.  Without this, Qt falls back to
+# the linuxfb or eglfs plugins which do not integrate with weston.
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
+
+# Disable client-side window decorations.  Under weston the HMI runs
+# fullscreen; decorations waste screen space and look wrong.
+export QT_WAYLAND_DISABLE_WINDOWDECORATION="${QT_WAYLAND_DISABLE_WINDOWDECORATION:-1}"
+
+# Source operator overrides.  `set -a` auto-exports every variable set
+# by the file so they are visible to the exec'd Python process.
+# The file is optional (protected by the -f test and the leading dash
+# in the systemd EnvironmentFile= directive).
+if [ -f "$HMI_GUI_DEFAULTS" ]; then
+    log "INFO" "sourcing overrides from ${HMI_GUI_DEFAULTS}"
+    set -a
+    # shellcheck disable=SC1090
+    . "$HMI_GUI_DEFAULTS"
+    set +a
+fi
+
+# Build the extra-args string.  HMI_GUI_EXTRA_ARGS is intentionally
+# unquoted on the exec line so that multiple space-separated arguments
+# expand correctly.
+_extra="${HMI_GUI_EXTRA_ARGS:-}"
+
+log "INFO" "launching GUI: ${GUI_LOADER}"
+log "INFO" "  XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}"
+log "INFO" "  WAYLAND_DISPLAY=${WAYLAND_DISPLAY}"
+log "INFO" "  QT_QPA_PLATFORM=${QT_QPA_PLATFORM}"
+log "INFO" "  APPS_DIR=${APPS_DIR}"
+
+# exec replaces this shell process with the Python GUI loader.
+# The --apps-dir and --ready-file flags are mandated by CONTRACT section 5.
+# "$@" forwards any extra arguments passed on the command line.
+# shellcheck disable=SC2086
+exec /usr/bin/python3 "$GUI_LOADER" \
+    --apps-dir "$APPS_DIR" \
+    --ready-file "$READY_FILE" \
+    $_extra \
+    "$@"

@@ -1,0 +1,170 @@
+# /etc/systemd/system/hmi-hwd.service
+# =====================================================================
+# HMI Hardware Daemon -- the process that talks to GPIOs, IIO sensors
+# and UART peripherals on the Verdin i.MX8M Plus and publishes their
+# state over a local socket for the GUI.
+#
+# This unit is Type=notify: hmi_hwd.py calls sd_notify(READY=1) once
+# it has initialised all configured devices.  Until that happens
+# systemd considers the service "activating" and dependents that use
+# After= on this unit will wait.
+#
+# The unit is ordered Before=hmi-gui.service so that hardware state is
+# typically available when the GUI starts, but the GUI declares only
+# Wants= (not Requires=) on this unit so it can survive the daemon
+# being absent or crashing.
+# =====================================================================
+
+[Unit]
+# Short human-readable description shown by `systemctl status`.
+Description=HMI Hardware Daemon (GPIO / IIO / UART)
+
+# Ensure the daemon is fully started before the GUI service attempts
+# to connect.  This is an ordering dependency only; the GUI does not
+# hard-require this unit (see hmi-gui.service).
+Before=hmi-gui.service
+
+# If the daemon fails to start, do not drag multi-user.target down;
+# the rest of the system should remain operational.
+#
+# This unit is not critical for basic system health.  An operator
+# can still SSH in and troubleshoot even if the HW daemon is down.
+After=sysinit.target
+
+[Service]
+# --- Execution ---
+
+# Type=notify: the process MUST call sd_notify("READY=1") or systemd
+# will consider it failed after TimeoutStartSec.  The Python daemon
+# uses systemd.daemon.notify() for this.
+Type=notify
+
+# Command line per CONTRACT section 5.  --strict makes the daemon
+# exit non-zero on any configuration or hardware error at startup,
+# which feeds into the Restart= logic.
+ExecStart=/usr/bin/python3 /usr/lib/hmi/hmi_hwd.py --config /etc/hmi/hwd.json --strict
+
+# WatchdogSec: if the daemon does not call sd_notify("WATCHDOG=1")
+# within this interval systemd kills and restarts it.  10 s is
+# generous for a polling loop; increase if the daemon performs slow
+# IIO reads.
+WatchdogSec=10
+
+# --- Restart policy ---
+
+# Always restart on any exit (clean, signal, watchdog, etc.).
+# The HW daemon is a critical path for the HMI; it must be self-healing.
+Restart=always
+
+# 2 s pause between restarts to avoid busy-loop on persistent failures
+# (e.g. missing GPIO chip), while still recovering quickly from
+# transient faults.
+RestartSec=2
+
+# --- Sandboxing / hardening ---
+# Every directive below is annotated with (a) what attack surface it
+# removes and (b) what would break if it were set differently.
+
+# Prevent the daemon (and any child process it forks) from gaining
+# new privileges via execve of a setuid binary.  Removing this would
+# let a compromised daemon escalate to capabilities it was not
+# granted.
+NoNewPrivileges=true
+
+# Make /home, /root and /run/user inaccessible.  The daemon has no
+# reason to touch user home directories.  Removing this would expose
+# SSH keys and user data to a compromised process.
+ProtectHome=true
+
+# Mount the entire root filesystem read-only, except for the paths
+# listed in ReadWritePaths.  "strict" is stronger than "full" because
+# it also protects /etc from writes.  Without this, a code-execution
+# bug in the daemon could modify system configuration.
+ProtectSystem=strict
+
+# Paths the daemon genuinely needs to write:
+#   /run/hmi -- runtime state (PID file proxies, readiness sentinels)
+#   /tmp     -- Python's tempfile module; PrivateTmp gives a private
+#               view so this is safe even with mode 1777
+ReadWritePaths=/run/hmi
+
+# Give the daemon its own /tmp so it cannot read or tamper with files
+# written by other services.  Without this, a compromised daemon
+# could read uploaded bundles in /tmp/hmi_upload.
+PrivateTmp=true
+
+# DevicePolicy=closed denies access to all device nodes by default.
+# We then whitelist exactly the nodes the daemon requires.
+# Without DevicePolicy=closed the daemon could open any device on
+# the system (framebuffer, block devices, etc.).
+DevicePolicy=closed
+
+# GPIO character devices -- libgpiod accesses these to read/write
+# GPIO lines.  "rw" because the daemon both reads inputs (buttons,
+# sensors) and writes outputs (LEDs, relays).
+# Without this line the daemon cannot control GPIOs at all.
+DeviceAllow=/dev/gpiochip* rw
+
+# IIO subsystem -- the daemon reads ADC values, accelerometer data,
+# etc. through sysfs but the kernel exposes /dev/iio:deviceN for
+# buffered/triggered reads.  "r" because the daemon only reads
+# sensor data, never configures trigger hardware.
+# Without this line buffered IIO reads fail with EACCES.
+DeviceAllow=/dev/iio:device* r
+
+# UART devices -- the daemon communicates with external peripherals
+# (RS-485 sensors, Modbus devices) over the Verdin UART pins.
+# "rw" because UART is bidirectional.
+# Without this line all serial communication fails.
+DeviceAllow=/dev/verdin-uart* rw
+
+# Also allow /dev/null, /dev/zero, /dev/urandom which Python and
+# glibc always need.  DevicePolicy=closed blocks even these unless
+# explicitly allowed.
+DeviceAllow=/dev/null rw
+DeviceAllow=/dev/zero r
+DeviceAllow=/dev/urandom r
+
+# Restrict socket families.  The daemon communicates over:
+#   AF_UNIX  -- sd_notify, local IPC socket to the GUI
+#   AF_INET  -- optional TCP connections (e.g. Modbus/TCP)
+# Denying AF_INET6, AF_NETLINK, AF_PACKET etc. limits the damage from
+# a compromised daemon; it cannot open raw sockets or talk to the
+# kernel netlink interface.
+RestrictAddressFamilies=AF_UNIX AF_INET
+
+# Prevent the daemon from creating new namespaces (mount, user, net,
+# pid, etc.).  A compromised process could otherwise create a
+# namespace to escape other sandboxing.
+RestrictNamespaces=true
+
+# Lock the process personality to the native architecture, preventing
+# it from switching to a compat personality (e.g. running x86 compat
+# on an x86-64 kernel).  Not relevant on aarch64 in practice but
+# costs nothing and closes a sandbox-escape vector.
+LockPersonality=true
+
+# NOTE: MemoryDenyWriteExecute is deliberately NOT set.
+# Python's default allocator and ctypes FFI require memory regions that
+# are both writable and executable (W^X).  Enabling MDWE would cause
+# Python to segfault or fail to load native extensions such as
+# libgpiod bindings and iio ctypes wrappers.
+
+# Restrict system calls to the native architecture only (aarch64).
+# Prevents a compromised process from invoking syscalls via a compat
+# ABI, which could bypass seccomp filters.
+SystemCallArchitectures=native
+
+# --- sysfs access ---
+# The daemon needs to read /sys/bus/iio for IIO sensor enumeration
+# and attribute reads.  ProtectSystem=strict makes /sys read-only
+# which is fine -- the daemon only reads sysfs attributes, never
+# writes them.  /sys is not blocked by ProtectSystem=strict (only
+# /sys/fs/cgroup and similar API filesystems are), so no extra
+# ReadWritePaths entry is needed for /sys/bus/iio.
+
+[Install]
+# Start this unit whenever multi-user.target is reached (i.e. normal
+# boot without a graphical target override).  The HW daemon must be
+# available for the HMI to function.
+WantedBy=multi-user.target

@@ -1,0 +1,70 @@
+# /etc/default/hmi-gui
+# Environment overrides for hmi-gui.service and hmi-gui-launch.
+#
+# This file is sourced by hmi-gui-launch (via `set -a; . <file>; set +a`)
+# and also loaded by systemd through EnvironmentFile=-/etc/default/hmi-gui.
+# The leading dash means systemd will not fail if the file is missing.
+#
+# All variables are optional.  The defaults shown in comments are what
+# hmi-gui-launch uses when a variable is unset.  Uncomment and change
+# only what you need.
+#
+# ---- Wayland compositor connection ----
+#
+# XDG_RUNTIME_DIR -- directory containing the Wayland socket.
+# hmi-gui-launch auto-detects this by scanning /run/user/*/wayland-*
+# so you rarely need to force it.  Set this only if auto-detection
+# picks the wrong user or you have a non-standard compositor setup.
+# Default: auto-detected (typically /run/user/0 when weston runs as root).
+#XDG_RUNTIME_DIR=/run/user/0
+
+# WAYLAND_DISPLAY -- name of the Wayland socket file inside
+# XDG_RUNTIME_DIR.  hmi-gui-launch auto-detects this together with
+# XDG_RUNTIME_DIR.  Override only if multiple compositors are running
+# and you need to pin one.
+# Default: auto-detected (typically "wayland-0" or "wayland-1").
+#WAYLAND_DISPLAY=wayland-0
+
+# ---- Qt rendering ----
+#
+# QT_SCALE_FACTOR -- global DPI scale factor for the Qt GUI.
+# Values > 1.0 enlarge UI elements for high-DPI panels; values < 1.0
+# shrink them.  Fractional values (e.g. 1.5) are supported.
+# Default: unset (Qt uses its own auto-detection).
+#QT_SCALE_FACTOR=1.0
+
+# QT_QPA_PLATFORM -- Qt platform plugin.
+# hmi-gui-launch forces "wayland"; override only for debugging
+# (e.g. "offscreen" for headless testing).
+# Default: wayland (set by hmi-gui-launch).
+#QT_QPA_PLATFORM=wayland
+
+# QT_WAYLAND_DISABLE_WINDOWDECORATION -- when set to 1, prevents Qt
+# from drawing client-side window decorations under Weston.  This is
+# normally what you want for a fullscreen HMI panel.
+# Default: 1 (set by hmi-gui-launch).
+#QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+
+# ---- HMI application behaviour ----
+#
+# HMI_LOG_LEVEL -- Python logging level for the GUI loader
+# (main.py) and its child widgets.  Valid values: DEBUG, INFO,
+# WARNING, ERROR, CRITICAL.
+# Default: INFO (set by the loader itself when unset).
+#HMI_LOG_LEVEL=INFO
+
+# HMI_GUI_EXTRA_ARGS -- additional command-line arguments appended
+# to the main.py invocation.  Useful for passing --fullscreen,
+# --geometry, or application-specific flags without editing
+# hmi-gui-launch itself.  Shell quoting rules apply.
+# Default: empty.
+#HMI_GUI_EXTRA_ARGS=
+
+# ---- Installer / developer hooks ----
+#
+# HMI_ROOT -- path prefix prepended to every filesystem path used by
+# hmi-install and hmi-gui-launch.  Exists purely for off-target
+# testing so the scripts can operate against a temp tree on a dev
+# host.  MUST be empty (or unset) in production.
+# Default: empty (no prefix).
+#HMI_ROOT=
