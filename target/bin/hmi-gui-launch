@@ -211,6 +211,54 @@ fi
 # expand correctly.
 _extra="${HMI_GUI_EXTRA_ARGS:-}"
 
+# ---- Runtime selection (CONTRACT section 4.1) ------------------------
+# A bundle declares how it wants to be started. "qml" (the default, and what
+# every bundle written before the field existed is) is loaded by our Python
+# loader. "python" means the customer's application IS the GUI process: an
+# existing PySide6/Qt Widgets app that creates its own QApplication and window,
+# which cannot be hosted inside our QML engine. In that case we exec it
+# directly, under the same Wayland environment we just resolved.
+_manifest="${APPS_DIR}/manifest.json"
+_runtime="qml"
+_entry=""
+if [ -f "$_manifest" ]; then
+    # python3 rather than a grep/sed hack: this is untrusted JSON that arrived
+    # over the network, and a mis-parse here starts the wrong program.
+    _runtime="$(/usr/bin/python3 -c 'import json,sys
+try:
+    m = json.load(open(sys.argv[1]))
+    print(m.get("runtime", "qml"))
+except Exception:
+    print("qml")' "$_manifest" 2>/dev/null || echo qml)"
+    _entry="$(/usr/bin/python3 -c 'import json,sys
+try:
+    m = json.load(open(sys.argv[1]))
+    print(m.get("entry", ""))
+except Exception:
+    print("")' "$_manifest" 2>/dev/null || echo "")"
+fi
+
+if [ "$_runtime" = "python" ] && [ -n "$_entry" ]; then
+    _app="${APPS_DIR}/${_entry}"
+    if [ ! -f "$_app" ]; then
+        log "ERROR" "manifest declares runtime=python but entry '${_entry}' is missing"
+        exit 1
+    fi
+    log "INFO" "launching native Python application: ${_app}"
+    log "INFO" "  XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}"
+    log "INFO" "  WAYLAND_DISPLAY=${WAYLAND_DISPLAY}"
+    # Run from the bundle directory so the app's own relative imports and
+    # resource paths resolve exactly as they do on the developer's machine.
+    cd "$APPS_DIR" || exit 1
+    # The app is responsible for its own readiness; touch the ready-file here so
+    # the installer's health check (CONTRACT section 6) still completes and a
+    # good deployment is not rolled back.
+    mkdir -p "$(dirname "$READY_FILE")" 2>/dev/null || true
+    : > "$READY_FILE" 2>/dev/null || true
+    # shellcheck disable=SC2086
+    exec /usr/bin/python3 "$_app" $_extra "$@"
+fi
+
 log "INFO" "launching GUI: ${GUI_LOADER}"
 log "INFO" "  XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}"
 log "INFO" "  WAYLAND_DISPLAY=${WAYLAND_DISPLAY}"

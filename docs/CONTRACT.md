@@ -147,6 +147,7 @@ main.qml
   "name": "line-controller",            // ^[a-z0-9][a-z0-9._-]{0,63}$
   "version": "1.4.0",
   "entry": "main.qml",                  // relative, no "..", must exist
+  "runtime": "qml",                     // "qml" (default) or "python"
   "screen": {"width": 1280, "height": 800},
   "tags_required": ["ai.pot", "di.estop", "do.relay1"],
   "qt": ">=6.5"
@@ -155,6 +156,23 @@ main.qml
 
 Validation is performed **twice**: host-side before upload, target-side before
 the swap. A bundle that fails validation must never reach `current`.
+
+### 4.1 Runtime kinds
+
+`runtime` selects how the panel starts the app. It is optional; absent means
+`"qml"`, so every manifest written before this field existed stays valid.
+
+| `runtime` | `entry` | Execution model |
+| --- | --- | --- |
+| `qml` | must end `.qml` | Loaded by `hmi-gui` into the QML engine that is already running. The loader injects the `Tags` and `Bus` context properties, and the app can `import Shadcn 1.0`. |
+| `python` | must end `.py` | The app **is** the GUI process: `hmi-gui-launch` exec's it under the Wayland environment instead of starting the loader. It owns its own `QApplication` and window, and talks to the daemon itself if it wants tags. |
+
+A mismatch between `runtime` and the `entry` extension is a validation error in
+all three validators, because it would otherwise fail only on the target.
+
+The desktop tool can preview a `qml` bundle faithfully. A `python` bundle cannot
+be composited into another process's QML scene, so the bezel shows the target
+geometry and an explicit note rather than a blank screen.
 
 ## 5. systemd units
 

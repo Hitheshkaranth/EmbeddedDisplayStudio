@@ -29,6 +29,16 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 ---
 
+<div align="center">
+
+<img src="docs/assets/screenshot-studio.png" alt="EmbeddedDisplay App Studio" width="900" />
+
+<em>EmbeddedDisplay — the customer's app running inside a live panel preview, with real telemetry from the hardware daemon.</em>
+
+</div>
+
+---
+
 ## The idea
 
 A machine builder ships one panel image. Their customers — or their own app team —
@@ -107,10 +117,21 @@ my-qt-app/
   "name": "line-controller",
   "version": "1.4.0",
   "entry": "main.qml",
+  "runtime": "qml",
   "screen": { "width": 1280, "height": 800 },
   "tags_required": ["ai.pot", "di.estop", "do.relay1"]
 }
 ```
+
+`runtime` is optional and defaults to `qml`:
+
+| runtime | entry | How it runs on the panel |
+| --- | --- | --- |
+| `qml` | `*.qml` | Loaded into the shell that is already running. Gets `Tags`/`Bus` injected, previews live in App Studio. |
+| `python` | `*.py` | Exec'd as the GUI process itself — for an existing PySide6/Qt Widgets application that owns its own window. |
+
+Already have a Qt app? Open it in App Studio; it detects the entry point and
+writes the manifest for you.
 
 ```qml
 import QtQuick
@@ -160,7 +181,25 @@ the panel, then push it.
   the offending field named.
 * **Scaffold** — "New App…" writes a valid starter bundle, already importing the
   design kit.
+* **Panel picker** — preview against 5.0" 800×480, 7" 1024×600, 7"/10.1"/12.1"
+  1280×800 or 15.6" 1920×1080, with the live resolution reported under the
+  bezel. The preview never shrinks below a readable size and always holds the
+  panel's aspect ratio.
+* **Adopts apps that were never written for this platform** — point it at an
+  existing Qt project with no `manifest.json` and it detects the entry point,
+  proposes a manifest and writes it for you. QML apps preview live; Python/Qt
+  Widgets apps are deployed as the GUI process itself.
 * Deploy, rollback, restart and journal tail, all off the UI thread.
+
+<div align="center">
+
+<img src="docs/assets/screenshot-hmi.png" alt="The panel UI" width="620" />
+<img src="docs/assets/screenshot-gallery.png" alt="Component gallery" width="620" />
+
+<em>Left: the panel screen, bound to live tags. Right: the component gallery
+(<code>python ui/gallery.py --theme dark</code>).</em>
+
+</div>
 
 ---
 

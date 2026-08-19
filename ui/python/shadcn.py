@@ -576,7 +576,11 @@ def generate_qss_files() -> None:
     for theme in ['light', 'dark']:
         qss_content = qss(theme)
         out_path = qss_dir / f"shadcn_{theme}.qss"
-        with open(out_path, "w", encoding="utf-8") as f:
+        # newline="\n" is required, not cosmetic: without it Python's text mode
+        # translates every \n to \r\n on Windows, so regenerating on a Windows
+        # host would rewrite these committed files with CRLF and produce a
+        # spurious diff on a repository that is LF-only by policy.
+        with open(out_path, "w", encoding="utf-8", newline="\n") as f:
             f.write(qss_content)
         print(f"Generated {out_path}")
 

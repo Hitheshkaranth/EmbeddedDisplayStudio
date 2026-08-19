@@ -13,8 +13,8 @@ from PySide6.QtWidgets import (
     QProgressBar, QStackedWidget
 )
 from PySide6.QtCore import Qt, QSettings
-from .devicepanel import DevicePanel
-from .deployer import validate_bundle, package_bundle
+from .devicepanel import DevicePanel, PANEL_PRESETS
+from .deployer import validate_bundle, package_bundle, detect_bundle, write_manifest
 from .telemetry import TelemetrySimulator, TelemetryRelay
 from .ssh import SshWorker, build_ssh_cmd
 from .scaffold import create_bundle
@@ -27,19 +27,28 @@ except ImportError:
     def icon(name, size=18, color=None): from PySide6.QtGui import QIcon; return QIcon()
     def qml_import_path(): return ""
 
+# Product version, shown hard right in the footer. Single source of truth.
+APP_VERSION = "0.0.1"
+
+
 class MainWindow(QMainWindow):
     def __init__(self, exit_after_ms=0):
         super().__init__()
-        self.setWindowTitle("HMI Deployer")
+        self.setWindowTitle("EmbeddedDisplay")
         self.resize(1280, 800)
         self.exit_after_ms = exit_after_ms
         
         self.settings = QSettings("MIL-HMI", "Deployer")
         self.bundle_dir = self.settings.value("last_bundle", "")
-        self.theme = "light"
+        # Dark is the product default: the tool sits beside a panel that
+        # runs Theme.mode="dark", and matching it keeps the preview and the
+        # chrome reading as one surface. The toggle still switches both.
+        self.theme = "dark"
         
         self.simulator = None
         self.relay = None
+        # Manifest of the loaded bundle; the panel picker's Custom entry reads it.
+        self.current_manifest = None
         self.ssh_worker = None
         
         self.setup_ui()
@@ -53,9 +62,19 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(self.exit_after_ms, self.close)
             
     def apply_theme(self):
+        """
+        Pushes the current theme's stylesheet onto the QApplication.
+
+        Logs what it applied: a silently-missing stylesheet looks identical to a
+        light theme, which is exactly the kind of failure that wastes an hour.
+        """
+        import logging
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance()
         apply(app, self.theme)
+        logging.getLogger("EmbeddedDisplay").info(
+            "theme=%s stylesheet=%d chars", self.theme, len(app.styleSheet() or "")
+        )
 
     def setup_ui(self):
         central_widget = QWidget()
@@ -79,7 +98,7 @@ class MainWindow(QMainWindow):
         self.lbl_logo.setFixedSize(28, 28)
 
         # Wordmark beside the logo, in the design system's heading style.
-        self.lbl_title = QLabel("HMI App Studio")
+        self.lbl_title = QLabel("EmbeddedDisplay")
         self.lbl_title.setStyleSheet("font-size: 16px; font-weight: 600; letter-spacing: -0.4px;")
 
         self.btn_open = QPushButton("Open Bundle...")
@@ -112,9 +131,45 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         main_layout.addWidget(splitter, 1)
         
-        # Left: Device Panel
+        # Left: Device Panel, with a caption strip directly beneath the bezel
+        # reporting the emulated geometry and letting the user pick a panel.
+        from PySide6.QtWidgets import QComboBox
+
+        panel_wrap = QWidget()
+        panel_layout = QVBoxLayout(panel_wrap)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(10)
+
         self.device_panel = DevicePanel()
-        splitter.addWidget(self.device_panel)
+        panel_layout.addWidget(self.device_panel, 1)
+
+        caption = QHBoxLayout()
+        caption.setContentsMargins(4, 0, 4, 0)
+
+        # Live resolution readout for whatever the preview is currently emulating.
+        self.lbl_resolution = QLabel(self.device_panel.resolution_text())
+        self.lbl_resolution.setObjectName("panelResolution")
+
+        # Panel picker. Selecting a diagonal re-lays out the preview at that
+        # resolution, so an app can be checked against a 7" 1024x600 panel
+        # without editing its manifest first.
+        self.cmb_panel = QComboBox()
+        for label, _inches, _w, _h in PANEL_PRESETS:
+            self.cmb_panel.addItem(label)
+        self.cmb_panel.addItem("Custom (from manifest)")
+        self.cmb_panel.setCurrentIndex(3)          # 10.1" 1280x800, the common default
+        self.cmb_panel.currentIndexChanged.connect(self.on_panel_size_changed)
+
+        caption.addWidget(QLabel("Display:"))
+        caption.addWidget(self.cmb_panel)
+        caption.addStretch()
+        caption.addWidget(self.lbl_resolution)
+        panel_layout.addLayout(caption)
+
+        # The wrapper inherits the panel's floor so the splitter cannot collapse it.
+        panel_wrap.setMinimumWidth(self.device_panel.minimumWidth())
+        splitter.addWidget(panel_wrap)
+        splitter.setCollapsible(0, False)
         
         # Right: Tools
         right_panel = QWidget()
@@ -184,10 +239,59 @@ class MainWindow(QMainWindow):
         splitter.addWidget(right_panel)
         splitter.setSizes([800, 400])
 
+        # Footer: attribution on the left, version hard right. Kept to the muted
+        # token so it reads as chrome and never competes with the panel preview.
+        footer = QHBoxLayout()
+        footer.setContentsMargins(2, 8, 2, 0)
+
+        self.lbl_footer = QLabel("Developed by FlyVi Technologies. All rights reserved.")
+        self.lbl_footer.setObjectName("footerText")
+
+        self.lbl_version = QLabel(APP_VERSION)
+        self.lbl_version.setObjectName("footerVersion")
+
+        footer.addWidget(self.lbl_footer)
+        footer.addStretch()
+        footer.addWidget(self.lbl_version)
+        main_layout.addLayout(footer)
+
+        self._style_footer()
+
+    def _style_footer(self):
+        """
+        Applies the muted footer styling.
+
+        Done in code rather than the global stylesheet because the footer must
+        follow the light/dark toggle, and the two generated stylesheets do not
+        know about these two object names.
+        """
+        muted = "#94a3b8" if self.theme == "dark" else "#64748b"
+        for widget in (self.lbl_footer, self.lbl_version):
+            widget.setStyleSheet(f"color: {muted}; font-size: 12px;")
+
+    def on_panel_size_changed(self, index):
+        """
+        Applies the selected panel geometry to the preview.
+
+        Args:
+            index: row in cmb_panel. The final row is "Custom", which falls back
+                to the loaded manifest's screen block, or 1280x800 when no
+                bundle is loaded yet.
+        """
+        if 0 <= index < len(PANEL_PRESETS):
+            _label, _inches, width, height = PANEL_PRESETS[index]
+        else:
+            screen = (self.current_manifest or {}).get("screen", {})
+            width = int(screen.get("width", 1280))
+            height = int(screen.get("height", 800))
+        self.device_panel.set_target_resolution(width, height)
+        self.lbl_resolution.setText(self.device_panel.resolution_text())
+
     def on_toggle_theme(self):
         self.theme = "dark" if self.theme == "light" else "light"
         self.btn_theme.setIcon(icon("sun" if self.theme == "dark" else "moon"))
         self.apply_theme()
+        self._style_footer()
         
         # Keep the preview in step with the chrome (CONTRACT 11.2). This must go
         # through the panel: a bare engine.evaluate("Theme.mode = ...") has no
@@ -211,6 +315,45 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to scaffold: {e}")
 
     def load_bundle(self, dir_path):
+        # An existing Qt application will not have a manifest - it was never
+        # written for this platform. Rather than refusing it, infer one and ask.
+        # This is the difference between a tool that only accepts bundles it
+        # produced and one that can adopt an app somebody already has.
+        if not os.path.isfile(os.path.join(dir_path, "manifest.json")):
+            proposed = detect_bundle(dir_path)
+            if not proposed:
+                self.val_label.setText(
+                    "No manifest.json, and no entry point could be detected.\n"
+                    "Expected one of: main.qml, Main.qml, app.qml, main.py, app.py."
+                )
+                self.val_label.setStyleSheet("color: #ef4444;")
+                self.btn_deploy.setEnabled(False)
+                return
+            kind = "Qt Quick (QML)" if proposed["runtime"] == "qml" else "Python (Qt Widgets)"
+            answer = QMessageBox.question(
+                self,
+                "Create manifest?",
+                f"This folder has no manifest.json.\n\n"
+                f"Detected a {kind} application with entry '{proposed['entry']}'.\n\n"
+                f"Create a manifest.json so it can be deployed?\n"
+                f"  name:    {proposed['name']}\n"
+                f"  version: {proposed['version']}\n"
+                f"  screen:  {proposed['screen']['width']}x{proposed['screen']['height']}",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if answer != QMessageBox.Yes:
+                self.val_label.setText("Import cancelled: no manifest.json.")
+                self.val_label.setStyleSheet("color: #ef4444;")
+                self.btn_deploy.setEnabled(False)
+                return
+            try:
+                written = write_manifest(dir_path, proposed)
+                self.log(f"Created {written}")
+            except OSError as exc:
+                QMessageBox.critical(self, "Error", f"Could not write manifest.json:\n{exc}")
+                return
+
         is_valid, msgs = validate_bundle(dir_path)
         if is_valid:
             self.bundle_dir = dir_path
@@ -218,7 +361,21 @@ class MainWindow(QMainWindow):
             with open(os.path.join(dir_path, "manifest.json"), "r", encoding="utf-8") as f:
                 manifest = json.load(f)
             
-            self.val_label.setText(f"Bundle Valid: {manifest.get('name')} v{manifest.get('version')}")
+            # Remember it: the panel picker's "Custom" entry reads this, and the
+            # caption strip reports the geometry the bundle actually declares.
+            self.current_manifest = manifest
+            screen = manifest.get("screen", {})
+            if self.cmb_panel.currentIndex() >= len(PANEL_PRESETS):
+                self.device_panel.set_target_resolution(
+                    int(screen.get("width", 1280)), int(screen.get("height", 800))
+                )
+            self.lbl_resolution.setText(self.device_panel.resolution_text())
+
+            runtime = manifest.get("runtime", "qml")
+            kind = "QML" if runtime == "qml" else "Python"
+            self.val_label.setText(
+                f"Bundle Valid: {manifest.get('name')} v{manifest.get('version')}  [{kind}]"
+            )
             self.val_label.setStyleSheet("color: #22c55e;") # success
             self.btn_deploy.setEnabled(True)
             

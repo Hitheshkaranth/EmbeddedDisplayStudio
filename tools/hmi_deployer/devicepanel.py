@@ -41,14 +41,38 @@ except ImportError as e:
         @Slot(str, "QVariant", result="QVariant")
         def value(self, name, fallback=None): return fallback
 
+# Selectable panel geometries, ordered by diagonal. Each entry is
+# (label, diagonal_inches, width_px, height_px). These are the display sizes
+# commonly paired with a Verdin module; "Custom" is filled in from the loaded
+# manifest so a bundle targeting anything else still previews correctly.
+PANEL_PRESETS = [
+    ('5.0" - 800 x 480',     5.0,   800,  480),
+    ('7.0" - 1024 x 600',    7.0,  1024,  600),
+    ('7.0" - 1280 x 800',    7.0,  1280,  800),
+    ('10.1" - 1280 x 800',  10.1,  1280,  800),
+    ('12.1" - 1280 x 800',  12.1,  1280,  800),
+    ('15.6" - 1920 x 1080', 15.6,  1920, 1080),
+]
+
+# The preview never renders smaller than this, in device-independent pixels.
+# Below roughly this size the bezel stops reading as a panel and the app inside
+# it becomes unjudgeable, which defeats the point of a WYSIWYG preview. The
+# splitter cannot collapse past it either.
+MIN_PANEL_WIDTH = 720
+MIN_PANEL_HEIGHT = 520
+
+
 class DevicePanel(QWidget):
     """
     Renders the hardware mock-up of the panel.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(400, 300)
-        
+        # Hard floor on the preview. The bezel is aspect-locked, so the widget
+        # can still be given more room than this, but never less - the splitter
+        # is prevented from squeezing the panel down to an unreadable sliver.
+        self.setMinimumSize(MIN_PANEL_WIDTH, MIN_PANEL_HEIGHT)
+
         self.manifest = None
         self.bundle_dir = None
         self.target_width = 1280
@@ -113,6 +137,31 @@ class DevicePanel(QWidget):
             return
         self._theme_holder = obj
 
+    def set_target_resolution(self, width: int, height: int) -> None:
+        """
+        Changes the emulated panel resolution and re-lays out the preview.
+
+        The QQuickWidget is resized to this resolution and scaled to fit the
+        bezel, so the app is composed against the geometry it will actually meet
+        on the device: a screen authored for 1280x800 shown in a 800x480 frame
+        must look wrong here, because it will look wrong there.
+
+        Args:
+            width: horizontal resolution in pixels, > 0.
+            height: vertical resolution in pixels, > 0.
+        """
+        if width <= 0 or height <= 0:
+            logging.warning("Ignoring invalid resolution %sx%s", width, height)
+            return
+        self.target_width = int(width)
+        self.target_height = int(height)
+        self.update_geometry()
+        self.update()
+
+    def resolution_text(self) -> str:
+        """Returns the current resolution formatted for the caption strip."""
+        return f"{self.target_width} x {self.target_height}"
+
     def get_led_state(self) -> int:
         return self._led_state
         
@@ -131,15 +180,49 @@ class DevicePanel(QWidget):
         self.target_height = screen.get("height", 800)
         
         expected_tags = manifest.get("tags_required", [])
-        self.tag_engine = TagEngine(expected_tags, rx_port=5001, daemon_host="127.0.0.1", daemon_port=5000, parent=self)
-        
+
+        # The engine binds UDP 5001, and only one socket may hold it. Creating a
+        # fresh engine per bundle meant the second load - which happens on any
+        # normal run, because the window restores the last bundle at startup and
+        # then the caller loads one - failed to bind and silently dropped the
+        # preview to offline for the rest of the session. Build it once, then
+        # reuse it and just re-seed the expected tags.
+        if self.tag_engine is None:
+            self.tag_engine = TagEngine(
+                expected_tags,
+                rx_port=5001,
+                daemon_host="127.0.0.1",
+                daemon_port=5000,
+                parent=self,
+            )
+        else:
+            for tag in expected_tags:
+                # Seed any tag this bundle declares that the previous one did
+                # not, so its bindings resolve before the first frame arrives.
+                if self.tag_engine.tagMap().value(tag.replace(".", "_")) is None:
+                    self.tag_engine.tagMap().insert(tag.replace(".", "_"), None)
+                    self.tag_engine.tagMap().insert(tag, None)
+
         ctx = self.quick_widget.rootContext()
         ctx.setContextProperty("Tags", self.tag_engine.tagMap())
         ctx.setContextProperty("Bus", self.tag_engine)
         
         entry = manifest.get("entry", "main.qml")
-        entry_path = os.path.join(bundle_dir, entry)
-        self.quick_widget.setSource(QUrl.fromLocalFile(entry_path))
+        runtime = manifest.get("runtime", "qml")
+
+        if runtime == "python":
+            # A Qt Widgets app creates its own QApplication and top-level window,
+            # so there is nothing to composite into this QQuickWidget. Show the
+            # explanatory screen instead of a blank rectangle, and keep the bezel
+            # at the target geometry so the size check is still meaningful.
+            ctx.setContextProperty("appName", manifest.get("name", "application"))
+            ctx.setContextProperty("appEntry", entry)
+            ctx.setContextProperty("appVersion", manifest.get("version", ""))
+            placeholder = os.path.join(os.path.dirname(__file__), "resources", "native_preview.qml")
+            self.quick_widget.setSource(QUrl.fromLocalFile(placeholder))
+        else:
+            entry_path = os.path.join(bundle_dir, entry)
+            self.quick_widget.setSource(QUrl.fromLocalFile(entry_path))
         
         self.update_geometry()
 
