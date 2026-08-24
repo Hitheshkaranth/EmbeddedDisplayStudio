@@ -56,6 +56,33 @@ APPS_DIR="${HMI_ROOT}/opt/hmi_apps/current"
 # checked by hmi-install during deploy verification.
 READY_FILE="${HMI_ROOT}/run/hmi/gui-ready"
 
+# Interpreter used for the loader and for runtime=python bundles.
+#
+# /usr/bin/python3 is NOT a safe assumption on a Yocto image. The stdlib is
+# split into subpackages there, and a base image can ship python3-core alone --
+# no json, no logging, no socket, no ctypes. That interpreter cannot run the
+# loader, and it certainly cannot run Qt. Provisioning can install a complete
+# interpreter at /opt/hmi-python, so prefer that when it exists.
+#
+# Resolution order:
+#   1. $HMI_PYTHON, if the operator set one (also settable in
+#      /etc/default/hmi-gui, which is loaded by the unit).
+#   2. /opt/hmi-python/bin/python3, the provisioned interpreter.
+#   3. /usr/bin/python3, the system one.
+resolve_python() {
+    if [ -n "${HMI_PYTHON:-}" ] && [ -x "${HMI_PYTHON}" ]; then
+        echo "${HMI_PYTHON}"
+        return 0
+    fi
+    if [ -x "${HMI_ROOT}/opt/hmi-python/bin/python3" ]; then
+        echo "${HMI_ROOT}/opt/hmi-python/bin/python3"
+        return 0
+    fi
+    echo "/usr/bin/python3"
+}
+
+PYTHON="$(resolve_python)"
+
 # ---- Functions -------------------------------------------------------
 
 ##
@@ -204,7 +231,12 @@ if [ -f "$HMI_GUI_DEFAULTS" ]; then
     # shellcheck disable=SC1090
     . "$HMI_GUI_DEFAULTS"
     set +a
+    # The overrides file may set HMI_PYTHON, so resolve again now that it has
+    # been read; the value computed at startup only saw the environment.
+    PYTHON="$(resolve_python)"
 fi
+
+log "INFO" "using interpreter: ${PYTHON}"
 
 # Build the extra-args string.  HMI_GUI_EXTRA_ARGS is intentionally
 # unquoted on the exec line so that multiple space-separated arguments
@@ -224,13 +256,13 @@ _entry=""
 if [ -f "$_manifest" ]; then
     # python3 rather than a grep/sed hack: this is untrusted JSON that arrived
     # over the network, and a mis-parse here starts the wrong program.
-    _runtime="$(/usr/bin/python3 -c 'import json,sys
+    _runtime="$("$PYTHON" -c 'import json,sys
 try:
     m = json.load(open(sys.argv[1]))
     print(m.get("runtime", "qml"))
 except Exception:
     print("qml")' "$_manifest" 2>/dev/null || echo qml)"
-    _entry="$(/usr/bin/python3 -c 'import json,sys
+    _entry="$("$PYTHON" -c 'import json,sys
 try:
     m = json.load(open(sys.argv[1]))
     print(m.get("entry", ""))
@@ -256,7 +288,7 @@ if [ "$_runtime" = "python" ] && [ -n "$_entry" ]; then
     mkdir -p "$(dirname "$READY_FILE")" 2>/dev/null || true
     : > "$READY_FILE" 2>/dev/null || true
     # shellcheck disable=SC2086
-    exec /usr/bin/python3 "$_app" $_extra "$@"
+    exec "$PYTHON" "$_app" $_extra "$@"
 fi
 
 log "INFO" "launching GUI: ${GUI_LOADER}"
@@ -269,7 +301,7 @@ log "INFO" "  APPS_DIR=${APPS_DIR}"
 # The --apps-dir and --ready-file flags are mandated by CONTRACT section 5.
 # "$@" forwards any extra arguments passed on the command line.
 # shellcheck disable=SC2086
-exec /usr/bin/python3 "$GUI_LOADER" \
+exec "$PYTHON" "$GUI_LOADER" \
     --apps-dir "$APPS_DIR" \
     --ready-file "$READY_FILE" \
     $_extra \

@@ -31,8 +31,10 @@
 #   HMI_ROOT          -- path prefix for all fs paths (empty in prod)
 #   HMI_RESTART_CMD   -- override for `systemctl restart hmi-gui.service`
 #                        (for off-target testing without systemd)
-#   HMI_SKIP_GUI_WAIT -- if set to "1", skip waiting for gui-ready
-#                        (for off-target testing)
+#   HMI_ENABLE_CMD    -- override for `systemctl enable hmi-gui.service`,
+#                        the step that makes the app the boot default
+#   HMI_SKIP_GUI_WAIT -- if set to "1", skip waiting for gui-ready and
+#                        skip enabling autostart (for off-target testing)
 #
 # SAFETY
 #   The script uses flock(2) to serialise concurrent invocations.
@@ -95,6 +97,14 @@ MAX_BUNDLE_SIZE=524288000
 # testing where systemd is unavailable.
 HMI_RESTART_CMD="${HMI_RESTART_CMD:-systemctl restart hmi-gui.service}"
 
+# Command that makes the GUI start at boot.  A deploy that only restarts the
+# service leaves a panel that shows the application now and nothing at all
+# after the next power cycle, which on a machine that is normally power-cycled
+# rather than shut down is the only state that matters.  `systemctl enable` is
+# idempotent, so running it on every install costs nothing and removes the
+# assumption that somebody enabled the unit by hand once.
+HMI_ENABLE_CMD="${HMI_ENABLE_CMD:-systemctl enable hmi-gui.service}"
+
 # When set to "1", skip waiting for the gui-ready file and skip
 # restarting the GUI.  Used only in off-target testing.
 HMI_SKIP_GUI_WAIT="${HMI_SKIP_GUI_WAIT:-0}"
@@ -103,6 +113,23 @@ HMI_SKIP_GUI_WAIT="${HMI_SKIP_GUI_WAIT:-0}"
 # The pruning step keeps the 3 newest plus whatever current and previous
 # point at.
 KEEP_RELEASES=3
+
+# Interpreter used for manifest validation, path canonicalisation and the
+# atomic symlink swap.
+#
+# A bare `python3` is not safe to assume on a Yocto image: the stdlib is split
+# into subpackages, and a base image can ship python3-core alone -- without
+# json or tempfile, which every python step below needs. Provisioning can
+# install a complete interpreter at /opt/hmi-python; prefer it when present.
+#
+# Resolution order: $HMI_PYTHON, then the provisioned interpreter, then PATH.
+if [ -n "${HMI_PYTHON:-}" ] && [ -x "${HMI_PYTHON}" ]; then
+    PYTHON="${HMI_PYTHON}"
+elif [ -x "${HMI_ROOT}/opt/hmi-python/bin/python3" ]; then
+    PYTHON="${HMI_ROOT}/opt/hmi-python/bin/python3"
+else
+    PYTHON="python3"
+fi
 
 # ---- Functions -------------------------------------------------------
 
@@ -222,8 +249,8 @@ validate_bundle_path() {
     # Resolve to an absolute path and verify it is under UPLOAD_DIR.
     # We use python3 because busybox `realpath` may not be available on
     # minimal Yocto images, and we need a reliable canonicalisation.
-    _resolved=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$_bp")
-    _upload_resolved=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$UPLOAD_DIR")
+    _resolved=$("$PYTHON" -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$_bp")
+    _upload_resolved=$("$PYTHON" -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$UPLOAD_DIR")
 
     case "$_resolved" in
         "${_upload_resolved}"/*)
@@ -356,7 +383,7 @@ validate_manifest() {
     # Delegate to python3 for robust JSON parsing and validation.
     # The heredoc is the validation script; it exits non-zero on any
     # failure and prints the error message to stdout.
-    _result=$(python3 - "$STAGING_DIR" "$_manifest" <<'PYEOF'
+    _result=$("$PYTHON" - "$STAGING_DIR" "$_manifest" <<'PYEOF'
 import json
 import os
 import re
@@ -489,7 +516,7 @@ PYEOF
 swap_current_symlink() {
     _target="$1"
 
-    python3 -c "
+    "$PYTHON" -c "
 import os, sys, tempfile
 
 target = sys.argv[1]
@@ -538,7 +565,7 @@ save_previous() {
     if [ -L "$CURRENT_LINK" ]; then
         _prev_target=$(readlink "$CURRENT_LINK")
         # Use the same atomic swap technique for the previous symlink.
-        python3 -c "
+        "$PYTHON" -c "
 import os, sys, tempfile
 target = sys.argv[1]
 link   = sys.argv[2]
@@ -587,7 +614,14 @@ restart_gui() {
     rm -f "$READY_FILE"
 
     log "INFO" "restarting GUI via: ${HMI_RESTART_CMD}"
-    if ! eval "$HMI_RESTART_CMD"; then
+    # 9>&- closes the flock file descriptor for the child. Without it the GUI
+    # process inherits FD 9 and, because it is meant to run forever, holds the
+    # install lock forever: every later install and rollback dies with "another
+    # hmi-install is already running" until the panel is rebooted. Under systemd
+    # the restart is a D-Bus call and PID 1 spawns the service with clean
+    # descriptors, which hides this -- but HMI_RESTART_CMD is documented as
+    # overridable, and any override that forks the GUI directly hits it.
+    if ! eval "$HMI_RESTART_CMD" 9>&-; then
         step "restart-gui" "fail" "restart command failed"
         return 1
     fi
@@ -604,6 +638,48 @@ restart_gui() {
     done
 
     step "restart-gui" "fail" "GUI did not become ready within ${GUI_READY_TIMEOUT}s"
+    return 1
+}
+
+##
+# enable_boot -- make the deployed application start at power-on
+#
+# Installing a release sets `current` and restarts the GUI, which covers
+# "running now".  It does not cover "running after the next boot": that needs
+# hmi-gui.service to be enabled, and on a panel where it never was, the
+# operator sees a working HMI that comes up blank the next morning.
+#
+# The symlink itself is already persistent -- it lives on flash -- so enabling
+# the unit is the only missing piece.  Enabling hmi-gui.service also pulls in
+# weston.service at boot through the unit's Requires=, so the whole display
+# chain follows from this one call.
+#
+# Failure here is reported but does NOT fail the install.  The new release is
+# at that point installed, running and verified; tearing it down because the
+# panel could not be made to autostart would replace a working UI with an old
+# one, which is worse than the problem.  The step line is how the host tools
+# surface it.
+#
+# Args:   none
+# Returns: 0 if the unit was enabled (or the step was skipped), 1 otherwise
+# Exits:   never
+# Side effects: runs HMI_ENABLE_CMD
+##
+enable_boot() {
+    if [ "$HMI_SKIP_GUI_WAIT" = "1" ]; then
+        step "enable-boot" "ok" "skipped (HMI_SKIP_GUI_WAIT=1)"
+        return 0
+    fi
+
+    log "INFO" "enabling GUI at boot via: ${HMI_ENABLE_CMD}"
+    # 9>&- for the same reason as restart_gui: never leak the install lock.
+    if eval "$HMI_ENABLE_CMD" 9>&- >/dev/null 2>&1; then
+        step "enable-boot" "ok" "hmi-gui.service will start at boot"
+        return 0
+    fi
+
+    step "enable-boot" "fail" "could not enable hmi-gui.service; the app runs now but will NOT start after a reboot"
+    log "WARN" "autostart could not be configured -- run '${HMI_ENABLE_CMD}' on the panel"
     return 1
 }
 
@@ -634,7 +710,8 @@ rollback_to_previous() {
     # Best-effort restart after rollback.
     if [ "$HMI_SKIP_GUI_WAIT" != "1" ]; then
         rm -f "$READY_FILE"
-        eval "$HMI_RESTART_CMD" || true
+        # 9>&- as in restart_gui: never let the GUI inherit the install lock.
+        eval "$HMI_RESTART_CMD" 9>&- || true
     fi
 
     return 0
@@ -664,16 +741,16 @@ prune_releases() {
     _protect_previous=""
 
     if [ -L "$CURRENT_LINK" ]; then
-        _protect_current=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$CURRENT_LINK")
+        _protect_current=$("$PYTHON" -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$CURRENT_LINK")
     fi
     if [ -L "$PREVIOUS_LINK" ]; then
-        _protect_previous=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$PREVIOUS_LINK")
+        _protect_previous=$("$PYTHON" -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$PREVIOUS_LINK")
     fi
 
     # Build a list of all release directories sorted by mtime (newest
     # first).  We use python3 to get reliable mtime sorting since
     # busybox ls may lack --sort=time or produce inconsistent output.
-    _pruned=$(python3 -c "
+    _pruned=$("$PYTHON" -c "
 import os, sys
 
 releases_dir  = sys.argv[1]
@@ -776,6 +853,11 @@ cmd_install() {
         die 1 "install-complete" "deployment FAILED -- rolled back to previous release"
     fi
 
+    # -- Make this the application the panel boots into ---
+    # Deliberately after the readiness check: only a release that has been
+    # proven to render is worth making the boot default.
+    enable_boot || true
+
     # -- Prune old releases ---
     prune_releases
 
@@ -827,17 +909,17 @@ cmd_list() {
     _current_real=""
     _previous_real=""
     if [ -L "$CURRENT_LINK" ]; then
-        _current_real=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$CURRENT_LINK")
+        _current_real=$("$PYTHON" -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$CURRENT_LINK")
     fi
     if [ -L "$PREVIOUS_LINK" ]; then
-        _previous_real=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$PREVIOUS_LINK")
+        _previous_real=$("$PYTHON" -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$PREVIOUS_LINK")
     fi
 
     for _dir in "$RELEASES_DIR"/*/; do
         # Skip if glob did not expand.
         [ -d "$_dir" ] || continue
 
-        _real=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$_dir")
+        _real=$("$PYTHON" -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$_dir")
         _name="${_dir%/}"
         _name="${_name##*/}"
         _marker=""
@@ -911,7 +993,13 @@ USAGE
 ENVIRONMENT
   HMI_ROOT           Path prefix for all filesystem paths (testing only)
   HMI_RESTART_CMD    Override the systemctl restart command (testing)
-  HMI_SKIP_GUI_WAIT  Set to "1" to skip GUI restart/wait (testing)
+  HMI_ENABLE_CMD     Override the systemctl enable command (testing)
+  HMI_SKIP_GUI_WAIT  Set to "1" to skip GUI restart/wait and autostart (testing)
+
+NOTES
+  A successful `install` also enables hmi-gui.service, so the release becomes
+  the application the panel starts at boot.  If that step reports "fail" the
+  app is running but will not survive a power cycle.
 
 EXIT CODES
   0  Success

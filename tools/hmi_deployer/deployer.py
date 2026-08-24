@@ -8,8 +8,140 @@ import json
 import os
 import tarfile
 import hashlib
+import fnmatch
 from typing import Tuple, List, Dict, Any
 import datetime
+
+# Patterns never worth sending to a panel. These are build outputs, caches and
+# VCS metadata: every one of them is regenerated or irrelevant on the target,
+# and a real application folder is full of them. Without this the tool packages
+# whatever happens to be sitting in the directory, which for an app that has
+# ever been built locally means shipping tens or hundreds of megabytes of
+# nothing over a field link.
+DEFAULT_EXCLUDES = (
+    ".git", ".svn", ".hg",
+    "__pycache__", "*.pyc", "*.pyo", "*.pyd",
+    ".venv", "venv", "env",
+    "node_modules",
+    "build", "dist", "*.egg-info",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox",
+    ".DS_Store", "Thumbs.db",
+    ".hmiignore",
+)
+
+# Hard ceiling on what may be sent, matching MAX_BUNDLE_SIZE in
+# target/bin/hmi-install. Checking it here as well means an oversized bundle is
+# refused in a second on the laptop, naming the files responsible, instead of
+# after a long upload the target then rejects.
+MAX_BUNDLE_BYTES = 524288000  # 500 MB
+
+# Name of the per-bundle exclude file. One glob per line, '#' starts a comment.
+# This is how an application says "these files are mine but they are not part
+# of what runs on the panel" -- source archives, datasheets, capture logs.
+HMIIGNORE = ".hmiignore"
+
+
+class BundleTooLargeError(Exception):
+    """Raised when a bundle exceeds what the target will accept."""
+
+
+def load_excludes(bundle_dir: str) -> List[str]:
+    """
+    Returns the exclude patterns in force for a bundle.
+
+    Args:
+        bundle_dir: the bundle root.
+
+    Returns:
+        DEFAULT_EXCLUDES plus any patterns from the bundle's .hmiignore.
+    """
+    patterns = list(DEFAULT_EXCLUDES)
+    ignore_path = os.path.join(bundle_dir, HMIIGNORE)
+    if os.path.isfile(ignore_path):
+        with open(ignore_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    patterns.append(line.rstrip("/"))
+    return patterns
+
+
+def _excluded(rel_path: str, name: str, patterns: List[str]) -> bool:
+    """
+    Tests one path against the exclude patterns.
+
+    Args:
+        rel_path: path relative to the bundle root, with forward slashes.
+        name: the final path component.
+        patterns: glob patterns.
+
+    Returns:
+        True if the path should be left out of the bundle.
+
+    A pattern matches either the bare name (so "__pycache__" catches it at any
+    depth) or the full relative path (so "docs/big.zip" can be targeted).
+    """
+    for pattern in patterns:
+        if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(rel_path, pattern):
+            return True
+    return False
+
+
+def plan_bundle(bundle_dir: str) -> Tuple[List[Tuple[str, str]], int]:
+    """
+    Works out exactly what would be packaged, without packaging it.
+
+    Args:
+        bundle_dir: the bundle root.
+
+    Returns:
+        (entries, total_bytes) where entries is a list of
+        (absolute_path, archive_name) in a stable sorted order.
+    """
+    patterns = load_excludes(bundle_dir)
+    entries: List[Tuple[str, str]] = []
+    total = 0
+
+    for dirpath, dirnames, filenames in os.walk(bundle_dir):
+        rel_dir = os.path.relpath(dirpath, bundle_dir).replace(os.sep, "/")
+        if rel_dir == ".":
+            rel_dir = ""
+
+        # Prune excluded directories in place so os.walk does not descend into
+        # them -- the point is to never stat a 60 GB tree, not to skip it later.
+        dirnames[:] = sorted(
+            d for d in dirnames
+            if not _excluded(f"{rel_dir}/{d}".lstrip("/"), d, patterns)
+        )
+
+        for name in sorted(filenames):
+            rel = f"{rel_dir}/{name}".lstrip("/")
+            if _excluded(rel, name, patterns):
+                continue
+            full = os.path.join(dirpath, name)
+            if not os.path.isfile(full) or os.path.islink(full):
+                # Symlinks are archived, but their target size is not counted.
+                if os.path.islink(full):
+                    entries.append((full, rel))
+                continue
+            entries.append((full, rel))
+            total += os.path.getsize(full)
+
+    return entries, total
+
+
+def _describe_largest(entries: List[Tuple[str, str]], count: int = 5) -> str:
+    """Formats the biggest entries, for an actionable size error."""
+    sized = []
+    for full, rel in entries:
+        try:
+            sized.append((os.path.getsize(full), rel))
+        except OSError:
+            continue
+    sized.sort(reverse=True)
+    return "\n".join(
+        f"    {size / (1024 * 1024):9.1f} MB  {rel}" for size, rel in sized[:count]
+    )
 
 def validate_bundle(bundle_dir: str) -> Tuple[bool, List[str]]:
     """
@@ -166,30 +298,48 @@ def write_manifest(bundle_dir: str, manifest: dict) -> str:
 def package_bundle(bundle_dir: str, output_dir: str) -> Tuple[str, str]:
     """
     Creates a gzip tarball of the bundle and its SHA256 checksum.
-    
+
     Args:
         bundle_dir: Path to the app folder to pack.
         output_dir: Path where the .tar.gz and .sha256 should be placed.
-        
+
     Returns:
         (tar_path, sha256_path)
+
+    Raises:
+        BundleTooLargeError: if the selected files exceed what the target
+            accepts. The message names the largest offenders and points at
+            .hmiignore, because the fix is always "this file is not part of the
+            application" rather than anything the tool can decide by itself.
+
+    Build outputs, caches and anything listed in the bundle's .hmiignore are
+    left out; see plan_bundle.
     """
     with open(os.path.join(bundle_dir, "manifest.json"), "r", encoding="utf-8") as f:
         manifest = json.load(f)
     name = manifest.get("name", "app")
-    
+
+    entries, total = plan_bundle(bundle_dir)
+    if total > MAX_BUNDLE_BYTES:
+        raise BundleTooLargeError(
+            f"Bundle is {total / (1024 * 1024):.0f} MB before compression; the panel "
+            f"accepts at most {MAX_BUNDLE_BYTES / (1024 * 1024):.0f} MB.\n"
+            f"Largest files:\n{_describe_largest(entries)}\n"
+            f"List anything that is not part of the running application in "
+            f"{os.path.join(bundle_dir, HMIIGNORE)} (one glob per line)."
+        )
+
     # Release id: <name>-<UTC yyyymmddTHHMMSSZ>
     timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     release_id = f"{name}-{timestamp}"
-    
+
     tar_name = f"{release_id}.tar.gz"
     tar_path = os.path.join(output_dir, tar_name)
-    
+
     with tarfile.open(tar_path, "w:gz") as tar:
-        for item in os.listdir(bundle_dir):
-            item_path = os.path.join(bundle_dir, item)
-            tar.add(item_path, arcname=item)
-            
+        for full, arcname in entries:
+            tar.add(full, arcname=arcname, recursive=False)
+
     # Compute SHA256
     sha256_hash = hashlib.sha256()
     with open(tar_path, "rb") as f:

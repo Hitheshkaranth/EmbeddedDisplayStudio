@@ -95,9 +95,29 @@ ssh-copy-id root@<panel-ip>                       # once
 ./deploy/deploy_to_hmi.sh -H <panel-ip> -b ./my-qt-app
 ```
 
+If the panel is running a stock image rather than one built from
+`yocto/meta-hmi`, install the platform onto it first — no reflash needed:
+
+```bash
+python deploy/provision_panel.py --host <panel-ip> --check   # survey only
+python deploy/provision_panel.py --host <panel-ip>
+```
+
+`--check` surveys the board and names anything that would stop it hosting the
+platform. Read it before assuming a stock image is ready: a **base** Toradex
+image ships `python3-core` alone — no `json`, no `socket`, no `ctypes` — and no
+Qt, which is enough to stop the installer, the loader and any application. See
+[`deploy/README.md`](deploy/README.md#what-a-minimal-image-is-still-missing) for
+what to add and where the scripts expect it.
+
 If the new app fails to render within 25 s, the panel **rolls itself back** to the
 previous release and the command exits non-zero. A bad deploy cannot leave a
 machine without a UI.
+
+A successful deploy also makes the app the panel's **boot default**: once the
+release has been proven to render, `hmi-gui.service` is enabled, so a power
+cycle brings the same application back with no further action. Deploying is the
+only step — there is nothing to enable by hand afterwards.
 
 ---
 
@@ -132,6 +152,11 @@ my-qt-app/
 
 Already have a Qt app? Open it in App Studio; it detects the entry point and
 writes the manifest for you.
+
+Build outputs, caches and VCS metadata are left out of the bundle
+automatically. For anything else that lives in the folder but is not part of the
+running application — source archives, packaged installers, capture logs — add a
+`.hmiignore` next to the manifest, one glob per line.
 
 ```qml
 import QtQuick
@@ -285,7 +310,7 @@ gui/                  Layer 2  loader, tag engine, shell, fallback screen
 apps/demo-app/        a worked example, and the pipeline's test fixture
 ui/                   design system: tokens, QML kit, QSS, icons, gallery
 target/               systemd units, atomic installer, Wayland launcher
-deploy/               deploy_to_hmi.sh — the CLI
+deploy/               deploy_to_hmi.sh — the CLI; provision_panel.py — onboard a stock image
 tools/hmi_deployer/   HMI App Studio
 yocto/meta-hmi/       bitbake layer that puts it all in the image
 tests/                protocol, integration and cross-validator suites

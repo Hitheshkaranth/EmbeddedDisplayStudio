@@ -6,6 +6,7 @@ into bash, to support Windows natively. (CONTRACT section 6).
 """
 import subprocess
 import logging
+import threading
 from PySide6.QtCore import QObject, Signal, QThread
 from typing import Optional, List
 
@@ -42,15 +43,25 @@ class SshWorker(QThread):
         # Popen instance for possible cancellation
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = False
+        self._timed_out = False
+        self._watchdog: Optional[threading.Timer] = None
 
     def run(self) -> None:
         """
         Executes the subprocess, reads output line by line, and waits.
+
+        The timeout is enforced by a watchdog timer rather than by the
+        Popen.wait() call below. Draining stdout blocks until the child closes
+        the pipe, which for a hung ssh is never -- so by the time wait() is
+        reached the process has already exited and a timeout passed to it can
+        never fire. That left the deploy button disabled forever whenever a
+        panel dropped off the network mid-command. The watchdog kills the child,
+        which ends the read loop, which is what actually unblocks this thread.
         """
         try:
             # We use CREATE_NO_WINDOW on Windows to prevent popping up console windows.
             creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-            
+
             self._proc = subprocess.Popen(
                 self.command,
                 stdout=subprocess.PIPE,
@@ -60,25 +71,38 @@ class SshWorker(QThread):
                 errors="replace",
                 creationflags=creationflags
             )
-            
+
+            if self.timeout_s and self.timeout_s > 0:
+                self._watchdog = threading.Timer(self.timeout_s, self._on_timeout)
+                self._watchdog.daemon = True
+                self._watchdog.start()
+
             if self._proc.stdout is not None:
                 for line in iter(self._proc.stdout.readline, ""):
                     if self._cancelled:
                         break
                     if line:
                         self.outputLine.emit(line.rstrip('\n'))
-            
-            self._proc.wait(timeout=self.timeout_s)
-            self.finished.emit(self._proc.returncode if not self._cancelled else -1)
-        except subprocess.TimeoutExpired:
-            self.error.emit(f"Command timed out after {self.timeout_s}s")
-            self.cancel()
-            self.finished.emit(-1)
+
+            self._proc.wait()
+            if self._timed_out:
+                self.error.emit(f"Command timed out after {self.timeout_s}s")
+                self.finished.emit(-1)
+            else:
+                self.finished.emit(self._proc.returncode if not self._cancelled else -1)
         except Exception as e:
             self.error.emit(str(e))
             self.finished.emit(-1)
         finally:
+            if self._watchdog is not None:
+                self._watchdog.cancel()
+                self._watchdog = None
             self._proc = None
+
+    def _on_timeout(self) -> None:
+        """Watchdog expiry: mark the run as timed out and kill the child."""
+        self._timed_out = True
+        self.cancel()
 
     def cancel(self) -> None:
         """Kills the underlying process if it is running."""

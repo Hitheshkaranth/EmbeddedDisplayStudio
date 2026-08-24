@@ -4,6 +4,92 @@ Layer 3 host-side command-line deployment tool for the BYOA HMI system.
 
 `deploy/deploy_to_hmi.sh` automates the validation, packaging, cryptographic verification, transport, installation, verification, and monitoring of Qt/QML application bundles targeted at a Toradex Verdin i.MX8M Plus panel.
 
+> **Deploying to a board that has never seen this platform?** `deploy_to_hmi.sh`
+> and App Studio both assume `/usr/bin/hmi-install` and the systemd units are
+> already on the target, which is what the `yocto/meta-hmi` layer puts there.
+> For a board that is already running an image, install the platform onto it
+> first with [`provision_panel.py`](#0-provisioning-a-panel-provision_panelpy).
+
+---
+
+## 0. Provisioning a panel (`provision_panel.py`)
+
+Installs the platform itself — Layer 1 daemon, Layer 2 loader and shell, the
+atomic installer, the shared QML kit and the systemd units — onto a panel that
+is already running Linux, at the paths CONTRACT section 3 specifies. No image
+rebuild, no reflash.
+
+```bash
+# survey the board and write nothing
+python deploy/provision_panel.py --host 192.168.1.50 --check
+
+# install the platform
+python deploy/provision_panel.py --host 192.168.1.50 -i ~/.ssh/id_ed25519
+```
+
+The survey runs first on every invocation and reports what the board is: OS,
+python3 and PySide6 versions, whether systemd is running, whether a
+`weston.service` exists, whether the rootfs is writable, and whether a container
+runtime is present. Anything that makes the board unable to host the platform is
+printed as a **BLOCKER** and provisioning refuses to start; anything that will
+bite later is printed as a **WARNING**.
+
+| Flag | Effect |
+|---|---|
+| `--check` | Survey only. Exits non-zero if there are blockers. |
+| `--force` | Provision despite blockers. |
+| `--force-config` | Replace `/etc/hmi/hwd.json` and `/etc/default/hmi-gui`. Without it, existing config is left alone — those files are how a board is matched to its carrier. |
+| `--enable-hwd` | Enable and start `hmi-hwd.service`. **Off by default:** the daemon drives real GPIO outputs from a pin map, and the shipped `hwd.json` is a Dahlia carrier default. Confirm it against your carrier before turning this on. |
+
+Provisioning enables `hmi-gui.service` but does not start it — there is no
+application installed yet, and starting it would put the unit in a restart loop
+against an empty `current`. The first deploy starts it.
+
+Re-running is safe: files are replaced through a rename, so provisioning can
+update a panel in place, including replacing `hmi-install` while it exists.
+
+### What a minimal image is still missing
+
+Provisioning installs *this platform*. It does not install a Python or Qt
+runtime, and a stock Toradex image may not have a usable one. Verified on a
+Verdin i.MX8M Plus running **TDX Wayland 7.7.0** (the base image, not
+`tdx-reference-multimedia-image`):
+
+* **The system Python is unusable.** Yocto splits the stdlib into subpackages
+  and that image ships `python3-core` + `python3-compression` only — no `json`,
+  `logging`, `socket`, `hashlib`, `ctypes` or `datetime`. `lib-dynload` holds 16
+  modules against a normal ~50, so the compiled extensions are genuinely absent
+  and copying `.py` files cannot fix it. `hmi-install` itself cannot run on that
+  interpreter.
+* **No Qt, and no package feed to get one.** `/etc/opkg/opkg.conf` has no `src`
+  entry, so `opkg install` has nothing to install from.
+
+The fix that worked, and what the scripts now expect:
+
+1. Install a self-contained CPython at **`/opt/hmi-python`** (e.g. a
+   `python-build-standalone` aarch64 `install_only` build). Both target scripts
+   prefer it automatically — see `target/README.md`, *Interpreter resolution*.
+   The system `python3` is left untouched.
+2. `pip install PySide6-Essentials` into it. Match the wheel to the board: the
+   aarch64 wheels are tagged `manylinux_2_39_aarch64` and need glibc ≥ 2.39.
+   Fetch wheels on the host — a Yocto `wget` typically does not validate TLS
+   certificates.
+3. Supply the libraries the wheels link against but the image lacks. On
+   i.MX8M Plus that is **desktop OpenGL** — the SoC is Vivante GLES-only, while
+   the PySide6 wheels link `libQt6Gui` against `libGL.so.1`/`libGLX.so.0` — plus
+   `libbrotlidec.so.1` for QtNetwork. Qt Widgets renders through the raster
+   engine and never issues a desktop GL call, so satisfying the *link* is
+   sufficient; `libglvnd` and `libbrotli1` from Debian arm64 into
+   `/usr/local/lib` followed by `ldconfig` is enough.
+
+Unresolved `libcups`, `libmysqlclient`, `libodbc`, `libpq`, `libxcb-*` and
+`libQt6Pdf`/`WebEngine`/`VirtualKeyboard`/`Quick3D` sonames belong to plugins a
+typical HMI never loads and can be ignored.
+
+The durable alternative to all of the above is to build the image with
+`yocto/meta-hmi` and `meta-qt6`, which is what a production panel should ship.
+Provisioning exists for boards already on a bench.
+
 ---
 
 ## 1. Usage Synopsis

@@ -52,6 +52,7 @@ Host deployment tools (`deploy_to_hmi.sh` and `HMI App Studio`) parse these line
 | `restart-gui` | `ok` / `fail` | Removes `/run/hmi/gui-ready`, executes `HMI_RESTART_CMD`, and polls for the readiness sentinel up to 25 seconds (`GUI_READY_TIMEOUT`). |
 | `auto-rollback-start` | `ok` | Emitted when `restart-gui` fails or times out, immediately prior to restoring the previous release. |
 | `rollback` | `ok` / `fail` | Restores `/opt/hmi_apps/current` to point at the target of `/opt/hmi_apps/previous` and restarts the GUI service. |
+| `enable-boot` | `ok` / `fail` | Runs `HMI_ENABLE_CMD` (`systemctl enable hmi-gui.service`) so the installed release is the application the panel starts at boot. Emitted only after readiness has been verified. A `fail` does **not** fail the install or trigger rollback: the release is installed and running, but will not come back after a power cycle until the unit is enabled by hand. |
 | `prune` | `ok` | Removes older releases from `/opt/hmi_apps/releases/`, retaining the 3 newest releases plus `current` and `previous`. Detail contains count of pruned releases. |
 | `install-complete` | `ok` / `fail` | Terminal step of deployment. Success reports the active release path; failure indicates deployment failed and rolled back. |
 | `rollback-start` | `ok` | Emitted at the start of manual `cmd_rollback`. |
@@ -86,13 +87,38 @@ Host deployment tools (`deploy_to_hmi.sh` and `HMI App Studio`) parse these line
 
 ### 3.3 Environment Overrides
 
-`hmi-install` supports three environment variables designed for developer testing and custom execution environments:
+`hmi-install` and `hmi-gui-launch` support these environment variables, for developer testing and for images whose stock tooling is not sufficient:
 
 | Variable | Default Value | Purpose |
 |---|---|---|
 | `HMI_ROOT` | *(empty)* | Filesystem path prefix prepended to all paths (`${HMI_ROOT}/opt/hmi_apps`, `${HMI_ROOT}/run/hmi`, etc.). Enables running the installer inside a temporary directory on a dev host. |
 | `HMI_RESTART_CMD` | `systemctl restart hmi-gui.service` | Shell command executed to restart the user interface. Can be overridden with a mock command (e.g. `true` or a test script) when systemd is unavailable. |
-| `HMI_SKIP_GUI_WAIT` | `0` | When set to `"1"`, skips executing `HMI_RESTART_CMD` and skips waiting for `/run/hmi/gui-ready`. |
+| `HMI_ENABLE_CMD` | `systemctl enable hmi-gui.service` | Command run after a verified install to make the release the panel's boot default. See the `enable-boot` step. |
+| `HMI_SKIP_GUI_WAIT` | `0` | When set to `"1"`, skips executing `HMI_RESTART_CMD`, skips waiting for `/run/hmi/gui-ready`, and skips `HMI_ENABLE_CMD`. |
+| `HMI_PYTHON` | *(auto)* | Python interpreter used by both scripts. See below. |
+
+#### Interpreter resolution (`HMI_PYTHON`)
+
+Both scripts need a Python with a **complete standard library**: `hmi-install`
+uses `json`, `os`, `re` and `tempfile` for manifest validation and the atomic
+symlink swap, and the loader needs far more.
+
+`/usr/bin/python3` is not a safe assumption on Yocto. The stdlib is split into
+subpackages there, and a base image can legitimately ship `python3-core` alone —
+no `json`, no `logging`, no `socket`, no `ctypes`, no `datetime`. On such an
+image every python step in the installer fails, and no Qt application can run at
+all. This is not hypothetical: the stock **TDX Wayland** image ships
+`python3-core` and `python3-compression` only.
+
+Both scripts therefore resolve an interpreter in this order:
+
+1. `$HMI_PYTHON`, if set and executable.
+2. `/opt/hmi-python/bin/python3` — the interpreter installed by provisioning on
+   images whose own Python is not usable.
+3. `/usr/bin/python3` (`python3` on `PATH` for `hmi-install`).
+
+`hmi-gui-launch` logs which one it chose, and re-resolves after sourcing
+`/etc/default/hmi-gui`, so `HMI_PYTHON` can be set there.
 
 ### 3.4 Internal Constants
 

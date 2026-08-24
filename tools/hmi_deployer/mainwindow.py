@@ -4,13 +4,11 @@ Layer: 3 (Host Deployer)
 Purpose: Main application window, layout, actions, and state machine.
 """
 import os
-import sys
 import json
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QSplitter, QGroupBox, QFormLayout, QLineEdit, 
-    QPlainTextEdit, QFileDialog, QMessageBox, QTabWidget,
-    QProgressBar, QStackedWidget
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QSplitter, QGroupBox, QFormLayout, QLineEdit,
+    QPlainTextEdit, QFileDialog, QMessageBox, QTabWidget
 )
 from PySide6.QtCore import Qt, QSettings
 from .devicepanel import DevicePanel, PANEL_PRESETS
@@ -18,6 +16,7 @@ from .deployer import validate_bundle, package_bundle, detect_bundle, write_mani
 from .telemetry import TelemetrySimulator, TelemetryRelay
 from .ssh import SshWorker, build_ssh_cmd
 from .scaffold import create_bundle
+from .taglab import TagLabSender
 
 try:
     from ui.python.shadcn import apply, icon, qml_import_path
@@ -30,6 +29,26 @@ except ImportError:
 # Product version, shown hard right in the footer. Single source of truth.
 APP_VERSION = "0.0.1"
 
+# ---- SSH step budgets -------------------------------------------------------
+# One timeout cannot serve every step of a deploy: the commands differ in cost
+# by three orders of magnitude. Each is a watchdog, not an expectation.
+
+# Commands that answer immediately (mkdir, a checksum file, rollback, restart).
+SSH_SHORT_TIMEOUT_S = 30
+
+# Fallback for callers that do not say what they are running.
+DEFAULT_SSH_TIMEOUT_S = 60
+
+# `hmi-install install` waits up to GUI_READY_TIMEOUT (25 s) for the panel to
+# render, and on failure rolls back and restarts again before it exits.
+INSTALL_TIMEOUT_S = 180
+
+# Bundle upload: a fixed allowance plus time proportional to the payload. The
+# floor rate is deliberately pessimistic (256 KiB/s) so a slow or congested
+# field link is not mistaken for a hang.
+SCP_BASE_TIMEOUT_S = 60
+SCP_MIN_BYTES_PER_S = 256 * 1024
+
 
 class MainWindow(QMainWindow):
     def __init__(self, exit_after_ms=0):
@@ -37,30 +56,35 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("EmbeddedDisplay")
         self.resize(1280, 800)
         self.exit_after_ms = exit_after_ms
-        
+
         self.settings = QSettings("MIL-HMI", "Deployer")
         self.bundle_dir = self.settings.value("last_bundle", "")
         # Dark is the product default: the tool sits beside a panel that
         # runs Theme.mode="dark", and matching it keeps the preview and the
         # chrome reading as one surface. The toggle still switches both.
         self.theme = "dark"
-        
+
         self.simulator = None
         self.relay = None
+        # Tag Lab sender – mutually exclusive with simulator and relay.
+        self.taglab_sender: TagLabSender = None
         # Manifest of the loaded bundle; the panel picker's Custom entry reads it.
         self.current_manifest = None
         self.ssh_worker = None
-        
+        # Every SSH/SCP worker still running. A deploy chains four of them, and
+        # a QThread destroyed while running takes the process down with it.
+        self._ssh_workers = []
+
         self.setup_ui()
         self.apply_theme()
-        
+
         if self.bundle_dir and os.path.isdir(self.bundle_dir):
             self.load_bundle(self.bundle_dir)
 
         if self.exit_after_ms > 0:
             from PySide6.QtCore import QTimer
             QTimer.singleShot(self.exit_after_ms, self.close)
-            
+
     def apply_theme(self):
         """
         Pushes the current theme's stylesheet onto the QApplication.
@@ -79,10 +103,10 @@ class MainWindow(QMainWindow):
     def setup_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        
+
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(16, 16, 16, 16)
-        
+
         # Top Bar
         top_bar = QHBoxLayout()
         from PySide6.QtWidgets import QPushButton, QLabel
@@ -105,17 +129,17 @@ class MainWindow(QMainWindow):
         self.btn_open.setProperty("variant", "outline")
         self.btn_open.setIcon(icon("folder-open"))
         self.btn_open.clicked.connect(self.on_open_bundle)
-        
+
         self.btn_new = QPushButton("New App...")
         self.btn_new.setProperty("variant", "secondary")
         self.btn_new.setIcon(icon("plus"))
         self.btn_new.clicked.connect(self.on_new_app)
-        
+
         self.btn_theme = QPushButton("")
         self.btn_theme.setProperty("variant", "ghost")
         self.btn_theme.setIcon(icon("moon"))
         self.btn_theme.clicked.connect(self.on_toggle_theme)
-        
+
         top_bar.addWidget(self.lbl_logo)
         top_bar.addSpacing(8)
         top_bar.addWidget(self.lbl_title)
@@ -124,13 +148,13 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(self.btn_new)
         top_bar.addStretch()
         top_bar.addWidget(self.btn_theme)
-        
+
         main_layout.addLayout(top_bar)
-        
+
         # Splitter
         splitter = QSplitter(Qt.Horizontal)
         main_layout.addWidget(splitter, 1)
-        
+
         # Left: Device Panel, with a caption strip directly beneath the bezel
         # reporting the emulated geometry and letting the user pick a panel.
         from PySide6.QtWidgets import QComboBox
@@ -170,12 +194,18 @@ class MainWindow(QMainWindow):
         panel_wrap.setMinimumWidth(self.device_panel.minimumWidth())
         splitter.addWidget(panel_wrap)
         splitter.setCollapsible(0, False)
-        
-        # Right: Tools
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        
+
+        # Right: Tools tab widget
+        # The Deploy tab holds the original target/deployment/console content.
+        # The Tag Lab tab holds the Tag Lab panel.
+        self._right_tabs = QTabWidget()
+        self._right_tabs.setAccessibleName("Deployer tool tabs")
+
+        # ── Deploy tab ────────────────────────────────────────────────────
+        deploy_page = QWidget()
+        right_layout = QVBoxLayout(deploy_page)
+        right_layout.setContentsMargins(0, 8, 0, 0)
+
         # Connection Box
         conn_box = QGroupBox("Target Configuration")
         conn_layout = QFormLayout(conn_box)
@@ -183,60 +213,73 @@ class MainWindow(QMainWindow):
         self.inp_user = QLineEdit(self.settings.value("user", "root"))
         self.inp_key = QLineEdit(self.settings.value("key", ""))
         self.inp_key.setPlaceholderText("Leave empty for default agent")
-        
+
         conn_layout.addRow("Host:", self.inp_host)
         conn_layout.addRow("User:", self.inp_user)
         conn_layout.addRow("Key:", self.inp_key)
-        
+
         test_layout = QHBoxLayout()
+        from PySide6.QtWidgets import QPushButton
         self.btn_test = QPushButton("Connect / Test")
         self.btn_test.clicked.connect(self.on_test_conn)
         test_layout.addWidget(self.btn_test)
         test_layout.addStretch()
         conn_layout.addRow("", test_layout)
-        
+
         right_layout.addWidget(conn_box)
-        
+
         # Deployment Actions
         deploy_box = QGroupBox("Deployment")
         deploy_layout = QVBoxLayout(deploy_box)
-        
+
+        from PySide6.QtWidgets import QLabel
         self.val_label = QLabel("No bundle loaded.")
         self.val_label.setWordWrap(True)
         deploy_layout.addWidget(self.val_label)
-        
+
         self.btn_deploy = QPushButton("Deploy to Target")
         self.btn_deploy.setProperty("variant", "default")
         self.btn_deploy.setIcon(icon("upload"))
         self.btn_deploy.clicked.connect(self.on_deploy)
         self.btn_deploy.setEnabled(False)
         deploy_layout.addWidget(self.btn_deploy)
-        
+
         h_layout = QHBoxLayout()
         self.btn_rollback = QPushButton("Rollback")
         self.btn_rollback.setProperty("variant", "destructive")
         self.btn_rollback.setIcon(icon("history"))
         self.btn_rollback.clicked.connect(self.on_rollback)
-        
+
         self.btn_restart = QPushButton("Restart GUI")
         self.btn_restart.setProperty("variant", "outline")
         self.btn_restart.setIcon(icon("refresh"))
         self.btn_restart.clicked.connect(self.on_restart)
-        
+
         h_layout.addWidget(self.btn_rollback)
         h_layout.addWidget(self.btn_restart)
         deploy_layout.addLayout(h_layout)
-        
+
         right_layout.addWidget(deploy_box)
-        
+
         # Console Output
         self.console = QPlainTextEdit()
         self.console.setReadOnly(True)
         self.console.setMinimumHeight(150)
         right_layout.addWidget(QLabel("Console Output:"))
         right_layout.addWidget(self.console, 1)
-        
-        splitter.addWidget(right_panel)
+
+        self._right_tabs.addTab(deploy_page, "Deploy")
+
+        # ── Tag Lab tab ────────────────────────────────────────────────────
+        # Imported here (deferred) so the tab is only instantiated after
+        # PySide6 is confirmed available. TagLabPanel guards its own imports.
+        from .taglab_panel import TagLabPanel
+        self.taglab_panel = TagLabPanel()
+        self.taglab_panel.sendingStarted.connect(self._on_taglab_start)
+        self.taglab_panel.sendingStopped.connect(self._on_taglab_stop)
+        self._right_tabs.addTab(self.taglab_panel, "Tag Lab")
+
+        splitter.addWidget(self._right_tabs)
         splitter.setSizes([800, 400])
 
         # Footer: attribution on the left, version hard right. Kept to the muted
@@ -292,7 +335,7 @@ class MainWindow(QMainWindow):
         self.btn_theme.setIcon(icon("sun" if self.theme == "dark" else "moon"))
         self.apply_theme()
         self._style_footer()
-        
+
         # Keep the preview in step with the chrome (CONTRACT 11.2). This must go
         # through the panel: a bare engine.evaluate("Theme.mode = ...") has no
         # QML imports in scope and fails silently.
@@ -302,7 +345,7 @@ class MainWindow(QMainWindow):
         dir_path = QFileDialog.getExistingDirectory(self, "Select App Bundle Directory", self.bundle_dir)
         if dir_path:
             self.load_bundle(dir_path)
-            
+
     def on_new_app(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Directory to Scaffold", "")
         if dir_path:
@@ -360,7 +403,7 @@ class MainWindow(QMainWindow):
             self.settings.setValue("last_bundle", dir_path)
             with open(os.path.join(dir_path, "manifest.json"), "r", encoding="utf-8") as f:
                 manifest = json.load(f)
-            
+
             # Remember it: the panel picker's "Custom" entry reads this, and the
             # caption strip reports the geometry the bundle actually declares.
             self.current_manifest = manifest
@@ -376,39 +419,79 @@ class MainWindow(QMainWindow):
             self.val_label.setText(
                 f"Bundle Valid: {manifest.get('name')} v{manifest.get('version')}  [{kind}]"
             )
-            self.val_label.setStyleSheet("color: #22c55e;") # success
+            self.val_label.setStyleSheet("color: #22c55e;")  # success
             self.btn_deploy.setEnabled(True)
-            
+
             self.device_panel.load_bundle(dir_path, manifest)
-            self.start_simulator(manifest.get("tags_required", []))
+            tags = manifest.get("tags_required", [])
+            self.start_simulator(tags)
+
+            # Bind the bundle's tags into Tag Lab so the user can inject signals
+            # for any tag the app declares.
+            self.taglab_panel.bind_tags(tags)
         else:
             err_text = "\n".join(msgs)
             self.val_label.setText(f"Validation Failed:\n{err_text}")
-            self.val_label.setStyleSheet("color: #ef4444;") # destructive
+            self.val_label.setStyleSheet("color: #ef4444;")  # destructive
             self.btn_deploy.setEnabled(False)
 
-    def start_simulator(self, expected_tags):
-        if self.simulator:
-            self.simulator.stop()
-        if self.relay:
-            self.relay.stop()
-            self.relay = None
-            
-        self.simulator = TelemetrySimulator(expected_tags, self)
-        self.simulator.start()
-        
-    def start_relay(self):
+    def _stop_all_senders(self) -> None:
+        """
+        Stop simulator, relay, and Tag Lab sender.
+
+        Enforces mutual exclusion: only one source may drive TagEngine at a time.
+        Called before starting any new source.
+        """
         if self.simulator:
             self.simulator.stop()
             self.simulator = None
         if self.relay:
             self.relay.stop()
-        
+            self.relay = None
+        if self.taglab_sender:
+            self.taglab_sender.stop()
+            self.taglab_sender = None
+        if hasattr(self, "taglab_panel"):
+            self.taglab_panel.set_sending(False)
+
+    def start_simulator(self, expected_tags):
+        self._stop_all_senders()
+        self.simulator = TelemetrySimulator(expected_tags, self)
+        self.simulator.start()
+
+    def start_relay(self):
+        self._stop_all_senders()
+
         host = self.inp_host.text().strip()
         user = self.inp_user.text().strip()
         key = self.inp_key.text().strip()
         self.relay = TelemetryRelay(host, user, 22, key, self)
         self.relay.start()
+
+    # ------------------------------------------------------------------
+    # Tag Lab sender lifecycle (mutual exclusion enforced here)
+    # ------------------------------------------------------------------
+
+    def _on_taglab_start(self) -> None:
+        """Slot: TagLabPanel requested start.  Enforce mutual exclusion."""
+        self._stop_all_senders()
+        model = self.taglab_panel.model()
+        self.taglab_sender = TagLabSender(model, parent=self)
+        self.taglab_sender.error.connect(self.log)
+        self.taglab_sender.start()
+        self.taglab_panel.set_sending(True)
+
+    def _on_taglab_stop(self) -> None:
+        """Slot: TagLabPanel requested stop."""
+        if self.taglab_sender:
+            self.taglab_sender.stop()
+            self.taglab_sender = None
+        self.taglab_panel.set_sending(False)
+        # Resume the offline simulator using the last known tags so the
+        # preview does not go dark after Tag Lab is stopped.
+        tags = (self.current_manifest or {}).get("tags_required", [])
+        if tags:
+            self.start_simulator(tags)
 
     def log(self, text):
         self.console.appendPlainText(text)
@@ -424,70 +507,146 @@ class MainWindow(QMainWindow):
     def on_test_conn(self):
         self.save_settings()
         self.log("Testing connection...")
-        self.device_panel.set_led_state(2) # deploying (amber)
+        self.device_panel.set_led_state(2)  # deploying (amber)
         cmd = build_ssh_cmd(
             self.inp_host.text().strip(),
             self.inp_user.text().strip(),
             22,
             self.inp_key.text().strip(),
-            "echo 'SSH OK'; hmi-install --help; systemctl is-active hmi-gui.service; df -h /tmp /opt"
+            # `hmi-install help`, not `--help`: the installer dispatches on a
+            # bare subcommand and answers anything else with a usage error.
+            # is-enabled is reported alongside is-active because the two answer
+            # different questions: whether the panel is showing the app now, and
+            # whether it will still be showing it after the next power cycle.
+            "echo 'SSH OK'; hmi-install help; "
+            "echo -n 'hmi-gui now:  '; systemctl is-active hmi-gui.service; "
+            "echo -n 'hmi-gui boot: '; systemctl is-enabled hmi-gui.service; "
+            "hmi-install status; df -h /tmp /opt"
         )
-        self.run_ssh_worker(cmd, "Test Connection")
+        self.run_ssh_worker(cmd, "Test Connection", timeout_s=SSH_SHORT_TIMEOUT_S)
 
-    def run_ssh_worker(self, cmd, desc, callback=None):
+    def run_ssh_worker(self, cmd, desc, callback=None, timeout_s=DEFAULT_SSH_TIMEOUT_S):
+        """
+        Runs one SSH/SCP command off the UI thread and reports its exit code.
+
+        Args:
+            cmd: the argv list to execute.
+            desc: human label used in the console and in the LED logic.
+            callback: called with the exit code once the command completes,
+                after the console line has been written. A deploy is a chain of
+                these, so a step that drops its callback silently ends the
+                deployment -- see on_deploy.
+            timeout_s: watchdog for this specific command. One value cannot fit
+                every step: a mkdir answers instantly, an scp of a large bundle
+                takes minutes, and `hmi-install install` deliberately blocks for
+                up to GUI_READY_TIMEOUT (25 s) waiting for the panel to render.
+
+        Side effects: disables the deploy button for the duration, keeps the
+        worker referenced until its thread has actually finished.
+        """
         self.btn_deploy.setEnabled(False)
-        self.ssh_worker = SshWorker(cmd, timeout_s=10, parent=self)
-        self.ssh_worker.outputLine.connect(self.log)
+        worker = SshWorker(cmd, timeout_s=timeout_s, parent=self)
+        # Hold a strong reference for the lifetime of the thread. Overwriting a
+        # single self.ssh_worker attribute -- which is what the chained deploy
+        # does, four times in a row -- dropped the last reference to a QThread
+        # that had emitted finished() but not yet returned from run(), and Qt
+        # aborts the process when a running QThread is destroyed.
+        self._ssh_workers.append(worker)
+        self.ssh_worker = worker
+        worker.outputLine.connect(self.log)
+
         def on_finished(code):
             self.log(f"{desc} exited with {code}")
             if code == 0:
-                self.device_panel.set_led_state(1) # Link up
+                self.device_panel.set_led_state(1)  # Link up
                 if desc == "Test Connection":
                     self.start_relay()
             else:
-                self.device_panel.set_led_state(3) # Fault
+                self.device_panel.set_led_state(3)  # Fault
             self.btn_deploy.setEnabled(self.bundle_dir is not None)
+            # run() emits this as its last act, so the thread is at most
+            # microseconds from returning; the bounded wait keeps the object
+            # alive across that window without stalling the UI.
+            worker.wait(2000)
+            if worker in self._ssh_workers:
+                self._ssh_workers.remove(worker)
             if callback:
                 callback(code)
-        self.ssh_worker.finished.connect(on_finished)
-        self.ssh_worker.error.connect(self.log)
-        self.ssh_worker.start()
+
+        worker.finished.connect(on_finished)
+        worker.error.connect(self.log)
+        worker.start()
 
     def on_deploy(self):
+        """
+        Packages the loaded bundle and installs it on the panel.
+
+        The flow is four SSH/SCP steps chained through completion callbacks:
+        mkdir -> scp tarball -> scp checksum -> hmi-install install. Each step
+        only starts once the previous one has exited 0, so a failure anywhere
+        stops the deployment with the failing step named in the console.
+        """
         self.save_settings()
         self.log(f"Deploying {self.bundle_dir}...")
         try:
             import tempfile
             out_dir = tempfile.mkdtemp()
             tar_path, sha256_path = package_bundle(self.bundle_dir, out_dir)
-            self.log(f"Packaged to {tar_path}")
-            
+            tar_size = os.path.getsize(tar_path)
+            self.log(f"Packaged to {tar_path} ({tar_size / (1024 * 1024):.1f} MB)")
+
             host = self.inp_host.text().strip()
             user = self.inp_user.text().strip()
             key = self.inp_key.text().strip()
-            
+
+            # Upload allowance scaled to the payload. A slow panel link moving a
+            # large bundle is normal, not a hang; a fixed short timeout would
+            # kill the transfer partway and leave a truncated file in the tmpfs.
+            scp_timeout = SCP_BASE_TIMEOUT_S + int(tar_size / SCP_MIN_BYTES_PER_S)
+
             # Step 1: Create /tmp/hmi_upload and scp files
             from .ssh import build_scp_cmd
             cmd_mkdir = build_ssh_cmd(host, user, 22, key, "mkdir -p /tmp/hmi_upload")
-            
+
             def on_mkdir(code):
-                if code != 0: return
+                if code != 0:
+                    self.log("Deploy aborted: could not create /tmp/hmi_upload on the panel.")
+                    return
                 cmd_scp1 = build_scp_cmd(host, user, 22, key, tar_path, "/tmp/hmi_upload/")
-                self.run_ssh_worker(cmd_scp1, "SCP tarball", lambda c: on_scp1(c))
-                
+                self.run_ssh_worker(cmd_scp1, "SCP tarball", on_scp1, timeout_s=scp_timeout)
+
             def on_scp1(code):
-                if code != 0: return
+                if code != 0:
+                    self.log("Deploy aborted: bundle upload failed.")
+                    return
                 cmd_scp2 = build_scp_cmd(host, user, 22, key, sha256_path, "/tmp/hmi_upload/")
-                self.run_ssh_worker(cmd_scp2, "SCP sha256", lambda c: on_scp2(c))
-                
+                self.run_ssh_worker(cmd_scp2, "SCP sha256", on_scp2, timeout_s=SSH_SHORT_TIMEOUT_S)
+
             def on_scp2(code):
-                if code != 0: return
+                if code != 0:
+                    self.log("Deploy aborted: checksum upload failed.")
+                    return
                 tar_name = os.path.basename(tar_path)
                 cmd_install = build_ssh_cmd(host, user, 22, key, f"hmi-install install /tmp/hmi_upload/{tar_name}")
-                self.run_ssh_worker(cmd_install, "Install", lambda c: self.start_relay())
-                
-            self.run_ssh_worker(cmd_mkdir, "Mkdir")
-            
+                # The installer blocks for up to its own GUI_READY_TIMEOUT
+                # waiting for the panel to render, then may roll back and
+                # restart again, so it needs far more headroom than a shell
+                # command that answers immediately.
+                self.run_ssh_worker(
+                    cmd_install, "Install", on_install, timeout_s=INSTALL_TIMEOUT_S
+                )
+
+            def on_install(code):
+                if code == 0:
+                    self.log("Deployment complete.")
+                else:
+                    self.log(f"Deployment FAILED (hmi-install exit {code}).")
+                self.start_relay()
+
+            self.run_ssh_worker(
+                cmd_mkdir, "Mkdir", on_mkdir, timeout_s=SSH_SHORT_TIMEOUT_S
+            )
+
         except Exception as e:
             self.log(f"Deploy failed: {e}")
 
@@ -498,7 +657,8 @@ class MainWindow(QMainWindow):
         user = self.inp_user.text().strip()
         key = self.inp_key.text().strip()
         cmd = build_ssh_cmd(host, user, 22, key, "hmi-install rollback")
-        self.run_ssh_worker(cmd, "Rollback")
+        # Rollback restarts the GUI on its way out, so it is not instant.
+        self.run_ssh_worker(cmd, "Rollback", timeout_s=INSTALL_TIMEOUT_S)
 
     def on_restart(self):
         self.save_settings()
@@ -507,5 +667,9 @@ class MainWindow(QMainWindow):
         user = self.inp_user.text().strip()
         key = self.inp_key.text().strip()
         cmd = build_ssh_cmd(host, user, 22, key, "systemctl restart hmi-gui.service")
-        self.run_ssh_worker(cmd, "Restart GUI")
+        self.run_ssh_worker(cmd, "Restart GUI", timeout_s=SSH_SHORT_TIMEOUT_S)
 
+    def closeEvent(self, event):
+        """Release every local/remote telemetry source before closing."""
+        self._stop_all_senders()
+        super().closeEvent(event)
