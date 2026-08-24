@@ -27,6 +27,35 @@ python deploy/provision_panel.py --host 192.168.1.50 --check
 python deploy/provision_panel.py --host 192.168.1.50 -i ~/.ssh/id_ed25519
 ```
 
+### Hosting PySide2 (Qt5) applications (`provision_pyside2.sh`)
+
+The platform's own runtime is CPython 3.12 + PySide6. A large share of existing
+industrial Qt code is PySide2, which cannot share that interpreter: PySide2 is
+Qt5-only and was never built past Python 3.11. A panel that must host both keeps
+a second runtime at `/opt/hmi-python-qt5`, and `hmi-gui-launch` chooses between
+them from the bundle manifest's `qt_binding`.
+
+```bash
+# run from Linux or WSL - the build step needs dpkg-deb
+./deploy/provision_pyside2.sh --host 192.168.1.50 --key ~/.ssh/id_ed25519
+
+# or build the payload once and install it on many panels
+./deploy/provision_pyside2.sh --build-only --out /tmp/qt5rt.tar.gz
+./deploy/provision_pyside2.sh --host 192.168.1.51 --payload /tmp/qt5rt.tar.gz
+```
+
+It installs CPython 3.11, PySide2 5.15.8 and a **private Qt 5.15.8**, then
+proves the result by creating a widget on the board. Shipping Qt is deliberate:
+the Toradex image already has Qt 5.15, but it is an i.MX GLES build, and every
+available aarch64 PySide2 binary is compiled against desktop GL — loading one
+against the other fails with `undefined symbol: _ZTI18QOpenGLTimeMonitor`. The
+Mesa/LLVM stack that normally comes with desktop GL is *not* shipped: Qt Widgets
+renders raster and issues no GL call, so the glvnd stubs satisfy the link and
+~200 MB is saved. The panel's own Qt5 is left untouched.
+
+Without this runtime, deploying a `qt_binding: pyside2` bundle fails at launch
+with a named error in the journal rather than a silent crash loop.
+
 The survey runs first on every invocation and reports what the board is: OS,
 python3 and PySide6 versions, whether systemd is running, whether a
 `weston.service` exists, whether the rootfs is writable, and whether a container
@@ -259,6 +288,23 @@ In industrial HMI panels, a failed software update must **never leave the screen
 2. **Deterministic Validation:** `manifest.json` is validated twice: once on the host before upload, and once on the target before the symlink is modified.
 3. **Atomic Symlink Swap (`os.replace` / `rename(2)`):** The script never executes `rm current && ln -s ...` (which leaves a window where no UI exists). Instead, a temporary symlink (`.current_swap_XXXX`) is created and atomically swapped over `/opt/hmi_apps/current` using POSIX `rename(2)`.
 4. **Health Check & Self-Rollback:** After restarting `hmi-gui.service`, `hmi-install` monitors `/run/hmi/gui-ready` for up to 25 seconds. If the application crashes on boot, throws a QML error, or fails to render, `hmi-install` automatically swaps the symlink back to `/opt/hmi_apps/previous`, restarts the GUI with the known-good release, and exits with code 1.
+
+#### Readiness for native (`runtime: python`) applications
+
+A native app owns its own window, so nothing in the platform can observe the
+moment it renders — only whether the process is still alive.
+
+`hmi-gui-launch` used to touch `/run/hmi/gui-ready` immediately before `exec`ing
+the application, which made the health check above meaningless for every native
+bundle: an app that died on its first import still satisfied it, was never
+rolled back, and left the panel restart-looping while the deploy reported
+success. The symptom is a panel showing the *previous* application, or nothing,
+after a deployment that said it worked.
+
+Readiness is now reported by a watchdog that touches the sentinel only once the
+application has stayed alive for `HMI_NATIVE_READY_SETTLE` seconds (default 8,
+comfortably inside the installer's 25 s window). A crash-looping release never
+touches it, so the installer times out and the rollback does its job.
 
 ---
 

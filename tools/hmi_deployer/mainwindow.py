@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, QSettings, QTimer
 from .devicepanel import DevicePanel, PANEL_PRESETS
 from .deployer import (
     BundleTooLargeError, validate_bundle, package_bundle, detect_bundle,
-    write_manifest,
+    detect_qt_binding, write_manifest,
 )
 from .telemetry import TelemetrySimulator, TelemetryRelay
 from .ssh import SshWorker, UploadWorker, build_ssh_cmd, build_upload_cmd
@@ -481,6 +481,24 @@ class MainWindow(QMainWindow):
             with open(os.path.join(dir_path, "manifest.json"), "r", encoding="utf-8") as f:
                 manifest = json.load(f)
 
+            # Manifests written before qt_binding existed do not say which Qt
+            # binding the app needs. The panel can sniff it, but recording it
+            # here means the deployed bundle states it outright and the two
+            # sides cannot disagree.
+            if manifest.get("runtime") == "python" and "qt_binding" not in manifest:
+                manifest["qt_binding"] = detect_qt_binding(dir_path, manifest.get("entry", ""))
+                if manifest["qt_binding"] == "pyside2" and manifest.get("qt", "").startswith(">=6"):
+                    # Inferred by an importer that only knew about Qt6; leaving
+                    # it would have the bundle advertise a Qt it cannot use.
+                    manifest["qt"] = ">=5.15"
+                try:
+                    write_manifest(dir_path, manifest)
+                    self.log(
+                        f"Recorded qt_binding={manifest['qt_binding']} in manifest.json"
+                    )
+                except OSError as exc:
+                    self.log(f"Could not update manifest.json: {exc}")
+
             # Remember it: the panel picker's "Custom" entry reads this, and the
             # caption strip reports the geometry the bundle actually declares.
             self.current_manifest = manifest
@@ -492,7 +510,17 @@ class MainWindow(QMainWindow):
             self.lbl_resolution.setText(self.device_panel.resolution_text())
 
             runtime = manifest.get("runtime", "qml")
-            kind = "QML" if runtime == "qml" else "Python"
+            if runtime == "qml":
+                kind = "QML"
+            else:
+                # Name the binding: it decides which runtime the panel starts,
+                # and it is the difference between the app rendering and dying
+                # on its first import.
+                kind = "Python / " + (
+                    "PySide2 (Qt5)"
+                    if manifest.get("qt_binding", "pyside6") == "pyside2"
+                    else "PySide6 (Qt6)"
+                )
             self.val_label.setText(
                 f"Bundle Valid: {manifest.get('name')} v{manifest.get('version')}  [{kind}]"
             )

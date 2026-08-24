@@ -83,6 +83,20 @@ resolve_python() {
 
 PYTHON="$(resolve_python)"
 
+# Root of the PySide2/Qt5 runtime, installed alongside (never on top of) the
+# PySide6 one so a panel can host applications written against either binding.
+#
+# PySide2 is Qt5-only and stopped at Python 3.11, so it cannot share the
+# PySide6 interpreter. It also cannot use the panel's own Qt5: that is an i.MX
+# GLES build, and the PySide2 bindings are compiled against a desktop-GL Qt5,
+# which fails to load with "undefined symbol: _ZTI18QOpenGLTimeMonitor". This
+# tree therefore carries its own matching Qt 5.15 under qt5/.
+QT5_RUNTIME="${HMI_ROOT}/opt/hmi-python-qt5"
+
+# Seconds a native application must stay alive before it is declared ready.
+# See the readiness note in the runtime-selection section below.
+NATIVE_READY_SETTLE="${HMI_NATIVE_READY_SETTLE:-8}"
+
 # ---- Functions -------------------------------------------------------
 
 ##
@@ -251,24 +265,33 @@ _extra="${HMI_GUI_EXTRA_ARGS:-}"
 # which cannot be hosted inside our QML engine. In that case we exec it
 # directly, under the same Wayland environment we just resolved.
 _manifest="${APPS_DIR}/manifest.json"
-_runtime="qml"
-_entry=""
-if [ -f "$_manifest" ]; then
-    # python3 rather than a grep/sed hack: this is untrusted JSON that arrived
-    # over the network, and a mis-parse here starts the wrong program.
-    _runtime="$("$PYTHON" -c 'import json,sys
+
+##
+# manifest_get -- read one top-level string key from the bundle manifest
+#
+# python3 rather than a grep/sed hack: this is untrusted JSON that arrived
+# over the network, and a mis-parse here starts the wrong program.
+#
+# Args:
+#   $1  key      -- manifest key to read
+#   $2  default  -- printed if the file, the key, or the JSON is unusable
+#
+# Returns: 0
+# Exits:   never
+##
+manifest_get() {
+    [ -f "$_manifest" ] || { echo "$2"; return 0; }
+    "$PYTHON" -c 'import json,sys
 try:
     m = json.load(open(sys.argv[1]))
-    print(m.get("runtime", "qml"))
+    v = m.get(sys.argv[2], sys.argv[3])
+    print(v if isinstance(v, str) else sys.argv[3])
 except Exception:
-    print("qml")' "$_manifest" 2>/dev/null || echo qml)"
-    _entry="$("$PYTHON" -c 'import json,sys
-try:
-    m = json.load(open(sys.argv[1]))
-    print(m.get("entry", ""))
-except Exception:
-    print("")' "$_manifest" 2>/dev/null || echo "")"
-fi
+    print(sys.argv[3])' "$_manifest" "$1" "$2" 2>/dev/null || echo "$2"
+}
+
+_runtime="$(manifest_get runtime qml)"
+_entry="$(manifest_get entry "")"
 
 if [ "$_runtime" = "python" ] && [ -n "$_entry" ]; then
     _app="${APPS_DIR}/${_entry}"
@@ -276,17 +299,71 @@ if [ "$_runtime" = "python" ] && [ -n "$_entry" ]; then
         log "ERROR" "manifest declares runtime=python but entry '${_entry}' is missing"
         exit 1
     fi
+
+    # ---- Qt binding selection ---------------------------------------
+    # Which Python binding the application imports decides which interpreter
+    # can run it at all; they are not interchangeable. The manifest field is
+    # authoritative. Bundles deployed before the field existed are sniffed
+    # from their entry point so they keep working without a redeploy.
+    _binding="$(manifest_get qt_binding "")"
+    if [ -z "$_binding" ]; then
+        if grep -qE '^[[:space:]]*(import|from)[[:space:]]+PySide2' "$_app" 2>/dev/null; then
+            _binding="pyside2"
+            log "INFO" "manifest has no qt_binding; entry imports PySide2"
+        else
+            _binding="pyside6"
+        fi
+    fi
+
+    if [ "$_binding" = "pyside2" ]; then
+        if [ ! -x "${QT5_RUNTIME}/bin/python3" ]; then
+            log "ERROR" "bundle needs the PySide2 runtime, but ${QT5_RUNTIME} is not installed"
+            log "ERROR" "install it with: deploy/provision_pyside2.sh --host <ip>"
+            exit 2
+        fi
+        PYTHON="${QT5_RUNTIME}/bin/python3"
+        # The private Qt5 must come first on the search path; the panel's own
+        # GLES Qt5 in /usr/lib would satisfy the sonames and then fail on the
+        # missing desktop-GL symbols.
+        LD_LIBRARY_PATH="${QT5_RUNTIME}/qt5/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+        QT_PLUGIN_PATH="${QT5_RUNTIME}/qt5/plugins${QT_PLUGIN_PATH:+:${QT_PLUGIN_PATH}}"
+        export LD_LIBRARY_PATH QT_PLUGIN_PATH
+    fi
+
     log "INFO" "launching native Python application: ${_app}"
+    log "INFO" "  qt_binding=${_binding}"
+    log "INFO" "  interpreter=${PYTHON}"
     log "INFO" "  XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}"
     log "INFO" "  WAYLAND_DISPLAY=${WAYLAND_DISPLAY}"
+
     # Run from the bundle directory so the app's own relative imports and
     # resource paths resolve exactly as they do on the developer's machine.
     cd "$APPS_DIR" || exit 1
-    # The app is responsible for its own readiness; touch the ready-file here so
-    # the installer's health check (CONTRACT section 6) still completes and a
-    # good deployment is not rolled back.
+
+    # ---- Readiness (CONTRACT section 6) -----------------------------
+    # A native app owns its own window, so nothing in the platform can observe
+    # the moment it renders. Touching the sentinel here, before exec, made
+    # every native deployment "succeed": an app that died on its first import
+    # still satisfied the installer's health check, so it was never rolled
+    # back and the panel restart-looped with the previous release's UI --
+    # or none at all.
+    #
+    # Instead, hand readiness to a watchdog that only reports the app alive
+    # once it has survived NATIVE_READY_SETTLE seconds. $$ is this shell,
+    # which exec turns into the application itself, so kill -0 is a direct
+    # liveness test on the app. A crash-looping release never touches the
+    # sentinel, the installer times out, and the rollback does its job.
     mkdir -p "$(dirname "$READY_FILE")" 2>/dev/null || true
-    : > "$READY_FILE" 2>/dev/null || true
+    (
+        _waited=0
+        while [ "$_waited" -lt "$NATIVE_READY_SETTLE" ]; do
+            sleep 1
+            _waited=$(( _waited + 1 ))
+            kill -0 "$$" 2>/dev/null || exit 0
+        done
+        : > "$READY_FILE" 2>/dev/null || true
+    ) &
+
     # shellcheck disable=SC2086
     exec "$PYTHON" "$_app" $_extra "$@"
 fi

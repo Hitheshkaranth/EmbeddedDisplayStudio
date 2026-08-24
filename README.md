@@ -148,10 +148,37 @@ my-qt-app/
 | runtime | entry | How it runs on the panel |
 | --- | --- | --- |
 | `qml` | `*.qml` | Loaded into the shell that is already running. Gets `Tags`/`Bus` injected, previews live in App Studio. |
-| `python` | `*.py` | Exec'd as the GUI process itself — for an existing PySide6/Qt Widgets application that owns its own window. |
+| `python` | `*.py` | Exec'd as the GUI process itself — for an existing Qt Widgets application that owns its own window. |
 
-Already have a Qt app? Open it in App Studio; it detects the entry point and
-writes the manifest for you.
+### Qt5 and Qt6 applications on the same panel
+
+A native Python app also declares which binding it imports, because the two
+cannot share an interpreter — PySide2 is Qt5-only and was never built past
+Python 3.11:
+
+```json
+{ "runtime": "python", "entry": "main.py", "qt_binding": "pyside2", "qt": ">=5.15" }
+```
+
+| qt_binding | Runtime on the panel | For |
+| --- | --- | --- |
+| `pyside6` (default) | `/opt/hmi-python` — CPython 3.12 + PySide6 | Qt6 apps, and the QML loader |
+| `pyside2` | `/opt/hmi-python-qt5` — CPython 3.11 + PySide2 + a private Qt 5.15 | Existing Qt5 apps |
+
+The Qt5 runtime is not installed by default. Add it once per panel:
+
+```bash
+./deploy/provision_pyside2.sh --host <panel-ip>     # run from Linux or WSL
+```
+
+It ships its own Qt 5.15 rather than using the one already on the Toradex
+image, because that is an i.MX **GLES** build while every available aarch64
+PySide2 binary is compiled against desktop GL — loading one against the other
+fails with `undefined symbol: _ZTI18QOpenGLTimeMonitor`. The panel's own Qt5 is
+left untouched.
+
+Already have a Qt app? Open it in App Studio; it detects the entry point **and
+the binding**, and writes the manifest for you.
 
 Build outputs, caches and VCS metadata are left out of the bundle
 automatically. For anything else that lives in the folder but is not part of the
