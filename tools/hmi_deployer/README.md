@@ -64,6 +64,26 @@ has been seen to work is worth booting into. If it fails, the deploy still
 succeeds — the app is installed and running — but the console says so
 explicitly, because that panel will come up blank after the next power cycle.
 
+### Watching a deployment
+
+A progress bar under the button reports real percentage, not a guess:
+
+* **Upload** is exact — the bundle is streamed over SSH and the bar follows
+  bytes actually sent, with live throughput. This is also why the upload is
+  fast: `scp` prints its meter only to a terminal, so through a pipe it is both
+  silent *and* slower than streaming into `cat`.
+* **Install** is driven by the installer's own `STEP` lines, so the caption
+  names what the panel is really doing — verifying the checksum, switching the
+  symlink, waiting for the UI to render — rather than interpolating a timer.
+
+Percentages are weighted by how long each phase takes, not by how many phases
+there are: on any real bundle the upload dominates, so it owns most of the bar.
+
+If anything fails the bar turns **red**, stops advancing, and the caption names
+the step that broke (`Verifying checksum failed: ...`). A later step cannot
+paint over a failure. The panel is safe regardless — the installer rolls itself
+back — but the tool says plainly that this attempt did not land.
+
 ## Excluding files
 
 The deployer packages the bundle directory, minus anything matching the built-in

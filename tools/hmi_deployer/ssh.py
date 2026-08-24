@@ -4,6 +4,8 @@ Layer: 3 (Host Deployer)
 Purpose: Handles off-thread SSH/SCP operations for deployment without shelling
 into bash, to support Windows natively. (CONTRACT section 6).
 """
+import os
+import shlex
 import subprocess
 import logging
 import threading
@@ -117,6 +119,131 @@ class SshWorker(QThread):
                 self._proc.kill()
             except Exception:
                 pass
+class UploadWorker(QThread):
+    """
+    Uploads one file over SSH, reporting how many bytes have been sent.
+
+    scp cannot be used for this: it prints its progress meter only when stdout
+    is a terminal, so through a pipe a multi-minute transfer produces no output
+    whatsoever until it completes. Streaming the file into `cat > dest` over the
+    same ssh transport gives an exact byte count on the sending side, which is
+    what a progress bar needs. Integrity is unaffected -- the target verifies
+    the SHA-256 sidecar before it will extract anything.
+
+    Signals:
+        progress(int, int): bytes sent so far, total bytes.
+        outputLine(str): a line of remote stdout/stderr.
+        finished(int): exit code; -1 on error, cancellation or timeout.
+        error(str): a launch failure, timeout or I/O error.
+    """
+    progress = Signal(int, int)
+    outputLine = Signal(str)
+    finished = Signal(int)
+    error = Signal(str)
+
+    # Large enough that the per-chunk overhead is irrelevant, small enough that
+    # the bar still moves several times a second on a slow link.
+    CHUNK = 256 * 1024
+
+    def __init__(
+        self,
+        command: List[str],
+        local_path: str,
+        timeout_s: int = 600,
+        parent: Optional[QObject] = None,
+    ) -> None:
+        """
+        Args:
+            command: argv that reads the file body on stdin (see build_upload_cmd).
+            local_path: file to send.
+            timeout_s: watchdog for the whole transfer.
+            parent: parent QObject.
+        """
+        super().__init__(parent)
+        self.command = command
+        self.local_path = local_path
+        self.timeout_s = timeout_s
+        self._proc: Optional[subprocess.Popen] = None
+        self._cancelled = False
+        self._timed_out = False
+        self._watchdog: Optional[threading.Timer] = None
+
+    def run(self) -> None:
+        total = 0
+        try:
+            total = os.path.getsize(self.local_path)
+            creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+
+            self._proc = subprocess.Popen(
+                self.command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                creationflags=creationflags,
+            )
+
+            if self.timeout_s and self.timeout_s > 0:
+                self._watchdog = threading.Timer(self.timeout_s, self._on_timeout)
+                self._watchdog.daemon = True
+                self._watchdog.start()
+
+            sent = 0
+            self.progress.emit(0, total)
+            with open(self.local_path, "rb") as f:
+                while not self._cancelled:
+                    chunk = f.read(self.CHUNK)
+                    if not chunk:
+                        break
+                    self._proc.stdin.write(chunk)
+                    sent += len(chunk)
+                    self.progress.emit(sent, total)
+            try:
+                self._proc.stdin.close()
+            except OSError:
+                pass
+
+            # Anything the remote side said (an error from cat, a shell
+            # complaint) arrives after stdin closes.
+            if self._proc.stdout is not None:
+                for raw in iter(self._proc.stdout.readline, b""):
+                    line = raw.decode("utf-8", errors="replace").rstrip("\n")
+                    if line:
+                        self.outputLine.emit(line)
+
+            self._proc.wait()
+            if self._timed_out:
+                self.error.emit(f"Upload timed out after {self.timeout_s}s")
+                self.finished.emit(-1)
+            else:
+                self.finished.emit(self._proc.returncode if not self._cancelled else -1)
+        except Exception as e:
+            self.error.emit(str(e))
+            self.finished.emit(-1)
+        finally:
+            if self._watchdog is not None:
+                self._watchdog.cancel()
+                self._watchdog = None
+            self._proc = None
+
+    def _on_timeout(self) -> None:
+        self._timed_out = True
+        self.cancel()
+
+    def cancel(self) -> None:
+        """Kills the transfer if it is running."""
+        self._cancelled = True
+        if self._proc is not None:
+            try:
+                self._proc.terminate()
+                self._proc.wait(timeout=1)
+            except Exception:
+                pass
+            try:
+                self._proc.kill()
+            except Exception:
+                pass
+
+
 """
 Helpers to construct SSH/SCP commands.
 """
@@ -129,6 +256,25 @@ def build_ssh_cmd(host: str, user: str, port: int, key_path: str, cmd: str) -> L
         args.extend(["-i", key_path])
     args.extend([f"{user}@{host}", cmd])
     return args
+
+def build_upload_cmd(host: str, user: str, port: int, key_path: str, dest: str) -> List[str]:
+    """
+    Builds an ssh command that writes its stdin to `dest` on the target.
+
+    Args:
+        host, user, port, key_path: as for build_ssh_cmd.
+        dest: absolute path to write on the target.
+
+    Returns:
+        The argv list. Used with UploadWorker, which streams the file body and
+        counts the bytes so a transfer can report real progress.
+
+    The destination is shell-quoted: it is interpolated into a remote shell
+    command, and release names -- while constrained by the manifest rules --
+    come from a file on disk rather than from this program.
+    """
+    return build_ssh_cmd(host, user, port, key_path, f"cat > {shlex.quote(dest)}")
+
 
 def build_scp_cmd(host: str, user: str, port: int, key_path: str, src: str, dest: str) -> List[str]:
     """Builds a non-interactive scp command."""

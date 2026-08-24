@@ -5,16 +5,20 @@ Purpose: Main application window, layout, actions, and state machine.
 """
 import os
 import json
+import time
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QGroupBox, QFormLayout, QLineEdit,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QApplication,
+    QSplitter, QGroupBox, QFormLayout, QLineEdit, QProgressBar,
     QPlainTextEdit, QFileDialog, QMessageBox, QTabWidget
 )
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtCore import Qt, QSettings, QTimer
 from .devicepanel import DevicePanel, PANEL_PRESETS
-from .deployer import validate_bundle, package_bundle, detect_bundle, write_manifest
+from .deployer import (
+    BundleTooLargeError, validate_bundle, package_bundle, detect_bundle,
+    write_manifest,
+)
 from .telemetry import TelemetrySimulator, TelemetryRelay
-from .ssh import SshWorker, build_ssh_cmd
+from .ssh import SshWorker, UploadWorker, build_ssh_cmd, build_upload_cmd
 from .scaffold import create_bundle
 from .taglab import TagLabSender
 
@@ -49,6 +53,49 @@ INSTALL_TIMEOUT_S = 180
 SCP_BASE_TIMEOUT_S = 60
 SCP_MIN_BYTES_PER_S = 256 * 1024
 
+# ---- Deploy progress model --------------------------------------------------
+# Percentages are apportioned by how long each phase actually takes, not by how
+# many phases there are: on any real bundle the upload dominates everything
+# else, so a bar that gave each step equal weight would sit at 40% for minutes
+# and then sprint. Upload progress is exact (bytes sent); the install phase is
+# advanced by the installer's own STEP lines.
+PROGRESS_PACKAGED = 6
+PROGRESS_UPLOAD_START = 8
+PROGRESS_UPLOAD_END = 72
+PROGRESS_INSTALL_START = 75
+
+# Installer STEP tags in the order hmi-install emits them, mapped to the bar.
+# Tags absent from a given run (a first install emits no prune) simply never
+# fire; the bar is monotonic because each tag sets an absolute value.
+INSTALL_STEP_PROGRESS = {
+    "install-start": 76,
+    "validate-path": 78,
+    "verify-sha256": 82,
+    "extract": 88,
+    "validate-manifest": 90,
+    "save-previous": 91,
+    "swap-symlink": 93,
+    "restart-gui": 96,
+    "enable-boot": 98,
+    "prune": 99,
+    "install-complete": 100,
+}
+
+# What each STEP tag is doing, for the stage caption under the bar.
+INSTALL_STEP_LABEL = {
+    "install-start": "Starting install on the panel",
+    "validate-path": "Checking the uploaded bundle",
+    "verify-sha256": "Verifying checksum",
+    "extract": "Extracting release",
+    "validate-manifest": "Validating manifest on the target",
+    "save-previous": "Recording the current release for rollback",
+    "swap-symlink": "Switching the panel to the new release",
+    "restart-gui": "Restarting the UI and waiting for it to render",
+    "enable-boot": "Setting it as the boot default",
+    "prune": "Pruning old releases",
+    "install-complete": "Deployment complete",
+}
+
 
 class MainWindow(QMainWindow):
     def __init__(self, exit_after_ms=0):
@@ -74,9 +121,23 @@ class MainWindow(QMainWindow):
         # Every SSH/SCP worker still running. A deploy chains four of them, and
         # a QThread destroyed while running takes the process down with it.
         self._ssh_workers = []
+        # When the current bundle upload began, for the throughput line.
+        self._upload_started = 0.0
+        # Set once a deploy has failed, so later steps cannot paint over it.
+        self._deploy_failed = False
 
         self.setup_ui()
         self.apply_theme()
+
+        # closeEvent covers the user shutting the window, but not every way the
+        # application can end: app.quit(), the last window closing, or a signal
+        # all skip it. Any of those leaves the telemetry relay's QThread alive
+        # into interpreter shutdown, and Qt aborts the process when a running
+        # QThread is destroyed -- which surfaces as a crash on exit, right after
+        # a deploy, because a deploy is what starts the relay.
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._stop_all_senders)
 
         if self.bundle_dir and os.path.isdir(self.bundle_dir):
             self.load_bundle(self.bundle_dir)
@@ -243,6 +304,22 @@ class MainWindow(QMainWindow):
         self.btn_deploy.clicked.connect(self.on_deploy)
         self.btn_deploy.setEnabled(False)
         deploy_layout.addWidget(self.btn_deploy)
+
+        # Deployment progress. A deploy spends most of its wall clock inside
+        # one silent scp, so without this the tool looks frozen for minutes on
+        # a large bundle -- which has been reported as a hang more than once.
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(True)
+        self.progress.setFormat("%p%")
+        self.progress.setVisible(False)
+        deploy_layout.addWidget(self.progress)
+
+        self.lbl_stage = QLabel("")
+        self.lbl_stage.setWordWrap(True)
+        self.lbl_stage.setVisible(False)
+        deploy_layout.addWidget(self.lbl_stage)
 
         h_layout = QHBoxLayout()
         self.btn_rollback = QPushButton("Rollback")
@@ -493,6 +570,95 @@ class MainWindow(QMainWindow):
         if tags:
             self.start_simulator(tags)
 
+    # ------------------------------------------------------------------
+    # Deployment progress
+    # ------------------------------------------------------------------
+
+    def _progress_begin(self) -> None:
+        """Shows the bar at zero, in its neutral colour, for a new deploy."""
+        self.progress.setVisible(True)
+        self.progress.setFormat("%p%")
+        self.progress.setStyleSheet("")
+        self.progress.setValue(0)
+        self.lbl_stage.setVisible(True)
+        self.lbl_stage.setStyleSheet("color: #a1a1aa;")
+        self.lbl_stage.setText("Preparing...")
+        self._deploy_failed = False
+
+    def _progress_set(self, percent: int, stage: str = "") -> None:
+        """
+        Moves the bar forward.
+
+        Args:
+            percent: absolute value, 0-100.
+            stage: caption shown under the bar; blank leaves it unchanged.
+
+        Never moves backwards, and never overwrites a failure: once a deploy
+        has failed the bar must keep saying so until the next attempt.
+        """
+        if self._deploy_failed:
+            return
+        self.progress.setValue(max(self.progress.value(), int(percent)))
+        if stage:
+            self.lbl_stage.setText(stage)
+
+    def _progress_fail(self, reason: str) -> None:
+        """
+        Marks the deployment failed: red bar, the reason kept on screen.
+
+        A failed deploy that merely stops leaves the operator reading a
+        half-filled bar and guessing. The panel itself is safe either way --
+        the installer rolls back on its own -- but the tool still has to say
+        plainly that this attempt did not land.
+        """
+        self._deploy_failed = True
+        self.progress.setVisible(True)
+        self.progress.setFormat("Failed")
+        self.progress.setStyleSheet(
+            "QProgressBar::chunk { background-color: #ef4444; }"
+        )
+        self.lbl_stage.setVisible(True)
+        self.lbl_stage.setStyleSheet("color: #ef4444;")
+        self.lbl_stage.setText(reason)
+        self.log(f"DEPLOY FAILED: {reason}")
+        self.device_panel.set_led_state(3)
+
+    def _progress_succeed(self) -> None:
+        """Marks the deployment complete: full green bar."""
+        self.progress.setValue(100)
+        self.progress.setFormat("Deployed")
+        self.progress.setStyleSheet(
+            "QProgressBar::chunk { background-color: #22c55e; }"
+        )
+        self.lbl_stage.setStyleSheet("color: #22c55e;")
+        self.lbl_stage.setText("Running on the panel, and set as the boot default.")
+
+    def _on_install_line(self, line: str) -> None:
+        """
+        Advances the bar from the installer's machine-readable STEP output.
+
+        The installer prints `STEP <tag> <ok|fail> [detail]` for every stage it
+        completes (CONTRACT section 6), which is a far better progress source
+        than a timer: it reports what the panel has actually done. A `fail`
+        marks the deployment failed and names the step.
+        """
+        if not line.startswith("STEP "):
+            return
+        parts = line.split(None, 3)
+        if len(parts) < 3:
+            return
+        tag, status = parts[1], parts[2]
+        detail = parts[3] if len(parts) > 3 else ""
+
+        if status == "fail":
+            self._progress_fail(
+                f"{INSTALL_STEP_LABEL.get(tag, tag)} failed: {detail}".strip()
+            )
+            return
+        if tag in INSTALL_STEP_PROGRESS:
+            self._progress_set(INSTALL_STEP_PROGRESS[tag],
+                               INSTALL_STEP_LABEL.get(tag, tag))
+
     def log(self, text):
         self.console.appendPlainText(text)
         # scroll to bottom
@@ -525,7 +691,60 @@ class MainWindow(QMainWindow):
         )
         self.run_ssh_worker(cmd, "Test Connection", timeout_s=SSH_SHORT_TIMEOUT_S)
 
-    def run_ssh_worker(self, cmd, desc, callback=None, timeout_s=DEFAULT_SSH_TIMEOUT_S):
+    def run_upload_worker(self, cmd, local_path, total_bytes, desc, callback=None,
+                          timeout_s=DEFAULT_SSH_TIMEOUT_S):
+        """
+        Streams a file to the panel, driving the progress bar from bytes sent.
+
+        Args:
+            cmd: argv that consumes the file on stdin (build_upload_cmd).
+            local_path: the file to send.
+            total_bytes: its size, for the percentage.
+            desc: label used in the console.
+            callback: called with the exit code on completion.
+            timeout_s: watchdog for the whole transfer.
+
+        Side effects: same worker-lifetime handling as run_ssh_worker.
+        """
+        self.btn_deploy.setEnabled(False)
+        started = time.monotonic()
+        worker = UploadWorker(cmd, local_path, timeout_s=timeout_s, parent=self)
+        self._ssh_workers.append(worker)
+        worker.outputLine.connect(self.log)
+
+        span = PROGRESS_UPLOAD_END - PROGRESS_UPLOAD_START
+
+        def on_progress(sent, total):
+            if not total:
+                return
+            fraction = sent / total
+            self._progress_set(
+                PROGRESS_UPLOAD_START + fraction * span,
+                f"Uploading {sent / (1024 * 1024):.1f} / "
+                f"{total / (1024 * 1024):.1f} MB "
+                f"({sent / max(time.monotonic() - started, 1e-6) / 1024:.0f} KB/s)",
+            )
+
+        worker.progress.connect(on_progress)
+
+        def on_finished(code):
+            elapsed = time.monotonic() - started
+            self.log(f"{desc} exited with {code} ({elapsed:.0f}s)")
+            if code != 0:
+                self.device_panel.set_led_state(3)
+            self.btn_deploy.setEnabled(self.bundle_dir is not None)
+            worker.wait(2000)
+            if worker in self._ssh_workers:
+                self._ssh_workers.remove(worker)
+            if callback:
+                callback(code)
+
+        worker.finished.connect(on_finished)
+        worker.error.connect(self.log)
+        worker.start()
+
+    def run_ssh_worker(self, cmd, desc, callback=None, timeout_s=DEFAULT_SSH_TIMEOUT_S,
+                       heartbeat_s=0, line_hook=None):
         """
         Runs one SSH/SCP command off the UI thread and reports its exit code.
 
@@ -540,11 +759,22 @@ class MainWindow(QMainWindow):
                 every step: a mkdir answers instantly, an scp of a large bundle
                 takes minutes, and `hmi-install install` deliberately blocks for
                 up to GUI_READY_TIMEOUT (25 s) waiting for the panel to render.
+            heartbeat_s: when non-zero, write a console line every this many
+                seconds for as long as the command runs. scp prints its progress
+                meter only to a terminal, so a multi-minute upload through a
+                pipe produces no output at all until it finishes -- which reads
+                as a hang, and has been reported as one. A step that says how
+                long it has been running is the difference between "working"
+                and "frozen".
+            line_hook: called with every output line, in addition to the
+                console. The install step uses it to drive the progress bar
+                from the installer's own STEP output.
 
         Side effects: disables the deploy button for the duration, keeps the
         worker referenced until its thread has actually finished.
         """
         self.btn_deploy.setEnabled(False)
+        started = time.monotonic()
         worker = SshWorker(cmd, timeout_s=timeout_s, parent=self)
         # Hold a strong reference for the lifetime of the thread. Overwriting a
         # single self.ssh_worker attribute -- which is what the chained deploy
@@ -554,9 +784,23 @@ class MainWindow(QMainWindow):
         self._ssh_workers.append(worker)
         self.ssh_worker = worker
         worker.outputLine.connect(self.log)
+        if line_hook is not None:
+            worker.outputLine.connect(line_hook)
+
+        pulse = None
+        if heartbeat_s > 0:
+            pulse = QTimer(self)
+            pulse.setInterval(heartbeat_s * 1000)
+            pulse.timeout.connect(
+                lambda: self.log(f"  {desc}: {time.monotonic() - started:.0f}s elapsed...")
+            )
+            pulse.start()
 
         def on_finished(code):
-            self.log(f"{desc} exited with {code}")
+            if pulse is not None:
+                pulse.stop()
+            elapsed = time.monotonic() - started
+            self.log(f"{desc} exited with {code} ({elapsed:.0f}s)")
             if code == 0:
                 self.device_panel.set_led_state(1)  # Link up
                 if desc == "Test Connection":
@@ -588,12 +832,18 @@ class MainWindow(QMainWindow):
         """
         self.save_settings()
         self.log(f"Deploying {self.bundle_dir}...")
+        self._progress_begin()
         try:
             import tempfile
             out_dir = tempfile.mkdtemp()
+            self._progress_set(2, "Packaging bundle...")
             tar_path, sha256_path = package_bundle(self.bundle_dir, out_dir)
             tar_size = os.path.getsize(tar_path)
             self.log(f"Packaged to {tar_path} ({tar_size / (1024 * 1024):.1f} MB)")
+            self._progress_set(
+                PROGRESS_PACKAGED,
+                f"Packaged {tar_size / (1024 * 1024):.1f} MB",
+            )
 
             host = self.inp_host.text().strip()
             user = self.inp_user.text().strip()
@@ -604,51 +854,79 @@ class MainWindow(QMainWindow):
             # kill the transfer partway and leave a truncated file in the tmpfs.
             scp_timeout = SCP_BASE_TIMEOUT_S + int(tar_size / SCP_MIN_BYTES_PER_S)
 
-            # Step 1: Create /tmp/hmi_upload and scp files
+            # Step 1: Create /tmp/hmi_upload and upload the bundle
             from .ssh import build_scp_cmd
             cmd_mkdir = build_ssh_cmd(host, user, 22, key, "mkdir -p /tmp/hmi_upload")
+            tar_name = os.path.basename(tar_path)
 
             def on_mkdir(code):
                 if code != 0:
-                    self.log("Deploy aborted: could not create /tmp/hmi_upload on the panel.")
+                    self._progress_fail(
+                        "Could not create /tmp/hmi_upload on the panel."
+                    )
                     return
-                cmd_scp1 = build_scp_cmd(host, user, 22, key, tar_path, "/tmp/hmi_upload/")
-                self.run_ssh_worker(cmd_scp1, "SCP tarball", on_scp1, timeout_s=scp_timeout)
+                self.log(
+                    f"Uploading {tar_size / (1024 * 1024):.1f} MB to {user}@{host} "
+                    f"(allowing up to {scp_timeout}s)..."
+                )
+                self._progress_set(PROGRESS_UPLOAD_START, "Uploading bundle...")
+                self._upload_started = time.monotonic()
+                self.run_upload_worker(
+                    build_upload_cmd(host, user, 22, key, f"/tmp/hmi_upload/{tar_name}"),
+                    tar_path, tar_size, "Upload", on_upload, timeout_s=scp_timeout,
+                )
 
-            def on_scp1(code):
+            def on_upload(code):
                 if code != 0:
-                    self.log("Deploy aborted: bundle upload failed.")
+                    self._progress_fail("Bundle upload failed.")
                     return
+                elapsed = max(time.monotonic() - self._upload_started, 1e-6)
+                self.log(
+                    f"Uploaded {tar_size / (1024 * 1024):.1f} MB in {elapsed:.0f}s "
+                    f"({tar_size / elapsed / 1024:.0f} KB/s)."
+                )
+                self._progress_set(PROGRESS_UPLOAD_END, "Uploading checksum...")
                 cmd_scp2 = build_scp_cmd(host, user, 22, key, sha256_path, "/tmp/hmi_upload/")
                 self.run_ssh_worker(cmd_scp2, "SCP sha256", on_scp2, timeout_s=SSH_SHORT_TIMEOUT_S)
 
             def on_scp2(code):
                 if code != 0:
-                    self.log("Deploy aborted: checksum upload failed.")
+                    self._progress_fail("Checksum upload failed.")
                     return
-                tar_name = os.path.basename(tar_path)
+                self._progress_set(PROGRESS_INSTALL_START, "Installing on the panel...")
                 cmd_install = build_ssh_cmd(host, user, 22, key, f"hmi-install install /tmp/hmi_upload/{tar_name}")
                 # The installer blocks for up to its own GUI_READY_TIMEOUT
                 # waiting for the panel to render, then may roll back and
                 # restart again, so it needs far more headroom than a shell
                 # command that answers immediately.
                 self.run_ssh_worker(
-                    cmd_install, "Install", on_install, timeout_s=INSTALL_TIMEOUT_S
+                    cmd_install, "Install", on_install,
+                    timeout_s=INSTALL_TIMEOUT_S, heartbeat_s=5,
+                    line_hook=self._on_install_line,
                 )
 
             def on_install(code):
-                if code == 0:
+                if code == 0 and not self._deploy_failed:
                     self.log("Deployment complete.")
-                else:
-                    self.log(f"Deployment FAILED (hmi-install exit {code}).")
+                    self._progress_succeed()
+                elif not self._deploy_failed:
+                    # A non-zero exit with no failing STEP line: the installer
+                    # died before it could report which stage broke.
+                    self._progress_fail(
+                        f"hmi-install exited {code}. See the console for the last step reached."
+                    )
                 self.start_relay()
 
             self.run_ssh_worker(
                 cmd_mkdir, "Mkdir", on_mkdir, timeout_s=SSH_SHORT_TIMEOUT_S
             )
 
+        except BundleTooLargeError as e:
+            self._progress_fail("Bundle is too large for the panel.")
+            self.log(str(e))
+            QMessageBox.critical(self, "Bundle too large", str(e))
         except Exception as e:
-            self.log(f"Deploy failed: {e}")
+            self._progress_fail(f"Could not start the deployment: {e}")
 
     def on_rollback(self):
         self.save_settings()
