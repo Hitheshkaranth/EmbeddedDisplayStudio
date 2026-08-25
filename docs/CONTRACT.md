@@ -236,9 +236,15 @@ A mismatch between `runtime` and the `entry` extension is a validation error,
 because it would otherwise fail only on the target. Since all callers share
 `schema/manifest.py`, this is enforced everywhere by construction.
 
-The desktop tool can preview a `qml` bundle faithfully. A `python` bundle cannot
-be composited into another process's QML scene, so the bezel shows the target
-geometry and an explicit note rather than a blank screen.
+The desktop tool previews both kinds in the bezel. A `qml` bundle is loaded
+into its QQuickWidget directly. A `python` bundle cannot be composited into
+another process's QML scene, so it is run unmodified in a child process at the
+target resolution and its rendered frames are streamed back and painted into
+the bezel; the window is kept off the screen with `WA_DontShowOnScreen` rather
+than by selecting the offscreen platform plugin, which carries no font database
+and would render every string as an empty box. Where that cannot run -- a
+PySide2 bundle with no PySide2 interpreter on the host -- the bezel shows the
+target geometry and an explicit note rather than a blank screen.
 
 ## 5. systemd units
 

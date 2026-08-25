@@ -226,6 +226,9 @@ class MainWindow(QMainWindow):
         panel_layout.setSpacing(10)
 
         self.device_panel = DevicePanel()
+        # A native preview that cannot run explains itself here rather than
+        # leaving the bezel silently showing the placeholder card.
+        self.device_panel.previewMessage.connect(self.log)
         panel_layout.addWidget(self.device_panel, 1)
 
         caption = QHBoxLayout()
@@ -1027,4 +1030,5 @@ class MainWindow(QMainWindow):
         """Release every local/remote telemetry source before closing."""
         self._stop_all_senders()
         self._discard_packaging_dir()
+        self.device_panel.stop_preview()
         super().closeEvent(event)

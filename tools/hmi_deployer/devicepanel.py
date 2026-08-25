@@ -7,11 +7,13 @@ Purpose: The centred hardware mock-up of the panel with a live QML preview.
 import os
 import sys
 import logging
-from PySide6.QtCore import Qt, QUrl, QRectF, QPropertyAnimation, Property, QRect
-from PySide6.QtGui import QPainter, QColor, QPainterPath, QPen
+from PySide6.QtCore import Qt, QUrl, QRectF, QPropertyAnimation, Property, QRect, Signal
+from PySide6.QtGui import QPainter, QColor, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PySide6.QtQuickWidgets import QQuickWidget
 from PySide6.QtQml import QQmlComponent, QQmlContext
+
+from .native_preview import NativePreview
 
 # Add repo's gui/ to sys.path to import tagengine
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -65,7 +67,16 @@ MIN_PANEL_HEIGHT = 520
 class DevicePanel(QWidget):
     """
     Renders the hardware mock-up of the panel.
+
+    Signals:
+        previewMessage(str): something the user should read about the preview,
+            forwarded to the console panel. Used when a native preview cannot
+            run, where the reason ("no PySide2 interpreter here", a traceback
+            from the app) is the whole value of the message.
     """
+
+    previewMessage = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # Hard floor on the preview. The bezel is aspect-locked, so the widget
@@ -92,6 +103,27 @@ class DevicePanel(QWidget):
         # ui/qml needs to be added
         UI_QML_DIR = os.path.join(REPO_ROOT, "ui", "qml")
         self.quick_widget.engine().addImportPath(UI_QML_DIR)
+
+        # Where frames from a runtime=python bundle are painted.
+        #
+        # A Qt Widgets application cannot be composited into the QQuickWidget
+        # above -- it owns its own QApplication and window -- so it is rendered
+        # offscreen in a child process and the resulting frames are shown here.
+        # The two views occupy the same rect and only one is ever visible.
+        self.native_view = QLabel(self)
+        self.native_view.setAlignment(Qt.AlignCenter)
+        self.native_view.setStyleSheet("background: #2b2b2b;")
+        self.native_view.setScaledContents(False)
+        self.native_view.hide()
+
+        self.native_preview = NativePreview(self)
+        self.native_preview.frameReady.connect(self._on_preview_frame)
+        self.native_preview.failed.connect(self._on_preview_failed)
+        self.native_preview.stopped.connect(self._on_preview_stopped)
+
+        # The most recent frame at full target resolution, kept so a resize can
+        # rescale without waiting for the next one.
+        self._native_frame = None
 
         self.tag_engine = None
 
@@ -158,6 +190,14 @@ class DevicePanel(QWidget):
         self.update_geometry()
         self.update()
 
+        # A native preview renders at a fixed size in its own process, so a new
+        # panel size means restarting it. The QML preview needs no equivalent:
+        # its root object is resized in place by the QQuickWidget.
+        if self.native_preview.is_running() and self.manifest is not None:
+            self.native_preview.start(
+                self.bundle_dir, self.manifest, self.target_width, self.target_height
+            )
+
     def resolution_text(self) -> str:
         """Returns the current resolution formatted for the caption strip."""
         return f"{self.target_width} x {self.target_height}"
@@ -211,20 +251,114 @@ class DevicePanel(QWidget):
         runtime = manifest.get("runtime", "qml")
 
         if runtime == "python":
-            # A Qt Widgets app creates its own QApplication and top-level window,
-            # so there is nothing to composite into this QQuickWidget. Show the
-            # explanatory screen instead of a blank rectangle, and keep the bezel
-            # at the target geometry so the size check is still meaningful.
-            ctx.setContextProperty("appName", manifest.get("name", "application"))
-            ctx.setContextProperty("appEntry", entry)
-            ctx.setContextProperty("appVersion", manifest.get("version", ""))
-            placeholder = os.path.join(os.path.dirname(__file__), "resources", "native_preview.qml")
-            self.quick_widget.setSource(QUrl.fromLocalFile(placeholder))
+            # A Qt Widgets app owns its own QApplication and window, so it
+            # cannot be composited into the QQuickWidget. It is rendered
+            # offscreen in a child process at the target resolution instead,
+            # and its frames are painted into the bezel -- see
+            # native_preview.py. If that cannot run here (a PySide2 bundle with
+            # no PySide2 interpreter on this machine, an app that never opens a
+            # window), _on_preview_failed puts the explanatory card back.
+            self._show_native_placeholder(manifest, entry)
+            self.native_preview.start(
+                bundle_dir, manifest, self.target_width, self.target_height
+            )
         else:
+            self.native_preview.stop()
+            self._show_qml_view()
             entry_path = os.path.join(bundle_dir, entry)
             self.quick_widget.setSource(QUrl.fromLocalFile(entry_path))
-        
+
         self.update_geometry()
+
+    # ------------------------------------------------------- native preview
+
+    def _show_qml_view(self) -> None:
+        """Make the QML view the visible one and drop any held frame."""
+        self._native_frame = None
+        self.native_view.hide()
+        self.native_view.clear()
+        self.quick_widget.show()
+
+    def _show_native_placeholder(self, manifest: dict, entry: str) -> None:
+        """Show the explanatory card in the bezel.
+
+        Args:
+            manifest: the loaded manifest, for the app name and version.
+            entry:    the manifest entry path, shown so the user can see which
+                      file the preview is trying to run.
+
+        Used while the child process starts, and left in place if it cannot.
+        """
+        ctx = self.quick_widget.rootContext()
+        ctx.setContextProperty("appName", manifest.get("name", "application"))
+        ctx.setContextProperty("appEntry", entry)
+        ctx.setContextProperty("appVersion", manifest.get("version", ""))
+        placeholder = os.path.join(
+            os.path.dirname(__file__), "resources", "native_preview.qml"
+        )
+        self.quick_widget.setSource(QUrl.fromLocalFile(placeholder))
+        self._show_qml_view()
+
+    def _on_preview_frame(self, image) -> None:
+        """Paint one rendered frame from the running application.
+
+        Args:
+            image: a QImage at the target panel resolution.
+
+        Side effects: hides the QML view the first time a frame arrives, so the
+        explanatory card is replaced the moment there is something real to show.
+        """
+        self._native_frame = image
+        if self.native_view.isHidden():
+            self.quick_widget.hide()
+            self.native_view.show()
+        self._rescale_native_frame()
+
+    def _rescale_native_frame(self) -> None:
+        """Fit the held frame to the screen rect, preserving aspect ratio.
+
+        The frame is rendered at the target resolution and the bezel's screen
+        area is whatever fits on this monitor, so it is scaled on display for
+        the same reason the QML preview is: what is being judged is the layout
+        at the panel's geometry, not its pixel size on a laptop.
+        """
+        if self._native_frame is None:
+            return
+        rect = self.native_view.size()
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
+        self.native_view.setPixmap(
+            QPixmap.fromImage(self._native_frame).scaled(
+                rect, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+        )
+
+    def _on_preview_failed(self, message: str) -> None:
+        """Fall back to the explanatory card and surface the reason.
+
+        Args:
+            message: why the preview could not run, already written for a user.
+        """
+        logging.warning("%s", message)
+        self.previewMessage.emit(message)
+        self._show_qml_view()
+
+    def stop_preview(self) -> None:
+        """Terminate any running native preview.
+
+        Called when the window closes and before a deploy, so a child process
+        rendering frames never outlives the thing that was showing them.
+        """
+        self.native_preview.stop()
+
+    def _on_preview_stopped(self) -> None:
+        """The application exited; keep the last frame rather than blanking.
+
+        A closed app is not the same as a broken one, and a bezel that goes
+        empty the moment the process ends tells the user less than the final
+        frame does.
+        """
+        logging.info("Native preview stopped")
 
     def update_geometry(self):
         """Update QQuickWidget geometry inside the bezel"""
@@ -264,6 +398,10 @@ class DevicePanel(QWidget):
         sh = bh - 2 * margin
         
         self.quick_widget.setGeometry(int(sx), int(sy), int(sw), int(sh))
+        # The native frame view occupies the same screen rect; only one of the
+        # two is ever visible.
+        self.native_view.setGeometry(int(sx), int(sy), int(sw), int(sh))
+        self._rescale_native_frame()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

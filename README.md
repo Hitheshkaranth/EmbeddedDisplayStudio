@@ -250,8 +250,15 @@ the panel, then push it.
   panel's aspect ratio.
 * **Adopts apps that were never written for this platform** — point it at an
   existing Qt project with no `manifest.json` and it detects the entry point,
-  proposes a manifest and writes it for you. QML apps preview live; Python/Qt
-  Widgets apps are deployed as the GUI process itself.
+  proposes a manifest and writes it for you.
+* **Qt Widgets apps preview live too.** A `runtime: python` bundle owns its own
+  window, so it cannot be composited into the QML scene. It is run unmodified
+  in a child process instead, forced to the target resolution, and its frames
+  are streamed into the bezel — so you see the real application, with real
+  fonts, before you deploy it. Nothing appears on your desktop: the window is
+  kept unmapped with `WA_DontShowOnScreen`. A PySide2 bundle needs a PySide2
+  interpreter on your machine; point `HMI_PREVIEW_PYTHON_QT5` at one, or skip
+  it — the bundle still deploys and runs on the panel's own Qt5 runtime.
 * Deploy, rollback, restart and journal tail, all off the UI thread.
 
 <div align="center">
@@ -374,6 +381,7 @@ python tests/run_all.py          # 153 tests
 | Fallback screen | the card lays out, sections do not overlap, the error text is shown |
 | Design tokens | `tokens.json` and `Theme.qml` cannot drift |
 | Gallery render | painted pixels asserted, not just "it ran" |
+| Native preview | a real Qt Widgets app renders at the target resolution with content |
 
 > **Run the installer tests on Linux.** Windows has no `flock`, so the
 > atomic-swap and cross-validator suites skip there rather than pretending to
