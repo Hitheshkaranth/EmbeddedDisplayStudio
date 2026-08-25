@@ -8,9 +8,9 @@ import argparse
 import logging
 import os
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QElapsedTimer, QTimer
 from PySide6.QtGui import QColor, QIcon, QPixmap
-from PySide6.QtWidgets import QApplication, QSplashScreen
+from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QSplashScreen
 
 from .mainwindow import MainWindow
 
@@ -24,6 +24,7 @@ LOGO_PATH = os.path.join(os.path.dirname(__file__), "resources", "logo.png")
 # several seconds of nothing on screen after a double-click reads as a launch
 # that failed.
 SPLASH_PATH = os.path.join(os.path.dirname(__file__), "resources", "splash.png")
+SPLASH_HOLD_MS = 5_000
 
 def main():
     parser = argparse.ArgumentParser(
@@ -48,14 +49,58 @@ def main():
     app.setWindowIcon(QIcon(str(LOGO_PATH)))
     
     splash = None
+    splash_progress = None
+    splash_status = None
     pixmap = QPixmap(str(SPLASH_PATH))
     if not pixmap.isNull():
+        # The original artwork was composed for a much larger launch window.
+        # Keep its proportions but present it at half scale in Studio.
+        pixmap = pixmap.scaled(
+            max(1, pixmap.width() // 2),
+            max(1, pixmap.height() // 2),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
         splash = QSplashScreen(pixmap)
+        # PDB-4000-style launch feedback: a thin dark track with a blue
+        # gradient, plus an explicit 0--100% status line.
+        progress_margin = max(24, pixmap.width() // 14)
+        progress_y = pixmap.height() - max(28, pixmap.height() // 10)
+        splash_progress = QProgressBar(splash)
+        splash_progress.setRange(0, 100)
+        splash_progress.setValue(0)
+        splash_progress.setTextVisible(False)
+        splash_progress.setGeometry(
+            progress_margin, progress_y,
+            pixmap.width() - 2 * progress_margin, 12,
+        )
+        splash_progress.setStyleSheet("""
+            QProgressBar {
+                background: #09090b;
+                border: 1px solid #3f3f46;
+                border-radius: 6px;
+            }
+            QProgressBar::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #006fee, stop:1 #38bdf8);
+                border-radius: 5px;
+            }
+        """)
+        splash_status = QLabel("Loading 0%", splash)
+        splash_status.setGeometry(
+            progress_margin, progress_y - 22,
+            pixmap.width() - 2 * progress_margin, 18,
+        )
+        splash_status.setAlignment(Qt.AlignCenter)
+        splash_status.setStyleSheet(
+            "color: #ecedee; background: transparent; font-size: 10px; font-weight: 700;"
+        )
         splash.showMessage(
             "Starting…",
             Qt.AlignBottom | Qt.AlignHCenter,
             QColor("#f8fafc"),
         )
+        splash.clearMessage()
         splash.show()
         # The window is built on this thread, so the splash only ever paints if
         # it is given the chance before that starts.
@@ -69,17 +114,38 @@ def main():
         if os.path.isdir(bundle_abs):
             window.load_bundle(bundle_abs)
         
-    window.show()
-    if splash is not None:
-        splash.finish(window)
-    
-    if args.capture_bezel:
-        def grab():
+    def grab():
+        if args.capture_bezel:
             window.device_panel.grab().save(args.capture_bezel)
             if args.exit_after > 0:
                 app.quit()
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(max(100, args.exit_after - 1000), grab)
+
+    def show_studio():
+        window.show()
+        if splash is not None:
+            splash.finish(window)
+        if args.capture_bezel:
+            QTimer.singleShot(max(100, args.exit_after - 1000), grab)
+
+    if splash is None:
+        QTimer.singleShot(0, show_studio)
+    else:
+        # The window is shown only after the splash reaches 100%, not merely
+        # after a fixed delay in the background.
+        splash_clock = QElapsedTimer()
+        splash_clock.start()
+
+        def advance_splash_progress():
+            elapsed = splash_clock.elapsed()
+            percent = min(100, round(elapsed * 100 / SPLASH_HOLD_MS))
+            splash_progress.setValue(percent)
+            splash_status.setText(f"Loading {percent}%")
+            if percent < 100:
+                QTimer.singleShot(40, advance_splash_progress)
+            else:
+                QTimer.singleShot(80, show_studio)
+
+        QTimer.singleShot(0, advance_splash_progress)
 
     sys.exit(app.exec())
 

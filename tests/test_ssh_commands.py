@@ -6,6 +6,7 @@ from unittest import mock
 
 from tools.hmi_deployer import ssh
 from tools.hmi_deployer.mainwindow import (
+    MEMORY_PROFILE_COMMAND,
     format_bytes,
     format_kib,
     parse_display_resolution,
@@ -69,6 +70,37 @@ class TestMemoryProfileParsing(unittest.TestCase):
         """Large target measurements remain readable inside cards and bars."""
         self.assertEqual(format_kib(1024 * 1024), "1.00 GiB")
         self.assertEqual(format_bytes(1024 * 1024), "1.0 MiB")
+
+    def test_cheap_fields_are_emitted_before_the_compression_step(self):
+        """Storage and RAM must not queue behind a multi-minute tar.
+
+        Recompressing a 300 MiB release takes about three minutes. While it sat
+        ahead of these fields the profile tab showed zeroes for all of them for
+        the whole run, which is indistinguishable from a refresh that failed.
+        """
+        compression = MEMORY_PROFILE_COMMAND.index("tar -C")
+        for field in (
+            "HMI_PROFILE_RELEASE=",
+            "HMI_PROFILE_APP_KB=",
+            "HMI_PROFILE_RELEASES_KB=",
+            "HMI_PROFILE_ROOT_KB=",
+            "HMI_PROFILE_USED_KB=",
+            "HMI_PROFILE_FREE_KB=",
+            "HMI_PROFILE_RAM_AVAILABLE_KB=",
+        ):
+            self.assertLess(
+                MEMORY_PROFILE_COMMAND.index(field),
+                compression,
+                f"{field} is reported only after the compression measurement",
+            )
+
+    def test_compressed_size_is_still_reported_on_both_paths(self):
+        """Splitting the command must not lose the field on either branch."""
+        self.assertEqual(MEMORY_PROFILE_COMMAND.count("HMI_PROFILE_COMPRESSED_BYTES="), 2)
+        self.assertGreater(
+            MEMORY_PROFILE_COMMAND.index("HMI_PROFILE_STAGE="),
+            MEMORY_PROFILE_COMMAND.index("HMI_PROFILE_RAM_AVAILABLE_KB="),
+        )
 
 
 if __name__ == "__main__":

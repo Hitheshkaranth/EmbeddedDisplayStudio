@@ -7,7 +7,7 @@ Purpose: The centred hardware mock-up of the panel with a live QML preview.
 import os
 import sys
 import logging
-from PySide6.QtCore import Qt, QUrl, QRectF, QPropertyAnimation, Property, QRect, Signal
+from PySide6.QtCore import Qt, QUrl, QRectF, QPropertyAnimation, Property, QRect, Signal, QTimer
 from PySide6.QtGui import QPainter, QColor, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PySide6.QtQuickWidgets import QQuickWidget
@@ -83,6 +83,9 @@ class DevicePanel(QWidget):
         # can still be given more room than this, but never less - the splitter
         # is prevented from squeezing the panel down to an unreadable sliver.
         self.setMinimumSize(MIN_PANEL_WIDTH, MIN_PANEL_HEIGHT)
+        self.setObjectName("devicePanel")
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAutoFillBackground(False)
 
         self.manifest = None
         self.bundle_dir = None
@@ -91,6 +94,12 @@ class DevicePanel(QWidget):
         # Physical diagonal of the selected panel, in inches. Decides how large
         # the bezel draws relative to the other presets; see _physical_scale.
         self.target_inches = 10.1
+        # The same FlyVi wordmark used on the reference hardware bezel. It is
+        # painted on the lower-right bezel margin, never over the active LCD.
+        logo_path = os.path.join(
+            os.path.dirname(__file__), "resources", "flyvi_logo_full.png"
+        )
+        self._bezel_logo = QPixmap(logo_path)
         
         # LED state: 0 = idle/disconnected, 1 = link up, 2 = deploying, 3 = fault
         self._led_state = 0
@@ -98,9 +107,9 @@ class DevicePanel(QWidget):
         # Setup QQuickWidget for the screen
         self.quick_widget = QQuickWidget(self)
         self.quick_widget.setResizeMode(QQuickWidget.SizeRootObjectToView)
-        # We need to set the background transparent if we want the idle color to show, 
-        # but the QQuickWidget fills its own rect. 
-        self.quick_widget.setClearColor(QColor("#2b2b2b"))
+        # The device framebuffer itself is a dark grey; the area *around* the
+        # bezel stays transparent so it inherits the Studio canvas.
+        self.quick_widget.setClearColor(QColor("#343434"))
         
         # We add Shadcn QML import path
         # ui/qml needs to be added
@@ -115,9 +124,23 @@ class DevicePanel(QWidget):
         # The two views occupy the same rect and only one is ever visible.
         self.native_view = QLabel(self)
         self.native_view.setAlignment(Qt.AlignCenter)
-        self.native_view.setStyleSheet("background: #2b2b2b;")
+        self.native_view.setStyleSheet("background: #343434;")
         self.native_view.setScaledContents(False)
         self.native_view.hide()
+
+        # QML is composed at the real panel dimensions offscreen, then its
+        # framebuffer is fitted into the physical screen opening below. This
+        # prevents the desktop preview from reflowing the root object to the
+        # bezel's on-screen size and preserves device clipping exactly.
+        self.qml_view = QLabel(self)
+        self.qml_view.setAlignment(Qt.AlignCenter)
+        self.qml_view.setStyleSheet("background: #343434;")
+        self.qml_view.setScaledContents(False)
+        self.qml_view.hide()
+        self._qml_frame = None
+        self._qml_capture_timer = QTimer(self)
+        self._qml_capture_timer.setInterval(33)
+        self._qml_capture_timer.timeout.connect(self._capture_qml_frame)
 
         self.native_preview = NativePreview(self)
         self.native_preview.frameReady.connect(self._on_preview_frame)
@@ -292,7 +315,33 @@ class DevicePanel(QWidget):
         self._native_frame = None
         self.native_view.hide()
         self.native_view.clear()
+        self.qml_view.show()
         self.quick_widget.show()
+        if not self._qml_capture_timer.isActive():
+            self._qml_capture_timer.start()
+
+    def _capture_qml_frame(self) -> None:
+        """Capture the target-resolution QML framebuffer for the bezel."""
+        if self.quick_widget.isHidden() or self.manifest is None:
+            return
+        image = self.quick_widget.grabFramebuffer()
+        if image.isNull():
+            return
+        self._qml_frame = image
+        self._rescale_qml_frame()
+
+    def _rescale_qml_frame(self) -> None:
+        """Fit the real panel framebuffer inside the bezel screen opening."""
+        if self._qml_frame is None:
+            return
+        rect = self.qml_view.size()
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
+        self.qml_view.setPixmap(
+            QPixmap.fromImage(self._qml_frame).scaled(
+                rect, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+        )
 
     def _show_native_placeholder(self, manifest: dict, entry: str) -> None:
         """Show the explanatory card in the bezel.
@@ -326,6 +375,7 @@ class DevicePanel(QWidget):
         self._native_frame = image
         if self.native_view.isHidden():
             self.quick_widget.hide()
+            self.qml_view.hide()
             self.native_view.show()
         self._rescale_native_frame()
 
@@ -365,6 +415,7 @@ class DevicePanel(QWidget):
         rendering frames never outlives the thing that was showing them.
         """
         self.native_preview.stop()
+        self._qml_capture_timer.stop()
 
     def _on_preview_stopped(self) -> None:
         """The application exited; keep the last frame rather than blanking.
@@ -390,6 +441,16 @@ class DevicePanel(QWidget):
     # [MIN_PHYSICAL_SCALE, 1.0]: a 5" panel still reads as clearly smaller than
     # a 12" one without becoming unusable.
     MIN_PHYSICAL_SCALE = 0.62
+
+    # How much of the pane the bezel fills, before physical scaling. Raised 20%
+    # from the original 0.90: the preview is the thing being judged, and it was
+    # leaving more of the pane empty than the panel occupied.
+    BEZEL_FILL_PCT = 0.9 * 1.2
+
+    # The bezel is centred in the pane, so a fill of 1.0 would put its edge
+    # exactly on the pane's. This keeps a sliver of margin at the largest
+    # diagonal, where the raised fill would otherwise overrun.
+    MAX_BEZEL_FILL_PCT = 0.98
 
     def _physical_scale(self) -> float:
         """Return how large this panel draws relative to the biggest one.
@@ -431,7 +492,9 @@ class DevicePanel(QWidget):
             self.target_height + 2 * (bezel_width_px * self.BEZEL_MARGIN_PCT)
         )
 
-        fill = 0.9 * self._physical_scale()
+        fill = min(
+            self.MAX_BEZEL_FILL_PCT, self.BEZEL_FILL_PCT * self._physical_scale()
+        )
         if w / h > bezel_aspect:
             bh = h * fill
             bw = bh * bezel_aspect
@@ -458,11 +521,19 @@ class DevicePanel(QWidget):
         sw = bw - 2 * margin
         sh = bh - 2 * margin
 
-        self.quick_widget.setGeometry(int(sx), int(sy), int(sw), int(sh))
-        # The native frame view occupies the same screen rect; only one of the
-        # two is ever visible.
+        # Compose QML at the actual device resolution. It remains outside the
+        # visible widget bounds; grabFramebuffer() yields the unclipped target
+        # framebuffer, which qml_view displays inside the screen opening.
+        self.quick_widget.setGeometry(
+            -self.target_width - 8, -self.target_height - 8,
+            self.target_width, self.target_height,
+        )
+        # The two visible frame views occupy the physical screen opening; only
+        # one is shown at a time.
         self.native_view.setGeometry(int(sx), int(sy), int(sw), int(sh))
+        self.qml_view.setGeometry(int(sx), int(sy), int(sw), int(sh))
         self._rescale_native_frame()
+        self._rescale_qml_frame()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -489,10 +560,28 @@ class DevicePanel(QWidget):
         bezel_path = QPainterPath()
         bezel_path.addRoundedRect(bezel_rect, 28, 28)
         painter.fillPath(bezel_path, QColor("#050505"))
-        
+
+        # The same inset defines both the active LCD opening and the hardware
+        # logo location in the lower bezel margin.
+        margin = bw * self.BEZEL_MARGIN_PCT
+
+        # Brand mark on the lower-right bezel, positioned within the physical
+        # margin below the display just as it is on the deployed hardware.
+        if not self._bezel_logo.isNull():
+            # Keep the whole mark inside the lower bezel margin, including on
+            # the smallest selectable panel. This is deliberately tied to the
+            # available margin rather than an absolute preview size.
+            logo_height = int(max(14, min(46, margin * 0.52)))
+            logo = self._bezel_logo.scaledToHeight(
+                logo_height, Qt.SmoothTransformation
+            )
+            logo_x = int(bx + bw - margin * 0.56 - logo.width())
+            screen_bottom = by + bh - margin
+            logo_y = int(screen_bottom + (margin - logo.height()) / 2)
+            painter.drawPixmap(logo_x, logo_y, logo)
+
         # LED: top-left corner
         # ~10px diameter, position it inside the bezel margin
-        margin = bw * self.BEZEL_MARGIN_PCT
         led_radius = 5.0
         # Place roughly in the center of the top margin area (x: left margin / 2, y: top margin / 2)
         led_cx = bx + margin / 2

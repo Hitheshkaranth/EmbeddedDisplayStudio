@@ -127,9 +127,8 @@ class NativePreviewRendersARealApp(unittest.TestCase):
 
     def test_a_frame_arrives_at_the_target_resolution(self):
         """
-        The point of the bezel is judging a layout at the panel's geometry, so
-        the frame must come back at the requested size -- not at whatever size
-        the application happened to call resize() with.
+        The panel framebuffer must come back at the requested size, while the
+        application inside it keeps its own authored geometry.
         """
         image, failure = self._await_frame(1280, 800)
         self.assertIsNotNone(image, f"no frame arrived: {failure}")

@@ -17,10 +17,12 @@ before deploying it.
 
 THE APPROACH
 ------------
-Run the application, unmodified, in a child process, force its main window to
-the target panel resolution, and stream rendered frames back. QWidget.grab()
-renders through QPainter rather than through the window system, so the image is
-produced without the window ever being mapped.
+Run the application, unmodified, in a child process, preserve its own window
+geometry, and stream it inside a target-resolution panel framebuffer.
+QWidget.grab() renders through QPainter rather than through the window system,
+so the image is produced without the window ever being mapped. Smaller desktop
+applications are centred with letterbox space; oversized applications are
+clipped at the panel edge exactly as a physical display would clip them.
 
 The window is kept off the screen with WA_DontShowOnScreen rather than by
 selecting Qt's offscreen platform plugin. That plugin carries no font database
@@ -110,9 +112,11 @@ _FPS = float(os.environ.get("HMI_PREVIEW_FPS", "10"))
 try:
     from PySide6.QtWidgets import QApplication, QWidget
     from PySide6.QtCore import Qt, QTimer, QBuffer, QByteArray, QIODevice
+    from PySide6.QtGui import QImage, QPainter
 except ImportError:
     from PySide2.QtWidgets import QApplication, QWidget
     from PySide2.QtCore import Qt, QTimer, QBuffer, QByteArray, QIODevice
+    from PySide2.QtGui import QImage, QPainter
 
 # Keep every top-level window off the screen without leaving the windowing
 # system.
@@ -195,13 +199,15 @@ def _tick():
     w = _pick_window()
     if w is None:
         return
-    # Force the panel geometry. The app was authored for some desktop size;
-    # what matters is how it looks at the resolution it will actually meet.
-    if w.width() != _W or w.height() != _H:
-        w.resize(_W, _H)
-        return  # let the layout settle; the next tick captures it
-
-    image = w.grab().toImage()
+    # Preserve the application's authored geometry. The physical panel is the
+    # framebuffer around it: smaller apps retain their native resolution with
+    # letterbox space, while anything larger is naturally clipped by QPainter.
+    source = w.grab().toImage()
+    image = QImage(_W, _H, QImage.Format_ARGB32_Premultiplied)
+    image.fill(Qt.black)
+    painter = QPainter(image)
+    painter.drawImage((_W - source.width()) // 2, (_H - source.height()) // 2, source)
+    painter.end()
 
     # The QByteArray must outlive the QBuffer that writes into it. Passing a
     # temporary -- QBuffer(QByteArray()) -- lets Python free it immediately

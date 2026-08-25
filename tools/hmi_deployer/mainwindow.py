@@ -10,9 +10,10 @@ import re
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QApplication,
     QSplitter, QGroupBox, QFormLayout, QLineEdit, QProgressBar,
-    QPlainTextEdit, QFileDialog, QMessageBox, QTabWidget, QLabel
+    QPlainTextEdit, QFileDialog, QMessageBox, QTabWidget, QLabel, QFrame
 )
-from PySide6.QtCore import Qt, QSettings, QTimer
+from PySide6.QtCore import Qt, QSettings, QTimer, QSize
+from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
 from .devicepanel import DevicePanel, PANEL_PRESETS
 from .deployer import (
     DependencyWorker, PackageWorker, validate_bundle, detect_bundle,
@@ -59,9 +60,25 @@ DISPLAY_PROBE_COMMAND = (
 # stream them into the UI without a second protocol or a temporary remote file.
 MEMORY_PROFILE_PREFIX = "HMI_PROFILE_"
 
+# Shown in place of a measurement the SOM has not reported yet.
+PROFILE_PENDING_TEXT = "Measuring…"
+
+# Opening height of the Studio window, in device-independent pixels. The window
+# is a preview pane beside a tool pane and both are tall: the panel bezel plus
+# its caption on one side, three stacked cards on the other.
+DEFAULT_WINDOW_HEIGHT = 1000
+
 # All size values except COMPRESSED_BYTES are KiB. The compressed measurement
 # is streamed through tar|wc rather than written to /tmp, preserving the
 # installer's tmpfs-space guarantee even for a large application.
+#
+# Field order is load-bearing. Recompressing the active release is the one
+# expensive step here -- three minutes for a 300 MiB bundle -- and it used to
+# sit in the middle, which meant storage, filesystem and RAM were all held
+# behind it. The panel showed three fields and zeroes for everything else until
+# the tar finished, which reads as a refresh that did not refresh. Every cheap
+# field is now emitted first and streams in immediately; only the compressed
+# figure waits, and it announces itself through STAGE while it works.
 MEMORY_PROFILE_COMMAND = (
     "current=$(readlink -f /opt/hmi_apps/current 2>/dev/null || true); "
     "if [ -n \"$current\" ] && [ -d \"$current\" ]; then "
@@ -69,12 +86,9 @@ MEMORY_PROFILE_COMMAND = (
     "echo \"HMI_PROFILE_DEPLOY_PATH=$current\"; "
     "app_kb=$(du -sk \"$current\" 2>/dev/null | awk '{print $1}'); "
     "echo \"HMI_PROFILE_APP_KB=${app_kb:-0}\"; "
-    "echo \"HMI_PROFILE_STAGE=Calculating compressed package size…\"; "
-    "compressed_bytes=$(tar -C \"$current\" -czf - . 2>/dev/null | wc -c); "
-    "echo \"HMI_PROFILE_COMPRESSED_BYTES=${compressed_bytes:-0}\"; "
     "else echo \"HMI_PROFILE_RELEASE=No active deployment\"; "
     "echo \"HMI_PROFILE_DEPLOY_PATH=/opt/hmi_apps/current\"; "
-    "echo \"HMI_PROFILE_APP_KB=0\"; echo \"HMI_PROFILE_COMPRESSED_BYTES=0\"; fi; "
+    "echo \"HMI_PROFILE_APP_KB=0\"; fi; "
     "releases_kb=$(du -sk /opt/hmi_apps/releases 2>/dev/null | awk '{print $1}'); "
     "echo \"HMI_PROFILE_RELEASES_KB=${releases_kb:-0}\"; "
     "set -- $(df -kP / 2>/dev/null | awk 'NR == 2 {print $2, $3, $4}'); "
@@ -82,7 +96,12 @@ MEMORY_PROFILE_COMMAND = (
     "echo \"HMI_PROFILE_USED_KB=${2:-0}\"; "
     "echo \"HMI_PROFILE_FREE_KB=${3:-0}\"; "
     "ram_kb=$(awk '/MemAvailable:/ {print $2; exit}' /proc/meminfo 2>/dev/null); "
-    "echo \"HMI_PROFILE_RAM_AVAILABLE_KB=${ram_kb:-0}\"; :"
+    "echo \"HMI_PROFILE_RAM_AVAILABLE_KB=${ram_kb:-0}\"; "
+    "if [ -n \"$current\" ] && [ -d \"$current\" ]; then "
+    "echo \"HMI_PROFILE_STAGE=Calculating compressed package size…\"; "
+    "compressed_bytes=$(tar -C \"$current\" -czf - . 2>/dev/null | wc -c); "
+    "echo \"HMI_PROFILE_COMPRESSED_BYTES=${compressed_bytes:-0}\"; "
+    "else echo \"HMI_PROFILE_COMPRESSED_BYTES=0\"; fi; :"
 )
 
 
@@ -152,8 +171,11 @@ SSH_SHORT_TIMEOUT_S = 30
 SSH_TEST_TIMEOUT_S = 60
 
 # Recompressing a release is streamed on the SOM and is intentionally allowed
-# more time than a simple SSH status operation.
-MEMORY_PROFILE_TIMEOUT_S = 180
+# more time than a simple SSH status operation. A 314 MiB release measured at
+# 179s against the previous 180s budget -- close enough to the watchdog that an
+# ordinary bundle would be cut off mid-measurement and report a failure that
+# was really a deadline.
+MEMORY_PROFILE_TIMEOUT_S = 420
 
 # Fallback for callers that do not say what they are running.
 DEFAULT_SSH_TIMEOUT_S = 60
@@ -240,7 +262,7 @@ class MainWindow(QMainWindow):
     def __init__(self, exit_after_ms=0):
         super().__init__()
         self.setWindowTitle("EmbeddedDisplay Studio")
-        self.resize(1280, 800)
+        self.resize(1280, DEFAULT_WINDOW_HEIGHT)
         self.exit_after_ms = exit_after_ms
 
         self.settings = QSettings("MIL-HMI", "Deployer")
@@ -326,6 +348,89 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 # The widget was destroyed; it will not be asked again.
                 pass
+        for widget, name in getattr(self, "_label_icon_names", {}).items():
+            try:
+                widget.setPixmap(icon(name).pixmap(17, 17))
+            except RuntimeError:
+                pass
+        for widget, name in getattr(self, "_page_icon_names", {}).items():
+            try:
+                widget.setPixmap(icon(name).pixmap(24, 24))
+            except RuntimeError:
+                pass
+        for (tab_bar, index), name in getattr(self, "_tab_icon_names", {}).items():
+            try:
+                tab_bar.setTabIcon(index, icon(name))
+            except RuntimeError:
+                pass
+
+    def _themed_label_icon(self, widget, name: str) -> None:
+        """Give a QLabel a small Tabler icon that follows theme changes."""
+        if not hasattr(self, "_label_icon_names"):
+            self._label_icon_names = {}
+        self._label_icon_names[widget] = name
+        widget.setPixmap(icon(name).pixmap(17, 17))
+
+    def _themed_tab_icon(self, tab_bar, index: int, name: str) -> None:
+        """Attach a tab icon that is re-rendered with the active theme."""
+        if not hasattr(self, "_tab_icon_names"):
+            self._tab_icon_names = {}
+        self._tab_icon_names[(tab_bar, index)] = name
+        tab_bar.setTabIcon(index, icon(name))
+
+    def _section_heading(self, title: str, icon_name: str) -> QHBoxLayout:
+        """Build a compact icon-and-title header for a console module."""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 4)
+        row.setSpacing(8)
+        mark = QLabel()
+        mark.setObjectName("sectionIcon")
+        mark.setFixedSize(20, 20)
+        mark.setAlignment(Qt.AlignCenter)
+        self._themed_label_icon(mark, icon_name)
+        label = QLabel(title)
+        label.setObjectName("sectionTitle")
+        row.addWidget(mark)
+        row.addWidget(label)
+        row.addStretch()
+        return row
+
+    def _page_heading(self, title: str, icon_name: str) -> QHBoxLayout:
+        """Build the title row that opens a workspace page.
+
+        Args:
+            title: The page name, which is the tab's name and nothing more.
+            icon_name: The Tabler icon the page's tab wears, so the heading and
+                the tab it belongs to carry the same mark.
+
+        Returns:
+            A row holding the icon and the page title.
+
+        Each page states its own name beside its own icon; without it, a page
+        reached from the tab bar had no heading of its own and the only thing
+        naming it was the tab the user had already left behind.
+        """
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+        mark = QLabel()
+        mark.setObjectName("pageTitleIcon")
+        mark.setFixedSize(26, 26)
+        mark.setAlignment(Qt.AlignCenter)
+        self._themed_page_icon(mark, icon_name)
+        label = QLabel(title)
+        label.setObjectName("consolePageTitle")
+        row.addWidget(mark)
+        row.addWidget(label)
+        row.addStretch()
+        return row
+
+    def _themed_page_icon(self, widget, name: str) -> None:
+        """Give a page heading its icon at title scale, following the theme."""
+        if not hasattr(self, "_page_icon_names"):
+            self._page_icon_names = {}
+        self._page_icon_names[widget] = name
+        widget.setPixmap(icon(name).pixmap(24, 24))
 
     def apply_theme(self):
         """
@@ -350,32 +455,63 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
 
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(16, 16, 16, 16)
+        main_layout.setContentsMargins(18, 14, 18, 12)
+        main_layout.setSpacing(12)
 
         # Top Bar
         top_bar = QHBoxLayout()
-        from PySide6.QtWidgets import QPushButton, QLabel
+        from PySide6.QtWidgets import QPushButton, QLabel, QTabBar
         from PySide6.QtGui import QPixmap
 
-        # Product mark. Rendered from the 128 px asset and scaled to 28 px so it
-        # stays crisp on HiDPI displays, where Qt asks for 2x the logical size.
+        # Use the supplied product mark exactly as shipped with Studio.
         logo_path = os.path.join(os.path.dirname(__file__), "resources", "logo_128.png")
         self.lbl_logo = QLabel()
+        self.lbl_logo.setObjectName("studioMark")
+        self.lbl_logo.setAlignment(Qt.AlignCenter)
         self.lbl_logo.setPixmap(
-            QPixmap(logo_path).scaled(28, 28, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            QPixmap(logo_path).scaled(36, 36, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         )
-        self.lbl_logo.setFixedSize(28, 28)
+        self.lbl_logo.setFixedSize(46, 46)
 
         # Wordmark beside the logo, in the design system's heading style.
+        title_wrap = QWidget()
+        title_layout = QVBoxLayout(title_wrap)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(0)
         self.lbl_title = QLabel("EmbeddedDisplay Studio")
-        self.lbl_title.setStyleSheet("font-size: 16px; font-weight: 600; letter-spacing: -0.4px;")
+        self.lbl_title.setObjectName("productTitle")
+        self.lbl_subtitle = QLabel("HMI DEPLOYMENT & VALIDATION CONSOLE")
+        self.lbl_subtitle.setObjectName("productSubtitle")
+        title_layout.addWidget(self.lbl_title)
+        title_layout.addWidget(self.lbl_subtitle)
+
+        self.lbl_connection = QLabel("●  DISCONNECTED")
+        self.lbl_connection.setObjectName("connectionBadge")
+
+        # The target is operated from a compact command strip: Target IP ->
+        # Port -> Connect -> live link state. This keeps the common path in
+        # the same immediate visual hierarchy as the reference console.
+        self.inp_host = QLineEdit(self.settings.value("host", "192.168.1.100"))
+        self.inp_host.setObjectName("targetHostInput")
+        self.inp_host.setMinimumWidth(150)
+        self.inp_host.setPlaceholderText("10.66.48.44")
+        self.inp_port = QLineEdit(str(self.settings.value("port", "22")))
+        self.inp_port.setObjectName("targetPortInput")
+        self.inp_port.setFixedWidth(68)
+        self.inp_port.setPlaceholderText("22")
+        self.btn_test = QPushButton("Connect")
+        self.btn_test.setObjectName("connectButton")
+        self._themed_icon(self.btn_test, "plug-connected")
+        self.btn_test.clicked.connect(self.on_test_conn)
 
         self.btn_open = QPushButton("Open Bundle...")
+        self.btn_open.setObjectName("topBarAction")
         self.btn_open.setProperty("variant", "outline")
         self._themed_icon(self.btn_open, "folder-open")
         self.btn_open.clicked.connect(self.on_open_bundle)
 
         self.btn_new = QPushButton("New App...")
+        self.btn_new.setObjectName("topBarAction")
         self.btn_new.setProperty("variant", "secondary")
         self._themed_icon(self.btn_new, "plus")
         self.btn_new.clicked.connect(self.on_new_app)
@@ -387,14 +523,41 @@ class MainWindow(QMainWindow):
 
         top_bar.addWidget(self.lbl_logo)
         top_bar.addSpacing(8)
-        top_bar.addWidget(self.lbl_title)
+        top_bar.addWidget(title_wrap)
         top_bar.addSpacing(24)
         top_bar.addWidget(self.btn_open)
         top_bar.addWidget(self.btn_new)
         top_bar.addStretch()
+        target_label = QLabel("TARGET IP")
+        target_label.setObjectName("connectionFieldLabel")
+        port_label = QLabel("PORT")
+        port_label.setObjectName("connectionFieldLabel")
+        top_bar.addWidget(target_label)
+        top_bar.addWidget(self.inp_host)
+        top_bar.addSpacing(8)
+        top_bar.addWidget(port_label)
+        top_bar.addWidget(self.inp_port)
+        top_bar.addSpacing(6)
+        top_bar.addWidget(self.btn_test)
+        top_bar.addSpacing(8)
+        top_bar.addWidget(self.lbl_connection)
+        top_bar.addSpacing(8)
         top_bar.addWidget(self.btn_theme)
 
         main_layout.addLayout(top_bar)
+
+        # A dedicated navigation rail belongs below the product header.  The
+        # content widget keeps its QTabWidget state machine, but its tab bar is
+        # deliberately surfaced here so navigation reads across the whole
+        # Studio rather than as part of only the right-hand pane.
+        self.primary_nav = QTabBar()
+        self.primary_nav.setObjectName("primaryNav")
+        self.primary_nav.setDrawBase(False)
+        self.primary_nav.setExpanding(False)
+        self.primary_nav.setElideMode(Qt.ElideNone)
+        self.primary_nav.setIconSize(QSize(16, 16))
+        self.primary_nav.setFixedHeight(44)
+        main_layout.addWidget(self.primary_nav)
 
         # Splitter
         splitter = QSplitter(Qt.Horizontal)
@@ -405,8 +568,9 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QComboBox
 
         panel_wrap = QWidget()
+        panel_wrap.setObjectName("previewPanel")
         panel_layout = QVBoxLayout(panel_wrap)
-        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setContentsMargins(12, 12, 12, 12)
         panel_layout.setSpacing(10)
 
         self.device_panel = DevicePanel()
@@ -435,7 +599,9 @@ class MainWindow(QMainWindow):
         self.cmb_panel.setCurrentIndex(3)          # 10.1" 1280x800, the common default
         self.cmb_panel.currentIndexChanged.connect(self.on_panel_size_changed)
 
-        caption.addWidget(QLabel("Display:"))
+        display_label = QLabel("DISPLAY PROFILE")
+        display_label.setObjectName("eyebrowLabel")
+        caption.addWidget(display_label)
         caption.addWidget(self.cmb_panel)
         caption.addStretch()
         caption.addWidget(self.lbl_resolution)
@@ -450,88 +616,133 @@ class MainWindow(QMainWindow):
         # The Deploy tab holds the original target/deployment/console content.
         # The Tag Lab tab holds the Tag Lab panel.
         self._right_tabs = QTabWidget()
+        self._right_tabs.setObjectName("workspaceTabs")
         self._right_tabs.setAccessibleName("Deployer tool tabs")
 
         # ── Deploy tab ────────────────────────────────────────────────────
         deploy_page = QWidget()
+        deploy_page.setObjectName("deployConsolePage")
         right_layout = QVBoxLayout(deploy_page)
-        right_layout.setContentsMargins(0, 8, 0, 0)
+        right_layout.setContentsMargins(12, 12, 12, 12)
+        right_layout.setSpacing(12)
 
-        # Connection Box
-        conn_box = QGroupBox("Target Configuration")
-        conn_layout = QFormLayout(conn_box)
-        self.inp_host = QLineEdit(self.settings.value("host", "192.168.1.100"))
+        page_subtitle = QLabel("Configure the target, validate the bundle, and manage the active panel release.")
+        page_subtitle.setObjectName("consolePageSubtitle")
+        page_subtitle.setWordWrap(True)
+        right_layout.addLayout(self._page_heading("Display Console", "device-desktop"))
+        right_layout.addWidget(page_subtitle)
+
+        # Advanced SSH details stay near deployment without competing with the
+        # inline connection strip above.
+        conn_box = QGroupBox()
+        conn_box.setProperty("class", "consoleSectionPanel")
+        conn_layout = QVBoxLayout(conn_box)
+        conn_layout.setContentsMargins(14, 14, 14, 14)
+        conn_layout.setSpacing(8)
+        conn_layout.addLayout(self._section_heading("Target Details", "server"))
+        conn_body = QFrame()
+        conn_body.setProperty("class", "consoleSectionBody")
+        conn_form = QFormLayout(conn_body)
+        conn_form.setContentsMargins(14, 12, 14, 12)
         self.inp_user = QLineEdit(self.settings.value("user", "root"))
-        self.inp_port = QLineEdit(str(self.settings.value("port", "22")))
-        self.inp_port.setPlaceholderText("22")
+        self.inp_user.setObjectName("targetDetailInput")
         self.inp_key = QLineEdit(self.settings.value("key", ""))
+        self.inp_key.setObjectName("targetDetailInput")
         self.inp_key.setPlaceholderText("Leave empty for default agent")
 
-        conn_layout.addRow("Host:", self.inp_host)
-        conn_layout.addRow("User:", self.inp_user)
-        conn_layout.addRow("Port:", self.inp_port)
-        conn_layout.addRow("Key:", self.inp_key)
+        conn_form.addRow("User:", self.inp_user)
+        conn_form.addRow("Key:", self.inp_key)
 
         self.lbl_target_resolution = QLabel("Not detected")
         self.lbl_target_resolution.setObjectName("targetResolution")
-        conn_layout.addRow("Display:", self.lbl_target_resolution)
-
-        test_layout = QHBoxLayout()
-        from PySide6.QtWidgets import QPushButton
-        self.btn_test = QPushButton("Connect / Test")
-        self.btn_test.clicked.connect(self.on_test_conn)
-        test_layout.addWidget(self.btn_test)
-        test_layout.addStretch()
-        conn_layout.addRow("", test_layout)
+        conn_form.addRow("Display:", self.lbl_target_resolution)
+        conn_layout.addWidget(conn_body)
 
         right_layout.addWidget(conn_box)
 
         # Deployment Actions
-        deploy_box = QGroupBox("Deployment")
+        deploy_box = QGroupBox()
+        deploy_box.setProperty("class", "consoleSectionPanel")
         deploy_layout = QVBoxLayout(deploy_box)
+        deploy_layout.setContentsMargins(14, 14, 14, 14)
+        deploy_layout.setSpacing(8)
+        deploy_layout.addLayout(self._section_heading("Deployment", "upload"))
+        deploy_body = QFrame()
+        deploy_body.setProperty("class", "consoleSectionBody")
+        deploy_body_layout = QVBoxLayout(deploy_body)
+        deploy_body_layout.setContentsMargins(14, 12, 14, 12)
+        deploy_body_layout.setSpacing(8)
 
         from PySide6.QtWidgets import QLabel
         self.val_label = QLabel("No bundle loaded.")
         self.val_label.setWordWrap(True)
-        deploy_layout.addWidget(self.val_label)
+        deploy_body_layout.addWidget(self.val_label)
 
         self.btn_deploy = QPushButton("Deploy to Target")
         self.btn_deploy.setProperty("variant", "default")
+        self.btn_deploy.setProperty("deploymentAction", True)
         self._themed_icon(self.btn_deploy, "upload")
         self.btn_deploy.clicked.connect(self.on_deploy)
         self.btn_deploy.setEnabled(False)
-        deploy_layout.addWidget(self.btn_deploy)
+        self.btn_deploy.setFixedHeight(28)
+        deploy_body_layout.addWidget(self.btn_deploy)
 
         # Deployment progress. A deploy spends most of its wall clock inside
         # one silent scp, so without this the tool looks frozen for minutes on
         # a large bundle -- which has been reported as a hang more than once.
+        # Keep this slot in the layout at all times.  Progress was previously
+        # added as two hidden widgets, so making them visible after Deploy was
+        # pressed increased the Deployment card (and the whole window) height.
+        # The fixed shell reserves their exact footprint while it is empty.
+        self.progress_slot = QWidget()
+        self.progress_slot.setObjectName("deploymentProgressSlot")
+        self.progress_slot.setFixedHeight(46)
+        progress_layout = QVBoxLayout(self.progress_slot)
+        progress_layout.setContentsMargins(0, 0, 0, 0)
+        progress_layout.setSpacing(4)
+
         self.progress = QProgressBar()
+        self.progress.setObjectName("deploymentProgressBar")
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
-        self.progress.setTextVisible(True)
+        # The percentage belongs in the stage line; the bar follows the
+        # PDB-4000 splash treatment and stays a clean visual indicator.
+        self.progress.setTextVisible(False)
         self.progress.setFormat("%p%")
-        self.progress.setVisible(False)
-        deploy_layout.addWidget(self.progress)
+        self.progress.setFixedHeight(12)
+        # Keep the full deployment status treatment on screen from startup.
+        # Besides making the card's expected height clear, this prevents Qt
+        # from recalculating its parent layout when deployment begins.
+        self.progress.setVisible(True)
+        progress_layout.addWidget(self.progress)
 
-        self.lbl_stage = QLabel("")
-        self.lbl_stage.setWordWrap(True)
-        self.lbl_stage.setVisible(False)
-        deploy_layout.addWidget(self.lbl_stage)
+        self.lbl_stage = QLabel("Ready to deploy")
+        self.lbl_stage.setWordWrap(False)
+        self.lbl_stage.setFixedHeight(24)
+        self.lbl_stage.setStyleSheet("color: #a1a1aa;")
+        self.lbl_stage.setVisible(True)
+        progress_layout.addWidget(self.lbl_stage)
+        deploy_body_layout.addWidget(self.progress_slot)
 
         h_layout = QHBoxLayout()
         self.btn_rollback = QPushButton("Rollback")
         self.btn_rollback.setProperty("variant", "destructive")
+        self.btn_rollback.setProperty("deploymentAction", True)
         self._themed_icon(self.btn_rollback, "history")
         self.btn_rollback.clicked.connect(self.on_rollback)
+        self.btn_rollback.setFixedHeight(28)
 
         self.btn_restart = QPushButton("Restart GUI")
         self.btn_restart.setProperty("variant", "outline")
+        self.btn_restart.setProperty("deploymentAction", True)
         self._themed_icon(self.btn_restart, "refresh")
         self.btn_restart.clicked.connect(self.on_restart)
+        self.btn_restart.setFixedHeight(28)
 
         h_layout.addWidget(self.btn_rollback)
         h_layout.addWidget(self.btn_restart)
-        deploy_layout.addLayout(h_layout)
+        deploy_body_layout.addLayout(h_layout)
+        deploy_layout.addWidget(deploy_body)
 
         right_layout.addWidget(deploy_box)
 
@@ -539,16 +750,28 @@ class MainWindow(QMainWindow):
         self.console = QPlainTextEdit()
         self.console.setReadOnly(True)
         self.console.setMinimumHeight(150)
-        right_layout.addWidget(QLabel("Console Output:"))
-        right_layout.addWidget(self.console, 1)
+        console_box = QGroupBox()
+        console_box.setProperty("class", "consoleSectionPanel")
+        console_layout = QVBoxLayout(console_box)
+        console_layout.setContentsMargins(14, 14, 14, 14)
+        console_layout.setSpacing(8)
+        console_layout.addLayout(self._section_heading("Console Output", "terminal-2"))
+        console_body = QFrame()
+        console_body.setProperty("class", "consoleSectionBody")
+        console_body_layout = QVBoxLayout(console_body)
+        console_body_layout.setContentsMargins(12, 12, 12, 12)
+        console_body_layout.addWidget(self.console, 1)
+        console_layout.addWidget(console_body, 1)
+        right_layout.addWidget(console_box, 1)
 
-        self._right_tabs.addTab(deploy_page, "Deploy")
+        self._right_tabs.addTab(deploy_page, "Display Console")
 
         # ── Tag Lab tab ────────────────────────────────────────────────────
         # Imported here (deferred) so the tab is only instantiated after
         # PySide6 is confirmed available. TagLabPanel guards its own imports.
         from .taglab_panel import TagLabPanel
         self.taglab_panel = TagLabPanel()
+        self._themed_page_icon(self.taglab_panel.title_icon, "activity")
         self.taglab_panel.sendingStarted.connect(self._on_taglab_start)
         self.taglab_panel.sendingStopped.connect(self._on_taglab_stop)
         self._right_tabs.addTab(self.taglab_panel, "Tag Lab")
@@ -557,23 +780,38 @@ class MainWindow(QMainWindow):
         # as Deploy so target diagnostics feel like part of one application.
         profile_page = QWidget()
         profile_layout = QVBoxLayout(profile_page)
-        profile_layout.setContentsMargins(0, 8, 0, 0)
+        profile_layout.setContentsMargins(12, 12, 12, 12)
+        profile_layout.setSpacing(12)
 
-        profile_header = QHBoxLayout()
+        # The page names itself the way Display Console and Tag Lab do: the tab's
+        # own title and the tab's own icon, with the explanatory line demoted to
+        # the subtitle it always was.
+        profile_heading = self._page_heading("System Profile", "cpu")
+        self.btn_refresh_profile = QPushButton("Refresh profile")
+        self.btn_refresh_profile.setProperty("variant", "outline")
+        self.btn_refresh_profile.setProperty("busy", "false")
+        self._themed_icon(self.btn_refresh_profile, "refresh")
+        self.btn_refresh_profile.clicked.connect(self.refresh_memory_profile)
+        profile_heading.addWidget(self.btn_refresh_profile)
+        profile_layout.addLayout(profile_heading)
+
         profile_copy = QLabel(
             "Live storage and memory snapshot from the connected SOM."
         )
+        profile_copy.setObjectName("consolePageSubtitle")
         profile_copy.setWordWrap(True)
-        profile_header.addWidget(profile_copy, 1)
-        self.btn_refresh_profile = QPushButton("Refresh profile")
-        self.btn_refresh_profile.setProperty("variant", "outline")
-        self._themed_icon(self.btn_refresh_profile, "refresh")
-        self.btn_refresh_profile.clicked.connect(self.refresh_memory_profile)
-        profile_header.addWidget(self.btn_refresh_profile)
-        profile_layout.addLayout(profile_header)
+        profile_layout.addWidget(profile_copy)
 
-        active_box = QGroupBox("Current Deployment")
-        active_layout = QFormLayout(active_box)
+        active_box = QGroupBox()
+        active_box.setProperty("class", "consoleSectionPanel")
+        active_outer = QVBoxLayout(active_box)
+        active_outer.setContentsMargins(14, 14, 14, 14)
+        active_outer.setSpacing(8)
+        active_outer.addLayout(self._section_heading("Current Deployment", "device-desktop"))
+        active_body = QFrame()
+        active_body.setProperty("class", "consoleSectionBody")
+        active_layout = QFormLayout(active_body)
+        active_layout.setContentsMargins(14, 12, 14, 12)
         self._add_profile_value(active_layout, "Package:", "RELEASE", "Not queried")
         self._add_profile_value(active_layout, "Deployed at:", "DEPLOY_PATH", "Not queried")
         self._add_profile_value(active_layout, "Current application:", "APP_KB", "Not queried")
@@ -583,10 +821,19 @@ class MainWindow(QMainWindow):
             "COMPRESSED_BYTES",
             "Not queried",
         )
+        active_outer.addWidget(active_body)
         profile_layout.addWidget(active_box)
 
-        storage_box = QGroupBox("Storage Distribution")
-        storage_layout = QVBoxLayout(storage_box)
+        storage_box = QGroupBox()
+        storage_box.setProperty("class", "consoleSectionPanel")
+        storage_outer = QVBoxLayout(storage_box)
+        storage_outer.setContentsMargins(14, 14, 14, 14)
+        storage_outer.setSpacing(8)
+        storage_outer.addLayout(self._section_heading("Storage Distribution", "server"))
+        storage_body = QFrame()
+        storage_body.setProperty("class", "consoleSectionBody")
+        storage_layout = QVBoxLayout(storage_body)
+        storage_layout.setContentsMargins(14, 12, 14, 12)
         self._add_profile_bar(storage_layout, "OS image capacity", "ROOT_KB")
         self._add_profile_bar(storage_layout, "Other system files", "SYSTEM_KB")
         self._add_profile_bar(storage_layout, "Application storage", "RELEASES_KB")
@@ -596,19 +843,37 @@ class MainWindow(QMainWindow):
             "Compressed current package",
             "COMPRESSED_BYTES",
         )
+        storage_outer.addWidget(storage_body)
         profile_layout.addWidget(storage_box)
 
-        resources_box = QGroupBox("System Resources")
-        resources_layout = QFormLayout(resources_box)
+        resources_box = QGroupBox()
+        resources_box.setProperty("class", "consoleSectionPanel")
+        resources_outer = QVBoxLayout(resources_box)
+        resources_outer.setContentsMargins(14, 14, 14, 14)
+        resources_outer.setSpacing(8)
+        resources_outer.addLayout(self._section_heading("System Resources", "cpu"))
+        resources_body = QFrame()
+        resources_body.setProperty("class", "consoleSectionBody")
+        resources_layout = QFormLayout(resources_body)
+        resources_layout.setContentsMargins(14, 12, 14, 12)
         self._add_profile_value(resources_layout, "Available RAM:", "RAM_AVAILABLE_KB", "Not queried")
         self._add_profile_value(resources_layout, "Root filesystem:", "ROOT_SUMMARY", "Not queried")
         self._add_profile_value(resources_layout, "Profile status:", "STATUS", "Connect to refresh")
+        resources_outer.addWidget(resources_body)
         profile_layout.addWidget(resources_box)
         profile_layout.addStretch()
         self._profile_page = profile_page
-        self._right_tabs.addTab(profile_page, "Memory Profile")
+        self._right_tabs.addTab(profile_page, "System Profile")
         # Selecting the tab is the request for the measurement.
         self._right_tabs.currentChanged.connect(self._on_tab_changed)
+
+        tab_icons = ("device-desktop", "activity", "cpu")
+        for index in range(self._right_tabs.count()):
+            self.primary_nav.addTab(self._right_tabs.tabText(index))
+            self._themed_tab_icon(self.primary_nav, index, tab_icons[index])
+        self._right_tabs.tabBar().hide()
+        self.primary_nav.currentChanged.connect(self._right_tabs.setCurrentIndex)
+        self._right_tabs.currentChanged.connect(self.primary_nav.setCurrentIndex)
 
         splitter.addWidget(self._right_tabs)
         splitter.setSizes([800, 400])
@@ -618,7 +883,7 @@ class MainWindow(QMainWindow):
         footer = QHBoxLayout()
         footer.setContentsMargins(2, 8, 2, 0)
 
-        self.lbl_footer = QLabel("Developed by FlyVi Technologies. All rights reserved.")
+        self.lbl_footer = QLabel("FLYVI TECHNOLOGIES  •  EMBEDDED DISPLAY ENGINEERING")
         self.lbl_footer.setObjectName("footerText")
 
         self.lbl_version = QLabel(APP_VERSION)
@@ -642,6 +907,10 @@ class MainWindow(QMainWindow):
         muted = "#94a3b8" if self.theme == "dark" else "#64748b"
         for widget in (self.lbl_footer, self.lbl_version):
             widget.setStyleSheet(f"color: {muted}; font-size: 12px;")
+
+        if hasattr(self, "lbl_connection"):
+            self.lbl_connection.style().unpolish(self.lbl_connection)
+            self.lbl_connection.style().polish(self.lbl_connection)
 
     def _add_profile_value(self, layout, label, key, initial):
         """Add one selectable text value to a memory-profile form.
@@ -672,6 +941,10 @@ class MainWindow(QMainWindow):
         """
         layout.addWidget(QLabel(label))
         bar = QProgressBar()
+        # The base QProgressBar is an 8px track with transparent text, which is
+        # right for the deploy strip and wrong here: these bars carry a
+        # measurement, and it was being painted invisibly onto a sliver.
+        bar.setObjectName("profileCapacityBar")
         bar.setRange(0, 100)
         bar.setValue(0)
         bar.setTextVisible(True)
@@ -733,7 +1006,7 @@ class MainWindow(QMainWindow):
         except (TypeError, ValueError):
             return 0
 
-    def _set_profile_bar(self, key, amount, total, text):
+    def _set_profile_bar(self, key, amount, total, text, pending=False):
         """Render one memory-profile bar relative to its relevant capacity.
 
         Args:
@@ -741,8 +1014,14 @@ class MainWindow(QMainWindow):
             amount: Numerator in KiB or bytes, depending on the bar.
             total: Matching denominator. Zero produces an unavailable bar.
             text: Human-readable measurement shown inside the bar.
+            pending: True while the fields behind this bar are still in flight,
+                which is reported as such rather than drawn as an empty bar.
         """
         bar = self._profile_bars[key]
+        if pending:
+            bar.setValue(0)
+            bar.setFormat(PROFILE_PENDING_TEXT)
+            return
         if total <= 0:
             bar.setValue(0)
             bar.setFormat(text)
@@ -750,6 +1029,15 @@ class MainWindow(QMainWindow):
         percent = min(100, round(amount * 100 / total))
         bar.setValue(percent)
         bar.setFormat(f"{text}  (%p%)")
+
+    def _profile_pending(self, *keys):
+        """True when any of these fields has not arrived from the SOM yet.
+
+        A field that is still in flight is not a field worth zero. Rendering an
+        absent measurement as "0 KiB" made a running refresh look like a
+        finished one that had found an empty board.
+        """
+        return any(key not in self.memory_profile for key in keys)
 
     def _render_memory_profile(self):
         """Render all visible profile cards and capacity bars from stored fields."""
@@ -761,39 +1049,58 @@ class MainWindow(QMainWindow):
         compressed_bytes = self._profile_number("COMPRESSED_BYTES")
         system_kb = max(0, used_kb - releases_kb)
 
+        pending = PROFILE_PENDING_TEXT
+
         self._profile_values["RELEASE"].setText(
-            self.memory_profile.get("RELEASE", "No active deployment")
+            pending if self._profile_pending("RELEASE")
+            else self.memory_profile["RELEASE"]
         )
         self._profile_values["DEPLOY_PATH"].setText(
-            self.memory_profile.get("DEPLOY_PATH", "/opt/hmi_apps/current")
+            pending if self._profile_pending("DEPLOY_PATH")
+            else self.memory_profile["DEPLOY_PATH"]
         )
-        self._profile_values["APP_KB"].setText(format_kib(app_kb))
-        compressed_text = format_bytes(compressed_bytes)
-        if compressed_bytes:
-            compressed_text += " (recomputed from active release)"
-        self._profile_values["COMPRESSED_BYTES"].setText(compressed_text)
-        self._profile_values["RAM_AVAILABLE_KB"].setText(
-            format_kib(self._profile_number("RAM_AVAILABLE_KB"))
-        )
-        self._profile_values["ROOT_SUMMARY"].setText(
-            f"{format_kib(root_kb)} total · {format_kib(free_kb)} free"
+        self._profile_values["APP_KB"].setText(
+            pending if self._profile_pending("APP_KB") else format_kib(app_kb)
         )
 
-        self._set_profile_bar("ROOT_KB", root_kb, root_kb, format_kib(root_kb))
+        compressed_pending = self._profile_pending("COMPRESSED_BYTES")
+        compressed_text = pending if compressed_pending else format_bytes(compressed_bytes)
+        card_text = compressed_text
+        if not compressed_pending and compressed_bytes:
+            card_text += " (recomputed from active release)"
+        self._profile_values["COMPRESSED_BYTES"].setText(card_text)
+
+        self._profile_values["RAM_AVAILABLE_KB"].setText(
+            pending if self._profile_pending("RAM_AVAILABLE_KB")
+            else format_kib(self._profile_number("RAM_AVAILABLE_KB"))
+        )
+        self._profile_values["ROOT_SUMMARY"].setText(
+            pending if self._profile_pending("ROOT_KB", "FREE_KB")
+            else f"{format_kib(root_kb)} total · {format_kib(free_kb)} free"
+        )
+
         self._set_profile_bar(
-            "SYSTEM_KB", system_kb, root_kb, f"{format_kib(system_kb)} used"
+            "ROOT_KB", root_kb, root_kb, format_kib(root_kb),
+            pending=self._profile_pending("ROOT_KB"),
         )
         self._set_profile_bar(
-            "RELEASES_KB", releases_kb, root_kb, f"{format_kib(releases_kb)} retained"
+            "SYSTEM_KB", system_kb, root_kb, f"{format_kib(system_kb)} used",
+            pending=self._profile_pending("ROOT_KB", "USED_KB", "RELEASES_KB"),
         )
         self._set_profile_bar(
-            "FREE_KB", free_kb, root_kb, format_kib(free_kb)
+            "RELEASES_KB", releases_kb, root_kb, f"{format_kib(releases_kb)} retained",
+            pending=self._profile_pending("ROOT_KB", "RELEASES_KB"),
+        )
+        self._set_profile_bar(
+            "FREE_KB", free_kb, root_kb, format_kib(free_kb),
+            pending=self._profile_pending("ROOT_KB", "FREE_KB"),
         )
         self._set_profile_bar(
             "COMPRESSED_BYTES",
             compressed_bytes,
             app_kb * 1024,
             compressed_text,
+            pending=compressed_pending,
         )
 
     def _record_memory_profile_line(self, line):
@@ -812,12 +1119,36 @@ class MainWindow(QMainWindow):
         if key == "STAGE":
             self._profile_values["STATUS"].setText(value)
             return
+        if key == "COMPRESSED_BYTES":
+            # The stage banner belongs to the measurement that was running. It
+            # is the last field the SOM sends, so its arrival -- not the SSH
+            # process exiting some seconds later -- is what ends the stage. Left
+            # to the exit code alone, "Calculating compressed package size…"
+            # stayed on screen over a completed profile, and stayed there for
+            # good whenever the command was cut short by its watchdog.
+            self._profile_values["STATUS"].setText("Current SOM snapshot")
         self._render_memory_profile()
 
     def _on_tab_changed(self, _index: int) -> None:
         """Take the profile when its tab is opened, not before."""
         if self._right_tabs.currentWidget() is self._profile_page and not self.memory_profile:
             self.refresh_memory_profile()
+
+    def _set_refresh_busy(self, busy: bool) -> None:
+        """Show, and hold, the engaged state on the Refresh profile button.
+
+        Args:
+            busy: True from the click until the remote profile command exits.
+
+        Qt does not re-evaluate a stylesheet when a property changes, so the
+        unpolish/polish pair is what actually puts the new state on screen.
+        """
+        button = self.btn_refresh_profile
+        button.setProperty("busy", "true" if busy else "false")
+        button.setEnabled(not busy)
+        button.setText("Refreshing…" if busy else "Refresh profile")
+        button.style().unpolish(button)
+        button.style().polish(button)
 
     def refresh_memory_profile(self):
         """Read the active release and capacity profile from the connected SOM.
@@ -827,8 +1158,12 @@ class MainWindow(QMainWindow):
         """
         self.save_settings()
         self.memory_profile = {}
+        # Clear the previous snapshot off the screen at the moment of the click.
+        # Leaving the last run's numbers up until the first line arrives made a
+        # refresh indistinguishable from nothing having happened.
+        self._render_memory_profile()
         self._profile_values["STATUS"].setText("Refreshing from connected SOM…")
-        self.btn_refresh_profile.setEnabled(False)
+        self._set_refresh_busy(True)
         self.log("Refreshing current SOM memory profile...")
         cmd = build_ssh_cmd(
             self.inp_host.text().strip(),
@@ -839,7 +1174,7 @@ class MainWindow(QMainWindow):
         )
 
         def on_finished(code):
-            self.btn_refresh_profile.setEnabled(True)
+            self._set_refresh_busy(False)
             if code == 0:
                 self._profile_values["STATUS"].setText("Current SOM snapshot")
             else:
@@ -1219,7 +1554,31 @@ class MainWindow(QMainWindow):
                                INSTALL_STEP_LABEL.get(tag, tag))
 
     def log(self, text):
-        self.console.appendPlainText(text)
+        """Append one console line with a semantic transport colour."""
+        message = str(text)
+        lowered = message.lower()
+        if any(token in lowered for token in (
+            "error", "failed", "failure", "denied", "traceback", "fault",
+        )):
+            colour = "#f31260"  # error / failed operation
+        elif any(token in lowered for token in (
+            "warning", "warn", "incomplete", "could not", "timeout",
+        )):
+            colour = "#f5a524"  # warning / incomplete result
+        elif any(token in lowered for token in (
+            "success", "complete", "ready", "ssh ok", "exited with 0",
+            "landed",
+        )):
+            colour = "#17c964"  # completed / healthy result
+        else:
+            colour = "#a1a1aa"  # ordinary transport information
+
+        cursor = self.console.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(colour))
+        cursor.setCharFormat(fmt)
+        cursor.insertText(message + "\n")
         # scroll to bottom
         vbar = self.console.verticalScrollBar()
         vbar.setValue(vbar.maximum())
@@ -1399,10 +1758,20 @@ class MainWindow(QMainWindow):
             self.log(f"{desc} exited with {code} ({elapsed:.0f}s)")
             if code == 0:
                 self.device_panel.set_led_state(1)  # Link up
+                if hasattr(self, "lbl_connection"):
+                    self.lbl_connection.setText("●  LINK ESTABLISHED")
+                    self.lbl_connection.setProperty("state", "connected")
+                    self.lbl_connection.style().unpolish(self.lbl_connection)
+                    self.lbl_connection.style().polish(self.lbl_connection)
                 if desc == "Test Connection":
                     self.start_relay()
             else:
                 self.device_panel.set_led_state(3)  # Fault
+                if hasattr(self, "lbl_connection"):
+                    self.lbl_connection.setText("●  CONNECTION FAULT")
+                    self.lbl_connection.setProperty("state", "fault")
+                    self.lbl_connection.style().unpolish(self.lbl_connection)
+                    self.lbl_connection.style().polish(self.lbl_connection)
             self.btn_deploy.setEnabled(self.bundle_dir is not None)
             # run() emits this as its last act, so the thread is at most
             # microseconds from returning; the bounded wait keeps the object

@@ -157,6 +157,12 @@ QPushButton:disabled {{
     background-color: {hex_to_rgba(p['primary'], 0.5)};
     color: {hex_to_rgba(p['primaryForeground'], 0.5)};
 }}
+QPushButton[deploymentAction="true"] {{
+    min-height: 28px;
+    max-height: 28px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+}}
 
 QPushButton[variant="secondary"] {{
     background-color: {p['secondary']};
@@ -182,6 +188,27 @@ QPushButton[variant="outline"] {{
 QPushButton[variant="outline"]:hover {{
     background-color: {p['accent']};
     color: {p['accentForeground']};
+}}
+/* An outline button's own transparent background overrides the base
+   QPushButton:pressed rule, so without these it was the one variant that
+   looked identical whether or not it had been clicked. */
+QPushButton[variant="outline"]:pressed {{
+    background-color: {p['accent']};
+    color: {p['accentForeground']};
+    border-color: {p['ring']};
+}}
+/* Held for as long as the action is actually running, not just while the
+   mouse is down: a click that starts a multi-second remote command has to
+   stay visibly engaged after the button is released. */
+QPushButton[variant="outline"][busy="true"] {{
+    background-color: {p['accent']};
+    color: {p['accentForeground']};
+    border: 2px solid {p['ring']};
+}}
+QPushButton[variant="outline"][busy="true"]:disabled {{
+    background-color: {p['accent']};
+    color: {hex_to_rgba(p['accentForeground'], 0.7)};
+    border: 2px solid {p['ring']};
 }}
 
 QPushButton[variant="ghost"] {{
@@ -325,6 +352,38 @@ QProgressBar::chunk {{
     background-color: {p['primary']};
     border-radius: {r['full']}px;
 }}
+QProgressBar#deploymentProgressBar {{
+    background-color: {p['background']};
+    border: 1px solid {p['accent']};
+    border-radius: 6px;
+    min-height: 10px;
+    max-height: 10px;
+    color: transparent;
+}}
+QProgressBar#deploymentProgressBar::chunk {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 {p['primary']}, stop:1 {p['ring']});
+    border-radius: 5px;
+}}
+/* The capacity bars on System Profile state a measurement, so they are sized
+   to be read and share the deploy bar's chunk. Anything else makes the one
+   tab that reports numbers the one tab that does not look like the product. */
+QProgressBar#profileCapacityBar {{
+    background-color: {p['background']};
+    border: 1px solid {p['border']};
+    border-radius: 6px;
+    min-height: 20px;
+    max-height: 20px;
+    text-align: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: {p['foreground']};
+}}
+QProgressBar#profileCapacityBar::chunk {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 {p['primary']}, stop:1 {p['ring']});
+    border-radius: 5px;
+}}
 
 /* ========================================================================
    QCheckBox, QRadioButton
@@ -438,6 +497,248 @@ QStatusBar {{
     background-color: {p['muted']};
     color: {p['mutedForeground']};
     border-top: 1px solid {p['border']};
+}}
+
+/* ========================================================================
+   EmbeddedDisplay Studio console skin
+   ======================================================================== */
+QWidget#previewPanel {{
+    background-color: {p['card']};
+    border: 1px solid transparent;
+    border-radius: {r['md']}px;
+    padding: 12px;
+}}
+QWidget#devicePanel {{ background-color: transparent; border: none; }}
+QLabel#studioMark {{
+    background-color: {p['card']};
+    border: 1px solid {p['border']};
+    border-radius: {r['lg']}px;
+    padding: 1px;
+}}
+QLabel#productTitle {{
+    font-size: 17px;
+    font-weight: 700;
+    color: {p['foreground']};
+}}
+QWidget#deployConsolePage {{ background-color: transparent; }}
+QWidget#deploymentProgressSlot {{ background-color: transparent; }}
+QLabel#consolePageTitle {{
+    color: {p['foreground']};
+    font-size: 20px;
+    font-weight: 700;
+}}
+QLabel#consolePageSubtitle {{
+    color: {p['mutedForeground']};
+    font-size: 12px;
+}}
+QLabel#sectionIcon {{
+    background-color: {p['muted']};
+    border-radius: 10px;
+}}
+/* The page title's mark, one step up from a section's: same treatment, sized
+   to sit against 20px type rather than 14px. */
+QLabel#pageTitleIcon {{
+    background-color: {p['muted']};
+    border-radius: 13px;
+}}
+QLabel#sectionTitle {{
+    color: {p['foreground']};
+    font-size: 14px;
+    font-weight: 700;
+}}
+QGroupBox[class="consoleSectionPanel"] {{
+    background-color: {p['secondary']};
+    border: 1px solid transparent;
+    border-radius: {r['lg']}px;
+    margin-top: 0;
+    padding: 0;
+}}
+QFrame[class="consoleSectionBody"] {{
+    background-color: {p['card']};
+    border: 1px solid transparent;
+    border-radius: {r['md']}px;
+}}
+QLabel#productSubtitle, QLabel#eyebrowLabel {{
+    font-size: 10px;
+    font-weight: 600;
+    color: {p['mutedForeground']};
+    letter-spacing: 1.1px;
+}}
+QLabel#connectionBadge {{
+    background-color: {p['muted']};
+    border: 1px solid {p['border']};
+    border-radius: 16px;
+    color: {p['mutedForeground']};
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .7px;
+    height: 34px;
+    min-height: 34px;
+    max-height: 34px;
+    padding: 0 14px;
+}}
+QLabel#connectionBadge[state="connected"] {{ color: {p['success']}; }}
+QLabel#connectionBadge[state="fault"] {{ color: {p['destructive']}; }}
+QTabBar#primaryNav {{
+    background-color: transparent;
+    border: none;
+    padding: 0;
+}}
+QTabBar#primaryNav::tab {{
+    background-color: {p['muted']};
+    color: {p['mutedForeground']};
+    border: 1px solid {p['border']};
+    border-radius: 16px;
+    min-width: 0;
+    margin-right: 8px;
+    padding: 9px 18px;
+    font-size: 12px;
+    font-weight: 600;
+}}
+QTabBar#primaryNav::tab:hover:!selected {{
+    background-color: {p['accent']};
+    color: {p['accentForeground']};
+}}
+QTabBar#primaryNav::tab:selected {{
+    background-color: {p['accent']};
+    color: {p['foreground']};
+    border-color: transparent;
+}}
+QLabel#connectionFieldLabel {{
+    color: {p['mutedForeground']};
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .8px;
+}}
+/* One pill geometry for every control the user operates the target with:
+   Open Bundle, New App, Target IP, Port, Connect, the link badge, and the
+   User/Key fields. The 36px height and 16px radius are the navigation tab's
+   own -- "Display Console" is the reference the rest of the chrome is matched
+   to, so a row of controls reads as one family rather than five sizes.
+   Heights are pinned at both ends because a QSS `height` alone is a hint the
+   layout is free to stretch, which is what left these controls at 54px. */
+QPushButton#topBarAction {{
+    height: 34px;
+    min-height: 34px;
+    max-height: 34px;
+    border-radius: 16px;
+    padding-top: 0;
+    padding-bottom: 0;
+    padding-left: 18px;
+    padding-right: 18px;
+}}
+/* The outline variant draws its shape entirely with `border`, and in the dark
+   palette that token is #00000000 -- so Open Bundle was bare text with no pill
+   at all. Up here it wears the unselected navigation tab's own fill, which is
+   the shape it is being asked to match. */
+QPushButton#topBarAction[variant="outline"] {{
+    background-color: {p['muted']};
+    border: 1px solid {p['border']};
+    color: {p['foreground']};
+}}
+QPushButton#topBarAction[variant="outline"]:hover {{
+    background-color: {p['accent']};
+    color: {p['accentForeground']};
+}}
+QLineEdit#targetHostInput, QLineEdit#targetPortInput {{
+    background-color: {p['background']};
+    border-color: {p['ring']};
+    border-radius: 16px;
+    font-size: 13px;
+    height: 34px;
+    min-height: 34px;
+    max-height: 34px;
+    padding: 0 {scale[2]}px;
+}}
+QPushButton#connectButton {{
+    background-color: {p['primary']};
+    color: {p['primaryForeground']};
+    height: 34px;
+    min-height: 34px;
+    max-height: 34px;
+    border-radius: 16px;
+    padding-top: 0;
+    padding-bottom: 0;
+    padding-left: 18px;
+    padding-right: 18px;
+}}
+QLineEdit#targetDetailInput {{
+    border-radius: 16px;
+    height: 34px;
+    min-height: 34px;
+    max-height: 34px;
+    padding: 0 {scale[2]}px;
+}}
+QTabWidget#workspaceTabs::pane {{
+    background-color: {p['card']};
+    border: 1px solid {p['border']};
+    border-radius: {r['xl']}px;
+    top: -1px;
+}}
+QTabWidget#workspaceTabs QTabBar {{
+    background-color: {p['muted']};
+    border: 1px solid {p['border']};
+    border-radius: {r['full']}px;
+    padding: 4px;
+}}
+QTabWidget#workspaceTabs QTabBar::tab {{
+    min-width: 96px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 600;
+}}
+QTabWidget#workspaceTabs QTabBar::tab:selected {{
+    background-color: {p['primary']};
+    color: {p['primaryForeground']};
+}}
+QGroupBox {{
+    background-color: {p['card']};
+    border: 1px solid {p['border']};
+    border-radius: {r['xl']}px;
+    margin-top: 18px;
+    padding-top: 6px;
+}}
+QGroupBox::title {{
+    color: {p['foreground']};
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: .3px;
+    subcontrol-origin: margin;
+    padding: 0 10px;
+}}
+QLineEdit, QComboBox {{
+    background-color: {p['background']};
+    border-color: {p['input']};
+    border-radius: {r['lg']}px;
+    min-height: 28px;
+}}
+QPushButton {{
+    border-radius: {r['lg']}px;
+    font-weight: 600;
+    min-height: 28px;
+}}
+QPushButton[variant="secondary"] {{ background-color: {p['secondary']}; }}
+QPlainTextEdit, QTextEdit {{
+    background-color: #0a0b0e;
+    color: {p['mutedForeground']};
+    border-color: {p['border']};
+    border-radius: {r['lg']}px;
+}}
+QTableWidget {{
+    background-color: {p['background']};
+    alternate-background-color: {p['muted']};
+    border: 1px solid {p['border']};
+    border-radius: {r['lg']}px;
+    gridline-color: {p['border']};
+}}
+QHeaderView::section {{
+    background-color: {p['muted']};
+    color: {p['mutedForeground']};
+    border: none;
+    border-bottom: 1px solid {p['border']};
+    padding: 8px;
+    font-size: 11px;
+    font-weight: 700;
 }}
 """
 

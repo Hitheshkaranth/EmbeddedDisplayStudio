@@ -580,6 +580,27 @@ class TestTagLabPanel(unittest.TestCase):
         self.panel.close()
         self.panel.deleteLater()
 
+    def test_panel_does_not_widen_the_workspace(self):
+        """Tag Lab must stay narrow enough to leave the bezel preview alone.
+
+        A QTabWidget takes its minimum width from its widest page, so a wide
+        Tag Lab silently shrinks the panel preview on every other tab too --
+        and it did: five actions on one row put a ~970px floor under the page,
+        and opening Tag Lab once moved the splitter for the rest of the
+        session. The bound is what keeps the actions wrapped.
+        """
+        self.assertLess(self.panel.minimumSizeHint().width(), 600)
+
+    def test_scenario_buttons_are_wide_enough_for_their_labels(self):
+        """Wrapping the actions must not clip the text it wraps."""
+        self.panel.resize(560, 700)
+        self.panel.show()
+        self.app.processEvents()
+        for button in (self.panel._btn_save, self.panel._btn_load):
+            with self.subTest(button=button.text()):
+                needed = button.fontMetrics().horizontalAdvance(button.text())
+                self.assertGreaterEqual(button.width(), needed)
+
     def test_empty_state_disables_sender(self):
         self.assertTrue(self.panel._lbl_empty.isVisibleTo(self.panel))
         self.assertFalse(self.panel._table.isVisibleTo(self.panel))

@@ -16,64 +16,64 @@ QtObject {
     property string mode: "light"
 
     /** @property {color} background */
-    readonly property color background: mode === "light" ? "#ffffff" : "#020817"
+    readonly property color background: mode === "light" ? "#ffffff" : "#09090b"
     /** @property {color} foreground */
-    readonly property color foreground: mode === "light" ? "#020817" : "#f8fafc"
+    readonly property color foreground: mode === "light" ? "#020817" : "#ecedee"
     /** @property {color} card */
-    readonly property color card: mode === "light" ? "#ffffff" : "#020817"
+    readonly property color card: mode === "light" ? "#ffffff" : "#18181b"
     /** @property {color} cardForeground */
-    readonly property color cardForeground: mode === "light" ? "#020817" : "#f8fafc"
+    readonly property color cardForeground: mode === "light" ? "#020817" : "#ecedee"
     /** @property {color} popover */
-    readonly property color popover: mode === "light" ? "#ffffff" : "#020817"
+    readonly property color popover: mode === "light" ? "#ffffff" : "#18181b"
     /** @property {color} popoverForeground */
-    readonly property color popoverForeground: mode === "light" ? "#020817" : "#f8fafc"
+    readonly property color popoverForeground: mode === "light" ? "#020817" : "#ecedee"
     /** @property {color} primary */
-    readonly property color primary: mode === "light" ? "#0f172a" : "#f8fafc"
+    readonly property color primary: mode === "light" ? "#0f172a" : "#006fee"
     /** @property {color} primaryForeground */
-    readonly property color primaryForeground: mode === "light" ? "#f8fafc" : "#0f172a"
+    readonly property color primaryForeground: mode === "light" ? "#f8fafc" : "#ffffff"
     /** @property {color} secondary */
-    readonly property color secondary: mode === "light" ? "#f1f5f9" : "#1e293b"
+    readonly property color secondary: mode === "light" ? "#f1f5f9" : "#27272a"
     /** @property {color} secondaryForeground */
-    readonly property color secondaryForeground: mode === "light" ? "#0f172a" : "#f8fafc"
+    readonly property color secondaryForeground: mode === "light" ? "#0f172a" : "#ecedee"
     /** @property {color} muted */
-    readonly property color muted: mode === "light" ? "#f1f5f9" : "#1e293b"
+    readonly property color muted: mode === "light" ? "#f1f5f9" : "#27272a"
     /** @property {color} mutedForeground */
-    readonly property color mutedForeground: mode === "light" ? "#64748b" : "#94a3b8"
+    readonly property color mutedForeground: mode === "light" ? "#64748b" : "#a1a1aa"
     /** @property {color} accent */
-    readonly property color accent: mode === "light" ? "#f1f5f9" : "#1e293b"
+    readonly property color accent: mode === "light" ? "#f1f5f9" : "#3f3f46"
     /** @property {color} accentForeground */
-    readonly property color accentForeground: mode === "light" ? "#0f172a" : "#f8fafc"
+    readonly property color accentForeground: mode === "light" ? "#0f172a" : "#ffffff"
     /** @property {color} destructive */
-    readonly property color destructive: mode === "light" ? "#ef4444" : "#7f1d1d"
+    readonly property color destructive: mode === "light" ? "#ef4444" : "#f31260"
     /** @property {color} destructiveForeground */
-    readonly property color destructiveForeground: mode === "light" ? "#f8fafc" : "#f8fafc"
+    readonly property color destructiveForeground: mode === "light" ? "#f8fafc" : "#ffffff"
     /** @property {color} border */
-    readonly property color border: mode === "light" ? "#e2e8f0" : "#1e293b"
+    readonly property color border: mode === "light" ? "#e2e8f0" : "#00000000"
     /** @property {color} input */
-    readonly property color input: mode === "light" ? "#e2e8f0" : "#1e293b"
+    readonly property color input: mode === "light" ? "#e2e8f0" : "#27272a"
     /** @property {color} ring */
-    readonly property color ring: mode === "light" ? "#020817" : "#cbd5e1"
+    readonly property color ring: mode === "light" ? "#020817" : "#006fee"
     /** @property {color} success */
-    readonly property color success: mode === "light" ? "#22c55e" : "#22c55e"
+    readonly property color success: mode === "light" ? "#22c55e" : "#17c964"
     /** @property {color} successForeground */
     readonly property color successForeground: mode === "light" ? "#f8fafc" : "#f8fafc"
     /** @property {color} warning */
-    readonly property color warning: mode === "light" ? "#f59e0b" : "#f59e0b"
+    readonly property color warning: mode === "light" ? "#f59e0b" : "#f5a524"
     /** @property {color} warningForeground */
     readonly property color warningForeground: mode === "light" ? "#f8fafc" : "#f8fafc"
     /** @property {color} info */
-    readonly property color info: mode === "light" ? "#3b82f6" : "#3b82f6"
+    readonly property color info: mode === "light" ? "#3b82f6" : "#006fee"
     /** @property {color} infoForeground */
     readonly property color infoForeground: mode === "light" ? "#f8fafc" : "#f8fafc"
 
     /** @property {real} radiusSm */
     readonly property real radiusSm: 4
     /** @property {real} radiusMd */
-    readonly property real radiusMd: 6
+    readonly property real radiusMd: 12
     /** @property {real} radiusLg */
-    readonly property real radiusLg: 8
+    readonly property real radiusLg: 16
     /** @property {real} radiusXl */
-    readonly property real radiusXl: 12
+    readonly property real radiusXl: 20
     /** @property {real} radiusFull */
     readonly property real radiusFull: 9999
 
