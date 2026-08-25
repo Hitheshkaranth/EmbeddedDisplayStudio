@@ -15,11 +15,14 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSettings, QTimer
 from .devicepanel import DevicePanel, PANEL_PRESETS
 from .deployer import (
-    PackageWorker, validate_bundle, detect_bundle,
+    DependencyWorker, PackageWorker, validate_bundle, detect_bundle,
     detect_qt_binding, write_manifest,
 )
 from .telemetry import TelemetrySimulator, TelemetryRelay
-from .ssh import SshWorker, UploadWorker, build_ssh_cmd, build_upload_cmd
+from .ssh import (
+    SshWorker, UploadWorker, build_ssh_cmd, build_upload_cmd,
+    build_dep_check_command, build_dep_install_command,
+)
 from .scaffold import create_bundle
 from .taglab import TagLabSender
 
@@ -156,14 +159,23 @@ MEMORY_PROFILE_TIMEOUT_S = 180
 DEFAULT_SSH_TIMEOUT_S = 60
 
 # `hmi-install install` waits up to GUI_READY_TIMEOUT (25 s) for the panel to
-# render, and on failure rolls back and restarts again before it exits.
-INSTALL_TIMEOUT_S = 180
+# render, and on failure rolls back and restarts again before it exits. On an
+# idle panel the whole thing measures 14 s; the allowance is for a panel that
+# is busy running the application it is about to replace, where every step --
+# extraction, two systemctl calls, the readiness wait, the rollback path --
+# competes with it for the same cores.
+INSTALL_TIMEOUT_S = 300
 
 # Bundle upload: a fixed allowance plus time proportional to the payload. The
 # floor rate is deliberately pessimistic (256 KiB/s) so a slow or congested
 # field link is not mistaken for a hang.
 SCP_BASE_TIMEOUT_S = 60
 SCP_MIN_BYTES_PER_S = 256 * 1024
+
+# Installing packages on the panel is a download over the field link, from an
+# index that may be far away, onto a board that unpacks wheels slowly. It is
+# nothing like the other commands and gets its own allowance.
+DEP_INSTALL_TIMEOUT_S = 900
 
 # Asked of the panel when an install is cut off before it reported a result.
 #
@@ -174,6 +186,7 @@ SCP_MIN_BYTES_PER_S = 256 * 1024
 # happened, so it is asked -- and it undoes the swap itself if the GUI is not
 # running.
 INSTALL_RECOVERY_COMMAND = (
+    'echo "HMI_CURRENT=$(basename "$(readlink -f /opt/hmi_apps/current)")"; '
     'if hmi-install status 2>/dev/null | grep -qE "^gui:[[:space:]]+ready"; '
     'then echo "HMI_RECOVER=ok"; else echo "HMI_RECOVER=rollback"; '
     "hmi-install rollback; fi"
@@ -258,6 +271,7 @@ class MainWindow(QMainWindow):
         self._upload_started = 0.0
         # Set once a deploy has failed, so later steps cannot paint over it.
         self._deploy_failed = False
+        self._last_install_step = ""
         # Last line any SSH/SCP step printed, so a failure can name its cause.
         self._last_transport_line = ""
 
@@ -281,6 +295,34 @@ class MainWindow(QMainWindow):
             from PySide6.QtCore import QTimer
             QTimer.singleShot(self.exit_after_ms, self.close)
 
+    def _themed_icon(self, widget, name: str) -> None:
+        """
+        Give a widget an icon that follows the theme.
+
+        Args:
+            widget: anything with setIcon.
+            name: the Tabler icon name.
+
+        Icons are rendered to pixmaps at the colour they are asked for, so a
+        stylesheet swap cannot reach them the way it reaches every other
+        widget. Remembering which icon each widget wears is what lets them all
+        be re-rendered when the theme changes -- without it, toggling to dark
+        left a row of black glyphs on a black bar.
+        """
+        if not hasattr(self, "_icon_names"):
+            self._icon_names = {}
+        self._icon_names[widget] = name
+        widget.setIcon(icon(name))
+
+    def _restyle_icons(self) -> None:
+        """Re-render every themed icon in the colour of the current theme."""
+        for widget, name in getattr(self, "_icon_names", {}).items():
+            try:
+                widget.setIcon(icon(name))
+            except RuntimeError:
+                # The widget was destroyed; it will not be asked again.
+                pass
+
     def apply_theme(self):
         """
         Pushes the current theme's stylesheet onto the QApplication.
@@ -292,6 +334,9 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance()
         apply(app, self.theme)
+        # apply() is what tells the icon renderer which palette is on screen,
+        # so the re-render has to follow it, not precede it.
+        self._restyle_icons()
         logging.getLogger("EmbeddedDisplay Studio").info(
             "theme=%s stylesheet=%d chars", self.theme, len(app.styleSheet() or "")
         )
@@ -323,17 +368,17 @@ class MainWindow(QMainWindow):
 
         self.btn_open = QPushButton("Open Bundle...")
         self.btn_open.setProperty("variant", "outline")
-        self.btn_open.setIcon(icon("folder-open"))
+        self._themed_icon(self.btn_open, "folder-open")
         self.btn_open.clicked.connect(self.on_open_bundle)
 
         self.btn_new = QPushButton("New App...")
         self.btn_new.setProperty("variant", "secondary")
-        self.btn_new.setIcon(icon("plus"))
+        self._themed_icon(self.btn_new, "plus")
         self.btn_new.clicked.connect(self.on_new_app)
 
         self.btn_theme = QPushButton("")
         self.btn_theme.setProperty("variant", "ghost")
-        self.btn_theme.setIcon(icon("moon"))
+        self._themed_icon(self.btn_theme, "sun" if self.theme == "dark" else "moon")
         self.btn_theme.clicked.connect(self.on_toggle_theme)
 
         top_bar.addWidget(self.lbl_logo)
@@ -448,7 +493,7 @@ class MainWindow(QMainWindow):
 
         self.btn_deploy = QPushButton("Deploy to Target")
         self.btn_deploy.setProperty("variant", "default")
-        self.btn_deploy.setIcon(icon("upload"))
+        self._themed_icon(self.btn_deploy, "upload")
         self.btn_deploy.clicked.connect(self.on_deploy)
         self.btn_deploy.setEnabled(False)
         deploy_layout.addWidget(self.btn_deploy)
@@ -472,12 +517,12 @@ class MainWindow(QMainWindow):
         h_layout = QHBoxLayout()
         self.btn_rollback = QPushButton("Rollback")
         self.btn_rollback.setProperty("variant", "destructive")
-        self.btn_rollback.setIcon(icon("history"))
+        self._themed_icon(self.btn_rollback, "history")
         self.btn_rollback.clicked.connect(self.on_rollback)
 
         self.btn_restart = QPushButton("Restart GUI")
         self.btn_restart.setProperty("variant", "outline")
-        self.btn_restart.setIcon(icon("refresh"))
+        self._themed_icon(self.btn_restart, "refresh")
         self.btn_restart.clicked.connect(self.on_restart)
 
         h_layout.addWidget(self.btn_rollback)
@@ -518,7 +563,7 @@ class MainWindow(QMainWindow):
         profile_header.addWidget(profile_copy, 1)
         self.btn_refresh_profile = QPushButton("Refresh profile")
         self.btn_refresh_profile.setProperty("variant", "outline")
-        self.btn_refresh_profile.setIcon(icon("refresh"))
+        self._themed_icon(self.btn_refresh_profile, "refresh")
         self.btn_refresh_profile.clicked.connect(self.refresh_memory_profile)
         profile_header.addWidget(self.btn_refresh_profile)
         profile_layout.addLayout(profile_header)
@@ -556,7 +601,10 @@ class MainWindow(QMainWindow):
         self._add_profile_value(resources_layout, "Profile status:", "STATUS", "Connect to refresh")
         profile_layout.addWidget(resources_box)
         profile_layout.addStretch()
+        self._profile_page = profile_page
         self._right_tabs.addTab(profile_page, "Memory Profile")
+        # Selecting the tab is the request for the measurement.
+        self._right_tabs.currentChanged.connect(self._on_tab_changed)
 
         splitter.addWidget(self._right_tabs)
         splitter.setSizes([800, 400])
@@ -762,6 +810,11 @@ class MainWindow(QMainWindow):
             return
         self._render_memory_profile()
 
+    def _on_tab_changed(self, _index: int) -> None:
+        """Take the profile when its tab is opened, not before."""
+        if self._right_tabs.currentWidget() is self._profile_page and not self.memory_profile:
+            self.refresh_memory_profile()
+
     def refresh_memory_profile(self):
         """Read the active release and capacity profile from the connected SOM.
 
@@ -800,7 +853,7 @@ class MainWindow(QMainWindow):
 
     def on_toggle_theme(self):
         self.theme = "dark" if self.theme == "light" else "light"
-        self.btn_theme.setIcon(icon("sun" if self.theme == "dark" else "moon"))
+        self._icon_names[self.btn_theme] = "sun" if self.theme == "dark" else "moon"
         self.apply_theme()
         self._style_footer()
 
@@ -1021,6 +1074,23 @@ class MainWindow(QMainWindow):
         self.progress.setFormat("")
         self.lbl_stage.setText(stage)
 
+    def _progress_cancel(self, reason: str) -> None:
+        """
+        Stand the bar down without calling it a failure.
+
+        Args:
+            reason: caption shown under the bar.
+
+        A deploy the operator called off is not a fault, and painting it red
+        would teach them to ignore red.
+        """
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat("%p%")
+        self.progress.setStyleSheet("")
+        self.lbl_stage.setStyleSheet("color: #a1a1aa;")
+        self.lbl_stage.setText(reason)
+
     def _progress_set(self, percent: int, stage: str = "") -> None:
         """
         Moves the bar forward.
@@ -1134,6 +1204,7 @@ class MainWindow(QMainWindow):
         tag, status = parts[1], parts[2]
         detail = parts[3] if len(parts) > 3 else ""
 
+        self._last_install_step = INSTALL_STEP_LABEL.get(tag, tag)
         if status == "fail":
             self._progress_fail(
                 f"{INSTALL_STEP_LABEL.get(tag, tag)} failed: {detail}".strip()
@@ -1187,7 +1258,12 @@ class MainWindow(QMainWindow):
         )
 
         def on_test_finished(code):
-            if code == 0:
+            # Only when the operator is looking at the profile. Measuring the
+            # compressed size of a release means re-compressing it, which on
+            # this hardware is a minute of one core at 100% for a 300 MB app --
+            # long enough that the next Test Connection times out behind it.
+            # Nobody asked for that by pressing Connect.
+            if code == 0 and self._right_tabs.currentWidget() is self._profile_page:
                 self.refresh_memory_profile()
 
         self.run_ssh_worker(
@@ -1305,7 +1381,10 @@ class MainWindow(QMainWindow):
             pulse = QTimer(self)
             pulse.setInterval(heartbeat_s * 1000)
             pulse.timeout.connect(
-                lambda: self.log(f"  {desc}: {time.monotonic() - started:.0f}s elapsed...")
+                lambda: self.log(
+                    f"  {desc}: {time.monotonic() - started:.0f}s elapsed"
+                    f"{self._heartbeat_detail(desc)}..."
+                )
             )
             pulse.start()
 
@@ -1333,6 +1412,26 @@ class MainWindow(QMainWindow):
         worker.finished.connect(on_finished)
         worker.error.connect(self.log)
         worker.start()
+
+    def _heartbeat_detail(self, desc: str) -> str:
+        """
+        Name what the panel last reported, so a long wait is not a blank one.
+
+        Args:
+            desc: the step label the worker was given.
+
+        Returns:
+            A clause for the heartbeat line, or "" when there is nothing to add.
+
+        An install that takes two minutes on a loaded panel used to print
+        nothing but a rising number, which reads as a hang -- especially once
+        the application is visibly up on the panel and the tool still appears
+        to be waiting for something.
+        """
+        if desc != "Install":
+            return ""
+        step = getattr(self, "_last_install_step", "")
+        return f" (last step: {step})" if step else ""
 
     def _discard_packaging_dir(self) -> None:
         """Remove the temp directory holding the last deployment's tarball.
@@ -1362,14 +1461,173 @@ class MainWindow(QMainWindow):
         only starts once the previous one has exited 0, so a failure anywhere
         stops the deployment with the failing step named in the console.
         """
-        import tempfile
-
         self.save_settings()
         self.log(f"Deploying {self.bundle_dir}...")
         self._progress_begin()
         # Nothing else disables the button until the first SSH step starts, and
-        # packaging happens before that.
+        # the checks before it take seconds.
         self.btn_deploy.setEnabled(False)
+        self._start_dependency_scan()
+
+    # ------------------------------------------------------------------
+    # Dependency pre-flight
+    # ------------------------------------------------------------------
+
+    def _start_dependency_scan(self) -> None:
+        """Read what the application imports, off the UI thread."""
+        self._progress_busy("Reading the application's imports...")
+        worker = DependencyWorker(self.bundle_dir, parent=self)
+        self._dep_worker = worker
+        worker.done.connect(self._on_deps_scanned)
+        worker.failed.connect(self._on_dep_scan_failed)
+        worker.start()
+
+    def _release_dep_worker(self) -> None:
+        """Let go of the scanning thread once it has reported."""
+        worker = getattr(self, "_dep_worker", None)
+        if worker is not None:
+            worker.wait(2000)
+            self._dep_worker = None
+
+    def _qt_binding(self) -> str:
+        """Return the binding this bundle runs under, defaulting to PySide6."""
+        return (self.current_manifest or {}).get("qt_binding", "pyside6")
+
+    def _on_dep_scan_failed(self, message: str) -> None:
+        """A scan is a convenience; never let it stop a deploy that would work."""
+        self._release_dep_worker()
+        self.log(f"Could not read the application's imports: {message}")
+        self._begin_packaging()
+
+    def _on_deps_scanned(self, pairs) -> None:
+        """Ask the panel whether it can import everything the bundle needs."""
+        self._release_dep_worker()
+        self._dependencies = [(str(m), str(d)) for m, d in pairs]
+        if not self._dependencies:
+            self.log("Dependencies: nothing beyond the standard library and Qt.")
+            self._begin_packaging()
+            return
+
+        listed = ", ".join(
+            module if module == distribution else f"{module} ({distribution})"
+            for module, distribution in self._dependencies
+        )
+        self.log(f"Dependencies this app imports: {listed}")
+        self._progress_busy("Checking dependencies on the panel...")
+        self._deps_missing = []
+        self.run_ssh_worker(
+            build_ssh_cmd(
+                self.inp_host.text().strip(), self.inp_user.text().strip(),
+                self.ssh_port(), self.inp_key.text().strip(),
+                build_dep_check_command(
+                    [module for module, _ in self._dependencies], self._qt_binding()
+                ),
+            ),
+            "Dependencies", self._on_deps_checked, timeout_s=SSH_TEST_TIMEOUT_S,
+            line_hook=self._note_dep_line,
+        )
+
+    def _note_dep_line(self, line: str) -> None:
+        """Collect the per-module verdicts from the panel's reply."""
+        parts = line.split()
+        if len(parts) == 3 and parts[0] == "DEP" and parts[2] == "missing":
+            self._deps_missing.append(parts[1])
+
+    def _on_deps_checked(self, code: int) -> None:
+        """Decide what to do about anything the panel could not import."""
+        if code != 0:
+            # An unreachable panel will be reported again, in the same words,
+            # by the upload; there is nothing useful to add here.
+            self.log("Could not check the panel's packages; continuing anyway.")
+            self._begin_packaging()
+            return
+
+        if not self._deps_missing:
+            self.log("Dependencies: the panel has all of them.")
+            self._begin_packaging()
+            return
+
+        wanted = [
+            distribution
+            for module, distribution in self._dependencies
+            if module in self._deps_missing
+        ]
+        self.log(f"Dependencies missing on the panel: {', '.join(wanted)}")
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Packages missing on the panel")
+        box.setText(
+            f"The panel cannot import {len(wanted)} package(s) this application "
+            "needs:\n\n    " + "\n    ".join(wanted) + "\n\n"
+            "Deployed as it is, the application will fail on its first import "
+            "and the panel will roll back."
+        )
+        box.setInformativeText("Install them on the panel now?")
+        install = box.addButton("Install and deploy", QMessageBox.AcceptRole)
+        anyway = box.addButton("Deploy anyway", QMessageBox.DestructiveRole)
+        box.addButton("Cancel", QMessageBox.RejectRole)
+        box.setDefaultButton(install)
+        box.exec()
+        clicked = box.clickedButton()
+
+        if clicked is anyway:
+            self.log("Deploying without the missing packages, at your request.")
+            self._begin_packaging()
+            return
+        if clicked is not install:
+            self.log("Deployment cancelled.")
+            self._progress_cancel("Cancelled -- packages missing on the panel.")
+            self.btn_deploy.setEnabled(self.bundle_dir is not None)
+            return
+
+        self._pip_failed = []
+        self._pip_done = 0
+        self._pip_total = len(wanted)
+        self._progress_busy(f"Installing {self._pip_total} package(s) on the panel...")
+        self.log(f"Installing on the panel: {', '.join(wanted)}")
+        self.run_ssh_worker(
+            build_ssh_cmd(
+                self.inp_host.text().strip(), self.inp_user.text().strip(),
+                self.ssh_port(), self.inp_key.text().strip(),
+                build_dep_install_command(wanted, self._qt_binding()),
+            ),
+            "Install packages", self._on_deps_installed,
+            timeout_s=DEP_INSTALL_TIMEOUT_S, heartbeat_s=10,
+            line_hook=self._note_pip_line,
+        )
+
+    def _note_pip_line(self, line: str) -> None:
+        """Drive the stage line from pip's progress through the list."""
+        text = line.strip()
+        if text.startswith("PIP_START "):
+            self._pip_done += 1
+            name = text.split(None, 1)[1]
+            self._progress_busy(
+                f"Installing {name} ({self._pip_done} of {self._pip_total})..."
+            )
+        elif text.startswith("PIP_FAIL "):
+            self._pip_failed.append(text.split(None, 1)[1])
+
+    def _on_deps_installed(self, code: int) -> None:
+        """Continue only if the panel really can import what it was sent."""
+        if code == 0 and not self._pip_failed:
+            self.log(f"Installed {self._pip_total} package(s) on the panel.")
+            self._begin_packaging()
+            return
+
+        names = ", ".join(self._pip_failed) or "the packages"
+        self._progress_fail(f"Could not install {names} on the panel.")
+        self.log(
+            "The console above has pip's own output. A panel with no route to "
+            "an index needs the packages installed by hand; deploying without "
+            "them would only crash-loop and roll back."
+        )
+        self.btn_deploy.setEnabled(self.bundle_dir is not None)
+
+    def _begin_packaging(self) -> None:
+        """Pack the bundle for upload, on a worker thread."""
+        import tempfile
 
         try:
             out_dir = tempfile.mkdtemp(prefix="hmi-deploy-")
@@ -1377,6 +1635,7 @@ class MainWindow(QMainWindow):
             self._progress_fail(f"Could not start the deployment: {e}")
             self.btn_deploy.setEnabled(self.bundle_dir is not None)
             return
+
 
         # The previous deploy's tarball is discarded by the same worker rather
         # than here: it is up to 500 MB, and deleting it inline is one more
@@ -1520,9 +1779,11 @@ class MainWindow(QMainWindow):
                         )
                 if code in (-1, 255):
                     # The installer did not get to say what it did. It may have
-                    # swapped the symlink already and died before the health
-                    # check could undo it.
-                    self._recover_interrupted_install(host, user, key)
+                    # finished, and it may have swapped the symlink and died
+                    # before the health check could undo it. The panel knows.
+                    self._recover_interrupted_install(
+                        host, user, key, tar_name[: -len(".tar.gz")]
+                    )
                     return
                 self.start_relay()
 
@@ -1542,28 +1803,47 @@ class MainWindow(QMainWindow):
             self._progress_fail(f"Could not start the deployment: {e}")
             self.btn_deploy.setEnabled(self.bundle_dir is not None)
 
-    def _recover_interrupted_install(self, host: str, user: str, key: str) -> None:
+    def _recover_interrupted_install(
+        self, host: str, user: str, key: str, release: str = ""
+    ) -> None:
         """
-        Make sure a cut-off install did not leave the panel on a dead release.
+        Find out what a cut-off install actually left on the panel.
 
         Args:
             host, user, key: the same target the install was sent to.
+            release: the release directory this deploy was creating, so the
+                answer can distinguish "it landed" from "something landed".
 
-        The panel decides: if its GUI is up, whatever is current works and is
-        left alone; if it is not, the panel rolls itself back. Doing this from
-        here would need the tool to know which release was live before the
-        deploy, which is exactly the state a killed installer takes with it.
+        The panel decides. If its GUI is up on the release we sent, the deploy
+        succeeded and only the reporting was lost -- which is what a busy panel
+        plus a client-side watchdog produces, and telling the operator it
+        failed would send them to re-deploy something already running. If the
+        GUI is not up, the panel rolls itself back.
         """
         self.log("Install was cut off -- asking the panel what state it is in...")
         self._recovered = ""
+        self._recovered_release = ""
 
         def note(line: str) -> None:
             if "HMI_RECOVER=" in line:
                 self._recovered = line.split("HMI_RECOVER=", 1)[1].strip()
+            elif "HMI_CURRENT=" in line:
+                self._recovered_release = line.split("HMI_CURRENT=", 1)[1].strip()
 
         def done(code: int) -> None:
-            if self._recovered == "ok":
-                self.log("The panel is running and ready; nothing to undo.")
+            landed = release and self._recovered_release == release
+            if self._recovered == "ok" and landed:
+                self.log(
+                    f"The panel is running {self._recovered_release} and is ready: "
+                    "the deployment landed, only its final report was lost."
+                )
+                self._deploy_failed = False
+                self._progress_succeed()
+            elif self._recovered == "ok":
+                self.log(
+                    f"The panel is running and ready on {self._recovered_release or 'its current release'}; "
+                    "nothing to undo."
+                )
             elif self._recovered == "rollback":
                 self.log("The panel was rolled back to the previous release.")
                 self._progress_fail(
@@ -1629,11 +1909,13 @@ class MainWindow(QMainWindow):
         # Packaging cannot be interrupted safely part-way through a tarball, so
         # it is waited out rather than cancelled; Qt aborts the process if the
         # thread is destroyed while it still runs.
-        packer = getattr(self, "_package_worker", None)
-        if packer is not None:
+        for name, grace in (("_package_worker", 10000), ("_dep_worker", 10000)):
+            worker = getattr(self, name, None)
+            if worker is None:
+                continue
             try:
-                if packer.isRunning():
-                    packer.wait(10000)
+                if worker.isRunning():
+                    worker.wait(grace)
             except Exception:
                 pass
 

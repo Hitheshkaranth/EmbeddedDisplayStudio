@@ -11,7 +11,7 @@ import subprocess
 import logging
 import threading
 from PySide6.QtCore import QObject, Signal, QThread
-from typing import Optional, List
+from typing import Optional, List, Sequence
 
 logger = logging.getLogger("ssh")
 
@@ -459,6 +459,91 @@ def build_upload_cmd(host: str, user: str, port: int, key_path: str, dest: str) 
         host, user, port, key_path,
         f"mkdir -p {shlex.quote(parent)} && cat > {shlex.quote(dest)}",
     )
+
+
+# Resolves the interpreter a bundle will actually run under, in the panel's own
+# shell. The order matches hmi-gui-launch exactly -- $HMI_PYTHON, then the
+# provisioned /opt/hmi-python, then whatever is on PATH -- because a package
+# installed into a different interpreter from the one that will import it is
+# indistinguishable, from the console, from not installing it at all.
+_RESOLVE_PYTHON = (
+    'P="${HMI_PYTHON:-}"; '
+    '[ -x "$P" ] || P=/opt/hmi-python/bin/python3; '
+    '[ -x "$P" ] || P="$(command -v python3)"; '
+)
+
+# A PySide2 bundle runs under the separate Qt5 runtime, which has its own
+# site-packages. See the runtime-selection section of hmi-gui-launch.
+_RESOLVE_PYTHON_QT5 = (
+    'P=/opt/hmi-python-qt5/bin/python3; '
+    '[ -x "$P" ] || P="${HMI_PYTHON:-}"; '
+    '[ -x "$P" ] || P="$(command -v python3)"; '
+)
+
+
+def _resolver(qt_binding: str) -> str:
+    """Return the shell prologue that puts the right interpreter in $P."""
+    return _RESOLVE_PYTHON_QT5 if qt_binding == "pyside2" else _RESOLVE_PYTHON
+
+
+def build_dep_check_command(modules: Sequence[str], qt_binding: str = "pyside6") -> str:
+    """
+    Build a remote command that reports which of these modules import.
+
+    Args:
+        modules: import names to test, as the application spells them.
+        qt_binding: the bundle's binding, which selects the interpreter.
+
+    Returns:
+        A shell command printing `DEP <module> ok|missing` per module, and
+        `DEP_PYTHON=<path>` first so the console records which interpreter
+        answered.
+
+    Importing is the only honest test. A package can be present on disk and
+    still fail to import -- a wheel built for the wrong architecture, a
+    compiled extension missing a library the panel does not have -- and that
+    failure is exactly the one that kills the application at startup.
+    """
+    listed = " ".join(shlex.quote(module) for module in modules)
+    return (
+        _resolver(qt_binding)
+        + 'echo "DEP_PYTHON=$P"; '
+        + f"for m in {listed}; do "
+        + 'if "$P" -c "import $m" >/dev/null 2>&1; '
+        + 'then echo "DEP $m ok"; else echo "DEP $m missing"; fi; '
+        + "done"
+    )
+
+
+def build_dep_install_command(
+    distributions: Sequence[str], qt_binding: str = "pyside6"
+) -> str:
+    """
+    Build a remote command that pip-installs these distributions.
+
+    Args:
+        distributions: pip requirement specifiers.
+        qt_binding: the bundle's binding, which selects the interpreter.
+
+    Returns:
+        A shell command printing `PIP_START`, then pip's own output, then
+        `PIP_OK <name>` or `PIP_FAIL <name>` for each.
+
+    One pip run per distribution, deliberately. A single run is all-or-nothing,
+    so one name a scan got wrong -- and a scan reads names out of source, so it
+    will sometimes get one wrong -- would take every other package down with
+    it, including the ones the application genuinely cannot start without.
+    """
+    lines = [_resolver(qt_binding)]
+    for distribution in distributions:
+        quoted = shlex.quote(distribution)
+        lines.append(
+            f"echo PIP_START {quoted}; "
+            f'if "$P" -m pip install --no-input --disable-pip-version-check '
+            f"--root-user-action=ignore {quoted}; "
+            f"then echo PIP_OK {quoted}; else echo PIP_FAIL {quoted}; fi; "
+        )
+    return "".join(lines)
 
 
 def build_scp_cmd(host: str, user: str, port: int, key_path: str, src: str, dest: str) -> List[str]:

@@ -7,6 +7,8 @@ flow (CONTRACT section 4, 6).
 import json
 import os
 import shutil
+import subprocess
+import sys
 import tarfile
 import hashlib
 import fnmatch
@@ -44,6 +46,87 @@ from schema.manifest import (  # noqa: E402
     screen_of,
     validate_bundle,
 )
+
+# Which packages an application needs on top of the platform is worked out from
+# the application itself; see the module docstring for why a scan rather than a
+# declaration is the primary source.
+from schema.deps import Dependency, dependencies  # noqa: E402,F401
+
+class DependencyWorker(QThread):
+    """
+    Reads a bundle's third-party imports off the UI thread.
+
+    The scan parses every Python file that would be packaged, and a real
+    application carries generated resource modules that are megabytes of
+    base64 -- 3.4 s on one of the bundles this was built for. That is well past
+    the point where a window stops repainting, so it does not run on the UI
+    thread.
+
+    Signals:
+        done(list): (module, distribution) pairs, sorted by module.
+        failed(str): why the scan could not be completed.
+    """
+
+    done = Signal(list)
+    failed = Signal(str)
+
+    def __init__(self, bundle_dir: str, parent: Optional[QObject] = None) -> None:
+        """
+        Args:
+            bundle_dir: the loaded bundle.
+            parent: parent QObject.
+        """
+        super().__init__(parent)
+        self.bundle_dir = bundle_dir
+
+    def run(self) -> None:
+        """Scan, and report pairs rather than the NamedTuple across threads."""
+        found = self._scan_out_of_process()
+        if found is None:
+            try:
+                found = [
+                    [item.module, item.distribution]
+                    for item in dependencies(self.bundle_dir)
+                ]
+            except Exception as exc:
+                self.failed.emit(str(exc))
+                return
+        self.done.emit(found)
+
+    def _scan_out_of_process(self):
+        """Run the scan in a child interpreter; None if that is not possible.
+
+        Returns:
+            (module, distribution) pairs, or None to fall back to this thread.
+
+        A thread is not enough on its own. The expensive part is ast.parse,
+        which holds the GIL for the whole of one file, and a real application
+        carries generated resource modules several megabytes long -- one call
+        measured at 0.9 s with the UI thread unable to run for the duration. A
+        child process shares no interpreter lock, so the window keeps painting
+        no matter what the bundle contains.
+        """
+        if getattr(sys, "frozen", False):
+            return None
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        try:
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            completed = subprocess.run(
+                [sys.executable, "-m", "schema.deps", self.bundle_dir],
+                cwd=repo_root, capture_output=True, text=True,
+                timeout=180, creationflags=creationflags,
+            )
+        except Exception:
+            return None
+        if completed.returncode != 0:
+            return None
+        pairs = []
+        for line in completed.stdout.splitlines():
+            module, _, distribution = line.partition("	")
+            if module and distribution:
+                pairs.append([module, distribution])
+        return pairs
+
 
 class PackageWorker(QThread):
     """

@@ -58,6 +58,11 @@ FILE_PAYLOAD: List[Tuple[str, str]] = [
     ("target/systemd/hmi-gui.service",      "etc/systemd/system/hmi-gui.service"),
     ("target/systemd/hmi-hwd.service",      "etc/systemd/system/hmi-hwd.service"),
     ("target/tmpfiles/hmi.conf",            "usr/lib/tmpfiles.d/hmi.conf"),
+    # Shown by the compositor from the moment it starts until the
+    # application maps its first window -- boot, and every restart in
+    # between. Both variants travel; the dark one is what gets used.
+    ("target/branding/boot-banner-dark.png",  "usr/share/hmi/boot-banner.png"),
+    ("target/branding/boot-banner-light.png", "usr/share/hmi/boot-banner-light.png"),
 ]
 
 # Whole directories. The loader resolves its shell relative to its own location

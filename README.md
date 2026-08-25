@@ -268,11 +268,9 @@ the panel, then push it.
 
 <div align="center">
 
-<img src="docs/assets/screenshot-hmi.png" alt="The panel UI" width="620" />
-<img src="docs/assets/screenshot-gallery.png" alt="Component gallery" width="620" />
+<img src="docs/assets/screenshot-hmi.png" alt="The panel UI" width="720" />
 
-<em>Left: the panel screen, bound to live tags. Right: the component gallery
-(<code>python ui/gallery.py --theme dark</code>).</em>
+<em>The panel screen, bound to live tags.</em>
 
 </div>
 

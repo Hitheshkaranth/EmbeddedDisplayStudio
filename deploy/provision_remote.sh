@@ -197,6 +197,61 @@ if command -v systemd-tmpfiles >/dev/null 2>&1; then
 fi
 step "install-runtime" "ok" "/run/hmi, /tmp/hmi_upload, /opt/hmi_apps"
 
+# ---- Boot banner -----------------------------------------------------
+# The panel is blank from the moment weston starts until the application maps
+# its window: several seconds at boot, and again on every deploy while the new
+# release starts. Weston paints its background there, so that is where the
+# product identity goes.
+#
+# The compositor reads this once, at startup. Changing it does not disturb a
+# running panel and does not take effect until the next boot, which is the
+# right trade: a weston restart would take the running application down with
+# it, and this is cosmetic.
+
+install_file "usr/share/hmi/boot-banner.png" 0644
+install_file "usr/share/hmi/boot-banner-light.png" 0644
+
+set_weston_background() {
+    _ini="/etc/xdg/weston/weston.ini"
+    [ -f "$_ini" ] || return 1
+
+    cp -a "$_ini" "${_ini}.hmi-backup" 2>/dev/null || true
+    _tmp="${_ini}.hmi.$$"
+
+    if grep -q "^background-image=" "$_ini"; then
+        sed -e "s|^background-image=.*|background-image=/usr/share/hmi/boot-banner.png|" \
+            -e "s|^background-type=.*|background-type=scale-crop|" "$_ini" > "$_tmp"
+    elif grep -q "^\[shell\]" "$_ini"; then
+        awk '/^\[shell\]/ {
+                print;
+                print "background-image=/usr/share/hmi/boot-banner.png";
+                print "background-type=scale-crop";
+                next
+             } { print }' "$_ini" > "$_tmp"
+    else
+        {
+            cat "$_ini"
+            printf '\n[shell]\nbackground-image=/usr/share/hmi/boot-banner.png\n'
+            printf 'background-type=scale-crop\n'
+        } > "$_tmp"
+    fi
+
+    # A truncated weston.ini costs the panel its display, so the new file only
+    # replaces the old one once it is complete and at least as long.
+    if [ -s "$_tmp" ] && [ "$(wc -c < "$_tmp")" -ge "$(wc -c < "$_ini")" ]; then
+        mv "$_tmp" "$_ini"
+        return 0
+    fi
+    rm -f "$_tmp"
+    return 1
+}
+
+if set_weston_background; then
+    step "install-branding" "ok" "/usr/share/hmi/boot-banner.png (shown from next boot)"
+else
+    step "install-branding" "ok" "banner installed; weston.ini not configured"
+fi
+
 # ---- systemd units ---------------------------------------------------
 
 install_file "etc/systemd/system/hmi-gui.service" 0644

@@ -441,6 +441,17 @@ QStatusBar {{
 }}
 """
 
+# The theme last handed to apply(). Icons are rendered as pixmaps, so unlike
+# everything the stylesheet reaches they cannot re-colour themselves; they need
+# to be told which palette is on screen.
+_ACTIVE_THEME = 'light'
+
+
+def active_theme() -> str:
+    """Return the theme most recently applied to the application."""
+    return _ACTIVE_THEME
+
+
 def apply(app: QApplication, theme: str = 'light') -> None:
     """
     Apply the shadcn theme to a QApplication.
@@ -452,6 +463,8 @@ def apply(app: QApplication, theme: str = 'light') -> None:
         app (QApplication): The application instance to style.
         theme (str): 'light' or 'dark'. Defaults to 'light'.
     """
+    global _ACTIVE_THEME
+    _ACTIVE_THEME = theme
     app.setStyleSheet(qss(theme))
     
     font = QFont()
@@ -495,8 +508,8 @@ def icon(name: str, size: int = 18, color: Union[str, QColor, None] = None) -> Q
     Args:
         name (str): The Tabler icon name (e.g. "upload", "settings").
         size (int): Render size in px, both width and height.  Defaults to 18.
-        color (str | QColor | None): Stroke colour.  None defaults to the
-            current foreground token for the light theme ('#020817').
+        color (str | QColor | None): Stroke colour.  None follows the theme
+            last applied, using its 'foreground' token.
 
     Returns:
         QIcon: The requested icon, or a visible placeholder if the name is
@@ -508,7 +521,13 @@ def icon(name: str, size: int = 18, color: Union[str, QColor, None] = None) -> Q
     """
     # -- resolve colour -------------------------------------------------
     if color is None:
-        color_str = "#020817"
+        # The default used to be the light theme's foreground, spelled out as a
+        # literal. Under the dark theme that painted every icon in near-black
+        # on a near-black bar: present, aligned, and invisible.
+        try:
+            color_str = globals()["color"]("foreground", _ACTIVE_THEME)
+        except Exception:
+            color_str = "#020817"
     elif isinstance(color, QColor):
         color_str = color.name()
     else:
