@@ -18,7 +18,7 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 **The stack**
 
 [![Qt](https://img.shields.io/badge/Qt%206-QML%20%2F%20PySide6-41cd52?style=for-the-badge&logo=qt&logoColor=white&labelColor=18181b)](https://doc.qt.io/qtforpython-6/)
-[![Python](https://img.shields.io/badge/Python-3.9%2B-3776ab?style=for-the-badge&logo=python&logoColor=white&labelColor=18181b)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12-3776ab?style=for-the-badge&logo=python&logoColor=white&labelColor=18181b)](https://www.python.org/)
 [![libgpiod](https://img.shields.io/badge/GPIO-libgpiod%20v1%20%2B%20v2-f59e0b?style=for-the-badge&labelColor=18181b)](https://libgpiod.readthedocs.io/)
 [![IIO](https://img.shields.io/badge/ADC-Linux%20IIO-f59e0b?style=for-the-badge&labelColor=18181b)](https://www.kernel.org/doc/html/latest/driver-api/iio/index.html)
 [![shadcn/ui](https://img.shields.io/badge/UI-shadcn%2Fui%20port-a1a1aa?style=for-the-badge&labelColor=18181b)](https://github.com/shadcn-ui/ui)
