@@ -2,8 +2,6 @@
 
 <img src="docs/assets/banner.jpg" alt="EmbeddedDisplay Studio" width="900" />
 
-# EmbeddedDisplay Studio
-
 ### Bring Your Own App — HMI platform for Toradex Verdin i.MX8M Plus
 
 Ship the panel once. Let anyone drop their own Qt app onto it in seconds — over SSH, with no rebuild, no image reflash, and no hardware code in the app.
@@ -32,9 +30,10 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 <div align="center">
 
-<img src="docs/assets/screenshot-studio.png" alt="EmbeddedDisplay Studio" width="900" />
+<img src="docs/assets/screenshot-studio.png" alt="The Studio window, connected to a panel" width="900" />
 
-<em>EmbeddedDisplay Studio — the customer's app running inside a live panel preview, with real telemetry from the hardware daemon.</em>
+<em>A customer's application running inside a live preview of the panel, beside
+the target it deploys to — connected here to a 10.1" 1024 x 768 SOM.</em>
 
 </div>
 
@@ -267,6 +266,27 @@ the panel, then push it.
   reported as an unreachable panel, not as whatever the step was trying to do.
 
 <div align="center">
+
+<img src="docs/assets/screenshot-packaging.png" alt="Dependency check before packaging" width="860" />
+
+<em>Creation of the package from the input GUI: the application's imports are
+read, the panel is asked whether it can import each one, and the bar reports
+the stage.</em>
+
+<br /><br />
+
+<img src="docs/assets/screenshot-installing.png" alt="Installing on the hardware" width="860" />
+
+<em>Uploading the GUI onto the hardware: the installer's own steps arrive as
+the panel reaches them, down to the release it is switching to.</em>
+
+<br /><br />
+
+<img src="docs/assets/screenshot-dark.png" alt="Studio in dark mode" width="860" />
+
+<em>Dark mode.</em>
+
+<br /><br />
 
 <img src="docs/assets/screenshot-hmi.png" alt="The panel UI" width="720" />
 
