@@ -272,6 +272,10 @@ class MainWindow(QMainWindow):
         # Set once a deploy has failed, so later steps cannot paint over it.
         self._deploy_failed = False
         self._last_install_step = ""
+        # Bumped by every deploy. A callback carrying an older number belongs
+        # to a deployment that is over, and must not touch the bar, the
+        # console, or the temporary files of the one running now.
+        self._deploy_generation = getattr(self, "_deploy_generation", 0) + 1
         # Last line any SSH/SCP step printed, so a failure can name its cause.
         self._last_transport_line = ""
 
@@ -1433,21 +1437,33 @@ class MainWindow(QMainWindow):
         step = getattr(self, "_last_install_step", "")
         return f" (last step: {step})" if step else ""
 
-    def _discard_packaging_dir(self) -> None:
-        """Remove the temp directory holding the last deployment's tarball.
+    def _discard_packaging_dir(self, path: str = "") -> None:
+        """Remove the temp directory holding a deployment's tarball.
 
-        Args:   none
+        Args:
+            path: the directory to remove. Defaults to the one this window
+                currently records, which is only correct when the caller knows
+                no newer deploy has started.
+
         Returns: nothing
-        Side effects: deletes the directory tree if one is recorded.
+        Side effects: deletes the directory tree, and forgets it if it is the
+            one on record.
         Never raises: failing to tidy up must not fail or interrupt a deploy.
+
+        Every deploy names the directory it created. A deploy step that
+        finishes late -- an install whose watchdog fired minutes ago, say --
+        used to delete whatever directory was on record at the moment it ran,
+        which by then belonged to the deploy that replaced it: the tarball
+        uploaded, and its checksum was gone before it could follow.
         """
-        path = getattr(self, "_packaging_dir", None)
-        if not path:
+        target = path or getattr(self, "_packaging_dir", None)
+        if not target:
             return
-        self._packaging_dir = None
+        if getattr(self, "_packaging_dir", None) == target:
+            self._packaging_dir = None
         try:
             import shutil
-            shutil.rmtree(path, ignore_errors=True)
+            shutil.rmtree(target, ignore_errors=True)
         except Exception:
             pass
 
@@ -1463,6 +1479,8 @@ class MainWindow(QMainWindow):
         """
         self.save_settings()
         self.log(f"Deploying {self.bundle_dir}...")
+        # _progress_begin() bumps the generation, so everything below belongs
+        # to this attempt.
         self._progress_begin()
         # Nothing else disables the button until the first SSH step starts, and
         # the checks before it take seconds.
@@ -1644,6 +1662,7 @@ class MainWindow(QMainWindow):
         # deploys.
         discard = getattr(self, "_packaging_dir", None) or ""
         self._packaging_dir = out_dir
+        self._packaging_generation = self._deploy_generation
 
         self._package_started = time.monotonic()
         self._progress_busy("Packaging bundle...")
@@ -1680,6 +1699,10 @@ class MainWindow(QMainWindow):
     def _on_packaged(self, tar_path: str, sha256_path: str) -> None:
         """Packaging succeeded: report the artefact and start the upload."""
         self._release_package_worker()
+        if self._packaging_generation != self._deploy_generation:
+            # A newer deploy owns the window; this tarball is nobody's.
+            self._discard_packaging_dir(os.path.dirname(tar_path))
+            return
         tar_size = os.path.getsize(tar_path)
         self.log(
             f"Packaged to {tar_path} ({tar_size / (1024 * 1024):.1f} MB) "
@@ -1694,6 +1717,8 @@ class MainWindow(QMainWindow):
     def _on_package_failed(self, kind: str, message: str) -> None:
         """Packaging failed: say why, and leave nothing behind."""
         self._release_package_worker()
+        if self._packaging_generation != self._deploy_generation:
+            return
         self._discard_packaging_dir()
         if kind == "too-large":
             self._progress_fail("Bundle is too large for the panel.")
@@ -1718,6 +1743,15 @@ class MainWindow(QMainWindow):
             user = self.inp_user.text().strip()
             key = self.inp_key.text().strip()
 
+            # This attempt's own state, captured rather than read back later:
+            # by the time a step returns, the window may belong to a newer one.
+            generation = self._deploy_generation
+            packaging_dir = os.path.dirname(tar_path)
+
+            def superseded() -> bool:
+                """True once a later deploy has taken over the window."""
+                return generation != self._deploy_generation
+
             # Upload allowance scaled to the payload. A slow panel link moving a
             # large bundle is normal, not a hang; a fixed short timeout would
             # kill the transfer partway and leave a truncated file in the tmpfs.
@@ -1730,8 +1764,10 @@ class MainWindow(QMainWindow):
             tar_name = os.path.basename(tar_path)
 
             def on_upload(code):
+                if superseded():
+                    return
                 if code != 0:
-                    self._discard_packaging_dir()
+                    self._discard_packaging_dir(packaging_dir)
                     self._progress_fail(self._transport_failure("the bundle upload", code))
                     return
                 elapsed = max(time.monotonic() - self._upload_started, 1e-6)
@@ -1744,8 +1780,10 @@ class MainWindow(QMainWindow):
                 self.run_ssh_worker(cmd_scp2, "SCP sha256", on_scp2, timeout_s=SSH_SHORT_TIMEOUT_S)
 
             def on_scp2(code):
+                if superseded():
+                    return
                 if code != 0:
-                    self._discard_packaging_dir()
+                    self._discard_packaging_dir(packaging_dir)
                     self._progress_fail(self._transport_failure("the checksum upload", code))
                     return
                 self._progress_set(PROGRESS_INSTALL_START, "Installing on the panel...")
@@ -1761,7 +1799,11 @@ class MainWindow(QMainWindow):
                 )
 
             def on_install(code):
-                self._discard_packaging_dir()
+                if superseded():
+                    # Still clean up after ourselves; just do not report.
+                    self._discard_packaging_dir(packaging_dir)
+                    return
+                self._discard_packaging_dir(packaging_dir)
                 if code == 0 and not self._deploy_failed:
                     self.log("Deployment complete.")
                     self._progress_succeed()
@@ -1799,7 +1841,7 @@ class MainWindow(QMainWindow):
             )
 
         except Exception as e:
-            self._discard_packaging_dir()
+            self._discard_packaging_dir(os.path.dirname(tar_path))
             self._progress_fail(f"Could not start the deployment: {e}")
             self.btn_deploy.setEnabled(self.bundle_dir is not None)
 
