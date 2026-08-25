@@ -88,6 +88,9 @@ class DevicePanel(QWidget):
         self.bundle_dir = None
         self.target_width = 1280
         self.target_height = 800
+        # Physical diagonal of the selected panel, in inches. Decides how large
+        # the bezel draws relative to the other presets; see _physical_scale.
+        self.target_inches = 10.1
         
         # LED state: 0 = idle/disconnected, 1 = link up, 2 = deploying, 3 = fault
         self._led_state = 0
@@ -169,7 +172,8 @@ class DevicePanel(QWidget):
             return
         self._theme_holder = obj
 
-    def set_target_resolution(self, width: int, height: int) -> None:
+    def set_target_resolution(self, width: int, height: int,
+                              inches: float = 0.0) -> None:
         """
         Changes the emulated panel resolution and re-lays out the preview.
 
@@ -181,12 +185,17 @@ class DevicePanel(QWidget):
         Args:
             width: horizontal resolution in pixels, > 0.
             height: vertical resolution in pixels, > 0.
+            inches: physical diagonal of the panel. 0 keeps the current value,
+                which is what a manifest-driven size wants: a bundle declares
+                its resolution but says nothing about the glass it runs on.
         """
         if width <= 0 or height <= 0:
             logging.warning("Ignoring invalid resolution %sx%s", width, height)
             return
         self.target_width = int(width)
         self.target_height = int(height)
+        if inches > 0:
+            self.target_inches = float(inches)
         self.update_geometry()
         self.update()
 
@@ -199,8 +208,14 @@ class DevicePanel(QWidget):
             )
 
     def resolution_text(self) -> str:
-        """Returns the current resolution formatted for the caption strip."""
-        return f"{self.target_width} x {self.target_height}"
+        """Returns the caption under the bezel: diagonal and resolution.
+
+        The diagonal is included because three of the presets are 1280x800 and
+        differ only in physical size, so a resolution-only caption could not
+        say which one you were looking at.
+        """
+        return (f'{self.target_inches:g}" - {self.target_width} x '
+                f'{self.target_height}')
 
     def get_led_state(self) -> int:
         return self._led_state
@@ -360,43 +375,89 @@ class DevicePanel(QWidget):
         """
         logging.info("Native preview stopped")
 
-    def update_geometry(self):
-        """Update QQuickWidget geometry inside the bezel"""
-        # Calculate aspect ratio
-        bezel_margin_pct = 0.095
-        
-        # the screen area is target_width x target_height
-        # bezel adds margins on all sides.
-        # Let W_s = screen width, H_s = screen height
-        # Bezel width W_b = W_s / (1 - 2*0.095) = W_s / 0.81
-        bezel_aspect = (self.target_width / 0.81) / (self.target_height + 2 * (self.target_width / 0.81 * 0.095))
-        
-        # Fit into available space
+    # Bezel margin as a fraction of bezel width (CONTRACT section 10:
+    # "uniform bezel margin ~9.5% of bezel width").
+    BEZEL_MARGIN_PCT = 0.095
+
+    # The largest panel the tool offers. The preview scales every other panel
+    # against this one, so relative physical size is visible at a glance.
+    MAX_DIAGONAL_IN = max(inches for _label, inches, _w, _h in PANEL_PRESETS)
+
+    # How small the smallest panel is allowed to render, as a fraction of the
+    # pane. Pure physical scaling would draw a 5.0" panel at 5.0/15.6 = 32% of
+    # a 15.6" one, which is too small to judge a layout in -- and judging the
+    # layout is the entire point. The scale is therefore compressed into
+    # [MIN_PHYSICAL_SCALE, 1.0]: a 5" panel still reads as clearly smaller than
+    # a 12" one without becoming unusable.
+    MIN_PHYSICAL_SCALE = 0.62
+
+    def _physical_scale(self) -> float:
+        """Return how large this panel draws relative to the biggest one.
+
+        Returns:
+            A factor in [MIN_PHYSICAL_SCALE, 1.0].
+
+        Without this the diagonal in each preset was decorative: every panel
+        rendered at exactly the same on-screen width, so the three 1280x800
+        presets (7.0", 10.1", 12.1") were pixel-identical and choosing between
+        them changed nothing. Physical size is precisely what separates them,
+        and it is what decides whether 14px text is comfortable or unreadable
+        on the finished machine.
+        """
+        if self.target_inches <= 0:
+            return 1.0
+        raw = min(1.0, self.target_inches / self.MAX_DIAGONAL_IN)
+        return self.MIN_PHYSICAL_SCALE + (1.0 - self.MIN_PHYSICAL_SCALE) * raw
+
+    def _bezel_rect(self):
+        """Return (bx, by, bw, bh) for the bezel in widget coordinates.
+
+        Returns:
+            A tuple of floats, or None when the widget has no area yet.
+
+        Single source of truth for the bezel box. The layout pass and the paint
+        pass each carried their own copy of this arithmetic; any change had to
+        be made twice and identically or the painted bezel would drift away
+        from the screen widget positioned inside it.
+        """
         w = self.width()
         h = self.height()
-        
         if w == 0 or h == 0:
-            return
-            
+            return None
+
+        # Bezel outer aspect: the screen plus a uniform margin on all sides.
+        bezel_width_px = self.target_width / (1 - 2 * self.BEZEL_MARGIN_PCT)
+        bezel_aspect = bezel_width_px / (
+            self.target_height + 2 * (bezel_width_px * self.BEZEL_MARGIN_PCT)
+        )
+
+        fill = 0.9 * self._physical_scale()
         if w / h > bezel_aspect:
-            # constrained by height
-            bh = h * 0.9  # 90% of available height
+            bh = h * fill
             bw = bh * bezel_aspect
         else:
-            # constrained by width
-            bw = w * 0.9
+            bw = w * fill
             bh = bw / bezel_aspect
-            
-        bx = (w - bw) / 2
-        by = (h - bh) / 2
-        
-        margin = bw * bezel_margin_pct
-        
+
+        return (w - bw) / 2, (h - bh) / 2, bw, bh
+
+    def update_geometry(self):
+        """Place the screen widgets inside the bezel.
+
+        Side effects: moves quick_widget and native_view, and rescales any held
+        native frame to the new screen rect.
+        """
+        rect = self._bezel_rect()
+        if rect is None:
+            return
+        bx, by, bw, bh = rect
+        margin = bw * self.BEZEL_MARGIN_PCT
+
         sx = bx + margin
         sy = by + margin
         sw = bw - 2 * margin
         sh = bh - 2 * margin
-        
+
         self.quick_widget.setGeometry(int(sx), int(sy), int(sw), int(sh))
         # The native frame view occupies the same screen rect; only one of the
         # two is ever visible.
@@ -412,25 +473,10 @@ class DevicePanel(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         
-        # Calculate bezel bounds
-        w = self.width()
-        h = self.height()
-        
-        if w == 0 or h == 0:
+        rect = self._bezel_rect()
+        if rect is None:
             return
-            
-        bezel_margin_pct = 0.095
-        bezel_aspect = (self.target_width / 0.81) / (self.target_height + 2 * (self.target_width / 0.81 * 0.095))
-        
-        if w / h > bezel_aspect:
-            bh = h * 0.9
-            bw = bh * bezel_aspect
-        else:
-            bw = w * 0.9
-            bh = bw / bezel_aspect
-            
-        bx = (w - bw) / 2
-        by = (h - bh) / 2
+        bx, by, bw, bh = rect
         
         # Soft drop shadow (simplified)
         shadow_rect = QRectF(bx + 4, by + 4, bw, bh)
@@ -446,7 +492,7 @@ class DevicePanel(QWidget):
         
         # LED: top-left corner
         # ~10px diameter, position it inside the bezel margin
-        margin = bw * bezel_margin_pct
+        margin = bw * self.BEZEL_MARGIN_PCT
         led_radius = 5.0
         # Place roughly in the center of the top margin area (x: left margin / 2, y: top margin / 2)
         led_cx = bx + margin / 2

@@ -3,7 +3,7 @@
 # =====================================================================
 #
 # PURPOSE
-#   Install the EmbeddedDisplay platform (Layer 1 daemon, Layer 2 loader,
+#   Install the EmbeddedDisplay Studio platform (Layer 1 daemon, Layer 2 loader,
 #   the atomic installer and the systemd units) onto a panel that is
 #   already running a Linux image, without reflashing it.
 #

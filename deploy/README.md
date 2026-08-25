@@ -5,7 +5,7 @@ Layer 3 host-side command-line deployment tool for the BYOA HMI system.
 `deploy/deploy_to_hmi.sh` automates the validation, packaging, cryptographic verification, transport, installation, verification, and monitoring of Qt/QML application bundles targeted at a Toradex Verdin i.MX8M Plus panel.
 
 > **Deploying to a board that has never seen this platform?** `deploy_to_hmi.sh`
-> and App Studio both assume `/usr/bin/hmi-install` and the systemd units are
+> and Studio both assume `/usr/bin/hmi-install` and the systemd units are
 > already on the target, which is what the `yocto/meta-hmi` layer puts there.
 > For a board that is already running an image, install the platform onto it
 > first with [`provision_panel.py`](#0-provisioning-a-panel-provision_panelpy).

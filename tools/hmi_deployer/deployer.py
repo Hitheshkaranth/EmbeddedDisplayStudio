@@ -6,11 +6,14 @@ flow (CONTRACT section 4, 6).
 """
 import json
 import os
+import shutil
 import tarfile
 import hashlib
 import fnmatch
-from typing import Tuple, List, Dict, Any
+from typing import Tuple, List, Dict, Any, Optional
 import datetime
+
+from PySide6.QtCore import QObject, QThread, Signal
 
 # Bundle packing rules live in schema/bundle.py, which deploy_to_hmi.sh also
 # calls, so both tools produce byte-identical tarballs from the same directory.
@@ -41,6 +44,61 @@ from schema.manifest import (  # noqa: E402
     screen_of,
     validate_bundle,
 )
+
+class PackageWorker(QThread):
+    """
+    Packs a bundle into its tarball off the UI thread.
+
+    Packaging walks every file in the bundle, sums their sizes and writes a
+    compressed archive. On a real application that is seconds of solid work,
+    and running it inline froze the window the instant Deploy was pressed:
+    Windows marks a window that has not pumped messages for five seconds as
+    "Not Responding", so the tool looked hung at exactly the moment it had the
+    most to say for itself.
+
+    Signals:
+        done(str, str): tarball path, checksum sidecar path.
+        failed(str, str): reason kind ('too-large' or 'error') and its message.
+    """
+
+    done = Signal(str, str)
+    failed = Signal(str, str)
+
+    def __init__(
+        self,
+        bundle_dir: str,
+        out_dir: str,
+        discard_dir: str = "",
+        parent: Optional[QObject] = None,
+    ) -> None:
+        """
+        Args:
+            bundle_dir: the loaded bundle to pack.
+            out_dir: an existing empty directory to write the tarball into.
+            discard_dir: the previous deploy's directory, deleted before
+                packing. Removing up to 500 MB is itself a UI-thread stall, so
+                it happens here rather than in the caller.
+            parent: parent QObject.
+        """
+        super().__init__(parent)
+        self.bundle_dir = bundle_dir
+        self.out_dir = out_dir
+        self.discard_dir = discard_dir
+
+    def run(self) -> None:
+        """Pack the bundle, reporting either the artefacts or why not."""
+        try:
+            if self.discard_dir:
+                shutil.rmtree(self.discard_dir, ignore_errors=True)
+            tar_path, sha_path = package_bundle(self.bundle_dir, self.out_dir)
+        except BundleTooLargeError as exc:
+            self.failed.emit("too-large", str(exc))
+            return
+        except Exception as exc:
+            self.failed.emit("error", str(exc))
+            return
+        self.done.emit(tar_path, sha_path)
+
 
 def detect_bundle(bundle_dir: str) -> dict:
     """

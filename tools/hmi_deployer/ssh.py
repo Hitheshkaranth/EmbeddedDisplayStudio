@@ -5,6 +5,7 @@ Purpose: Handles off-thread SSH/SCP operations for deployment without shelling
 into bash, to support Windows natively. (CONTRACT section 6).
 """
 import os
+import posixpath
 import shlex
 import subprocess
 import logging
@@ -38,6 +39,112 @@ def _openssh_executable(name: str) -> str:
         if os.path.isfile(candidate):
             return candidate
     return name
+
+
+# One job object for the whole process, created on first use. 0 records that
+# the mechanism was tried and is unavailable, so it is not retried per command.
+_kill_job = None
+_kill_job_lock = threading.Lock()
+
+
+def _kill_job_handle():
+    """Return a Windows job object whose members die when this process does.
+
+    Every ssh and scp we launch is a child that outlives us whenever the tool
+    ends without running its shutdown path -- Task Manager, a crash, an IDE
+    stop button. An orphan holds its SSH session open on the panel, whose
+    socket-activated dropbear allows 64 at a time and silently drops every
+    connection past that; leaked children therefore accumulate until *every*
+    deploy fails at whatever its first step happens to be. A job with
+    KILL_ON_JOB_CLOSE hands the cleanup to the kernel: the handle is released
+    when this process dies, however it dies, and the children go with it.
+
+    Returns:
+        The job handle, or None on non-Windows hosts and wherever the job
+        cannot be created -- in which case children behave as they did before.
+    """
+    global _kill_job
+    if os.name != "nt":
+        return None
+    with _kill_job_lock:
+        if _kill_job is not None:
+            return _kill_job or None
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class _IoCounters(ctypes.Structure):
+                _fields_ = [(field, ctypes.c_ulonglong) for field in (
+                    "ReadOperationCount", "WriteOperationCount",
+                    "OtherOperationCount", "ReadTransferCount",
+                    "WriteTransferCount", "OtherTransferCount")]
+
+            class _BasicLimits(ctypes.Structure):
+                _fields_ = [
+                    ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+                    ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+                    ("LimitFlags", wintypes.DWORD),
+                    ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t),
+                    ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t),
+                    ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD),
+                ]
+
+            class _ExtendedLimits(ctypes.Structure):
+                _fields_ = [
+                    ("BasicLimitInformation", _BasicLimits),
+                    ("IoInfo", _IoCounters),
+                    ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t),
+                ]
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+            kernel32.SetInformationJobObject.restype = wintypes.BOOL
+
+            handle = kernel32.CreateJobObjectW(None, None)
+            if not handle:
+                _kill_job = 0
+                return None
+            info = _ExtendedLimits()
+            info.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
+            if not kernel32.SetInformationJobObject(
+                handle, 9, ctypes.byref(info), ctypes.sizeof(info)
+            ):
+                _kill_job = 0
+                return None
+            _kill_job = handle
+            return handle
+        except Exception:
+            logger.debug("child-kill job unavailable", exc_info=True)
+            _kill_job = 0
+            return None
+
+
+def _reap_child_with_us(proc: subprocess.Popen) -> None:
+    """Tie one child's lifetime to this process's.
+
+    Args:
+        proc: the freshly started child.
+
+    Never raises: losing this safety net is not a reason to fail a command.
+    """
+    handle = _kill_job_handle()
+    if handle is None:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject(handle, int(proc._handle))
+    except Exception:
+        logger.debug("could not put the ssh child in the kill job", exc_info=True)
 
 class SshWorker(QThread):
     """
@@ -98,6 +205,7 @@ class SshWorker(QThread):
                 errors="replace",
                 creationflags=creationflags
             )
+            _reap_child_with_us(self._proc)
 
             if self.timeout_s and self.timeout_s > 0:
                 self._watchdog = threading.Timer(self.timeout_s, self._on_timeout)
@@ -206,6 +314,7 @@ class UploadWorker(QThread):
                 stderr=subprocess.STDOUT,
                 creationflags=creationflags,
             )
+            _reap_child_with_us(self._proc)
 
             if self.timeout_s and self.timeout_s > 0:
                 self._watchdog = threading.Timer(self.timeout_s, self._on_timeout)
@@ -297,9 +406,25 @@ class UploadWorker(QThread):
 """
 Helpers to construct SSH/SCP commands.
 """
+
+# Options shared by every command we build.
+#
+# The keepalives bound a session whose link disappears mid-command -- a panel
+# unplugged, or the host's route to it withdrawn. Without them the target keeps
+# the session, and its dropbear, alive indefinitely: the FIN never arrives, and
+# dropbear runs with no keepalive of its own. Stranded sessions count against
+# the panel's 64-connection limit, past which it drops every new connection and
+# the deployer cannot reach the panel at all. Three unanswered probes at 15 s
+# end the session in about 45 s instead.
+CONNECTION_OPTS = (
+    "-o", "StrictHostKeyChecking=accept-new",
+    "-o", "BatchMode=yes",
+    "-o", "ServerAliveInterval=15",
+    "-o", "ServerAliveCountMax=3",
+)
 def build_ssh_cmd(host: str, user: str, port: int, key_path: str, cmd: str) -> List[str]:
     """Builds a non-interactive ssh command."""
-    args = [_openssh_executable("ssh"), "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes"]
+    args = [_openssh_executable("ssh"), *CONNECTION_OPTS]
     if port != 22:
         args.extend(["-p", str(port)])
     if key_path:
@@ -323,12 +448,22 @@ def build_upload_cmd(host: str, user: str, port: int, key_path: str, dest: str) 
     command, and release names -- while constrained by the manifest rules --
     come from a file on disk rather than from this program.
     """
-    return build_ssh_cmd(host, user, port, key_path, f"cat > {shlex.quote(dest)}")
+    parent = posixpath.dirname(dest) or "/"
+    # The landing directory is created here rather than by an ssh step of its
+    # own. It normally exists already -- systemd-tmpfiles makes it at boot --
+    # so the mkdir costs nothing, while a separate step cost a whole extra
+    # connection whose every failure mode (unreachable panel, refused key,
+    # exhausted connection slots) was reported to the operator as a directory
+    # that could not be created.
+    return build_ssh_cmd(
+        host, user, port, key_path,
+        f"mkdir -p {shlex.quote(parent)} && cat > {shlex.quote(dest)}",
+    )
 
 
 def build_scp_cmd(host: str, user: str, port: int, key_path: str, src: str, dest: str) -> List[str]:
     """Builds a non-interactive scp command."""
-    args = [_openssh_executable("scp"), "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes"]
+    args = [_openssh_executable("scp"), *CONNECTION_OPTS]
     if port != 22:
         args.extend(["-P", str(port)])
     if key_path:

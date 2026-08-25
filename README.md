@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="docs/assets/logo.png" alt="FlyVi" width="140" />
+<img src="docs/assets/banner.jpg" alt="EmbeddedDisplay Studio" width="900" />
 
-# EmbeddedDisplay
+# EmbeddedDisplay Studio
 
 ### Bring Your Own App — HMI platform for Toradex Verdin i.MX8M Plus
 
@@ -32,9 +32,9 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 <div align="center">
 
-<img src="docs/assets/screenshot-studio.png" alt="EmbeddedDisplay App Studio" width="900" />
+<img src="docs/assets/screenshot-studio.png" alt="EmbeddedDisplay Studio" width="900" />
 
-<em>EmbeddedDisplay — the customer's app running inside a live panel preview, with real telemetry from the hardware daemon.</em>
+<em>EmbeddedDisplay Studio — the customer's app running inside a live panel preview, with real telemetry from the hardware daemon.</em>
 
 </div>
 
@@ -50,7 +50,7 @@ that arrive over a loopback socket, and the platform does the rest.
 ```
         YOUR LAPTOP                                   THE PANEL
  ┌──────────────────────────┐                ┌────────────────────────────────┐
- │  HMI App Studio          │                │  hmi-gui.service               │
+ │  EmbeddedDisplay Studio  │                │  hmi-gui.service               │
  │   drag in a Qt app       │   scp bundle   │   loader + tag engine          │
  │   see it in a real bezel │ ─────────────► │   /opt/hmi_apps/current        │
  │   one-click deploy       │   ssh install  │            ▲                   │
@@ -85,7 +85,7 @@ python daemon/hmi_hwd.py --config daemon/hwd.json --sim
 # terminal 2 — the panel UI, in a window
 python gui/hmi_loader/main.py --apps-dir apps/demo-app --windowed
 
-# terminal 3 — HMI App Studio
+# terminal 3 — EmbeddedDisplay Studio
 python -m tools.hmi_deployer.app
 ```
 
@@ -156,7 +156,7 @@ rest are optional: `screen` defaults to 1280x800, `tags_required` to none,
 
 | runtime | entry | How it runs on the panel |
 | --- | --- | --- |
-| `qml` | `*.qml` | Loaded into the shell that is already running. Gets `Tags`/`Bus` injected, previews live in App Studio. |
+| `qml` | `*.qml` | Loaded into the shell that is already running. Gets `Tags`/`Bus` injected, previews live in Studio. |
 | `python` | `*.py` | Exec'd as the GUI process itself — for an existing Qt Widgets application that owns its own window. |
 
 ### Qt5 and Qt6 applications on the same panel
@@ -186,11 +186,11 @@ PySide2 binary is compiled against desktop GL — loading one against the other
 fails with `undefined symbol: _ZTI18QOpenGLTimeMonitor`. The panel's own Qt5 is
 left untouched.
 
-Already have a Qt app? Open it in App Studio; it detects the entry point **and
+Already have a Qt app? Open it in Studio; it detects the entry point **and
 the binding**, and writes the manifest for you.
 
 Build outputs, caches and VCS metadata are left out of the bundle
-automatically, by both the CLI and App Studio — they share one packer, so the
+automatically, by both the CLI and Studio — they share one packer, so the
 same folder produces a byte-identical tarball either way. For anything else that
 lives in the folder but is not part of the running application — source
 archives, packaged installers, capture logs — add a `.hmiignore` next to the
@@ -230,7 +230,7 @@ isn't fitted still renders.
 
 ---
 
-## HMI App Studio
+## EmbeddedDisplay Studio
 
 The desktop tool. Import a bundle, watch it run inside a photo-real mock-up of
 the panel, then push it.
@@ -259,7 +259,12 @@ the panel, then push it.
   kept unmapped with `WA_DontShowOnScreen`. A PySide2 bundle needs a PySide2
   interpreter on your machine; point `HMI_PREVIEW_PYTHON_QT5` at one, or skip
   it — the bundle still deploys and runs on the panel's own Qt5 runtime.
-* Deploy, rollback, restart and journal tail, all off the UI thread.
+* **Nothing blocks the window.** Packaging, upload, install, rollback,
+  restart and journal tail all run on worker threads, and the bar reports
+  the stage it is in — a sweeping bar while the bundle is packed, then bytes
+  and throughput for the upload, then the installer's own steps as the panel
+  reaches them. A step that fails names what failed: an unreachable panel is
+  reported as an unreachable panel, not as whatever the step was trying to do.
 
 <div align="center">
 
@@ -359,7 +364,7 @@ apps/demo-app/        a worked example, and the pipeline's test fixture
 ui/                   design system: tokens, QML kit, QSS, icons, gallery
 target/               systemd units, atomic installer, Wayland launcher
 deploy/               deploy_to_hmi.sh — the CLI; provision_panel.py — onboard a stock image
-tools/hmi_deployer/   HMI App Studio
+tools/hmi_deployer/   EmbeddedDisplay Studio
 yocto/meta-hmi/       bitbake layer that puts it all in the image
 tests/                protocol, integration and cross-validator suites
 ```

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSettings, QTimer
 from .devicepanel import DevicePanel, PANEL_PRESETS
 from .deployer import (
-    BundleTooLargeError, validate_bundle, package_bundle, detect_bundle,
+    PackageWorker, validate_bundle, detect_bundle,
     detect_qt_binding, write_manifest,
 )
 from .telemetry import TelemetrySimulator, TelemetryRelay
@@ -165,6 +165,20 @@ INSTALL_TIMEOUT_S = 180
 SCP_BASE_TIMEOUT_S = 60
 SCP_MIN_BYTES_PER_S = 256 * 1024
 
+# Asked of the panel when an install is cut off before it reported a result.
+#
+# `hmi-install` rolls a release that will not render back on its own, but only
+# if it survives long enough to do it: our watchdog killing the ssh, or the link
+# dropping, takes the installer with it and can leave `current` pointing at a
+# release that never came up. The panel is the only authority on what actually
+# happened, so it is asked -- and it undoes the swap itself if the GUI is not
+# running.
+INSTALL_RECOVERY_COMMAND = (
+    'if hmi-install status 2>/dev/null | grep -qE "^gui:[[:space:]]+ready"; '
+    'then echo "HMI_RECOVER=ok"; else echo "HMI_RECOVER=rollback"; '
+    "hmi-install rollback; fi"
+)
+
 # ---- Deploy progress model --------------------------------------------------
 # Percentages are apportioned by how long each phase actually takes, not by how
 # many phases there are: on any real bundle the upload dominates everything
@@ -212,7 +226,7 @@ INSTALL_STEP_LABEL = {
 class MainWindow(QMainWindow):
     def __init__(self, exit_after_ms=0):
         super().__init__()
-        self.setWindowTitle("EmbeddedDisplay")
+        self.setWindowTitle("EmbeddedDisplay Studio")
         self.resize(1280, 800)
         self.exit_after_ms = exit_after_ms
 
@@ -244,6 +258,8 @@ class MainWindow(QMainWindow):
         self._upload_started = 0.0
         # Set once a deploy has failed, so later steps cannot paint over it.
         self._deploy_failed = False
+        # Last line any SSH/SCP step printed, so a failure can name its cause.
+        self._last_transport_line = ""
 
         self.setup_ui()
         self.apply_theme()
@@ -256,7 +272,7 @@ class MainWindow(QMainWindow):
         # a deploy, because a deploy is what starts the relay.
         app = QApplication.instance()
         if app is not None:
-            app.aboutToQuit.connect(self._stop_all_senders)
+            app.aboutToQuit.connect(self._shutdown_transport)
 
         if self.bundle_dir and os.path.isdir(self.bundle_dir):
             self.load_bundle(self.bundle_dir)
@@ -276,7 +292,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance()
         apply(app, self.theme)
-        logging.getLogger("EmbeddedDisplay").info(
+        logging.getLogger("EmbeddedDisplay Studio").info(
             "theme=%s stylesheet=%d chars", self.theme, len(app.styleSheet() or "")
         )
 
@@ -302,7 +318,7 @@ class MainWindow(QMainWindow):
         self.lbl_logo.setFixedSize(28, 28)
 
         # Wordmark beside the logo, in the design system's heading style.
-        self.lbl_title = QLabel("EmbeddedDisplay")
+        self.lbl_title = QLabel("EmbeddedDisplay Studio")
         self.lbl_title.setStyleSheet("font-size: 16px; font-weight: 600; letter-spacing: -0.4px;")
 
         self.btn_open = QPushButton("Open Bundle...")
@@ -628,7 +644,10 @@ class MainWindow(QMainWindow):
             screen = (self.current_manifest or {}).get("screen", {})
             width = int(screen.get("width", 1280))
             height = int(screen.get("height", 800))
-        self.device_panel.set_target_resolution(width, height)
+            # A manifest states a resolution but not the glass it runs on, so
+            # the diagonal from whichever preset was last chosen is kept.
+            inches = 0.0
+        self.device_panel.set_target_resolution(width, height, inches)
         self.lbl_resolution.setText(self.device_panel.resolution_text())
 
     def _record_detected_resolution(self, line):
@@ -977,6 +996,7 @@ class MainWindow(QMainWindow):
     def _progress_begin(self) -> None:
         """Shows the bar at zero, in its neutral colour, for a new deploy."""
         self.progress.setVisible(True)
+        self.progress.setRange(0, 100)
         self.progress.setFormat("%p%")
         self.progress.setStyleSheet("")
         self.progress.setValue(0)
@@ -984,6 +1004,22 @@ class MainWindow(QMainWindow):
         self.lbl_stage.setStyleSheet("color: #a1a1aa;")
         self.lbl_stage.setText("Preparing...")
         self._deploy_failed = False
+
+    def _progress_busy(self, stage: str) -> None:
+        """
+        Puts the bar in its indeterminate state for work of unknown length.
+
+        Args:
+            stage: caption shown under the bar.
+
+        Packaging cannot report a percentage -- the cost is dominated by files
+        the packer has not looked at yet -- but it can report that it is
+        running. A bar sweeping under a stage line is the difference between a
+        tool that is working and a window that has stopped answering.
+        """
+        self.progress.setRange(0, 0)
+        self.progress.setFormat("")
+        self.lbl_stage.setText(stage)
 
     def _progress_set(self, percent: int, stage: str = "") -> None:
         """
@@ -998,6 +1034,10 @@ class MainWindow(QMainWindow):
         """
         if self._deploy_failed:
             return
+        if self.progress.maximum() == 0:
+            # Leaving the indeterminate state: a real percentage has arrived.
+            self.progress.setRange(0, 100)
+            self.progress.setValue(0)
         self.progress.setValue(max(self.progress.value(), int(percent)))
         if stage:
             self.lbl_stage.setText(stage)
@@ -1013,6 +1053,11 @@ class MainWindow(QMainWindow):
         """
         self._deploy_failed = True
         self.progress.setVisible(True)
+        if self.progress.maximum() == 0:
+            # A failure during an indeterminate stage: stop the sweep, and fill
+            # the bar so the red says plainly that this attempt is over.
+            self.progress.setRange(0, 100)
+            self.progress.setValue(100)
         self.progress.setFormat("Failed")
         self.progress.setStyleSheet(
             "QProgressBar::chunk { background-color: #ef4444; }"
@@ -1022,6 +1067,45 @@ class MainWindow(QMainWindow):
         self.lbl_stage.setText(reason)
         self.log(f"DEPLOY FAILED: {reason}")
         self.device_panel.set_led_state(3)
+
+    def _record_transport_line(self, line: str) -> None:
+        """Remember the last thing an SSH/SCP step said, for failure messages."""
+        text = line.strip()
+        if text:
+            self._last_transport_line = text
+
+    def _transport_failure(self, what: str, code: int) -> str:
+        """
+        Describe a failed SSH/SCP step by what actually went wrong.
+
+        Args:
+            what: the step, named for a sentence ("the bundle upload").
+            code: its exit code; -1 is this tool's watchdog, not the panel's.
+
+        Returns:
+            A sentence for the progress bar and the console.
+
+        ssh reports its own failures as 255, and the remote command never ran
+        at all in that case -- an unreachable panel, a refused key, or a panel
+        already holding its 64 SSH sessions all arrive that way. Blaming those
+        on whatever the step was trying to do sent people looking at the panel
+        filesystem for a problem that was never there.
+        """
+        detail = self._last_transport_line
+        if code == -1:
+            return (
+                f"The panel stopped responding during {what}"
+                + (f": {detail}" if detail else ".")
+            )
+        if code == 255:
+            return (
+                "Could not reach the panel over SSH: "
+                + (detail or "ssh exited 255 without saying why")
+            )
+        return (
+            f"{what.capitalize()} failed on the panel (exit {code})"
+            + (f": {detail}" if detail else ".")
+        )
 
     def _progress_succeed(self) -> None:
         """Marks the deployment complete: full green bar."""
@@ -1133,7 +1217,10 @@ class MainWindow(QMainWindow):
         started = time.monotonic()
         worker = UploadWorker(cmd, local_path, timeout_s=timeout_s, parent=self)
         self._ssh_workers.append(worker)
+        self._last_transport_line = ""
         worker.outputLine.connect(self.log)
+        worker.outputLine.connect(self._record_transport_line)
+        worker.error.connect(self._record_transport_line)
 
         span = PROGRESS_UPLOAD_END - PROGRESS_UPLOAD_START
 
@@ -1206,7 +1293,10 @@ class MainWindow(QMainWindow):
         # aborts the process when a running QThread is destroyed.
         self._ssh_workers.append(worker)
         self.ssh_worker = worker
+        self._last_transport_line = ""
         worker.outputLine.connect(self.log)
+        worker.outputLine.connect(self._record_transport_line)
+        worker.error.connect(self._record_transport_line)
         if line_hook is not None:
             worker.outputLine.connect(line_hook)
 
@@ -1266,31 +1356,105 @@ class MainWindow(QMainWindow):
         """
         Packages the loaded bundle and installs it on the panel.
 
-        The flow is four SSH/SCP steps chained through completion callbacks:
-        mkdir -> scp tarball -> scp checksum -> hmi-install install. Each step
+        Packaging runs on a worker thread; the rest is three SSH/SCP steps
+        chained through completion callbacks: upload tarball (which creates the
+        landing directory) -> scp checksum -> hmi-install install. Each step
         only starts once the previous one has exited 0, so a failure anywhere
         stops the deployment with the failing step named in the console.
         """
+        import tempfile
+
         self.save_settings()
         self.log(f"Deploying {self.bundle_dir}...")
         self._progress_begin()
-        try:
-            import tempfile
-            # Cleaned up when the deployment finishes, succeeds or fails.
-            # Every deploy used to leave its tarball behind -- up to 500 MB
-            # each, and a working session is many deploys.
-            self._discard_packaging_dir()
-            out_dir = tempfile.mkdtemp(prefix="hmi-deploy-")
-            self._packaging_dir = out_dir
-            self._progress_set(2, "Packaging bundle...")
-            tar_path, sha256_path = package_bundle(self.bundle_dir, out_dir)
-            tar_size = os.path.getsize(tar_path)
-            self.log(f"Packaged to {tar_path} ({tar_size / (1024 * 1024):.1f} MB)")
-            self._progress_set(
-                PROGRESS_PACKAGED,
-                f"Packaged {tar_size / (1024 * 1024):.1f} MB",
-            )
+        # Nothing else disables the button until the first SSH step starts, and
+        # packaging happens before that.
+        self.btn_deploy.setEnabled(False)
 
+        try:
+            out_dir = tempfile.mkdtemp(prefix="hmi-deploy-")
+        except Exception as e:
+            self._progress_fail(f"Could not start the deployment: {e}")
+            self.btn_deploy.setEnabled(self.bundle_dir is not None)
+            return
+
+        # The previous deploy's tarball is discarded by the same worker rather
+        # than here: it is up to 500 MB, and deleting it inline is one more
+        # stall on the thread that has to keep the window alive. Every deploy
+        # used to leave its tarball behind, and a working session is many
+        # deploys.
+        discard = getattr(self, "_packaging_dir", None) or ""
+        self._packaging_dir = out_dir
+
+        self._package_started = time.monotonic()
+        self._progress_busy("Packaging bundle...")
+        self.log("Packaging bundle (large applications take a few seconds)...")
+        self._package_pulse = QTimer(self)
+        self._package_pulse.setInterval(1000)
+        self._package_pulse.timeout.connect(self._on_package_tick)
+        self._package_pulse.start()
+
+        worker = PackageWorker(self.bundle_dir, out_dir, discard, parent=self)
+        self._package_worker = worker
+        worker.done.connect(self._on_packaged)
+        worker.failed.connect(self._on_package_failed)
+        worker.start()
+
+    def _on_package_tick(self) -> None:
+        """Keep the stage line counting, so a long pack still looks alive."""
+        elapsed = time.monotonic() - self._package_started
+        self.lbl_stage.setText(f"Packaging bundle... ({elapsed:.0f}s)")
+
+    def _release_package_worker(self) -> None:
+        """Stop the elapsed counter and let go of the packaging thread."""
+        pulse = getattr(self, "_package_pulse", None)
+        if pulse is not None:
+            pulse.stop()
+            self._package_pulse = None
+        worker = getattr(self, "_package_worker", None)
+        if worker is not None:
+            # Emitted as run()'s last act, so the thread is microseconds from
+            # returning; Qt aborts the process if it is destroyed still running.
+            worker.wait(2000)
+            self._package_worker = None
+
+    def _on_packaged(self, tar_path: str, sha256_path: str) -> None:
+        """Packaging succeeded: report the artefact and start the upload."""
+        self._release_package_worker()
+        tar_size = os.path.getsize(tar_path)
+        self.log(
+            f"Packaged to {tar_path} ({tar_size / (1024 * 1024):.1f} MB) "
+            f"in {time.monotonic() - self._package_started:.0f}s"
+        )
+        self._progress_set(
+            PROGRESS_PACKAGED,
+            f"Packaged {tar_size / (1024 * 1024):.1f} MB",
+        )
+        self._start_upload(tar_path, sha256_path, tar_size)
+
+    def _on_package_failed(self, kind: str, message: str) -> None:
+        """Packaging failed: say why, and leave nothing behind."""
+        self._release_package_worker()
+        self._discard_packaging_dir()
+        if kind == "too-large":
+            self._progress_fail("Bundle is too large for the panel.")
+            self.log(message)
+            QMessageBox.critical(self, "Bundle too large", message)
+        else:
+            self._progress_fail(f"Could not package the bundle: {message}")
+        self.btn_deploy.setEnabled(self.bundle_dir is not None)
+
+    def _start_upload(self, tar_path: str, sha256_path: str, tar_size: int) -> None:
+        """
+        Sends the packaged bundle to the panel and installs it.
+
+        Args:
+            tar_path: the packaged bundle.
+            sha256_path: its checksum sidecar.
+            tar_size: the tarball's size, for the timeout and the throughput
+                line.
+        """
+        try:
             host = self.inp_host.text().strip()
             user = self.inp_user.text().strip()
             key = self.inp_key.text().strip()
@@ -1300,33 +1464,16 @@ class MainWindow(QMainWindow):
             # kill the transfer partway and leave a truncated file in the tmpfs.
             scp_timeout = SCP_BASE_TIMEOUT_S + int(tar_size / SCP_MIN_BYTES_PER_S)
 
-            # Step 1: Create /tmp/hmi_upload and upload the bundle
+            # Step 1: upload the bundle. The upload command creates
+            # /tmp/hmi_upload itself, so the transfer is the first thing that
+            # touches the panel.
             from .ssh import build_scp_cmd
-            cmd_mkdir = build_ssh_cmd(host, user, self.ssh_port(), key, "mkdir -p /tmp/hmi_upload")
             tar_name = os.path.basename(tar_path)
-
-            def on_mkdir(code):
-                if code != 0:
-                    self._discard_packaging_dir()
-                    self._progress_fail(
-                        "Could not create /tmp/hmi_upload on the panel."
-                    )
-                    return
-                self.log(
-                    f"Uploading {tar_size / (1024 * 1024):.1f} MB to {user}@{host} "
-                    f"(allowing up to {scp_timeout}s)..."
-                )
-                self._progress_set(PROGRESS_UPLOAD_START, "Uploading bundle...")
-                self._upload_started = time.monotonic()
-                self.run_upload_worker(
-                    build_upload_cmd(host, user, self.ssh_port(), key, f"/tmp/hmi_upload/{tar_name}"),
-                    tar_path, tar_size, "Upload", on_upload, timeout_s=scp_timeout,
-                )
 
             def on_upload(code):
                 if code != 0:
                     self._discard_packaging_dir()
-                    self._progress_fail("Bundle upload failed.")
+                    self._progress_fail(self._transport_failure("the bundle upload", code))
                     return
                 elapsed = max(time.monotonic() - self._upload_started, 1e-6)
                 self.log(
@@ -1340,7 +1487,7 @@ class MainWindow(QMainWindow):
             def on_scp2(code):
                 if code != 0:
                     self._discard_packaging_dir()
-                    self._progress_fail("Checksum upload failed.")
+                    self._progress_fail(self._transport_failure("the checksum upload", code))
                     return
                 self._progress_set(PROGRESS_INSTALL_START, "Installing on the panel...")
                 cmd_install = build_ssh_cmd(host, user, self.ssh_port(), key, f"hmi-install install /tmp/hmi_upload/{tar_name}")
@@ -1359,24 +1506,81 @@ class MainWindow(QMainWindow):
                 if code == 0 and not self._deploy_failed:
                     self.log("Deployment complete.")
                     self._progress_succeed()
-                elif not self._deploy_failed:
-                    # A non-zero exit with no failing STEP line: the installer
-                    # died before it could report which stage broke.
-                    self._progress_fail(
-                        f"hmi-install exited {code}. See the console for the last step reached."
-                    )
+                    self.start_relay()
+                    return
+                if not self._deploy_failed:
+                    # A non-zero exit with no failing STEP line: either the
+                    # installer died before it could report which stage broke,
+                    # or the connection carrying it did.
+                    if code in (-1, 255):
+                        self._progress_fail(self._transport_failure("the install", code))
+                    else:
+                        self._progress_fail(
+                            f"hmi-install exited {code}. See the console for the last step reached."
+                        )
+                if code in (-1, 255):
+                    # The installer did not get to say what it did. It may have
+                    # swapped the symlink already and died before the health
+                    # check could undo it.
+                    self._recover_interrupted_install(host, user, key)
+                    return
                 self.start_relay()
 
-            self.run_ssh_worker(
-                cmd_mkdir, "Mkdir", on_mkdir, timeout_s=SSH_SHORT_TIMEOUT_S
+            self.log(
+                f"Uploading {tar_size / (1024 * 1024):.1f} MB to {user}@{host} "
+                f"(allowing up to {scp_timeout}s)..."
+            )
+            self._progress_set(PROGRESS_UPLOAD_START, "Uploading bundle...")
+            self._upload_started = time.monotonic()
+            self.run_upload_worker(
+                build_upload_cmd(host, user, self.ssh_port(), key, f"/tmp/hmi_upload/{tar_name}"),
+                tar_path, tar_size, "Upload", on_upload, timeout_s=scp_timeout,
             )
 
-        except BundleTooLargeError as e:
-            self._progress_fail("Bundle is too large for the panel.")
-            self.log(str(e))
-            QMessageBox.critical(self, "Bundle too large", str(e))
         except Exception as e:
+            self._discard_packaging_dir()
             self._progress_fail(f"Could not start the deployment: {e}")
+            self.btn_deploy.setEnabled(self.bundle_dir is not None)
+
+    def _recover_interrupted_install(self, host: str, user: str, key: str) -> None:
+        """
+        Make sure a cut-off install did not leave the panel on a dead release.
+
+        Args:
+            host, user, key: the same target the install was sent to.
+
+        The panel decides: if its GUI is up, whatever is current works and is
+        left alone; if it is not, the panel rolls itself back. Doing this from
+        here would need the tool to know which release was live before the
+        deploy, which is exactly the state a killed installer takes with it.
+        """
+        self.log("Install was cut off -- asking the panel what state it is in...")
+        self._recovered = ""
+
+        def note(line: str) -> None:
+            if "HMI_RECOVER=" in line:
+                self._recovered = line.split("HMI_RECOVER=", 1)[1].strip()
+
+        def done(code: int) -> None:
+            if self._recovered == "ok":
+                self.log("The panel is running and ready; nothing to undo.")
+            elif self._recovered == "rollback":
+                self.log("The panel was rolled back to the previous release.")
+                self._progress_fail(
+                    "Install did not finish; the panel was rolled back to the "
+                    "previous release."
+                )
+            else:
+                self.log(
+                    "Could not confirm the panel's state. Check it with "
+                    "Connect / Test before deploying again."
+                )
+            self.start_relay()
+
+        self.run_ssh_worker(
+            build_ssh_cmd(host, user, self.ssh_port(), key, INSTALL_RECOVERY_COMMAND),
+            "Recover", done, timeout_s=INSTALL_TIMEOUT_S, line_hook=note,
+        )
 
     def on_rollback(self):
         self.save_settings()
@@ -1397,9 +1601,45 @@ class MainWindow(QMainWindow):
         cmd = build_ssh_cmd(host, user, self.ssh_port(), key, "systemctl restart hmi-gui.service")
         self.run_ssh_worker(cmd, "Restart GUI", timeout_s=SSH_SHORT_TIMEOUT_S)
 
+    def _shutdown_transport(self) -> None:
+        """
+        End every SSH session this window owns.
+
+        Stopping the senders covers the telemetry relay; the rest of the list
+        is whatever deploy or diagnostic step was still in flight. Each one is
+        a live session on the panel, and the panel's socket-activated dropbear
+        serves 64 at a time and drops every connection past that, so sessions
+        left running by a closing window are eventually paid for by a deploy
+        that cannot connect at all.
+
+        Never raises: this runs on the way out, and a failure here would only
+        replace a clean exit with a crash.
+        """
+        try:
+            self._stop_all_senders()
+        except Exception:
+            pass
+        for worker in list(self._ssh_workers):
+            try:
+                worker.cancel()
+                if worker.isRunning():
+                    worker.wait(2000)
+            except Exception:
+                pass
+        # Packaging cannot be interrupted safely part-way through a tarball, so
+        # it is waited out rather than cancelled; Qt aborts the process if the
+        # thread is destroyed while it still runs.
+        packer = getattr(self, "_package_worker", None)
+        if packer is not None:
+            try:
+                if packer.isRunning():
+                    packer.wait(10000)
+            except Exception:
+                pass
+
     def closeEvent(self, event):
         """Release every local/remote telemetry source before closing."""
-        self._stop_all_senders()
+        self._shutdown_transport()
         self._discard_packaging_dir()
         self.device_panel.stop_preview()
         super().closeEvent(event)

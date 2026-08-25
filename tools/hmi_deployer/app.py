@@ -19,7 +19,9 @@ from .mainwindow import MainWindow
 LOGO_PATH = os.path.join(os.path.dirname(__file__), "resources", "logo.png")
 
 def main():
-    parser = argparse.ArgumentParser(description="EmbeddedDisplay - BYOA HMI deployment tool")
+    parser = argparse.ArgumentParser(
+        description="EmbeddedDisplay Studio - BYOA HMI deployment tool"
+    )
     parser.add_argument("--bundle", type=str, help="Path to initial app bundle")
     parser.add_argument("--exit-after", type=int, default=0, help="Exit after N ms")
     parser.add_argument("--capture-bezel", type=str, help="Grab bezel to png")
@@ -31,7 +33,7 @@ def main():
 
     # Needs to be set for Settings
     app.setOrganizationName("MIL-HMI")
-    app.setApplicationName("EmbeddedDisplay")
+    app.setApplicationName("EmbeddedDisplay Studio")
 
     # Application identity. Set on the QApplication so every window, dialog and
     # the OS taskbar entry inherit it; the 512 px master is what Qt downsamples

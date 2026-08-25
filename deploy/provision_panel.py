@@ -2,7 +2,7 @@
 """
 deploy/provision_panel.py
 Layer: 3 (Host Deployer)
-Purpose: Install the EmbeddedDisplay platform onto a running panel over SSH,
+Purpose: Install the EmbeddedDisplay Studio platform onto a running panel over SSH,
 without rebuilding or reflashing an image.
 
 The bitbake layer in yocto/meta-hmi is how this reaches a production image.
@@ -291,7 +291,7 @@ def report_preflight(facts: dict) -> List[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Install the EmbeddedDisplay platform onto a running panel over SSH.",
+        description="Install the EmbeddedDisplay Studio platform onto a running panel over SSH.",
     )
     parser.add_argument("--host", required=True, help="Panel IP or hostname")
     parser.add_argument("--user", default="root", help="SSH user (default: root)")
