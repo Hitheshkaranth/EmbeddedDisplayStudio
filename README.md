@@ -288,6 +288,15 @@ the panel reaches them, down to the release it is switching to.</em>
 
 <br /><br />
 
+<img src="docs/assets/screenshot-memory-profile.png" alt="Memory profile of the deployed release" width="860" />
+
+<em>What the release costs the panel, read from the SOM after it is deployed:
+the active package and where it landed, the application unpacked against its
+compressed size, how the root filesystem is divided between the OS image, the
+application and free space, and the RAM left over.</em>
+
+<br /><br />
+
 <img src="docs/assets/screenshot-hmi.png" alt="The panel UI" width="720" />
 
 <em>The panel screen, bound to live tags.</em>
