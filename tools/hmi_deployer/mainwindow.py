@@ -6,10 +6,11 @@ Purpose: Main application window, layout, actions, and state machine.
 import os
 import json
 import time
+import re
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QApplication,
     QSplitter, QGroupBox, QFormLayout, QLineEdit, QProgressBar,
-    QPlainTextEdit, QFileDialog, QMessageBox, QTabWidget
+    QPlainTextEdit, QFileDialog, QMessageBox, QTabWidget, QLabel
 )
 from PySide6.QtCore import Qt, QSettings, QTimer
 from .devicepanel import DevicePanel, PANEL_PRESETS
@@ -33,12 +34,123 @@ except ImportError:
 # Product version, shown hard right in the footer. Single source of truth.
 APP_VERSION = "0.0.1"
 
+# Exact, machine-readable marker emitted by DISPLAY_PROBE_COMMAND over SSH.
+DISPLAY_RESOLUTION_RE = re.compile(r"^HMI_DISPLAY=(\d{1,5})x(\d{1,5})$")
+
+# Prefer the connected DRM mode. Some embedded BSPs expose only a framebuffer,
+# so virtual_size is kept as a fallback. The final ':' makes an unavailable
+# display probe non-fatal to Connect / Test.
+DISPLAY_PROBE_COMMAND = (
+    "for connector in /sys/class/drm/card*-*; do "
+    "if [ -f \"$connector/status\" ] && "
+    "[ \"$(cat \"$connector/status\")\" = connected ] && "
+    "[ -s \"$connector/modes\" ]; then "
+    "mode=\"$(head -n 1 \"$connector/modes\")\"; "
+    "echo \"HMI_DISPLAY=$mode\"; exit 0; fi; done; "
+    "if [ -r /sys/class/graphics/fb0/virtual_size ]; then "
+    "size=\"$(tr ',' 'x' < /sys/class/graphics/fb0/virtual_size)\"; "
+    "echo \"HMI_DISPLAY=$size\"; fi; :"
+)
+
+# Profile records are deliberately line-oriented so the existing SSH worker can
+# stream them into the UI without a second protocol or a temporary remote file.
+MEMORY_PROFILE_PREFIX = "HMI_PROFILE_"
+
+# All size values except COMPRESSED_BYTES are KiB. The compressed measurement
+# is streamed through tar|wc rather than written to /tmp, preserving the
+# installer's tmpfs-space guarantee even for a large application.
+MEMORY_PROFILE_COMMAND = (
+    "current=$(readlink -f /opt/hmi_apps/current 2>/dev/null || true); "
+    "if [ -n \"$current\" ] && [ -d \"$current\" ]; then "
+    "echo \"HMI_PROFILE_RELEASE=${current##*/}\"; "
+    "echo \"HMI_PROFILE_DEPLOY_PATH=$current\"; "
+    "app_kb=$(du -sk \"$current\" 2>/dev/null | awk '{print $1}'); "
+    "echo \"HMI_PROFILE_APP_KB=${app_kb:-0}\"; "
+    "echo \"HMI_PROFILE_STAGE=Calculating compressed package size…\"; "
+    "compressed_bytes=$(tar -C \"$current\" -czf - . 2>/dev/null | wc -c); "
+    "echo \"HMI_PROFILE_COMPRESSED_BYTES=${compressed_bytes:-0}\"; "
+    "else echo \"HMI_PROFILE_RELEASE=No active deployment\"; "
+    "echo \"HMI_PROFILE_DEPLOY_PATH=/opt/hmi_apps/current\"; "
+    "echo \"HMI_PROFILE_APP_KB=0\"; echo \"HMI_PROFILE_COMPRESSED_BYTES=0\"; fi; "
+    "releases_kb=$(du -sk /opt/hmi_apps/releases 2>/dev/null | awk '{print $1}'); "
+    "echo \"HMI_PROFILE_RELEASES_KB=${releases_kb:-0}\"; "
+    "set -- $(df -kP / 2>/dev/null | awk 'NR == 2 {print $2, $3, $4}'); "
+    "echo \"HMI_PROFILE_ROOT_KB=${1:-0}\"; "
+    "echo \"HMI_PROFILE_USED_KB=${2:-0}\"; "
+    "echo \"HMI_PROFILE_FREE_KB=${3:-0}\"; "
+    "ram_kb=$(awk '/MemAvailable:/ {print $2; exit}' /proc/meminfo 2>/dev/null); "
+    "echo \"HMI_PROFILE_RAM_AVAILABLE_KB=${ram_kb:-0}\"; :"
+)
+
+
+def parse_display_resolution(line: str):
+    """Parse a resolution marker emitted by the remote SOM.
+
+    Args:
+        line: One line of combined SSH stdout/stderr.
+
+    Returns:
+        A ``(width, height)`` pixel tuple for a valid marker, otherwise None.
+    """
+    match = DISPLAY_RESOLUTION_RE.fullmatch(line.strip())
+    if match is None:
+        return None
+    width, height = (int(value) for value in match.groups())
+    return (width, height) if width > 0 and height > 0 else None
+
+
+def parse_memory_profile_line(line: str):
+    """Parse one machine-readable memory-profile field from SSH output.
+
+    Args:
+        line: One line of remote stdout/stderr.
+
+    Returns:
+        A ``(field, value)`` tuple without the profile prefix, or None when
+        the line is ordinary console output.
+    """
+    line = line.strip()
+    if not line.startswith(MEMORY_PROFILE_PREFIX):
+        return None
+    field, separator, value = line[len(MEMORY_PROFILE_PREFIX):].partition("=")
+    return (field, value) if separator and field else None
+
+
+def format_kib(value):
+    """Format a non-negative KiB value for a compact status label."""
+    value = max(0, int(value))
+    if value >= 1024 * 1024:
+        return f"{value / (1024 * 1024):.2f} GiB"
+    if value >= 1024:
+        return f"{value / 1024:.1f} MiB"
+    return f"{value} KiB"
+
+
+def format_bytes(value):
+    """Format a non-negative byte count for a compact status label."""
+    value = max(0, int(value))
+    if value >= 1024 * 1024 * 1024:
+        return f"{value / (1024 * 1024 * 1024):.2f} GiB"
+    if value >= 1024 * 1024:
+        return f"{value / (1024 * 1024):.1f} MiB"
+    if value >= 1024:
+        return f"{value / 1024:.1f} KiB"
+    return f"{value} B"
+
 # ---- SSH step budgets -------------------------------------------------------
 # One timeout cannot serve every step of a deploy: the commands differ in cost
 # by three orders of magnitude. Each is a watchdog, not an expectation.
 
 # Commands that answer immediately (mkdir, a checksum file, rollback, restart).
 SSH_SHORT_TIMEOUT_S = 30
+
+# A connection survey invokes systemd and hmi-install status on the SOM. Those
+# are normally quick, but a busy target may need longer than a filesystem mkdir.
+SSH_TEST_TIMEOUT_S = 60
+
+# Recompressing a release is streamed on the SOM and is intentionally allowed
+# more time than a simple SSH status operation.
+MEMORY_PROFILE_TIMEOUT_S = 180
 
 # Fallback for callers that do not say what they are running.
 DEFAULT_SSH_TIMEOUT_S = 60
@@ -117,6 +229,13 @@ class MainWindow(QMainWindow):
         self.taglab_sender: TagLabSender = None
         # Manifest of the loaded bundle; the panel picker's Custom entry reads it.
         self.current_manifest = None
+        # Pixel geometry read from the connected SOM. A resolution cannot tell
+        # us the physical diagonal, so inches remain a user-selected preview value.
+        self.detected_resolution = None
+        # Most recent profile fields streamed from the connected SOM.
+        self.memory_profile = {}
+        self._profile_values = {}
+        self._profile_bars = {}
         self.ssh_worker = None
         # Every SSH/SCP worker still running. A deploy chains four of them, and
         # a QThread destroyed while running takes the process down with it.
@@ -244,6 +363,9 @@ class MainWindow(QMainWindow):
         self.cmb_panel = QComboBox()
         for label, _inches, _w, _h in PANEL_PRESETS:
             self.cmb_panel.addItem(label)
+        self._detected_panel_index = self.cmb_panel.count()
+        self.cmb_panel.addItem("Connected target (run Connect / Test)")
+        self._custom_panel_index = self.cmb_panel.count()
         self.cmb_panel.addItem("Custom (from manifest)")
         self.cmb_panel.setCurrentIndex(3)          # 10.1" 1280x800, the common default
         self.cmb_panel.currentIndexChanged.connect(self.on_panel_size_changed)
@@ -284,6 +406,10 @@ class MainWindow(QMainWindow):
         conn_layout.addRow("User:", self.inp_user)
         conn_layout.addRow("Port:", self.inp_port)
         conn_layout.addRow("Key:", self.inp_key)
+
+        self.lbl_target_resolution = QLabel("Not detected")
+        self.lbl_target_resolution.setObjectName("targetResolution")
+        conn_layout.addRow("Display:", self.lbl_target_resolution)
 
         test_layout = QHBoxLayout()
         from PySide6.QtWidgets import QPushButton
@@ -362,6 +488,60 @@ class MainWindow(QMainWindow):
         self.taglab_panel.sendingStopped.connect(self._on_taglab_stop)
         self._right_tabs.addTab(self.taglab_panel, "Tag Lab")
 
+        # The profile uses the same cards, labels, and outline button treatment
+        # as Deploy so target diagnostics feel like part of one application.
+        profile_page = QWidget()
+        profile_layout = QVBoxLayout(profile_page)
+        profile_layout.setContentsMargins(0, 8, 0, 0)
+
+        profile_header = QHBoxLayout()
+        profile_copy = QLabel(
+            "Live storage and memory snapshot from the connected SOM."
+        )
+        profile_copy.setWordWrap(True)
+        profile_header.addWidget(profile_copy, 1)
+        self.btn_refresh_profile = QPushButton("Refresh profile")
+        self.btn_refresh_profile.setProperty("variant", "outline")
+        self.btn_refresh_profile.setIcon(icon("refresh"))
+        self.btn_refresh_profile.clicked.connect(self.refresh_memory_profile)
+        profile_header.addWidget(self.btn_refresh_profile)
+        profile_layout.addLayout(profile_header)
+
+        active_box = QGroupBox("Current Deployment")
+        active_layout = QFormLayout(active_box)
+        self._add_profile_value(active_layout, "Package:", "RELEASE", "Not queried")
+        self._add_profile_value(active_layout, "Deployed at:", "DEPLOY_PATH", "Not queried")
+        self._add_profile_value(active_layout, "Current application:", "APP_KB", "Not queried")
+        self._add_profile_value(
+            active_layout,
+            "Compressed package:",
+            "COMPRESSED_BYTES",
+            "Not queried",
+        )
+        profile_layout.addWidget(active_box)
+
+        storage_box = QGroupBox("Storage Distribution")
+        storage_layout = QVBoxLayout(storage_box)
+        self._add_profile_bar(storage_layout, "OS image capacity", "ROOT_KB")
+        self._add_profile_bar(storage_layout, "Other system files", "SYSTEM_KB")
+        self._add_profile_bar(storage_layout, "Application storage", "RELEASES_KB")
+        self._add_profile_bar(storage_layout, "Free system storage", "FREE_KB")
+        self._add_profile_bar(
+            storage_layout,
+            "Compressed current package",
+            "COMPRESSED_BYTES",
+        )
+        profile_layout.addWidget(storage_box)
+
+        resources_box = QGroupBox("System Resources")
+        resources_layout = QFormLayout(resources_box)
+        self._add_profile_value(resources_layout, "Available RAM:", "RAM_AVAILABLE_KB", "Not queried")
+        self._add_profile_value(resources_layout, "Root filesystem:", "ROOT_SUMMARY", "Not queried")
+        self._add_profile_value(resources_layout, "Profile status:", "STATUS", "Connect to refresh")
+        profile_layout.addWidget(resources_box)
+        profile_layout.addStretch()
+        self._right_tabs.addTab(profile_page, "Memory Profile")
+
         splitter.addWidget(self._right_tabs)
         splitter.setSizes([800, 400])
 
@@ -395,23 +575,209 @@ class MainWindow(QMainWindow):
         for widget in (self.lbl_footer, self.lbl_version):
             widget.setStyleSheet(f"color: {muted}; font-size: 12px;")
 
+    def _add_profile_value(self, layout, label, key, initial):
+        """Add one selectable text value to a memory-profile form.
+
+        Args:
+            layout: Form layout receiving the new row.
+            label: User-facing row label.
+            key: Machine-readable profile field name.
+            initial: Text shown before the first remote refresh.
+
+        Side effects: creates and stores a QLabel in ``_profile_values``.
+        """
+        value = QLabel(initial)
+        value.setWordWrap(True)
+        value.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._profile_values[key] = value
+        layout.addRow(label, value)
+
+    def _add_profile_bar(self, layout, label, key):
+        """Add one shadcn-styled horizontal capacity bar to the profile tab.
+
+        Args:
+            layout: Vertical layout receiving the label and progress bar.
+            label: User-facing resource name.
+            key: Machine-readable profile field represented by this bar.
+
+        Side effects: creates and stores a QProgressBar in ``_profile_bars``.
+        """
+        layout.addWidget(QLabel(label))
+        bar = QProgressBar()
+        bar.setRange(0, 100)
+        bar.setValue(0)
+        bar.setTextVisible(True)
+        bar.setFormat("Not queried")
+        self._profile_bars[key] = bar
+        layout.addWidget(bar)
+
     def on_panel_size_changed(self, index):
         """
         Applies the selected panel geometry to the preview.
 
         Args:
-            index: row in cmb_panel. The final row is "Custom", which falls back
-                to the loaded manifest's screen block, or 1280x800 when no
-                bundle is loaded yet.
+            index: row in cmb_panel. The connected-target row uses geometry
+                detected over SSH; Custom falls back to the manifest screen.
         """
         if 0 <= index < len(PANEL_PRESETS):
-            _label, _inches, width, height = PANEL_PRESETS[index]
+            _label, inches, width, height = PANEL_PRESETS[index]
+        elif index == self._detected_panel_index and self.detected_resolution:
+            width, height = self.detected_resolution
+            inches = 0.0
         else:
             screen = (self.current_manifest or {}).get("screen", {})
             width = int(screen.get("width", 1280))
             height = int(screen.get("height", 800))
         self.device_panel.set_target_resolution(width, height)
         self.lbl_resolution.setText(self.device_panel.resolution_text())
+
+    def _record_detected_resolution(self, line):
+        """Apply a display resolution marker emitted by the connected SOM.
+
+        Args:
+            line: One remote output line. Lines that do not contain a valid
+                HMI_DISPLAY marker are ignored.
+
+        Side effects: updates the target readout, picker, preview, and console.
+        """
+        resolution = parse_display_resolution(line)
+        if resolution is None:
+            return
+
+        width, height = resolution
+        display_text = f"{width} x {height} px"
+        self.detected_resolution = resolution
+        self.lbl_target_resolution.setText(display_text)
+        self.cmb_panel.setItemText(
+            self._detected_panel_index,
+            f"Connected target — {display_text}",
+        )
+        self.cmb_panel.setCurrentIndex(self._detected_panel_index)
+        self.log(f"Connected SOM display detected: {display_text}")
+
+    def _profile_number(self, key):
+        """Return one non-negative integer field from the current SOM profile."""
+        try:
+            return max(0, int(self.memory_profile.get(key, "0")))
+        except (TypeError, ValueError):
+            return 0
+
+    def _set_profile_bar(self, key, amount, total, text):
+        """Render one memory-profile bar relative to its relevant capacity.
+
+        Args:
+            key: Bar key registered by _add_profile_bar.
+            amount: Numerator in KiB or bytes, depending on the bar.
+            total: Matching denominator. Zero produces an unavailable bar.
+            text: Human-readable measurement shown inside the bar.
+        """
+        bar = self._profile_bars[key]
+        if total <= 0:
+            bar.setValue(0)
+            bar.setFormat(text)
+            return
+        percent = min(100, round(amount * 100 / total))
+        bar.setValue(percent)
+        bar.setFormat(f"{text}  (%p%)")
+
+    def _render_memory_profile(self):
+        """Render all visible profile cards and capacity bars from stored fields."""
+        root_kb = self._profile_number("ROOT_KB")
+        used_kb = self._profile_number("USED_KB")
+        free_kb = self._profile_number("FREE_KB")
+        releases_kb = self._profile_number("RELEASES_KB")
+        app_kb = self._profile_number("APP_KB")
+        compressed_bytes = self._profile_number("COMPRESSED_BYTES")
+        system_kb = max(0, used_kb - releases_kb)
+
+        self._profile_values["RELEASE"].setText(
+            self.memory_profile.get("RELEASE", "No active deployment")
+        )
+        self._profile_values["DEPLOY_PATH"].setText(
+            self.memory_profile.get("DEPLOY_PATH", "/opt/hmi_apps/current")
+        )
+        self._profile_values["APP_KB"].setText(format_kib(app_kb))
+        compressed_text = format_bytes(compressed_bytes)
+        if compressed_bytes:
+            compressed_text += " (recomputed from active release)"
+        self._profile_values["COMPRESSED_BYTES"].setText(compressed_text)
+        self._profile_values["RAM_AVAILABLE_KB"].setText(
+            format_kib(self._profile_number("RAM_AVAILABLE_KB"))
+        )
+        self._profile_values["ROOT_SUMMARY"].setText(
+            f"{format_kib(root_kb)} total · {format_kib(free_kb)} free"
+        )
+
+        self._set_profile_bar("ROOT_KB", root_kb, root_kb, format_kib(root_kb))
+        self._set_profile_bar(
+            "SYSTEM_KB", system_kb, root_kb, f"{format_kib(system_kb)} used"
+        )
+        self._set_profile_bar(
+            "RELEASES_KB", releases_kb, root_kb, f"{format_kib(releases_kb)} retained"
+        )
+        self._set_profile_bar(
+            "FREE_KB", free_kb, root_kb, format_kib(free_kb)
+        )
+        self._set_profile_bar(
+            "COMPRESSED_BYTES",
+            compressed_bytes,
+            app_kb * 1024,
+            compressed_text,
+        )
+
+    def _record_memory_profile_line(self, line):
+        """Consume a streamed profile field from the SOM and refresh the tab.
+
+        Args:
+            line: One remote output line from MEMORY_PROFILE_COMMAND.
+
+        Side effects: updates in-memory profile fields and the visible tab.
+        """
+        parsed = parse_memory_profile_line(line)
+        if parsed is None:
+            return
+        key, value = parsed
+        self.memory_profile[key] = value
+        if key == "STAGE":
+            self._profile_values["STATUS"].setText(value)
+            return
+        self._render_memory_profile()
+
+    def refresh_memory_profile(self):
+        """Read the active release and capacity profile from the connected SOM.
+
+        The SSH command runs off the UI thread, so recompressing a large active
+        release cannot freeze the Studio window.
+        """
+        self.save_settings()
+        self.memory_profile = {}
+        self._profile_values["STATUS"].setText("Refreshing from connected SOM…")
+        self.btn_refresh_profile.setEnabled(False)
+        self.log("Refreshing current SOM memory profile...")
+        cmd = build_ssh_cmd(
+            self.inp_host.text().strip(),
+            self.inp_user.text().strip(),
+            self.ssh_port(),
+            self.inp_key.text().strip(),
+            MEMORY_PROFILE_COMMAND,
+        )
+
+        def on_finished(code):
+            self.btn_refresh_profile.setEnabled(True)
+            if code == 0:
+                self._profile_values["STATUS"].setText("Current SOM snapshot")
+            else:
+                self._profile_values["STATUS"].setText(
+                    "Profile incomplete — see Console Output"
+                )
+
+        self.run_ssh_worker(
+            cmd,
+            "Memory Profile",
+            callback=on_finished,
+            timeout_s=MEMORY_PROFILE_TIMEOUT_S,
+            line_hook=self._record_memory_profile_line,
+        )
 
     def on_toggle_theme(self):
         self.theme = "dark" if self.theme == "light" else "light"
@@ -729,19 +1095,24 @@ class MainWindow(QMainWindow):
         cmd = build_ssh_cmd(
             self.inp_host.text().strip(),
             self.inp_user.text().strip(),
-            22,
+            self.ssh_port(),
             self.inp_key.text().strip(),
-            # `hmi-install help`, not `--help`: the installer dispatches on a
-            # bare subcommand and answers anything else with a usage error.
-            # is-enabled is reported alongside is-active because the two answer
-            # different questions: whether the panel is showing the app now, and
-            # whether it will still be showing it after the next power cycle.
-            "echo 'SSH OK'; hmi-install help; "
-            "echo -n 'hmi-gui now:  '; systemctl is-active hmi-gui.service; "
-            "echo -n 'hmi-gui boot: '; systemctl is-enabled hmi-gui.service; "
-            "hmi-install status; df -h /tmp /opt"
+            # Status already reports the active release and GUI readiness. Keep
+            # this connection survey short; disk details live in Memory Profile.
+            "echo 'SSH OK'; hmi-install status; " + DISPLAY_PROBE_COMMAND
         )
-        self.run_ssh_worker(cmd, "Test Connection", timeout_s=SSH_SHORT_TIMEOUT_S)
+
+        def on_test_finished(code):
+            if code == 0:
+                self.refresh_memory_profile()
+
+        self.run_ssh_worker(
+            cmd,
+            "Test Connection",
+            callback=on_test_finished,
+            timeout_s=SSH_TEST_TIMEOUT_S,
+            line_hook=self._record_detected_resolution,
+        )
 
     def run_upload_worker(self, cmd, local_path, total_bytes, desc, callback=None,
                           timeout_s=DEFAULT_SSH_TIMEOUT_S):

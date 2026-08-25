@@ -14,6 +14,31 @@ from typing import Optional, List
 
 logger = logging.getLogger("ssh")
 
+
+def _openssh_executable(name: str) -> str:
+    """Return a trustworthy OpenSSH executable name for this host.
+
+    On Windows, GUI processes can inherit a PATH containing ``ssh.bat`` or
+    ``scp.cmd`` wrappers ahead of the operating-system OpenSSH client.  Python's
+    process launcher honours PATHEXT, so asking it to run bare ``ssh`` can
+    execute one of those wrappers instead of ``ssh.exe``.  Prefer the standard
+    Windows OpenSSH location when it exists; retain the bare command on other
+    systems and on Windows installations that keep OpenSSH elsewhere.
+
+    Args:
+        name: OpenSSH program basename, currently ``ssh`` or ``scp``.
+
+    Returns:
+        An absolute ``.exe`` path on a standard Windows installation, otherwise
+        the supplied basename for normal PATH resolution.
+    """
+    if os.name == "nt":
+        system_root = os.environ.get("SystemRoot", r"C:\Windows")
+        candidate = os.path.join(system_root, "System32", "OpenSSH", f"{name}.exe")
+        if os.path.isfile(candidate):
+            return candidate
+    return name
+
 class SshWorker(QThread):
     """
     Runs an SSH command or SCP off the UI thread.
@@ -274,7 +299,7 @@ Helpers to construct SSH/SCP commands.
 """
 def build_ssh_cmd(host: str, user: str, port: int, key_path: str, cmd: str) -> List[str]:
     """Builds a non-interactive ssh command."""
-    args = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes"]
+    args = [_openssh_executable("ssh"), "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes"]
     if port != 22:
         args.extend(["-p", str(port)])
     if key_path:
@@ -303,7 +328,7 @@ def build_upload_cmd(host: str, user: str, port: int, key_path: str, dest: str) 
 
 def build_scp_cmd(host: str, user: str, port: int, key_path: str, src: str, dest: str) -> List[str]:
     """Builds a non-interactive scp command."""
-    args = ["scp", "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes"]
+    args = [_openssh_executable("scp"), "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes"]
     if port != 22:
         args.extend(["-P", str(port)])
     if key_path:

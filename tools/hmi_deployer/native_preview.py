@@ -281,6 +281,44 @@ def _preview_platform() -> str:
     return "offscreen"
 
 
+def _windows_launcher_interpreters() -> list:
+    """Return Python executable paths registered with the Windows launcher.
+
+    Returns:
+        Existing interpreter paths listed by ``py -0p``. Returns an empty list
+        outside Windows or when the launcher is unavailable.
+
+    A Python installed per-user commonly has no ``python3.10`` command on PATH,
+    while the Windows launcher still knows its full executable path. This keeps
+    PySide2 preview discovery independent of PATH configuration.
+    """
+    if os.name != "nt":
+        return []
+    launcher = shutil.which("py")
+    if not launcher:
+        return []
+    try:
+        result = subprocess.run(
+            [launcher, "-0p"], capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+
+    paths = []
+    for line in result.stdout.splitlines():
+        fields = line.strip().split(maxsplit=2)
+        if not fields or not fields[0].startswith("-V:"):
+            continue
+        path = fields[2] if len(fields) >= 3 and fields[1] == "*" else (
+            fields[1] if len(fields) >= 2 else ""
+        )
+        if path and os.path.isfile(path):
+            paths.append(path)
+    return paths
+
+
 def find_interpreter(binding: str) -> str:
     """Locate a host interpreter that can import the requested Qt binding.
 
@@ -293,9 +331,10 @@ def find_interpreter(binding: str) -> str:
     App Studio itself is PySide6, so its own interpreter always serves a
     pyside6 bundle. A pyside2 bundle needs a second interpreter, because the
     two bindings cannot coexist in one process. $HMI_PREVIEW_PYTHON_QT5 names
-    it explicitly; otherwise a few conventional names are probed. Returning ""
-    is a normal outcome, not an error: the caller falls back to the
-    explanatory card and says why.
+    it explicitly; otherwise conventional PATH names and interpreters recorded
+    by the Windows ``py`` launcher are probed. Returning "" is a normal
+    outcome, not an error: the caller falls back to the explanatory card and
+    says why.
     """
     if binding != "pyside2":
         return sys.executable
@@ -304,10 +343,19 @@ def find_interpreter(binding: str) -> str:
     if explicit and os.path.isfile(explicit):
         return explicit
 
-    for candidate in ("python3.11", "python3.10", "python3.9", "python3", "python"):
-        path = shutil.which(candidate)
-        if not path or os.path.normcase(path) == os.path.normcase(sys.executable):
+    candidates = [
+        shutil.which(candidate)
+        for candidate in ("python3.11", "python3.10", "python3.9", "python3", "python")
+    ]
+    candidates.extend(_windows_launcher_interpreters())
+    seen = set()
+    for path in candidates:
+        if not path:
             continue
+        identity = os.path.normcase(os.path.abspath(path))
+        if identity in seen or identity == os.path.normcase(os.path.abspath(sys.executable)):
+            continue
+        seen.add(identity)
         try:
             probe = subprocess.run(
                 [path, "-c", "import PySide2"],
