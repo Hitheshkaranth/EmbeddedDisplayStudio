@@ -20,7 +20,7 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 [![Design system](https://img.shields.io/badge/UI-shadcn%2Fui%20port-020817?style=for-the-badge)](https://github.com/shadcn-ui/ui)
 [![Icons](https://img.shields.io/badge/Icons-Tabler-206bc4?style=for-the-badge&logo=tabler&logoColor=white)](https://github.com/tabler/tabler-icons)
-[![Tests](https://img.shields.io/badge/tests-153%20passing-22c55e?style=for-the-badge)](tests/)
+[![Tests](https://img.shields.io/badge/tests-185%20passing-22c55e?style=for-the-badge)](tests/)
 [![CI](https://img.shields.io/badge/CI-Linux%20full%20suite-2088ff?style=for-the-badge&logo=githubactions&logoColor=white)](.github/workflows/ci.yml)
 [![No Docker](https://img.shields.io/badge/containers-none-64748b?style=for-the-badge&logo=docker&logoColor=white)](#why-no-containers)
 
@@ -46,18 +46,24 @@ write a Qt/QML application and push it to the panel with a single command. The
 app never touches a GPIO line, an ADC node or a serial port: it binds to **tags**
 that arrive over a loopback socket, and the platform does the rest.
 
-```
-        YOUR LAPTOP                                   THE PANEL
- ┌──────────────────────────┐                ┌────────────────────────────────┐
- │  EmbeddedDisplay Studio  │                │  hmi-gui.service               │
- │   drag in a Qt app       │   scp bundle   │   loader + tag engine          │
- │   see it in a real bezel │ ─────────────► │   /opt/hmi_apps/current        │
- │   one-click deploy       │   ssh install  │            ▲                   │
- ├──────────────────────────┤                │            │ UDP/JSON          │
- │  deploy_to_hmi.sh        │                │            ▼                   │
- │   the same thing, in CI  │                │  hmi-hwd.service               │
- └──────────────────────────┘                │   libgpiod · IIO · UART        │
-                                             └────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph host["Your laptop"]
+        studio["EmbeddedDisplay Studio<br/>preview, validate, deploy"]
+        cli["deploy_to_hmi.sh<br/>the same thing, in CI"]
+    end
+
+    subgraph panel["The panel"]
+        gui["hmi-gui.service<br/>loader + tag engine"]
+        current["/opt/hmi_apps/current<br/>the customer bundle"]
+        hwd["hmi-hwd.service<br/>libgpiod, IIO, UART"]
+    end
+
+    studio -- "ssh: upload + hmi-install" --> gui
+    cli -- "ssh: upload + hmi-install" --> gui
+    gui --> current
+    hwd -- "tags, UDP/JSON on loopback" --> gui
+    gui -- "commands" --> hwd
 ```
 
 Three layers, deliberately decoupled:
@@ -88,7 +94,30 @@ python gui/hmi_loader/main.py --apps-dir apps/demo-app --windowed
 python -m tools.hmi_deployer.app
 ```
 
-**On the panel.**
+### Running EmbeddedDisplay Studio
+
+```bash
+python -m pip install PySide6              # once
+python -m tools.hmi_deployer.app           # from the repository root
+```
+
+`--bundle <dir>` opens an application on start; with no argument the last one
+is restored. Then, in the window:
+
+1. **Open Bundle…** — point it at your application's directory. The manifest is
+   validated, or proposed and written for you if there is none, and the
+   application starts rendering in the bezel at the target's resolution.
+2. **Target Configuration** — the panel's address, `root`, and the private key
+   that reaches it. `ssh-copy-id root@<panel-ip>` once, if you have not.
+3. **Connect / Test** — proves the link, reports the panel's real display size
+   and which release is live on it.
+4. **Deploy to Target** — everything in [the pipeline below](#from-a-python-app-to-the-panel).
+   The bar names the stage it is in, and the console carries the panel's own
+   words.
+5. **Rollback** returns to the previous release; **Restart GUI** restarts the
+   current one. **Memory Profile** reports what the live release costs the board.
+
+**From the command line**, for CI or a headless machine:
 
 ```bash
 ssh-copy-id root@<panel-ip>                       # once
@@ -118,6 +147,60 @@ A successful deploy also makes the app the panel's **boot default**: once the
 release has been proven to render, `hmi-gui.service` is enabled, so a power
 cycle brings the same application back with no further action. Deploying is the
 only step — there is nothing to enable by hand afterwards.
+
+---
+
+## From a Python app to the panel
+
+What happens between pressing **Deploy to Target** and the application being the
+panel's boot default. Every step is the same whether it is driven from the
+window or from `deploy_to_hmi.sh`.
+
+```mermaid
+flowchart TD
+    A["Your application<br/>a directory with manifest.json"] --> B["Read what it imports<br/>schema/deps.py, in a child process"]
+    B --> C{"Can the panel<br/>import all of them?"}
+    C -- "no" --> D["pip install the missing ones<br/>into the interpreter the bundle will run under"]
+    C -- "yes" --> E
+    D --> E["Package<br/>build outputs and .hmiignore excluded<br/>tar.gz + .sha256, on a worker thread"]
+    E --> F["Stream over ssh into /tmp/hmi_upload<br/>tmpfs, so a failed upload never touches flash"]
+    F --> G["hmi-install: verify the checksum"]
+    G --> H["Extract into a staging directory"]
+    H --> I["Validate the manifest again, on the target"]
+    I --> J["Record the live release as previous"]
+    J --> K["Promote by a single rename(2)<br/>onto the current symlink"]
+    K --> L["Restart hmi-gui and wait for its ready file"]
+    L -- "ready within 25 s" --> M["Enable at boot, prune old releases"]
+    L -- "no ready file" --> N["Swap the symlink back<br/>and restart the previous release"]
+    M --> O["Running, and the boot default"]
+    N --> P["Deploy fails; the panel keeps a working UI"]
+```
+
+A few of those steps are worth their own sentence.
+
+**Nothing is converted.** There is no build, no freezing, no cross-compilation:
+the panel carries a complete CPython and the Qt binding the manifest asks for,
+so the application runs there from the same sources it runs from on your
+machine. What the pipeline does is decide what travels, prove it arrived
+intact, and swap it in without a window where the panel has no UI.
+
+**The dependency check reads the application, not a list.** Every file that
+would be packaged is parsed, each absolute import reduced to its top-level
+name, and the standard library, the bundle's own modules, the Qt bindings the
+platform pins, and anything guarded by `try: … except ImportError` are removed.
+What is left is what pip must supply — and the panel is asked to *import* each
+one, because a wheel built for another architecture is present on disk and
+still fatal at startup.
+
+**What travels is what runs.** Build outputs, caches and VCS metadata are
+excluded by one packer shared with the CLI, so the same folder produces a
+byte-identical tarball either way, and the checksum the target verifies does
+not depend on which tool sent it.
+
+**The swap cannot leave the panel dark.** `current` is promoted by `rename(2)`,
+never `rm` then `ln`. If the new release does not signal readiness within 25 s,
+the symlink swaps back and the previous release is restarted — the deploy fails
+and the machine still has its UI.
 
 ---
 
@@ -258,6 +341,12 @@ the panel, then push it.
   kept unmapped with `WA_DontShowOnScreen`. A PySide2 bundle needs a PySide2
   interpreter on your machine; point `HMI_PREVIEW_PYTHON_QT5` at one, or skip
   it — the bundle still deploys and runs on the panel's own Qt5 runtime.
+* **It checks the panel can run the app before sending it.** The bundle's
+  third-party imports are read off its source, the panel is asked whether it
+  can import each one under the interpreter that bundle will use, and anything
+  missing is named and offered for installation. A missing package does not
+  degrade an application, it kills it on its first import and leaves the panel
+  restart-looping on the release before it.
 * **Nothing blocks the window.** Packaging, upload, install, rollback,
   restart and journal tail all run on worker threads, and the bar reports
   the stage it is in — a sweeping bar while the bundle is packed, then bytes
@@ -374,9 +463,10 @@ icons vendored offline. Same tokens, same variant names, same geometry.
 python ui/gallery.py --theme dark      # every component, every state
 ```
 
-Light and dark are switchable at runtime; the panel defaults to dark, the desktop
-tool to light. `ui/tokens.json` is the single source of truth, and a test fails
-if `Theme.qml` ever drifts from it.
+Light and dark are switchable at runtime and both default to dark; icons are
+re-rendered in the new palette on every switch, so nothing goes black-on-black.
+`ui/tokens.json` is the single source of truth, and a test fails if `Theme.qml`
+ever drifts from it.
 
 ---
 
@@ -384,7 +474,7 @@ if `Theme.qml` ever drifts from it.
 
 ```
 docs/CONTRACT.md      the normative interface spec — read this first
-schema/               shared formats: manifest validation, bundle packing
+schema/               shared formats: manifest validation, bundle packing, dependency scan
 daemon/               Layer 1  hardware daemon + tag map
 gui/                  Layer 2  loader, tag engine, shell, fallback screen
 apps/demo-app/        a worked example, and the pipeline's test fixture
@@ -401,7 +491,7 @@ tests/                protocol, integration and cross-validator suites
 ## Verification
 
 ```bash
-python tests/run_all.py          # 153 tests
+python tests/run_all.py          # 185 tests
 ```
 
 | Area | Coverage |
@@ -414,6 +504,8 @@ python tests/run_all.py          # 153 tests
 | Design tokens | `tokens.json` and `Theme.qml` cannot drift |
 | Gallery render | painted pixels asserted, not just "it ran" |
 | Native preview | a real Qt Widgets app renders at the target resolution with content |
+| Dependency scan | imports against stdlib, bundle-local and guarded ones; distribution names; the commands sent to the panel |
+| Deploy bookkeeping | a step that finishes late cannot delete the files of the deploy that replaced it |
 
 > **Run the installer tests on Linux.** Windows has no `flock`, so the
 > atomic-swap and cross-validator suites skip there rather than pretending to
