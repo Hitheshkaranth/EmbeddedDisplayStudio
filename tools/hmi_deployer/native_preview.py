@@ -334,18 +334,28 @@ def find_interpreter(binding: str) -> str:
     Returns:
         Path to a usable interpreter, or "" when none was found.
 
-    App Studio itself is PySide6, so its own interpreter always serves a
-    pyside6 bundle. A pyside2 bundle needs a second interpreter, because the
-    two bindings cannot coexist in one process. $HMI_PREVIEW_PYTHON_QT5 names
-    it explicitly; otherwise conventional PATH names and interpreters recorded
-    by the Windows ``py`` launcher are probed. Returning "" is a normal
-    outcome, not an error: the caller falls back to the explanatory card and
-    says why.
+    Run from source, App Studio is itself a PySide6 process, so its own
+    interpreter serves a pyside6 bundle. Packaged as an executable it is not:
+    sys.executable is the Studio, and handing that to the preview shim would
+    relaunch the Studio instead of the customer's application. A frozen build
+    therefore has to go looking for a real interpreter for either binding.
+
+    A pyside2 bundle always needs a second interpreter, because the two
+    bindings cannot coexist in one process. $HMI_PREVIEW_PYTHON_QT5 names it
+    explicitly; otherwise conventional PATH names and interpreters recorded by
+    the Windows ``py`` launcher are probed. Returning "" is a normal outcome,
+    not an error: the caller falls back to the explanatory card and says why.
     """
-    if binding != "pyside2":
+    frozen = getattr(sys, "frozen", False)
+    if binding != "pyside2" and not frozen:
         return sys.executable
 
-    explicit = os.environ.get("HMI_PREVIEW_PYTHON_QT5", "")
+    module = "PySide2" if binding == "pyside2" else "PySide6"
+
+    explicit = os.environ.get(
+        "HMI_PREVIEW_PYTHON_QT5" if binding == "pyside2" else "HMI_PREVIEW_PYTHON_QT6",
+        "",
+    )
     if explicit and os.path.isfile(explicit):
         return explicit
 
@@ -359,12 +369,14 @@ def find_interpreter(binding: str) -> str:
         if not path:
             continue
         identity = os.path.normcase(os.path.abspath(path))
+        # A frozen Studio is not an interpreter, so it is never a candidate;
+        # from source it is already the answer and must not probe itself.
         if identity in seen or identity == os.path.normcase(os.path.abspath(sys.executable)):
             continue
         seen.add(identity)
         try:
             probe = subprocess.run(
-                [path, "-c", "import PySide2"],
+                [path, "-c", f"import {module}"],
                 capture_output=True, timeout=20,
             )
         except (OSError, subprocess.SubprocessError):

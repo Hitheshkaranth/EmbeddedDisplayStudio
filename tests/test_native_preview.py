@@ -22,6 +22,7 @@ import sys
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -184,6 +185,21 @@ class InterpreterResolution(unittest.TestCase):
     def test_pyside6_uses_this_interpreter(self):
         """App Studio is PySide6, so it can host a PySide6 bundle itself."""
         self.assertEqual(find_interpreter("pyside6"), sys.executable)
+
+    def test_frozen_studio_never_previews_with_itself(self):
+        """Packaged as an executable, sys.executable is the Studio itself.
+
+        Handing that to the preview shim would relaunch App Studio instead of
+        running the customer's application -- a second window claiming to be a
+        panel preview. A frozen build has to find a real interpreter, and
+        returning "" so the card explains why is the honest failure.
+        """
+        with mock.patch.object(sys, "frozen", True, create=True):
+            found = find_interpreter("pyside6")
+        self.assertNotEqual(
+            found, sys.executable,
+            "A frozen Studio must not preview a bundle with its own binary.",
+        )
 
     def test_pyside2_never_uses_this_interpreter(self):
         """
