@@ -8,21 +8,28 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 <br />
 
-[![Platform](https://img.shields.io/badge/SoM-Toradex%20Verdin%20i.MX8M%20Plus-0b7285?style=for-the-badge)](https://www.toradex.com/computer-on-modules/verdin-arm-family/nxp-imx-8m-plus)
-[![Yocto](https://img.shields.io/badge/Yocto-Reference%20Multimedia%20Image-4a7ebb?style=for-the-badge&logo=yocto&logoColor=white)](https://developer.toradex.com/linux-bsp/)
-[![Wayland](https://img.shields.io/badge/Display-Wayland%20%2F%20Weston-1a3d7c?style=for-the-badge)](https://wayland.freedesktop.org/)
-[![systemd](https://img.shields.io/badge/Init-systemd%20native-30363d?style=for-the-badge&logo=systemd&logoColor=white)](https://systemd.io/)
+**The panel**
 
-[![Qt](https://img.shields.io/badge/Qt%206-QML%20%2F%20PySide6-41cd52?style=for-the-badge&logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
-[![Python](https://img.shields.io/badge/Python-3.9%2B-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![libgpiod](https://img.shields.io/badge/GPIO-libgpiod%20v1%20%2B%20v2-f59e0b?style=for-the-badge)](https://libgpiod.readthedocs.io/)
-[![IIO](https://img.shields.io/badge/ADC-Linux%20IIO-ef4444?style=for-the-badge)](https://www.kernel.org/doc/html/latest/driver-api/iio/index.html)
+[![SoM](https://img.shields.io/badge/SoM-Verdin%20i.MX8M%20Plus-006fee?style=for-the-badge&labelColor=18181b)](https://www.toradex.com/computer-on-modules/verdin-arm-family/nxp-imx-8m-plus)
+[![Yocto](https://img.shields.io/badge/BSP-Yocto%20Reference%20Multimedia-006fee?style=for-the-badge&logo=yocto&logoColor=white&labelColor=18181b)](https://developer.toradex.com/linux-bsp/)
+[![Wayland](https://img.shields.io/badge/Display-Wayland%20%2F%20Weston-006fee?style=for-the-badge&labelColor=18181b)](https://wayland.freedesktop.org/)
+[![systemd](https://img.shields.io/badge/Init-systemd%20native-006fee?style=for-the-badge&logo=systemd&logoColor=white&labelColor=18181b)](https://systemd.io/)
 
-[![Design system](https://img.shields.io/badge/UI-shadcn%2Fui%20port-020817?style=for-the-badge)](https://github.com/shadcn-ui/ui)
-[![Icons](https://img.shields.io/badge/Icons-Tabler-206bc4?style=for-the-badge&logo=tabler&logoColor=white)](https://github.com/tabler/tabler-icons)
-[![Tests](https://img.shields.io/badge/tests-185%20passing-22c55e?style=for-the-badge)](tests/)
-[![CI](https://img.shields.io/badge/CI-Linux%20full%20suite-2088ff?style=for-the-badge&logo=githubactions&logoColor=white)](.github/workflows/ci.yml)
-[![No Docker](https://img.shields.io/badge/containers-none-64748b?style=for-the-badge&logo=docker&logoColor=white)](#why-no-containers)
+**The stack**
+
+[![Qt](https://img.shields.io/badge/Qt%206-QML%20%2F%20PySide6-41cd52?style=for-the-badge&logo=qt&logoColor=white&labelColor=18181b)](https://doc.qt.io/qtforpython-6/)
+[![Python](https://img.shields.io/badge/Python-3.9%2B-3776ab?style=for-the-badge&logo=python&logoColor=white&labelColor=18181b)](https://www.python.org/)
+[![libgpiod](https://img.shields.io/badge/GPIO-libgpiod%20v1%20%2B%20v2-f59e0b?style=for-the-badge&labelColor=18181b)](https://libgpiod.readthedocs.io/)
+[![IIO](https://img.shields.io/badge/ADC-Linux%20IIO-f59e0b?style=for-the-badge&labelColor=18181b)](https://www.kernel.org/doc/html/latest/driver-api/iio/index.html)
+[![shadcn/ui](https://img.shields.io/badge/UI-shadcn%2Fui%20port-a1a1aa?style=for-the-badge&labelColor=18181b)](https://github.com/shadcn-ui/ui)
+[![Tabler](https://img.shields.io/badge/Icons-Tabler-206bc4?style=for-the-badge&logo=tabler&logoColor=white&labelColor=18181b)](https://github.com/tabler/tabler-icons)
+
+**The project**
+
+[![Tests](https://img.shields.io/badge/tests-193%20passing-17c964?style=for-the-badge&labelColor=18181b)](tests/)
+[![CI](https://img.shields.io/badge/CI-Linux%20full%20suite-006fee?style=for-the-badge&logo=githubactions&logoColor=white&labelColor=18181b)](.github/workflows/ci.yml)
+[![No containers](https://img.shields.io/badge/containers-none-a1a1aa?style=for-the-badge&logo=docker&logoColor=white&labelColor=18181b)](#why-no-containers)
+[![License](https://img.shields.io/badge/license-MIT-006fee?style=for-the-badge&labelColor=18181b)](LICENSE)
 
 </div>
 
@@ -33,7 +40,7 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 <img src="docs/assets/screenshot-studio.png" alt="The Studio window, connected to a panel" width="900" />
 
 <em>A customer's application running inside a live preview of the panel, beside
-the target it deploys to — connected here to a 10.1" 1024 x 768 SOM.</em>
+the target it deploys to — composed here against a 10.1", 1280 x 800 panel.</em>
 
 </div>
 
@@ -107,15 +114,20 @@ is restored. Then, in the window:
 1. **Open Bundle…** — point it at your application's directory. The manifest is
    validated, or proposed and written for you if there is none, and the
    application starts rendering in the bezel at the target's resolution.
-2. **Target Configuration** — the panel's address, `root`, and the private key
-   that reaches it. `ssh-copy-id root@<panel-ip>` once, if you have not.
-3. **Connect / Test** — proves the link, reports the panel's real display size
-   and which release is live on it.
+2. **Target IP** and **Port** in the command strip, with `root` and the private
+   key that reaches the panel under **Target Details** on the Display Console
+   tab. `ssh-copy-id root@<panel-ip>` once, if you have not.
+3. **Connect** — proves the link, reports the panel's real display size and
+   which release is live on it. The badge beside it carries the link state, and
+   the bezel re-composes itself at the resolution the panel reported.
 4. **Deploy to Target** — everything in [the pipeline below](#from-a-python-app-to-the-panel).
    The bar names the stage it is in, and the console carries the panel's own
    words.
 5. **Rollback** returns to the previous release; **Restart GUI** restarts the
-   current one. **Memory Profile** reports what the live release costs the board.
+   current one.
+6. **System Profile** reports what the live release costs the board, and
+   **Tag Lab** injects tag values into the preview so the panel's behaviour can
+   be exercised without the hardware that would normally drive it.
 
 **From the command line**, for CI or a headless machine:
 
@@ -367,13 +379,15 @@ the stage.</em>
 <img src="docs/assets/screenshot-installing.png" alt="Installing on the hardware" width="860" />
 
 <em>Uploading the GUI onto the hardware: the installer's own steps arrive as
-the panel reaches them, down to the release it is switching to.</em>
+the panel reaches them, down to the release it is switching to — ending with
+the application running on the panel and set as its boot default.</em>
 
 <br /><br />
 
-<img src="docs/assets/screenshot-dark.png" alt="Studio in dark mode" width="860" />
+<img src="docs/assets/screenshot-light.png" alt="Studio in light mode" width="860" />
 
-<em>Dark mode.</em>
+<em>Light mode. The same window, the same deploy; the theme follows the
+operator, and the preview inside the bezel follows the theme with it.</em>
 
 <br /><br />
 
@@ -491,7 +505,7 @@ tests/                protocol, integration and cross-validator suites
 ## Verification
 
 ```bash
-python tests/run_all.py          # 185 tests
+python tests/run_all.py          # 193 tests
 ```
 
 | Area | Coverage |

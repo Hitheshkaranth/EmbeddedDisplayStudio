@@ -61,6 +61,10 @@ QtObject {
     readonly property color warning: mode === "light" ? "#f59e0b" : "#f5a524"
     /** @property {color} warningForeground */
     readonly property color warningForeground: mode === "light" ? "#f8fafc" : "#f8fafc"
+    /** @property {color} brand */
+    readonly property color brand: mode === "light" ? "#006fee" : "#006fee"
+    /** @property {color} brandForeground */
+    readonly property color brandForeground: mode === "light" ? "#ffffff" : "#ffffff"
     /** @property {color} info */
     readonly property color info: mode === "light" ? "#3b82f6" : "#006fee"
     /** @property {color} infoForeground */

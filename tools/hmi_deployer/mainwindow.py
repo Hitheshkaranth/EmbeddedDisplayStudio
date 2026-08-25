@@ -285,6 +285,7 @@ class MainWindow(QMainWindow):
         self.memory_profile = {}
         self._profile_values = {}
         self._profile_bars = {}
+        self._profile_bar_values = {}
         self.ssh_worker = None
         # Every SSH/SCP worker still running. A deploy chains four of them, and
         # a QThread destroyed while running takes the process down with it.
@@ -939,16 +940,28 @@ class MainWindow(QMainWindow):
 
         Side effects: creates and stores a QProgressBar in ``_profile_bars``.
         """
-        layout.addWidget(QLabel(label))
+        # The measurement is stated beside the resource name, not painted
+        # inside the bar. A bar is two-toned by definition -- filled chunk on
+        # an empty track -- and no single text colour reads on both: dark text
+        # vanished into a full chunk in light mode, light text vanished into
+        # the empty track. Outside the bar it is legible at any percentage in
+        # either theme, and the bar is left to do the one thing a bar is for.
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 2)
+        header.addWidget(QLabel(label))
+        header.addStretch()
+        value = QLabel("Not queried")
+        value.setObjectName("profileBarValue")
+        value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._profile_bar_values[key] = value
+        header.addWidget(value)
+        layout.addLayout(header)
+
         bar = QProgressBar()
-        # The base QProgressBar is an 8px track with transparent text, which is
-        # right for the deploy strip and wrong here: these bars carry a
-        # measurement, and it was being painted invisibly onto a sliver.
         bar.setObjectName("profileCapacityBar")
         bar.setRange(0, 100)
         bar.setValue(0)
-        bar.setTextVisible(True)
-        bar.setFormat("Not queried")
+        bar.setTextVisible(False)
         self._profile_bars[key] = bar
         layout.addWidget(bar)
 
@@ -1018,17 +1031,18 @@ class MainWindow(QMainWindow):
                 which is reported as such rather than drawn as an empty bar.
         """
         bar = self._profile_bars[key]
+        value = self._profile_bar_values[key]
         if pending:
             bar.setValue(0)
-            bar.setFormat(PROFILE_PENDING_TEXT)
+            value.setText(PROFILE_PENDING_TEXT)
             return
         if total <= 0:
             bar.setValue(0)
-            bar.setFormat(text)
+            value.setText(text)
             return
         percent = min(100, round(amount * 100 / total))
         bar.setValue(percent)
-        bar.setFormat(f"{text}  (%p%)")
+        value.setText(f"{text}  ({percent}%)")
 
     def _profile_pending(self, *keys):
         """True when any of these fields has not arrived from the SOM yet.

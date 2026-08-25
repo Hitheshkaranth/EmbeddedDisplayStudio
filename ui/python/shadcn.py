@@ -369,20 +369,25 @@ QProgressBar#deploymentProgressBar::chunk {{
    to be read and share the deploy bar's chunk. Anything else makes the one
    tab that reports numbers the one tab that does not look like the product. */
 QProgressBar#profileCapacityBar {{
-    background-color: {p['background']};
-    border: 1px solid {p['border']};
+    background-color: {p['muted']};
+    border: 1px solid {p['input']};
     border-radius: 6px;
-    min-height: 20px;
-    max-height: 20px;
-    text-align: center;
-    font-size: 11px;
-    font-weight: 600;
-    color: {p['foreground']};
+    min-height: 10px;
+    max-height: 10px;
+    color: transparent;
 }}
+/* Brand blue, not `primary`: in the light palette primary and ring are both
+   near-black, which drew a black chunk that swallowed the reading painted on
+   top of it. The measurement now sits beside the bar (profileBarValue). */
 QProgressBar#profileCapacityBar::chunk {{
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 {p['primary']}, stop:1 {p['ring']});
+        stop:0 {p['brand']}, stop:1 {p['info']});
     border-radius: 5px;
+}}
+QLabel#profileBarValue {{
+    color: {p['mutedForeground']};
+    font-size: 11px;
+    font-weight: 600;
 }}
 
 /* ========================================================================
@@ -650,9 +655,12 @@ QLineEdit#targetHostInput, QLineEdit#targetPortInput {{
     max-height: 34px;
     padding: 0 {scale[2]}px;
 }}
+/* Brand blue in both themes, deliberately not `primary`: that token is
+   #006fee in dark but near-black in light, so the one control the operator
+   reaches for first changed colour with the theme. */
 QPushButton#connectButton {{
-    background-color: {p['primary']};
-    color: {p['primaryForeground']};
+    background-color: {p['brand']};
+    color: {p['brandForeground']};
     height: 34px;
     min-height: 34px;
     max-height: 34px;
@@ -661,6 +669,20 @@ QPushButton#connectButton {{
     padding-bottom: 0;
     padding-left: 18px;
     padding-right: 18px;
+}}
+/* Without these the base :hover rule reaches back for `primary` and the
+   button turns near-black under the cursor in light mode. */
+QPushButton#connectButton:hover {{
+    background-color: {hex_to_rgba(p['brand'], 0.9)};
+    color: {p['brandForeground']};
+}}
+QPushButton#connectButton:pressed {{
+    background-color: {hex_to_rgba(p['brand'], 0.8)};
+    color: {p['brandForeground']};
+}}
+QPushButton#connectButton:disabled {{
+    background-color: {hex_to_rgba(p['brand'], 0.5)};
+    color: {hex_to_rgba(p['brandForeground'], 0.6)};
 }}
 QLineEdit#targetDetailInput {{
     border-radius: 16px;
