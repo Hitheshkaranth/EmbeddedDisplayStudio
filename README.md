@@ -22,7 +22,8 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 [![Design system](https://img.shields.io/badge/UI-shadcn%2Fui%20port-020817?style=for-the-badge)](https://github.com/shadcn-ui/ui)
 [![Icons](https://img.shields.io/badge/Icons-Tabler-206bc4?style=for-the-badge&logo=tabler&logoColor=white)](https://github.com/tabler/tabler-icons)
-[![Tests](https://img.shields.io/badge/tests-21%20passing%20%7C%209%20cross--validator-22c55e?style=for-the-badge)](tests/)
+[![Tests](https://img.shields.io/badge/tests-153%20passing-22c55e?style=for-the-badge)](tests/)
+[![CI](https://img.shields.io/badge/CI-Linux%20full%20suite-2088ff?style=for-the-badge&logo=githubactions&logoColor=white)](.github/workflows/ci.yml)
 [![No Docker](https://img.shields.io/badge/containers-none-64748b?style=for-the-badge&logo=docker&logoColor=white)](#why-no-containers)
 
 </div>
@@ -143,6 +144,14 @@ my-qt-app/
 }
 ```
 
+Only four fields are required — `schema`, `name`, `version` and `entry`. The
+rest are optional: `screen` defaults to 1280x800, `tags_required` to none,
+`runtime` to `qml`. This is the smallest manifest that validates:
+
+```json
+{ "schema": 1, "name": "line-controller", "version": "1.4.0", "entry": "main.qml" }
+```
+
 `runtime` is optional and defaults to `qml`:
 
 | runtime | entry | How it runs on the panel |
@@ -181,9 +190,11 @@ Already have a Qt app? Open it in App Studio; it detects the entry point **and
 the binding**, and writes the manifest for you.
 
 Build outputs, caches and VCS metadata are left out of the bundle
-automatically. For anything else that lives in the folder but is not part of the
-running application — source archives, packaged installers, capture logs — add a
-`.hmiignore` next to the manifest, one glob per line.
+automatically, by both the CLI and App Studio — they share one packer, so the
+same folder produces a byte-identical tarball either way. For anything else that
+lives in the folder but is not part of the running application — source
+archives, packaged installers, capture logs — add a `.hmiignore` next to the
+manifest, one glob per line.
 
 ```qml
 import QtQuick
@@ -298,10 +309,12 @@ staging directory, validated again on the target, then promoted by a single
 window with no UI. The GUI must recreate its ready-file within 25 s or the
 symlink swaps back.
 
-**Validation happens twice, identically.** Host CLI, target installer and the
-desktop tool implement the same manifest rules, and a test suite asserts all
-three agree — because a bundle that passes on a laptop and is refused on the
-panel is worse than one that fails everywhere.
+**Validation happens twice, from one implementation.** The host CLI, the target
+installer and the desktop tool all call `schema/manifest.py`; the target still
+validates independently of the host, as it must, but not by different rules.
+They used to be three separate implementations that had drifted apart in both
+directions — a bundle that passed on a laptop and was refused on the panel is
+worse than one that fails everywhere.
 
 **Both libgpiod generations.** BSP 6 ships libgpiod 1.6, BSP 7 ships 2.x, and
 their Python APIs are incompatible. Both are implemented and selected at import.
@@ -332,6 +345,7 @@ if `Theme.qml` ever drifts from it.
 
 ```
 docs/CONTRACT.md      the normative interface spec — read this first
+schema/               shared formats: manifest validation, bundle packing
 daemon/               Layer 1  hardware daemon + tag map
 gui/                  Layer 2  loader, tag engine, shell, fallback screen
 apps/demo-app/        a worked example, and the pipeline's test fixture
@@ -348,20 +362,24 @@ tests/                protocol, integration and cross-validator suites
 ## Verification
 
 ```bash
-python tests/run_all.py          # 21 tests
+python tests/run_all.py          # 153 tests
 ```
 
 | Area | Coverage |
 |---|---|
 | Daemon protocol | error codes, silence on unparseable input, `seq` monotonicity, survives hostile frames |
 | Tag engine | daemon → UDP → QML binding, command write-back, fallback on missing tags |
-| Bundle validation | all three implementations agree, in both directions |
+| Bundle validation | one implementation, three callers; minimal, README and malformed manifests |
+| Install atomicity | unique release ids, running release survives redeploy, traversal refused before extraction |
+| Fallback screen | the card lays out, sections do not overlap, the error text is shown |
 | Design tokens | `tokens.json` and `Theme.qml` cannot drift |
 | Gallery render | painted pixels asserted, not just "it ran" |
 
-> **Run the installer tests on Linux.** Windows has no `flock`, names Python
-> differently and translates paths, so the atomic-swap suite skips there rather
-> than pretending to pass. `tests/README.md` has the WSL command.
+> **Run the installer tests on Linux.** Windows has no `flock`, so the
+> atomic-swap and cross-validator suites skip there rather than pretending to
+> pass — and the runner prints how many tests skipped, because a skip is not a
+> pass. CI runs the whole suite on Linux and fails if anything skips.
+> `tests/README.md` has the WSL command.
 
 ---
 

@@ -27,7 +27,6 @@ import pathlib
 import re
 import signal
 import socket
-import struct
 import sys
 import time
 import threading
@@ -75,6 +74,14 @@ logger = logging.getLogger("hmi-hwd")
 # sd_notify -- raw AF_UNIX, no libsystemd dependency
 # ---------------------------------------------------------------------------
 
+# Cached notification socket, opened on first use and kept for the process
+# lifetime. WATCHDOG=1 is sent every poll cycle (10 Hz by default), so opening
+# and closing a fresh socket per call churned ~864,000 file descriptors a day
+# for no benefit -- the socket is connectionless and the peer address never
+# changes.
+_notify_sock: Optional[socket.socket] = None
+
+
 def sd_notify(state: str) -> None:
     """Send a sd_notify datagram to systemd if NOTIFY_SOCKET is set.
 
@@ -82,24 +89,34 @@ def sd_notify(state: str) -> None:
         state: notification string, e.g. "READY=1" or "WATCHDOG=1".
 
     Side effects:
-        Sends a single UDP datagram to the systemd notification socket.
-        Silently does nothing when NOTIFY_SOCKET is unset (developer host,
-        non-systemd environment) or on any socket error.
+        Sends a single datagram to the systemd notification socket, opening
+        the cached socket on first use.  Silently does nothing when
+        NOTIFY_SOCKET is unset (developer host, non-systemd environment) or on
+        any socket error.
 
     The abstract namespace convention: if the path starts with '@', replace
     it with a NUL byte (Linux abstract socket namespace).
     """
+    global _notify_sock
+
     addr = os.environ.get("NOTIFY_SOCKET")
     if not addr:
         return
     if addr.startswith("@"):
         addr = "\x00" + addr[1:]
     try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-        sock.sendto(state.encode("utf-8"), addr)
-        sock.close()
+        if _notify_sock is None:
+            _notify_sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        _notify_sock.sendto(state.encode("utf-8"), addr)
     except OSError:
-        pass
+        # Drop the socket so the next call rebuilds it rather than retrying a
+        # descriptor that has gone bad.
+        if _notify_sock is not None:
+            try:
+                _notify_sock.close()
+            except OSError:
+                pass
+            _notify_sock = None
 
 # ---------------------------------------------------------------------------
 # Rate-limited logger
@@ -117,21 +134,28 @@ class RateLimitedLogger:
         # Maps error-class string -> monotonic timestamp of last emission (s).
         self._last: Dict[str, float] = {}
 
-    def warning(self, err_class: str, msg: str) -> None:
+    def warning(self, err_class: str, msg: str, *args: Any) -> None:
         """Log msg at WARNING level if not rate-limited for err_class.
 
         Args:
             err_class: arbitrary key grouping related errors (e.g. "bad_json").
-            msg:       free-form message text.
+            msg:       printf-style format string.
+            *args:     values interpolated into msg, exactly as logging does it.
 
         Side effects:
             Writes to the Python logging system at most once per
             LOG_RATE_LIMIT_S seconds per err_class.
+
+        *args exists because every caller in this file passes them. Without it
+        each of those ten call sites raised TypeError instead of logging, and
+        because they sit before the ack, the caught exception also swallowed
+        the CONTRACT 2.3 nack the handler was about to send. The formatting is
+        deferred to the logging call so a rate-limited line costs nothing.
         """
         now = time.monotonic()
         prev = self._last.get(err_class, 0.0)
         if now - prev >= LOG_RATE_LIMIT_S:
-            logger.warning("[%s] %s", err_class, msg)
+            logger.warning("[%s] " + msg, err_class, *args)
             self._last[err_class] = now
 
 
@@ -564,6 +588,19 @@ class IioAdc:
         volts = volts * gain + transform_offset
         return round(volts, 6)
 
+    def channels(self) -> List[str]:
+        """Return the tags registered for polling.
+
+        Returns:
+            A list of tag names, safe to iterate while read() reopens a
+            channel's file descriptor (it is a copy, not a live view).
+
+        Exists so the poll loop does not have to reach into _channels; the
+        simulated backend offers the same method, so the caller needs no
+        knowledge of which one it holds.
+        """
+        return list(self._channels.keys())
+
     def close(self) -> None:
         """Close all open file descriptors.
 
@@ -616,6 +653,10 @@ class IioSim:
         volts = (raw * 0.8056640625) / 1000.0
         volts = volts * gain + transform_offset
         return round(volts, 6)
+
+    def channels(self) -> List[str]:
+        """Return the tags registered for polling.  See IioAdc.channels."""
+        return list(self._channels.keys())
 
     def close(self) -> None:
         """No-op for simulation."""
@@ -822,6 +863,38 @@ def load_config(path: str) -> dict:
             logger.error("Config missing required section '%s'", sec)
             sys.exit(1)
 
+    # Validate the daemon section's numeric fields before anything consumes
+    # them. A poll_interval_ms of 0 turns the publisher into a busy loop that
+    # saturates a core and floods every subscriber; a malformed
+    # telemetry_sink used to raise ValueError out of __init__ as a traceback
+    # rather than a diagnosable message.
+    dcfg = cfg["daemon"]
+
+    poll_ms = dcfg.get("poll_interval_ms", 100)
+    if not isinstance(poll_ms, (int, float)) or poll_ms <= 0:
+        logger.error(
+            "daemon.poll_interval_ms must be a positive number, got %r", poll_ms
+        )
+        sys.exit(1)
+
+    cmd_port = dcfg.get("cmd_port", 5000)
+    if not isinstance(cmd_port, int) or not (1 <= cmd_port <= 65535):
+        logger.error("daemon.cmd_port must be 1..65535, got %r", cmd_port)
+        sys.exit(1)
+
+    sink = dcfg.get("telemetry_sink", "127.0.0.1:5001")
+    if not isinstance(sink, str) or ":" not in sink:
+        logger.error(
+            "daemon.telemetry_sink must be 'host:port', got %r", sink
+        )
+        sys.exit(1)
+    sink_port = sink.rsplit(":", 1)[1]
+    if not sink_port.isdigit() or not (1 <= int(sink_port) <= 65535):
+        logger.error(
+            "daemon.telemetry_sink port must be 1..65535, got %r", sink_port
+        )
+        sys.exit(1)
+
     # Validate tag names in gpio outputs and inputs, and adc channels.
     for section_key in ("outputs", "inputs"):
         section = cfg.get("gpio", {}).get(section_key, {})
@@ -953,7 +1026,9 @@ class CommandProtocol(asyncio.DatagramProtocol):
         # -- Size check (CONTRACT: >8192 B dropped + counted) --
         if len(data) > MAX_DGRAM_BYTES:
             self._daemon.error_count += 1
-            _rl_log.warning(ERR_TOO_LARGE, "Oversized datagram (%d B) from %s", )
+            _rl_log.warning(
+                ERR_TOO_LARGE, "Oversized datagram (%d B) from %s", len(data), addr
+            )
             # Cannot reliably parse an id from an oversized payload.
             # Try anyway for best-effort ack.
             msg_id = self._extract_id_best_effort(data)
@@ -981,9 +1056,17 @@ class CommandProtocol(asyncio.DatagramProtocol):
             return
 
         # -- Must be a JSON object --
+        # A well-formed array or scalar has no addressable "id" member, so the
+        # regex extractor is the only way to correlate a reply. Without this
+        # branch the not_an_object code in the CONTRACT 2.3 closed set was
+        # unreachable: the daemon simply went silent and the sender learned
+        # nothing about why its command was ignored.
         if not isinstance(msg, dict):
             self._daemon.error_count += 1
             _rl_log.warning(ERR_NOT_OBJ, "Non-object JSON from %s", addr)
+            msg_id = self._extract_id_regex(text)
+            if msg_id:
+                self._send_nack(msg_id, ERR_NOT_OBJ, addr)
             return
 
         # -- Extract optional id (max 64 chars, must be string) --
@@ -1203,9 +1286,21 @@ class CommandProtocol(asyncio.DatagramProtocol):
         m = re.search(r'"id"\s*:\s*"([^"]{1,64})"', text)
         return m.group(1) if m else None
 
-    def error_datagram_received(self, exc: Exception) -> None:
-        """Called by asyncio on ICMP errors.  Ignored."""
-        pass
+    def error_received(self, exc: Exception) -> None:
+        """Called by asyncio when a previous send raised an ICMP error.
+
+        Args:
+            exc: the OSError asyncio recovered from the socket.
+
+        An ICMP port-unreachable is the normal consequence of acking a client
+        that has already exited; it says nothing about the daemon's health, so
+        it is counted for diagnostics and rate-limited rather than logged per
+        occurrence.  The method name matters: asyncio calls `error_received`,
+        and the previous spelling (`error_datagram_received`) was never
+        invoked by anything.
+        """
+        self._daemon.error_count += 1
+        _rl_log.warning("icmp", "ICMP error on command socket: %s", exc)
 
 # ---------------------------------------------------------------------------
 # Main daemon
@@ -1502,10 +1597,16 @@ class HwDaemon:
                 _rl_log.warning(ERR_HW_ERROR, "GPIO read error for %s", tag)
                 # Tag retains its previous value (better than None for a bool).
 
-        # ADC channels.
+        # ADC channels.  A failed read publishes None (CONTRACT 2.4) and is
+        # counted, exactly as a failed GPIO read is: sys.errors is documented
+        # as a cumulative hardware error count, so a channel that is failing
+        # every cycle must be visible there rather than only in the journal.
         if self.adc is not None:
-            for tag in list(self.adc._channels.keys()):
+            for tag in self.adc.channels():
                 val = self.adc.read(tag)
+                if val is None:
+                    self.error_count += 1
+                    _rl_log.warning(ERR_HW_ERROR, "ADC read error for %s", tag)
                 self.tags.set(tag, val)
 
         # UART tags.

@@ -157,7 +157,8 @@ step "prereq-systemd" "ok" "systemd present"
 
 install_file "usr/bin/hmi-install"    0755
 install_file "usr/bin/hmi-gui-launch" 0755
-step "install-bin" "ok" "/usr/bin/hmi-install, /usr/bin/hmi-gui-launch"
+install_file "usr/bin/hmi-hwd-launch" 0755
+step "install-bin" "ok" "/usr/bin/hmi-install, /usr/bin/hmi-gui-launch, /usr/bin/hmi-hwd-launch"
 
 # ---- Layer 2: GUI loader, shell QML, shared component kit -------------
 # The loader resolves its shell as <its own dir>/../shell/Shell.qml and adds
@@ -173,8 +174,10 @@ step "install-gui" "ok" "/usr/lib/hmi/gui, /usr/lib/hmi/shell, /usr/lib/hmi/qml"
 # ---- Layer 1: hardware daemon ----------------------------------------
 
 install_file   "usr/lib/hmi/hmi_hwd.py" 0755
+# The shared CONTRACT section 4 validator, called by hmi-install.
+install_file   "usr/lib/hmi/manifest.py" 0644
 install_config "etc/hmi/hwd.json"       0644
-step "install-hwd" "ok" "/usr/lib/hmi/hmi_hwd.py"
+step "install-hwd" "ok" "/usr/lib/hmi/hmi_hwd.py, /usr/lib/hmi/manifest.py"
 
 # ---- Configuration ---------------------------------------------------
 

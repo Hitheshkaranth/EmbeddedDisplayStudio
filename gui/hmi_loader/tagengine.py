@@ -83,6 +83,10 @@ class TagEngine(QObject):
     # Emitted whenever the link watchdog changes the online state.
     onlineChanged = Signal()
 
+    # Emitted when a datagram is rejected, so a diagnostics screen can bind to
+    # rxErrors and see it move.
+    rxErrorsChanged = Signal()
+
     def __init__(
         self,
         expected_tags: list[str],
@@ -120,6 +124,14 @@ class TagEngine(QObject):
         # Where commands are sent.
         self._daemon_addr = QHostAddress(daemon_host)
         self._daemon_port = daemon_port
+
+        # Monotonic counter behind the correlation ids put on outgoing
+        # commands. The daemon only acks a command that carries an "id"
+        # (CONTRACT 2.3), so without one a rejected write -- not_writable,
+        # bad_value, hw_error -- was silently dropped and ackReceived could
+        # only ever fire for ping. An app had no way to tell a command that
+        # took effect from one the daemon refused.
+        self._cmd_seq = 0
 
         # Reverse lookup from QML-safe alias ("ai_pot") to wire name ("ai.pot"),
         # needed because commands must use the dotted form (CONTRACT 2.5).
@@ -198,8 +210,22 @@ class TagEngine(QObject):
         """Returns the cumulative count of rejected datagrams."""
         return self._rx_errors
 
+    def _count_rx_error(self) -> None:
+        """Increment the rejected-datagram counter and notify QML.
+
+        Every ingress rejection goes through here so no path can bump the
+        counter without emitting the change signal.
+        """
+        self._rx_errors += 1
+        self.rxErrorsChanged.emit()
+
     # Diagnostics counter, exposed read-only for status screens.
-    rxErrors = Property(int, get_rx_errors, constant=True)
+    #
+    # NOT constant: it was declared `constant=True` while incrementing on every
+    # rejected datagram, which tells QML never to re-evaluate the binding. A
+    # status screen bound to Bus.rxErrors showed 0 for ever, which is worse
+    # than not exposing it at all.
+    rxErrors = Property(int, get_rx_errors, notify=rxErrorsChanged)
 
     # ---------------------------------------------------------------- ingress
 
@@ -217,7 +243,7 @@ class TagEngine(QObject):
             # discarded without being parsed.
             if size > MAX_DATAGRAM_BYTES:
                 self._socket.readDatagram(size)
-                self._rx_errors += 1
+                self._count_rx_error()
                 continue
 
             datagram, _sender_host, _sender_port = self._socket.readDatagram(size)
@@ -225,7 +251,7 @@ class TagEngine(QObject):
             try:
                 msg = json.loads(bytes(datagram).decode("utf-8"))
                 if not isinstance(msg, dict):
-                    self._rx_errors += 1
+                    self._count_rx_error()
                     continue
 
                 kind = msg.get("t")
@@ -235,12 +261,12 @@ class TagEngine(QObject):
                     self._handle_ack(msg)
                 else:
                     # Foreign traffic on our port; counted, not fatal.
-                    self._rx_errors += 1
+                    self._count_rx_error()
             except (UnicodeDecodeError, json.JSONDecodeError):
-                self._rx_errors += 1
+                self._count_rx_error()
             except Exception as exc:  # noqa: BLE001 - deliberate catch-all
                 logger.debug("Unhandled error processing datagram: %s", exc)
-                self._rx_errors += 1
+                self._count_rx_error()
 
     def _handle_telemetry(self, msg: dict) -> None:
         """
@@ -253,7 +279,7 @@ class TagEngine(QObject):
         """
         tags = msg.get("tags")
         if not isinstance(tags, dict):
-            self._rx_errors += 1
+            self._count_rx_error()
             return
 
         self.set_online(True)
@@ -266,8 +292,14 @@ class TagEngine(QObject):
             # Learn tags the manifest did not declare, so an app can still bind
             # to anything the daemon happens to publish.
             self._alias_to_tag.setdefault(alias, tag)
-            self._map.insert(tag, value)
-            self._map.insert(alias, value)
+            # Only write when the value actually moved. QQmlPropertyMap.insert
+            # emits a change notification unconditionally, so writing every tag
+            # under both spellings on every frame re-evaluated every binding in
+            # the running app 10 times a second -- on a panel where most tags
+            # are a digital input that changes once an hour.
+            if self._map.value(tag) != value:
+                self._map.insert(tag, value)
+                self._map.insert(alias, value)
 
     def _handle_ack(self, msg: dict) -> None:
         """
@@ -291,6 +323,16 @@ class TagEngine(QObject):
     def _subscribe_to_daemon(self) -> None:
         """Re-asserts our telemetry subscription so the daemon keeps streaming."""
         self._send_command({"cmd": "subscribe", "ttl": SUBSCRIBE_TTL_S})
+
+    def _next_id(self) -> str:
+        """Return a fresh correlation id for an outgoing command.
+
+        Returns:
+            A short opaque string, well inside the 64-character limit
+            CONTRACT 2.2 puts on the field.
+        """
+        self._cmd_seq += 1
+        return "gui-%d" % self._cmd_seq
 
     def _send_command(self, cmd: dict) -> None:
         """
@@ -322,7 +364,12 @@ class TagEngine(QObject):
                 `bad_value`; the local map is not optimistically updated, so
                 the UI always reflects the hardware's actual read-back.
         """
-        self._send_command({"cmd": "set", "tag": self._to_wire_name(tag), "value": value})
+        self._send_command({
+            "id": self._next_id(),
+            "cmd": "set",
+            "tag": self._to_wire_name(tag),
+            "value": value,
+        })
 
     @Slot(str, int)
     def pulse(self, tag: str, ms: int) -> None:
@@ -333,7 +380,12 @@ class TagEngine(QObject):
             tag: dotted or underscored output tag name.
             ms: pulse width in milliseconds, 1..10000 as enforced by the daemon.
         """
-        self._send_command({"cmd": "pulse", "tag": self._to_wire_name(tag), "ms": ms})
+        self._send_command({
+            "id": self._next_id(),
+            "cmd": "pulse",
+            "tag": self._to_wire_name(tag),
+            "ms": ms,
+        })
 
     @Slot(str)
     def uart_tx(self, data: str) -> None:
@@ -349,7 +401,7 @@ class TagEngine(QObject):
                 expects (the daemon does not append one). Keep it inside the
                 8192-byte datagram limit.
         """
-        self._send_command({"cmd": "uart_tx", "data": data})
+        self._send_command({"id": self._next_id(), "cmd": "uart_tx", "data": data})
 
     @Slot()
     def ping(self) -> None:

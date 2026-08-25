@@ -48,7 +48,11 @@ TEXT_SUFFIXES = (
 FILE_PAYLOAD: List[Tuple[str, str]] = [
     ("target/bin/hmi-install",              "usr/bin/hmi-install"),
     ("target/bin/hmi-gui-launch",           "usr/bin/hmi-gui-launch"),
+    ("target/bin/hmi-hwd-launch",           "usr/bin/hmi-hwd-launch"),
     ("daemon/hmi_hwd.py",                   "usr/lib/hmi/hmi_hwd.py"),
+    # The single implementation of CONTRACT section 4; hmi-install calls it
+    # from here rather than carrying its own copy of the manifest rules.
+    ("schema/manifest.py",                  "usr/lib/hmi/manifest.py"),
     ("daemon/hwd.json",                     "etc/hmi/hwd.json"),
     ("target/etc/default/hmi-gui",          "etc/default/hmi-gui"),
     ("target/systemd/hmi-gui.service",      "etc/systemd/system/hmi-gui.service"),

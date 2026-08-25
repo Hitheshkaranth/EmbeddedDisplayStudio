@@ -6,9 +6,11 @@
 #
 # Target paths (CONTRACT section 3):
 #   /usr/lib/hmi/hmi_hwd.py          hardware daemon
+#   /usr/lib/hmi/manifest.py         shared CONTRACT section 4 validator
 #   /etc/hmi/hwd.json                runtime pin/bus configuration
 #   /usr/bin/hmi-install             application installer helper
 #   /usr/bin/hmi-gui-launch          GUI launcher wrapper
+#   /usr/bin/hmi-hwd-launch          daemon launcher wrapper
 #   /etc/default/hmi-gui             GUI launcher environment defaults
 #   /usr/lib/tmpfiles.d/hmi.conf     tmpfiles.d fragment
 #   ${systemd_unitdir}/system/hmi-hwd.service
@@ -44,6 +46,7 @@ SRC_URI = " \
     file://hwd.json \
     file://hmi-install \
     file://hmi-gui-launch \
+    file://hmi-hwd-launch \
     file://hmi-gui.default \
     file://hmi.conf \
     file://hmi-hwd.service \
@@ -90,8 +93,20 @@ REQUIRED_DISTRO_FEATURES = "systemd"
 SYSTEMD_SERVICE:${PN} = "hmi-hwd.service hmi-gui.service"
 
 # Enable both units at image-build time (equivalent to `systemctl enable`).
-# Set to "disable" in local.conf overrides if you want the service
-# opt-in on the target.
+#
+# This is not in tension with hmi-install's enable_boot step, which enables
+# hmi-gui.service only after a release has been proven to render: `systemctl
+# enable` is idempotent, and the two paths exist for different starting
+# points.  An image built from this layer has the unit enabled from the
+# factory; a stock image onboarded with deploy/provision_panel.py does not,
+# and gets it from the first successful deploy.
+#
+# A freshly flashed panel with no application installed is a supported state:
+# the loader finds no manifest, Shell.qml still loads, and the panel shows the
+# fallback screen naming the problem.  That is the CONTRACT section 7 outcome
+# and is strictly better than a dark screen.
+#
+# Set to "disable" in a local.conf override if you want the units opt-in.
 SYSTEMD_AUTO_ENABLE = "enable"
 
 # ---------------------------------------------------------------------------
@@ -113,29 +128,26 @@ HMI_GPIOD_PYTHON ?= "python3-libgpiod"
 # ---------------------------------------------------------------------------
 # RDEPENDS - runtime dependencies
 #
-# Only packages that the daemon actually imports at runtime are listed here.
-# Packages that are guaranteed to be present in the Toradex reference
-# multimedia image (python3-core, python3-json, etc.) are still listed
-# explicitly so the recipe is portable to a minimal image.
-#
-# python3-core       - Python interpreter and built-ins
-# python3-json       - json module (used to parse hwd.json)
-# python3-logging    - logging module (used throughout the daemon)
-# python3-threading  - threading module (watchdog thread)
-# python3-subprocess - subprocess module (used by hmi-install to run apps)
-# python3-pathlib    - pathlib module (Path objects in installer)
-# python3-signal     - signal module (SIGTERM / SIGHUP handler)
-# python3-fcntl      - fcntl module (advisory lock in hmi-install via flock)
-# ${HMI_GPIOD_PYTHON} - GPIO control; see comment above for version note
-# ---------------------------------------------------------------------------
+# The Python stdlib is split into subpackages on Yocto: a base image can ship
+# python3-core with no json, no asyncio and no argparse.  hmi_hwd.py imports
+# argparse, asyncio, json, logging, os, pathlib, re, signal, socket, sys,
+# threading and time; hmi-install runs embedded python needing json, os, re and
+# tempfile.  python3-asyncio was missing entirely, which surfaces as a
+# ModuleNotFoundError when the unit starts rather than as a build error --
+# exactly the split-stdlib trap that deploy/provision_panel.py exists to
+# diagnose.  Keep this list in step with the imports in daemon/hmi_hwd.py.
 RDEPENDS:${PN} = " \
     python3-core \
+    python3-argparse \
+    python3-asyncio \
     python3-json \
     python3-logging \
-    python3-threading \
-    python3-subprocess \
+    python3-netclient \
     python3-pathlib \
+    python3-re \
+    python3-shell \
     python3-signal \
+    python3-threading \
     python3-fcntl \
     ${HMI_GPIOD_PYTHON} \
 "
@@ -144,7 +156,7 @@ RDEPENDS:${PN} = " \
 # FILES - packaging paths
 #
 # Bitbake automatically includes everything under ${bindir}, ${sysconfdir},
-# ${libdir}, ${systemd_unitdir}, and ${prefix}/lib/tmpfiles.d in the main
+# ${nonarch_libdir}, ${systemd_unitdir}, and ${prefix}/lib/tmpfiles.d in the main
 # package.  /opt is NOT in the default packaging path, so we must list it
 # explicitly; otherwise the directories would be created by do_install but
 # silently dropped from the .ipk/.rpm.
@@ -170,15 +182,25 @@ CONFFILES:${PN} = " \
 do_install() {
     # -----------------------------------------------------------------------
     # /usr/lib/hmi/ - private library directory for HMI Python modules.
-    # We use ${libdir} (resolves to /usr/lib on aarch64) rather than a
-    # hard-coded path so that multilib builds (/usr/lib64) stay correct.
+    # ${nonarch_libdir} always resolves to /usr/lib, which is what CONTRACT
+    # section 3 fixes these paths at, and what hmi-gui.service and
+    # hmi-gui-launch hard-code.  ${libdir} was wrong here: under multilib it
+    # becomes /usr/lib64, which would put the daemon somewhere its own unit
+    # file does not look and split this tree from hmi-gui's half of it.
     # -----------------------------------------------------------------------
-    install -d ${D}${libdir}/hmi
+    install -d ${D}${nonarch_libdir}/hmi
 
-    # Install the hardware daemon.  Mode 0644 is correct: systemd runs it
-    # via `ExecStart=/usr/bin/python3 /usr/lib/hmi/hmi_hwd.py` so the
-    # execute bit is not needed on the .py file itself.
-    install -m 0644 ${S}/hmi_hwd.py ${D}${libdir}/hmi/hmi_hwd.py
+    # Install the hardware daemon.  Mode 0755 per CONTRACT section 3: the
+    # unit passes it to an interpreter so the execute bit is not strictly
+    # required, but the contract fixes the mode and an integrator comparing
+    # the running system against it should not find a discrepancy.
+    install -m 0755 ${S}/hmi_hwd.py ${D}${nonarch_libdir}/hmi/hmi_hwd.py
+
+    # The single implementation of CONTRACT section 4. hmi-install calls it
+    # from /usr/lib/hmi/manifest.py; the host CLI and the desktop tool call
+    # the same file from the repository. Mode 0644: it is imported and run
+    # as an argument to the interpreter, never executed directly.
+    install -m 0644 ${S}/manifest.py ${D}${nonarch_libdir}/hmi/manifest.py
 
     # -----------------------------------------------------------------------
     # /etc/hmi/ - runtime configuration (pinned to ${sysconfdir}).
@@ -187,7 +209,7 @@ do_install() {
     # of the pin/bus mapping (may contain hardware security parameters).
     # -----------------------------------------------------------------------
     install -d ${D}${sysconfdir}/hmi
-    install -m 0640 ${S}/hwd.json ${D}${sysconfdir}/hmi/hwd.json
+    install -m 0644 ${S}/hwd.json ${D}${sysconfdir}/hmi/hwd.json
 
     # -----------------------------------------------------------------------
     # /usr/bin/ - public executables.
@@ -196,6 +218,7 @@ do_install() {
     install -d ${D}${bindir}
     install -m 0755 ${S}/hmi-install     ${D}${bindir}/hmi-install
     install -m 0755 ${S}/hmi-gui-launch  ${D}${bindir}/hmi-gui-launch
+    install -m 0755 ${S}/hmi-hwd-launch  ${D}${bindir}/hmi-hwd-launch
 
     # -----------------------------------------------------------------------
     # /etc/default/hmi-gui - environment defaults for the GUI launcher.
@@ -209,7 +232,7 @@ do_install() {
     # -----------------------------------------------------------------------
     # /usr/lib/tmpfiles.d/hmi.conf - tmpfiles.d fragment.
     # systemd-tmpfiles reads this at boot to create /run/hmi and apply
-    # correct ownership on /opt/hmi_apps.  We install under ${libdir} because
+    # correct ownership on /opt/hmi_apps.  We install under ${nonarch_libdir} because
     # bitbake's systemd class expects tmpfiles fragments in ${prefix}/lib/
     # (i.e. the non-arch libdir); on a standard aarch64 build both resolve
     # to /usr/lib so there is no practical difference, but using the variable

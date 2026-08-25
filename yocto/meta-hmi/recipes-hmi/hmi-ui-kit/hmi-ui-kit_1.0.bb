@@ -109,8 +109,12 @@ do_install() {
 
     # -----------------------------------------------------------------------
     # Install the design-system token file alongside the QML components.
-    # tokens.json is read at QML startup via a small JSON loader component
-    # inside the Shadcn module; it must live inside the module directory.
+    #
+    # Nothing reads it at runtime: Theme.qml carries the literal values, and
+    # ui/tests/test_tokens.py fails if the two ever drift.  It is shipped so
+    # that an integrator reading the module on the target has the single
+    # source of truth beside the components it generated, and so a field
+    # engineer can diff a panel's kit against a known release.
     # -----------------------------------------------------------------------
     install -m 0644 ${S}/tokens.json ${D}${nonarch_libdir}/hmi/qml/Shadcn/tokens.json
 

@@ -44,23 +44,19 @@ readonly LOG_UNITS=("hmi-gui" "hmi-hwd")
 # Number of journal lines fetched before following (CONTRACT section 6).
 readonly LOG_LINES=200
 
-# Fields required in manifest.json (CONTRACT section 4).
-readonly REQUIRED_MANIFEST_FIELDS=("name" "entry" "version" "schema")
+# Path to the single implementation of CONTRACT section 4.
+#
+# The manifest rules are NOT duplicated in this script any more. They lived
+# here as a name regex, a version regex, a required-field list and a schema
+# constant, and that copy disagreed with the desktop tool and the target
+# installer in both directions -- so the same bundle deployed or not depending
+# on which tool you used. schema/manifest.py is now called by all three.
+readonly REPO_ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly SCHEMA_VALIDATOR="${REPO_ROOT_DIR}/schema/manifest.py"
 
-# Legal application name pattern: lowercase alphanumerics and hyphens only,
-# 1–64 characters (CONTRACT section 4).
-# Exactly the CONTRACT section 4 pattern. The previous expression forbade dots
-# and underscores, so a contract-valid bundle named "my.app" or "my_app" was
-# accepted by the GUI loader and the deployer tool but refused here - the same
-# bundle deploying or not depending on which tool you used.
-readonly NAME_RE='^[a-z0-9][a-z0-9._-]{0,63}$'
+# Path to the shared bundle packer (exclusion rules + deterministic tar).
+readonly SCHEMA_PACKER="${REPO_ROOT_DIR}/schema/bundle.py"
 
-# Legal version pattern: semantic-ish, e.g. "1.0.0", "2.3.4-rc1" (CONTRACT
-# section 4).  More permissive variants ("1.0", "1") are also accepted.
-readonly VERSION_RE='^[0-9]+(\.[0-9]+){0,3}(-[a-zA-Z0-9._-]+)?(\+[a-zA-Z0-9._-]+)?$'
-
-# manifest.json schema version this tool understands (CONTRACT section 3).
-readonly SUPPORTED_SCHEMA=1
 
 # SSH ControlMaster socket is placed inside TMPDIR; the variable is populated
 # during setup_temp_dir() and referenced by all ssh/scp helper functions.
@@ -215,25 +211,6 @@ realpath_portable() {
     fi
 }
 
-sha256_file() {
-    # Purpose: compute the SHA-256 hex digest of a file portably.
-    #          Linux provides sha256sum; macOS provides shasum -a 256;
-    #          Git Bash typically ships sha256sum via MinGW/MSYS2.
-    # Args:    $1 — path to the file (must exist and be readable).
-    # Returns: writes "<hex_digest>  <filename>" to stdout (sha256sum format).
-    # Exits:   non-zero if no SHA-256 tool is found.
-    local file="$1"
-    if command -v sha256sum >/dev/null 2>&1; then
-        # Linux and Git Bash (MinGW).
-        sha256sum -- "$file"
-    elif command -v shasum >/dev/null 2>&1; then
-        # macOS / BSD.
-        shasum -a 256 -- "$file"
-    else
-        die 1 "No SHA-256 tool found (tried sha256sum, shasum).  Install one and retry."
-    fi
-}
-
 mktemp_dir() {
     # Purpose: create a private temporary directory portably.
     #          GNU mktemp accepts a trailing XXXXXX template; BSD/macOS mktemp
@@ -243,70 +220,6 @@ mktemp_dir() {
     # Returns: writes the path of the created directory to stdout.
     # Exits:   non-zero if the directory cannot be created.
     mktemp -d 2>/dev/null || mktemp -d -t hmi_deploy
-}
-
-tar_sorted() {
-    # Purpose: create a deterministic gzip tarball from a source directory.
-    #          GNU tar >= 1.28 supports --sort=name; older GNU tar and BSD tar
-    #          do not.  When --sort is unavailable we sort members with find and
-    #          pipe them explicitly so that the archive member order is identical
-    #          across runs (same bundle => same checksum).
-    #          Options used to normalise mtime:
-    #            --mtime / --modification-time: force all members to epoch 0.
-    #            --numeric-owner: strip host UID/GID names.
-    #            --owner=0 --group=0: normalise ownership metadata.
-    # Args:    $1 — output tarball path (.tar.gz)
-    #          $2 — source directory (the bundle root)
-    # Returns: creates $1; exits non-zero on failure.
-    local out="$1"
-    local src="$2"
-
-    # Normalised timestamp: Unix epoch zero for reproducibility.
-    local epoch_zero="1970-01-01T00:00:00Z"
-
-    if tar --sort=name --version >/dev/null 2>&1; then
-        # GNU tar >= 1.28: --sort=name handles member ordering natively.
-        log_verbose "Using GNU tar --sort=name"
-        tar --create \
-            --gzip \
-            --file="$out" \
-            --directory="$src" \
-            --sort=name \
-            --mtime="${epoch_zero}" \
-            --owner=0 --group=0 \
-            --numeric-owner \
-            .
-    else
-        # Fallback: enumerate files in sorted order and feed them to tar.
-        # 'find | sort | tar --files-from' gives reproducible ordering.
-        # BSD tar (macOS) uses --modification-time instead of --mtime.
-        log_verbose "Falling back to sorted find + tar (no --sort=name)"
-        local filelist
-        filelist="$(find "$src" -mindepth 1 | sort | sed "s|^${src}/||")"
-        if [[ "${HOST_PLATFORM}" == "darwin" ]]; then
-            # macOS BSD tar: no --mtime, use --modification-time; no --numeric-owner.
-            printf '%s\n' "${filelist}" | \
-                tar --create \
-                    --gzip \
-                    --file="$out" \
-                    --directory="$src" \
-                    --files-from=- \
-                    2>/dev/null
-            # macOS tar does not support mtime normalisation; warn the operator.
-            log_warn "macOS tar: archive mtime not normalised; checksum may vary across hosts."
-        else
-            printf '%s\n' "${filelist}" | \
-                tar --create \
-                    --gzip \
-                    --file="$out" \
-                    --directory="$src" \
-                    --files-from=- \
-                    --mtime="${epoch_zero}" \
-                    --owner=0 --group=0 \
-                    --numeric-owner \
-                    2>/dev/null
-        fi
-    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -729,101 +642,74 @@ MANIFEST_ENTRY=""   # app entry file path extracted from manifest.json
 MANIFEST_SCHEMA=""  # schema version extracted from manifest.json
 
 validate_bundle_dir() {
-    # Purpose: validate a directory-form bundle against CONTRACT section 4.
-    #          Checks performed in order:
-    #            1. Directory exists and is readable.
-    #            2. manifest.json is present.
-    #            3. manifest.json is valid JSON.
-    #            4. Required fields (schema, name, entry, version) are present.
-    #            5. schema matches SUPPORTED_SCHEMA.
-    #            6. name matches NAME_RE.
-    #            7. version matches VERSION_RE.
-    #            8. entry has no absolute path and no "../" traversal.
-    #            9. entry file exists inside the bundle directory.
-    #           10. Bundle total size is compared to BUNDLE_WARN_BYTES.
+    # Purpose: validate a directory-form bundle against CONTRACT section 4 by
+    #          calling the single shared implementation in schema/manifest.py,
+    #          then extract the MANIFEST_* globals the rest of this script
+    #          needs.
+    #
+    #          The rules used to be reimplemented here in bash + python
+    #          one-liners.  That third copy disagreed with the other two in
+    #          both directions -- it demanded a 'version' the desktop tool
+    #          never checked, and ignored the 'runtime'/'entry' agreement that
+    #          CONTRACT 4.1 requires everywhere -- so whether a bundle deployed
+    #          depended on which tool you reached for.
+    #
     # Args:    $1 — path to the bundle directory.
     # Returns: populates MANIFEST_* globals; calls die() on any violation.
     # Exits:   1 on any validation failure.
 
     local bdir="$1"
-    local manifest="${bdir}/manifest.json"
 
-    # 1. Directory check.
-    [[ -d "${bdir}" ]] \
-        || die 1 "Bundle path is not a directory: ${bdir}"
+    [[ -d "${bdir}" ]]         || die 1 "Bundle path is not a directory: ${bdir}"
 
-    # 2. Manifest presence.
-    [[ -f "${manifest}" ]] \
-        || die 1 "manifest.json not found in bundle: ${bdir}"
-
-    # 3. JSON validity — use python3 (available per contract).
-    local json_ok
-    json_ok="$(python3 -c "import json,sys; json.load(open(sys.argv[1])); print('ok')" \
-        "${manifest}" 2>&1)" \
-        || die 1 "manifest.json is not valid JSON in '${manifest}': ${json_ok}"
-
-    # 4 & populate MANIFEST_* globals — extract each required field.
-    local field value
-    for field in "${REQUIRED_MANIFEST_FIELDS[@]}"; do
-        value="$(python3 -c \
-            "import json,sys; d=json.load(open(sys.argv[1])); print(d.get(sys.argv[2],'__MISSING__'))" \
-            "${manifest}" "${field}" 2>/dev/null)"
-        if [[ "${value}" == "__MISSING__" || -z "${value}" ]]; then
-            die 1 "Required field '${field}' is missing or empty in manifest.json."
-        fi
-        case "${field}" in
-            schema)  MANIFEST_SCHEMA="${value}" ;;
-            name)    MANIFEST_NAME="${value}" ;;
-            entry)   MANIFEST_ENTRY="${value}" ;;
-            version) MANIFEST_VERSION="${value}" ;;
-        esac
-    done
-
-    # 5. Schema version.
-    if [[ "${MANIFEST_SCHEMA}" != "${SUPPORTED_SCHEMA}" ]]; then
-        die 1 "Unsupported manifest schema '${MANIFEST_SCHEMA}' in manifest.json. \
-Expected: ${SUPPORTED_SCHEMA}."
+    # Run the shared validator.  Its stdout is either "OK" or one error per
+    # line, so the whole report reaches the user rather than the first problem.
+    local report=""
+    local rc=0
+    report="$(python3 "${SCHEMA_VALIDATOR}" "${bdir}" 2>&1)" || rc=$?
+    if [[ "${rc}" -ne 0 ]]; then
+        log_error "Bundle validation failed for ${bdir}:"
+        printf '%s
+' "${report}" >&2
+        exit 1
     fi
 
-    # 6. Name pattern.
-    if ! [[ "${MANIFEST_NAME}" =~ ${NAME_RE} ]]; then
-        die 1 "Invalid 'name' field '${MANIFEST_NAME}' in manifest.json. \
-Must match: ${NAME_RE}"
-    fi
+    # Pull the fields this script uses for naming and reporting.  Safe now:
+    # the validator has already confirmed each is present and well-formed.
+    local fields
+    fields="$(python3 -c "
+import json, sys
+with open(sys.argv[1] + '/manifest.json') as f:
+    m = json.load(f)
+print(m['name'])
+print(m['version'])
+print(m['entry'])
+print(m['schema'])
+" "${bdir}")" || die 1 "Could not read manifest fields from ${bdir}"
 
-    # 7. Version pattern.
-    if ! [[ "${MANIFEST_VERSION}" =~ ${VERSION_RE} ]]; then
-        die 1 "Invalid 'version' field '${MANIFEST_VERSION}' in manifest.json. \
-Must match: ${VERSION_RE}"
-    fi
+    MANIFEST_NAME="$(printf '%s
+' "${fields}" | sed -n '1p')"
+    MANIFEST_VERSION="$(printf '%s
+' "${fields}" | sed -n '2p')"
+    MANIFEST_ENTRY="$(printf '%s
+' "${fields}" | sed -n '3p')"
+    MANIFEST_SCHEMA="$(printf '%s
+' "${fields}" | sed -n '4p')"
 
-    # 8. Entry path safety — absolute paths and "../" traversals are rejected.
-    if [[ "${MANIFEST_ENTRY}" == /* ]]; then
-        die 1 "Field 'entry' in manifest.json must not be an absolute path: \
-${MANIFEST_ENTRY}"
-    fi
-    if [[ "${MANIFEST_ENTRY}" == *../* || "${MANIFEST_ENTRY}" == ../* ]]; then
-        die 1 "Field 'entry' in manifest.json must not contain '../' traversal: \
-${MANIFEST_ENTRY}"
-    fi
-
-    # 9. Entry file existence.
-    if [[ ! -f "${bdir}/${MANIFEST_ENTRY}" ]]; then
-        die 1 "Entry file '${MANIFEST_ENTRY}' from manifest.json does not exist \
-in bundle directory: ${bdir}"
-    fi
-
-    # 10. Size advisory.
+    # Size advisory.  `du -sb` is GNU-only; BSD/macOS du has no -b, so fall
+    # back to summing the file sizes with find+awk rather than silently
+    # skipping the check on the platforms this script claims to support.
     local bundle_bytes
-    bundle_bytes="$(du -sb "${bdir}" 2>/dev/null | awk '{print $1}' || echo 0)"
-    if [[ "${bundle_bytes}" -gt "${BUNDLE_WARN_BYTES}" ]]; then
-        log_warn "Bundle size is $(( bundle_bytes / 1048576 )) MiB, which exceeds \
-the advisory limit of $(( BUNDLE_WARN_BYTES / 1048576 )) MiB. \
-Consider splitting large assets."
+    if bundle_bytes="$(du -sb "${bdir}" 2>/dev/null | awk '{print $1}')"        && [[ -n "${bundle_bytes}" ]]; then
+        :
+    else
+        bundle_bytes="$(find "${bdir}" -type f -exec wc -c {} + 2>/dev/null             | awk '{ total += $1 } END { print total + 0 }')"
+    fi
+    if [[ "${bundle_bytes:-0}" -gt "${BUNDLE_WARN_BYTES}" ]]; then
+        log_warn "Bundle size is $(( bundle_bytes / 1048576 )) MiB, which exceeds the advisory limit of $(( BUNDLE_WARN_BYTES / 1048576 )) MiB. Consider splitting large assets."
     fi
 
-    log_ok "Bundle validated: name=${MANIFEST_NAME}, version=${MANIFEST_VERSION}, \
-entry=${MANIFEST_ENTRY}"
+    log_ok "Bundle validated: name=${MANIFEST_NAME}, version=${MANIFEST_VERSION}, entry=${MANIFEST_ENTRY}"
 }
 
 validate_bundle_archive() {
@@ -867,41 +753,42 @@ validate_bundle_archive() {
 # ---------------------------------------------------------------------------
 
 package_bundle() {
-    # Purpose: build a deterministic gzip tarball from a validated bundle
-    #          directory, compute its SHA-256 digest, and write the sidecar
-    #          file next to the tarball.  The archive:
-    #            - has all members' mtime zeroed (epoch 0) for reproducibility
-    #            - is built from sorted member order (same inputs => same hash)
-    #            - strips host paths from archive member names
-    #            - has no leading "./" in member names
-    #            - uses numeric owner (0:0) to remove host UID/GID dependency
-    #          The resulting tarball path is written to stdout.
-    # Args:    $1 — validated bundle directory path.
+    # Purpose: build the bundle tarball and its SHA-256 sidecar by calling the
+    #          shared packer in schema/bundle.py -- the same code the desktop
+    #          tool uses, so both produce byte-identical archives from the same
+    #          directory and the digest the target verifies does not depend on
+    #          which tool built it.
+    #
+    #          That sharing is the point. Build outputs, caches, VCS metadata
+    #          and anything listed in the bundle's .hmiignore are excluded;
+    #          this script used to tar the directory as it found it, so the
+    #          README's "left out of the bundle automatically" was true of the
+    #          GUI and false here, and a CLI deploy shipped .git/ and build/
+    #          over a field link into panel flash.
+    #
+    # Args:    $1 - validated bundle directory path.
     # Returns: writes <tarball_path> to stdout.
-    # Exits:   1 on tar or sha256 failure.
+    # Exits:   1 if packing fails (oversized bundle, unreadable file).
     # Side effects: creates files under TMPWORK.
 
     local bdir="$1"
-    # Use app name and version for a meaningful filename.
-    local app_name="${OPT_NAME_OVERRIDE:-${MANIFEST_NAME}}"
-    local tarball="${TMPWORK}/${app_name}-${MANIFEST_VERSION}.tar.gz"
-    local sidecar="${tarball}.sha256"
 
-    log_step "Packaging bundle as ${app_name}-${MANIFEST_VERSION}.tar.gz"
-    tar_sorted "${tarball}" "${bdir}"
+    log_step "Packaging bundle"
 
-    # Compute the digest; strip the path from the sha256sum output so the
-    # sidecar contains only "<digest>  <basename>" — the installer checks this.
-    local digest_line
-    digest_line="$(sha256_file "${tarball}")"
-    # Replace the full path with just the basename in the digest line.
+    local tarball=""
+    local rc=0
+    tarball="$(python3 "${SCHEMA_PACKER}" pack "${bdir}" "${TMPWORK}")" || rc=$?
+    if [[ "${rc}" -ne 0 || -z "${tarball}" ]]; then
+        die 1 "Could not package ${bdir}."
+    fi
+
     local digest_only
-    digest_only="$(printf '%s\n' "${digest_line}" | awk '{print $1}')"
-    printf '%s  %s\n' "${digest_only}" "$(basename "${tarball}")" > "${sidecar}"
+    digest_only="$(awk '{print $1}' "${tarball}.sha256")"
 
     log_ok "Tarball: ${tarball}"
     log_ok "SHA-256: ${digest_only}"
-    printf '%s\n' "${tarball}"
+    printf '%s
+' "${tarball}"
 }
 
 # ---------------------------------------------------------------------------

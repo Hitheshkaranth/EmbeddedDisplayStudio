@@ -72,20 +72,16 @@ Window {{
             anchors.left: parent.left
             
             // Buttons
-            // ShCard requires manual height calculation because it does not use a layout internally.
-            // We calculate implicitHeight from the header and content, plus bottom margin padding.
+            // ShCard flows its header and content and sizes itself to them,
+            // so a card only has to declare its width.
             ShCard {{
                 width: 400
-                implicitHeight: btnHeader.height + btnContent.height + Theme.spacing24
                 ShCardHeader {{ id: btnHeader; ShCardTitle {{ text: "Buttons" }} }}
                 ShCardContent {{
                     id: btnContent
-                    anchors.top: btnHeader.bottom
-                    implicitHeight: btnLayout.implicitHeight
                     ColumnLayout {{
                         id: btnLayout
-                        anchors.left: parent.left
-                        anchors.right: parent.right
+                        width: parent.width
                         RowLayout {{
                             ShButton {{ text: "Default"; variant: "default" }}
                             ShButton {{ text: "Secondary"; variant: "secondary" }}
@@ -112,16 +108,12 @@ Window {{
             // Inputs
             ShCard {{
                 width: 400
-                implicitHeight: inHeader.height + inContent.height + Theme.spacing24
                 ShCardHeader {{ id: inHeader; ShCardTitle {{ text: "Inputs" }} }}
                 ShCardContent {{
                     id: inContent
-                    anchors.top: inHeader.bottom
-                    implicitHeight: inLayout.implicitHeight
                     ColumnLayout {{
                         id: inLayout
-                        anchors.left: parent.left
-                        anchors.right: parent.right
+                        width: parent.width
                         ShInput {{ placeholderText: "Empty input..." }}
                         ShInput {{ text: "Filled input" }}
                         ShInput {{ placeholderText: "Disabled input"; enabled: false }}
@@ -132,16 +124,12 @@ Window {{
             // Badges
             ShCard {{
                 width: 400
-                implicitHeight: bgHeader.height + bgContent.height + Theme.spacing24
                 ShCardHeader {{ id: bgHeader; ShCardTitle {{ text: "Badges" }} }}
                 ShCardContent {{
                     id: bgContent
-                    anchors.top: bgHeader.bottom
-                    implicitHeight: bgLayout.implicitHeight
                     ColumnLayout {{
                         id: bgLayout
-                        anchors.left: parent.left
-                        anchors.right: parent.right
+                        width: parent.width
                         RowLayout {{
                             ShBadge {{ text: "Default"; variant: "default" }}
                             ShBadge {{ text: "Secondary"; variant: "secondary" }}
@@ -159,16 +147,12 @@ Window {{
             // Switch & Progress
             ShCard {{
                 width: 400
-                implicitHeight: swHeader.height + swContent.height + Theme.spacing24
                 ShCardHeader {{ id: swHeader; ShCardTitle {{ text: "Switch & Progress" }} }}
                 ShCardContent {{
                     id: swContent
-                    anchors.top: swHeader.bottom
-                    implicitHeight: swLayout.implicitHeight
                     ColumnLayout {{
                         id: swLayout
-                        anchors.left: parent.left
-                        anchors.right: parent.right
+                        width: parent.width
                         RowLayout {{
                             ShSwitch {{ checked: false }}
                             ShSwitch {{ checked: true }}
@@ -185,16 +169,12 @@ Window {{
             // Separator & Alert
             ShCard {{
                 width: 400
-                implicitHeight: sepHeader.height + sepContent.height + Theme.spacing24
                 ShCardHeader {{ id: sepHeader; ShCardTitle {{ text: "Separator & Alert" }} }}
                 ShCardContent {{
                     id: sepContent
-                    anchors.top: sepHeader.bottom
-                    implicitHeight: sepLayout.implicitHeight
                     ColumnLayout {{
                         id: sepLayout
-                        anchors.left: parent.left
-                        anchors.right: parent.right
+                        width: parent.width
                         ShSeparator {{ orientation: Qt.Horizontal; Layout.fillWidth: true }}
                         ShAlert {{ title: "Default Alert"; description: "This is a default alert." }}
                         ShAlert {{ title: "Destructive Alert"; description: "This is a destructive alert."; variant: "destructive" }}
@@ -205,16 +185,12 @@ Window {{
             // Tabs, Labels, Skeletons
             ShCard {{
                 width: 400
-                implicitHeight: tabHeader.height + tabContent.height + Theme.spacing24
                 ShCardHeader {{ id: tabHeader; ShCardTitle {{ text: "Tabs, Labels, Skeletons" }} }}
                 ShCardContent {{
                     id: tabContent
-                    anchors.top: tabHeader.bottom
-                    implicitHeight: tabLayout.implicitHeight
                     ColumnLayout {{
                         id: tabLayout
-                        anchors.left: parent.left
-                        anchors.right: parent.right
+                        width: parent.width
                         ShTabs {{ model: ["Tab 1", "Tab 2", "Tab 3"]; currentIndex: 1 }}
                         ShLabel {{ text: "This is a standard label" }}
                         ShSkeleton {{ width: 100; height: 20 }}
@@ -225,16 +201,12 @@ Window {{
             // HMI Additions
             ShCard {{
                 width: 400
-                implicitHeight: hmiHeader.height + hmiContent.height + Theme.spacing24
                 ShCardHeader {{ id: hmiHeader; ShCardTitle {{ text: "HMI Additions" }} }}
                 ShCardContent {{
                     id: hmiContent
-                    anchors.top: hmiHeader.bottom
-                    implicitHeight: hmiLayout.implicitHeight
                     ColumnLayout {{
                         id: hmiLayout
-                        anchors.left: parent.left
-                        anchors.right: parent.right
+                        width: parent.width
                         ShGauge {{ value: 42; minValue: 0; maxValue: 100; unit: "V"; label: "Voltage"; Layout.fillWidth: true }}
                         RowLayout {{
                             ShStatDot {{ state: "idle" }}
@@ -250,16 +222,12 @@ Window {{
             // Dialog (inline for display)
             ShCard {{
                 width: 400
-                implicitHeight: dlgHeader.height + dlgContent.height + Theme.spacing24
                 ShCardHeader {{ id: dlgHeader; ShCardTitle {{ text: "Dialog Component" }} }}
                 ShCardContent {{
                     id: dlgContent
-                    anchors.top: dlgHeader.bottom
-                    implicitHeight: dlgLayout.implicitHeight
                     ColumnLayout {{
                         id: dlgLayout
-                        anchors.left: parent.left
-                        anchors.right: parent.right
+                        width: parent.width
                         ShDialog {{
                             id: dummyDialog
                             title: "Test Dialog"
@@ -276,16 +244,12 @@ Window {{
             // Icons
             ShCard {{
                 width: parent.width
-                implicitHeight: icoHeader.height + icoContent.height + Theme.spacing24
                 ShCardHeader {{ id: icoHeader; ShCardTitle {{ text: "Icons" }} }}
                 ShCardContent {{
                     id: icoContent
-                    anchors.top: icoHeader.bottom
-                    implicitHeight: icoLayout.implicitHeight
                     Flow {{
                         id: icoLayout
-                        anchors.left: parent.left
-                        anchors.right: parent.right
+                        width: parent.width
                         spacing: 12
                         {icons_qml}
                     }}

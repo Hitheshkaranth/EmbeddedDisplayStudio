@@ -17,10 +17,14 @@ Rectangle {
     anchors.fill: parent
 
     ShCard {
+        // Named so tests/test_shell_render.py can assert this screen is
+        // actually laid out; CONTRACT section 7 requires it to stay legible.
+        objectName: "fallbackCard"
         width: 500
         anchors.centerIn: parent
 
         ShCardHeader {
+            objectName: "fallbackHeader"
             ShCardTitle { 
                 text: "Application Load Failed" 
             }
@@ -30,11 +34,13 @@ Rectangle {
         }
 
         ShCardContent {
+            objectName: "fallbackContent"
             ColumnLayout {
                 width: parent.width
                 spacing: 16
 
                 ShAlert {
+                    objectName: "fallbackAlert"
                     Layout.fillWidth: true
                     title: "Validation Error"
                     description: Hmi.lastError

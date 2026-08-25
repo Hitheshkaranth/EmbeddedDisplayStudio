@@ -272,11 +272,14 @@ class MainWindow(QMainWindow):
         conn_layout = QFormLayout(conn_box)
         self.inp_host = QLineEdit(self.settings.value("host", "192.168.1.100"))
         self.inp_user = QLineEdit(self.settings.value("user", "root"))
+        self.inp_port = QLineEdit(str(self.settings.value("port", "22")))
+        self.inp_port.setPlaceholderText("22")
         self.inp_key = QLineEdit(self.settings.value("key", ""))
         self.inp_key.setPlaceholderText("Leave empty for default agent")
 
         conn_layout.addRow("Host:", self.inp_host)
         conn_layout.addRow("User:", self.inp_user)
+        conn_layout.addRow("Port:", self.inp_port)
         conn_layout.addRow("Key:", self.inp_key)
 
         test_layout = QHBoxLayout()
@@ -570,7 +573,7 @@ class MainWindow(QMainWindow):
         host = self.inp_host.text().strip()
         user = self.inp_user.text().strip()
         key = self.inp_key.text().strip()
-        self.relay = TelemetryRelay(host, user, 22, key, self)
+        self.relay = TelemetryRelay(host, user, self.ssh_port(), key, self)
         self.relay.start()
 
     # ------------------------------------------------------------------
@@ -693,9 +696,27 @@ class MainWindow(QMainWindow):
         vbar = self.console.verticalScrollBar()
         vbar.setValue(vbar.maximum())
 
+    def ssh_port(self) -> int:
+        """Return the SSH port to use, falling back to 22.
+
+        Returns:
+            The port from the connection form, or 22 when the field is empty
+            or not a number.
+
+        Every call site used to pass a literal 22 even though build_ssh_cmd
+        takes a port and the host CLI exposes -P, so a panel reachable only on
+        a non-standard port could not be deployed to from this tool at all.
+        """
+        raw = self.inp_port.text().strip()
+        if not raw.isdigit():
+            return 22
+        port = int(raw)
+        return port if 1 <= port <= 65535 else 22
+
     def save_settings(self):
         self.settings.setValue("host", self.inp_host.text().strip())
         self.settings.setValue("user", self.inp_user.text().strip())
+        self.settings.setValue("port", self.ssh_port())
         self.settings.setValue("key", self.inp_key.text().strip())
 
     def on_test_conn(self):
@@ -849,6 +870,24 @@ class MainWindow(QMainWindow):
         worker.error.connect(self.log)
         worker.start()
 
+    def _discard_packaging_dir(self) -> None:
+        """Remove the temp directory holding the last deployment's tarball.
+
+        Args:   none
+        Returns: nothing
+        Side effects: deletes the directory tree if one is recorded.
+        Never raises: failing to tidy up must not fail or interrupt a deploy.
+        """
+        path = getattr(self, "_packaging_dir", None)
+        if not path:
+            return
+        self._packaging_dir = None
+        try:
+            import shutil
+            shutil.rmtree(path, ignore_errors=True)
+        except Exception:
+            pass
+
     def on_deploy(self):
         """
         Packages the loaded bundle and installs it on the panel.
@@ -863,7 +902,12 @@ class MainWindow(QMainWindow):
         self._progress_begin()
         try:
             import tempfile
-            out_dir = tempfile.mkdtemp()
+            # Cleaned up when the deployment finishes, succeeds or fails.
+            # Every deploy used to leave its tarball behind -- up to 500 MB
+            # each, and a working session is many deploys.
+            self._discard_packaging_dir()
+            out_dir = tempfile.mkdtemp(prefix="hmi-deploy-")
+            self._packaging_dir = out_dir
             self._progress_set(2, "Packaging bundle...")
             tar_path, sha256_path = package_bundle(self.bundle_dir, out_dir)
             tar_size = os.path.getsize(tar_path)
@@ -884,11 +928,12 @@ class MainWindow(QMainWindow):
 
             # Step 1: Create /tmp/hmi_upload and upload the bundle
             from .ssh import build_scp_cmd
-            cmd_mkdir = build_ssh_cmd(host, user, 22, key, "mkdir -p /tmp/hmi_upload")
+            cmd_mkdir = build_ssh_cmd(host, user, self.ssh_port(), key, "mkdir -p /tmp/hmi_upload")
             tar_name = os.path.basename(tar_path)
 
             def on_mkdir(code):
                 if code != 0:
+                    self._discard_packaging_dir()
                     self._progress_fail(
                         "Could not create /tmp/hmi_upload on the panel."
                     )
@@ -900,12 +945,13 @@ class MainWindow(QMainWindow):
                 self._progress_set(PROGRESS_UPLOAD_START, "Uploading bundle...")
                 self._upload_started = time.monotonic()
                 self.run_upload_worker(
-                    build_upload_cmd(host, user, 22, key, f"/tmp/hmi_upload/{tar_name}"),
+                    build_upload_cmd(host, user, self.ssh_port(), key, f"/tmp/hmi_upload/{tar_name}"),
                     tar_path, tar_size, "Upload", on_upload, timeout_s=scp_timeout,
                 )
 
             def on_upload(code):
                 if code != 0:
+                    self._discard_packaging_dir()
                     self._progress_fail("Bundle upload failed.")
                     return
                 elapsed = max(time.monotonic() - self._upload_started, 1e-6)
@@ -914,15 +960,16 @@ class MainWindow(QMainWindow):
                     f"({tar_size / elapsed / 1024:.0f} KB/s)."
                 )
                 self._progress_set(PROGRESS_UPLOAD_END, "Uploading checksum...")
-                cmd_scp2 = build_scp_cmd(host, user, 22, key, sha256_path, "/tmp/hmi_upload/")
+                cmd_scp2 = build_scp_cmd(host, user, self.ssh_port(), key, sha256_path, "/tmp/hmi_upload/")
                 self.run_ssh_worker(cmd_scp2, "SCP sha256", on_scp2, timeout_s=SSH_SHORT_TIMEOUT_S)
 
             def on_scp2(code):
                 if code != 0:
+                    self._discard_packaging_dir()
                     self._progress_fail("Checksum upload failed.")
                     return
                 self._progress_set(PROGRESS_INSTALL_START, "Installing on the panel...")
-                cmd_install = build_ssh_cmd(host, user, 22, key, f"hmi-install install /tmp/hmi_upload/{tar_name}")
+                cmd_install = build_ssh_cmd(host, user, self.ssh_port(), key, f"hmi-install install /tmp/hmi_upload/{tar_name}")
                 # The installer blocks for up to its own GUI_READY_TIMEOUT
                 # waiting for the panel to render, then may roll back and
                 # restart again, so it needs far more headroom than a shell
@@ -934,6 +981,7 @@ class MainWindow(QMainWindow):
                 )
 
             def on_install(code):
+                self._discard_packaging_dir()
                 if code == 0 and not self._deploy_failed:
                     self.log("Deployment complete.")
                     self._progress_succeed()
@@ -962,7 +1010,7 @@ class MainWindow(QMainWindow):
         host = self.inp_host.text().strip()
         user = self.inp_user.text().strip()
         key = self.inp_key.text().strip()
-        cmd = build_ssh_cmd(host, user, 22, key, "hmi-install rollback")
+        cmd = build_ssh_cmd(host, user, self.ssh_port(), key, "hmi-install rollback")
         # Rollback restarts the GUI on its way out, so it is not instant.
         self.run_ssh_worker(cmd, "Rollback", timeout_s=INSTALL_TIMEOUT_S)
 
@@ -972,10 +1020,11 @@ class MainWindow(QMainWindow):
         host = self.inp_host.text().strip()
         user = self.inp_user.text().strip()
         key = self.inp_key.text().strip()
-        cmd = build_ssh_cmd(host, user, 22, key, "systemctl restart hmi-gui.service")
+        cmd = build_ssh_cmd(host, user, self.ssh_port(), key, "systemctl restart hmi-gui.service")
         self.run_ssh_worker(cmd, "Restart GUI", timeout_s=SSH_SHORT_TIMEOUT_S)
 
     def closeEvent(self, event):
         """Release every local/remote telemetry source before closing."""
         self._stop_all_senders()
+        self._discard_packaging_dir()
         super().closeEvent(event)

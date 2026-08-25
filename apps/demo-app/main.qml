@@ -15,16 +15,6 @@ Rectangle {
     width: 1280
     height: 800
 
-    // Helper to safely get tag values with fallback
-    // Since Tags is a QQmlPropertyMap, Tags.value(...) in QML conflicts with property reading,
-    // so we use the built-in map indexing `Tags["key"]` or `Tags.key`
-    function getTag(name, fallback) {
-        // Replace dots with underscores to read from QQmlPropertyMap
-        let alias = name.replace(/\./g, '_');
-        let v = Tags[alias];
-        return (v !== undefined && v !== null) ? v : fallback;
-    }
-
     // Main layout
     ColumnLayout {
         anchors.fill: parent
@@ -85,22 +75,20 @@ Rectangle {
                     }
 
                     ShCardContent {
-                        // ShCard is a plain Rectangle, so we must manually flow its Header and Content.
-                        // We anchor Content below Header and let it fill the remaining card height.
-                        anchors.top: leftHeader.bottom
-                        anchors.bottom: parent.bottom
-                        
                         ColumnLayout {
-                            // Fills the ShCardContent area, avoiding 'width: parent.width' bindings.
-                            anchors.fill: parent
+                            width: parent.width
                             spacing: 24
 
-                            // Use getTag() to safely retrieve the tag with a fallback
+                            // Bus.value() returns the fallback for a tag that is missing,
+                            // null, or not published yet -- see CONTRACT 2.5.
                             ShGauge {
                                 Layout.fillWidth: true
-                                Layout.fillHeight: true
+                                // ShCard sizes to its content, so the gauge
+                                // states the height it wants rather than
+                                // stretching into leftover card space.
+                                Layout.preferredHeight: 260
                                 // Safely retrieve ai.pot, fallback to 0.0 if not present
-                                value: getTag("ai.pot", 0.0)
+                                value: Bus.value("ai.pot", 0.0)
                                 minValue: 0.0
                                 maxValue: 3.3
                                 unit: "V"
@@ -114,13 +102,13 @@ Rectangle {
                                 Layout.preferredHeight: 120
                                 // Format the number safely
                                 value: {
-                                    let v = getTag("ai.pot", null);
+                                    let v = Bus.value("ai.pot", null);
                                     return v !== null ? Number(v).toFixed(2) : "--";
                                 }
                                 label: "Raw Voltage"
                                 unit: "V"
                                 state: {
-                                    let v = getTag("ai.pot", 0.0);
+                                    let v = Bus.value("ai.pot", 0.0);
                                     if (v > 3.0) return "fault";
                                     if (v > 2.5) return "warn";
                                     return "ok";
@@ -148,13 +136,8 @@ Rectangle {
                     }
 
                     ShCardContent {
-                        // Position below header and fill the remaining card height
-                        anchors.top: rightHeader.bottom
-                        anchors.bottom: parent.bottom
-                        
                         ColumnLayout {
-                            // Fills the ShCardContent safely
-                            anchors.fill: parent
+                            width: parent.width
                             spacing: 16
 
                             // E-Stop status
@@ -166,11 +149,11 @@ Rectangle {
                                 }
                                 ShStatDot {
                                     // Default to false (safe) if tag is missing
-                                    state: getTag("di.estop", false) ? "fault" : "ok"
+                                    state: Bus.value("di.estop", false) ? "fault" : "ok"
                                 }
                                 ShLabel {
-                                    text: getTag("di.estop", false) ? "ENGAGED" : "CLEAR"
-                                    color: getTag("di.estop", false) ? Theme.destructive : Theme.success
+                                    text: Bus.value("di.estop", false) ? "ENGAGED" : "CLEAR"
+                                    color: Bus.value("di.estop", false) ? Theme.destructive : Theme.success
                                     font.weight: Font.DemiBold
                                 }
                             }
@@ -195,7 +178,7 @@ Rectangle {
                                 
                                 ShSwitch {
                                     // Safe read of the current state
-                                    checked: getTag("do.relay1", false)
+                                    checked: Bus.value("do.relay1", false)
                                     // Commands go through Bus, never by assigning
                                     // to Tags: PySide6 cannot intercept writes to
                                     // a QQmlPropertyMap, so an assignment would

@@ -8,7 +8,7 @@ Comprehensive integration guide for building the BYOA HMI stack into the native 
 
 The `meta-hmi` layer integrates the three BYOA layers directly into the native root filesystem of the Toradex Reference Multimedia Image:
 
-* **Layer 1 (`hmi-core`):** Hardware daemon (`hmi_hwd.py`), pin mapping (`hwd.json`), atomic installer (`hmi-install`), launcher wrapper (`hmi-gui-launch`), systemd units (`hmi-hwd.service`, `hmi-gui.service`), and tmpfiles configuration.
+* **Layer 1 (`hmi-core`):** Hardware daemon (`hmi_hwd.py`), pin mapping (`hwd.json`), atomic installer (`hmi-install`), launcher wrappers (`hmi-gui-launch`, `hmi-hwd-launch`), systemd units (`hmi-hwd.service`, `hmi-gui.service`), and tmpfiles configuration.
 * **Layer 2 (`hmi-gui`):** Python/PySide6 Qt6 GUI application loader and top-level QML shell.
 * **Layer 3 (`hmi-ui-kit`):** Standalone Shadcn-derived QML component library, token definitions, and Tabler icon registry.
 * **Packagegroup (`packagegroup-hmi`):** Aggregates all HMI components plus deployment utilities (`openssh-sftp-server`, `util-linux` for `flock`, `coreutils`, `weston`).
@@ -86,11 +86,13 @@ mkdir -p "${CORE_FILES}"
 
 # Link or copy Layer 1 daemon and config
 cp daemon/hmi_hwd.py            "${CORE_FILES}/hmi_hwd.py"
+cp schema/manifest.py           "${CORE_FILES}/manifest.py"
 cp daemon/hwd.json              "${CORE_FILES}/hwd.json"
 
 # Link or copy Layer 3 target scripts and units
 cp target/bin/hmi-install       "${CORE_FILES}/hmi-install"
 cp target/bin/hmi-gui-launch    "${CORE_FILES}/hmi-gui-launch"
+cp target/bin/hmi-hwd-launch    "${CORE_FILES}/hmi-hwd-launch"
 cp target/etc/default/hmi-gui   "${CORE_FILES}/hmi-gui.default"
 cp target/tmpfiles/hmi.conf     "${CORE_FILES}/hmi.conf"
 cp target/systemd/hmi-hwd.service "${CORE_FILES}/hmi-hwd.service"
@@ -149,6 +151,7 @@ do_install() {
     install -d ${D}${bindir}
     install -m 0755 ${S}/target/bin/hmi-install     ${D}${bindir}/hmi-install
     install -m 0755 ${S}/target/bin/hmi-gui-launch  ${D}${bindir}/hmi-gui-launch
+    install -m 0755 ${S}/target/bin/hmi-hwd-launch  ${D}${bindir}/hmi-hwd-launch
 
     install -d ${D}${sysconfdir}/default
     install -m 0644 ${S}/target/etc/default/hmi-gui ${D}${sysconfdir}/default/hmi-gui

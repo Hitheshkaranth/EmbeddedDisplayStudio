@@ -42,7 +42,15 @@ Type=notify
 # Command line per CONTRACT section 5.  --strict makes the daemon
 # exit non-zero on any configuration or hardware error at startup,
 # which feeds into the Restart= logic.
-ExecStart=/usr/bin/python3 /usr/lib/hmi/hmi_hwd.py --config /etc/hmi/hwd.json --strict
+#
+# Started through hmi-hwd-launch rather than naming an interpreter here:
+# /usr/bin/python3 on a Yocto image can be python3-core alone, with no json
+# and no asyncio, and the daemon cannot run on it.  The launcher applies the
+# same resolution order as hmi-install and hmi-gui-launch ($HMI_PYTHON, then
+# /opt/hmi-python, then /usr/bin/python3) and fails with a diagnosable message
+# instead of an ImportError traceback.
+EnvironmentFile=-/etc/default/hmi-hwd
+ExecStart=/usr/bin/hmi-hwd-launch --strict
 
 # WatchdogSec: if the daemon does not call sd_notify("WATCHDOG=1")
 # within this interval systemd kills and restarts it.  10 s is

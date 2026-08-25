@@ -1,0 +1,19 @@
+# Host-side development and test dependencies.
+#
+# The target does NOT install from this file: the panel gets PySide6 from
+# meta-qt6 (see yocto/meta-hmi) or from deploy/provision_panel.py, and the
+# hardware daemon deliberately depends on nothing outside the Python stdlib
+# plus optional gpiod/pyserial so it can run on a minimal image.
+#
+# Pinned rather than floated so a CI run and a laptop test the same Qt. The
+# QML component kit is geometry-sensitive; a minor PySide6 bump has changed
+# implicit sizing before, and an unpinned CI would report that as a random
+# failure in whatever was committed that day.
+
+# QML engine, Qt Widgets, QUdpSocket. Used by the GUI loader, App Studio, the
+# component gallery and the render tests.
+PySide6==6.8.1
+
+# Optional: the daemon's UART feature. Absent, the feature disables itself
+# with a warning (CONTRACT section 7), so it is not required to run the suite.
+pyserial==3.5

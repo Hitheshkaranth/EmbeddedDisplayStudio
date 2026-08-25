@@ -138,7 +138,20 @@ class TelemetrySimulator(QObject):
 def build_remote_relay_script() -> str:
     """Return the Python 3 bridge executed on the target panel."""
     return (
-        "import sys, socket, json, time\n"
+        "import sys, socket, json, time, threading, os\n"
+        # Nothing signals this process when the ssh transport dies: it is run
+        # without a TTY, so killing the local ssh leaves the remote interpreter
+        # running. Every deploy restarts the relay, which stopped the previous
+        # one locally and left its python on the panel, subscribed, for the
+        # rest of the session. Watching stdin fixes that -- ssh closes it on
+        # the way out, the read returns EOF, and the relay exits.
+        "def _die_with_parent():\n"
+        "    try:\n"
+        "        sys.stdin.read()\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "    os._exit(0)\n"
+        "threading.Thread(target=_die_with_parent, daemon=True).start()\n"
         "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
         "sock.bind(('127.0.0.1', 0))\n"
         "sub = json.dumps({'cmd': 'subscribe', 'ttl': 300}).encode()\n"
@@ -161,9 +174,28 @@ def build_remote_relay_script() -> str:
 
 
 def build_remote_relay_command() -> str:
-    """Build a remote-shell-safe command without nesting user-data quotes."""
+    """Build a remote-shell-safe command without nesting user-data quotes.
+
+    Returns:
+        A single shell command line to run on the panel.
+
+    The interpreter is resolved in shell rather than hard-coded. A bare
+    `python3` on a Yocto image can be python3-core alone, with no json and no
+    socket, so the relay died on its first import while the rest of the
+    platform ran happily on the provisioned interpreter. The order matches
+    hmi-install, hmi-gui-launch and hmi-hwd-launch: $HMI_PYTHON, then
+    /opt/hmi-python, then whatever is on PATH.
+
+    `exec` replaces the login shell so the process tree stays flat and there is
+    no orphaned shell left holding the relay when ssh goes away.
+    """
     encoded = base64.b64encode(build_remote_relay_script().encode("utf-8")).decode("ascii")
-    return f'python3 -c "import base64;exec(base64.b64decode(\'{encoded}\'))"'
+    resolve = (
+        'P="${HMI_PYTHON:-}"; '
+        '[ -x "$P" ] || P=/opt/hmi-python/bin/python3; '
+        '[ -x "$P" ] || P="$(command -v python3)"; '
+    )
+    return resolve + f'exec "$P" -c "import base64;exec(base64.b64decode(\'{encoded}\'))"'
 
 
 class TelemetryRelay(QObject):

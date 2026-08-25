@@ -4,11 +4,15 @@
 # hosts dynamically-loaded BYOA application views.
 #
 # Target paths (CONTRACT section 3):
-#   /usr/lib/hmi/gui/             directory for GUI loader and shell QML
-#   /usr/lib/hmi/gui/main.py      Python/PySide6 GUI loader
-#   /usr/lib/hmi/gui/tagengine.py Python/PySide6 TagEngine for daemon comms
-#   /usr/lib/hmi/gui/Shell.qml    top-level QML shell
-#   /usr/lib/hmi/gui/Fallback.qml fallback QML screen
+#   /usr/lib/hmi/gui/               directory for the GUI loader
+#   /usr/lib/hmi/gui/main.py        Python/PySide6 GUI loader
+#   /usr/lib/hmi/gui/tagengine.py   Python/PySide6 TagEngine for daemon comms
+#   /usr/lib/hmi/shell/             directory for the QML shell
+#   /usr/lib/hmi/shell/Shell.qml    top-level QML shell
+#   /usr/lib/hmi/shell/Fallback.qml fallback QML screen
+#
+# The shell lives beside gui/, not inside it: main.py resolves it as
+# Path(__file__).parent.parent / "shell" / "Shell.qml".
 #
 # ---------------------------------------------------------------------------
 # DEPENDENCY NOTE - PySide6 / meta-qt6
@@ -78,8 +82,18 @@ S         = "${WORKDIR}"
 #                        warnings on a minimal rootfs - adjust to your
 #                        brand font package if different
 # ---------------------------------------------------------------------------
+# The Python stdlib is split into subpackages on a Yocto image: python3-core
+# alone ships neither json nor argparse nor logging.  main.py and tagengine.py
+# import every module listed below, and a missing one is a ModuleNotFoundError
+# at service start rather than a build failure -- so the closure is spelled out
+# instead of assumed.  Keep it in step with the imports in gui/hmi_loader/.
 RDEPENDS:${PN} = " \
     python3-core \
+    python3-argparse \
+    python3-json \
+    python3-logging \
+    python3-pathlib \
+    python3-re \
     python3-pyside6 \
     qtbase \
     qtdeclarative \
@@ -95,7 +109,7 @@ RDEPENDS:${PN} = " \
 # bitbake splits hmi-gui-dev or hmi-gui-doc automatically and misroutes
 # the files; adding the explicit glob below is defensive.
 # ---------------------------------------------------------------------------
-FILES:${PN} += "${nonarch_libdir}/hmi/gui/*"
+FILES:${PN} += "${nonarch_libdir}/hmi/gui/* ${nonarch_libdir}/hmi/shell/*"
 
 do_install() {
     # -----------------------------------------------------------------------
@@ -106,13 +120,24 @@ do_install() {
     # -----------------------------------------------------------------------
     install -d ${D}${nonarch_libdir}/hmi/gui
 
-    # Install the Python loader and tag engine.  Mode 0644: executed via
-    # `ExecStart=/usr/bin/python3 /usr/lib/hmi/gui/main.py`
-    # from hmi-gui.service so the execute bit is not required on the file.
+    # Install the Python loader and tag engine.  Mode 0644: the loader is
+    # started as an argument to the interpreter by hmi-gui-launch, never
+    # executed directly, so the execute bit is not required on the file.
     install -m 0644 ${S}/main.py       ${D}${nonarch_libdir}/hmi/gui/main.py
     install -m 0644 ${S}/tagengine.py  ${D}${nonarch_libdir}/hmi/gui/tagengine.py
 
-    # Install the top-level QML shell and fallback screen.  Mode 0644: read by the QML engine.
-    install -m 0644 ${S}/Shell.qml     ${D}${nonarch_libdir}/hmi/gui/Shell.qml
-    install -m 0644 ${S}/Fallback.qml  ${D}${nonarch_libdir}/hmi/gui/Fallback.qml
+    # -----------------------------------------------------------------------
+    # /usr/lib/hmi/shell/ - the QML shell and fallback screen.
+    #
+    # This directory is NOT interchangeable with gui/.  main.py resolves its
+    # shell as Path(__file__).parent.parent / "shell" / "Shell.qml", i.e.
+    # /usr/lib/hmi/shell/Shell.qml, and deploy/provision_panel.py installs it
+    # there.  These two files were previously installed into gui/ alongside
+    # the loader, where the loader never looks: the image booted, the loader
+    # logged "Failed to load shell QML. Exiting.", and Restart=always turned
+    # that into a boot loop with no UI and no fallback screen.
+    # -----------------------------------------------------------------------
+    install -d ${D}${nonarch_libdir}/hmi/shell
+    install -m 0644 ${S}/Shell.qml     ${D}${nonarch_libdir}/hmi/shell/Shell.qml
+    install -m 0644 ${S}/Fallback.qml  ${D}${nonarch_libdir}/hmi/shell/Fallback.qml
 }

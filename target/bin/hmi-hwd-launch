@@ -1,0 +1,129 @@
+#!/bin/sh
+# /usr/bin/hmi-hwd-launch
+# =====================================================================
+# Hardware Daemon Launcher
+# =====================================================================
+#
+# PURPOSE
+#   Resolve the Python interpreter and exec the hardware daemon.
+#
+#   The unit used to name /usr/bin/python3 directly. That is not a safe
+#   assumption on a Yocto image: the stdlib is split into subpackages
+#   and a base image can ship python3-core alone -- no json, no socket,
+#   no asyncio. hmi-install and hmi-gui-launch both go out of their way
+#   to prefer the provisioned interpreter at /opt/hmi-python, and the
+#   daemon was the one component that did not. On exactly the board the
+#   provisioning scripts target, the GUI came up on the good interpreter
+#   while hmi-hwd.service failed on the bad one.
+#
+# USAGE
+#   /usr/bin/hmi-hwd-launch [extra args forwarded to hmi_hwd.py ...]
+#   Normally invoked by hmi-hwd.service; not called directly.
+#
+# EXIT CODES
+#   0   -- never returned (exec replaces this process)
+#   2   -- no usable interpreter found
+#
+# ENVIRONMENT (all optional; see /etc/default/hmi-hwd)
+#   HMI_PYTHON    -- absolute path to the interpreter to use
+#   HMI_ROOT      -- path prefix for all filesystem paths (off-target tests)
+#   HMI_HWD_CONFIG-- config path (default /etc/hmi/hwd.json)
+#   HMI_HWD_ARGS  -- extra arguments appended to the command line
+#
+# =====================================================================
+
+set -eu
+
+# HMI_ROOT: path prefix for all filesystem paths.  Empty in production.
+# Allows off-target testing against a temp tree on a dev host.
+HMI_ROOT="${HMI_ROOT:-}"
+
+# Environment overrides file. Also referenced by the unit's EnvironmentFile=,
+# but re-sourced here so a manual invocation behaves the same as a unit start.
+HMI_HWD_DEFAULTS="${HMI_ROOT}/etc/default/hmi-hwd"
+
+# The daemon itself, per CONTRACT section 3.
+HWD="${HMI_ROOT}/usr/lib/hmi/hmi_hwd.py"
+
+# Tag-to-pin map, per CONTRACT section 3.
+HWD_CONFIG="${HMI_HWD_CONFIG:-${HMI_ROOT}/etc/hmi/hwd.json}"
+
+##
+# log -- emit a message to stderr (captured by journald)
+#
+# Args:
+#   $1  severity -- "INFO", "WARN" or "ERROR"
+#   $*  message  -- free-form human text
+#
+# Returns: 0
+# Exits:   never
+# Side effects: writes to stderr
+##
+log() {
+    _sev="$1"; shift
+    printf '[hmi-hwd-launch] %s: %s\n' "$_sev" "$*" >&2
+}
+
+##
+# resolve_python -- choose the interpreter to run the daemon with
+#
+# Resolution order, identical to hmi-install and hmi-gui-launch:
+#   1. $HMI_PYTHON, if the operator set one and it is executable.
+#   2. /opt/hmi-python/bin/python3, the provisioned interpreter.
+#   3. /usr/bin/python3, the system one.
+#
+# Args:    none
+# Returns: prints the interpreter path; always succeeds (the caller checks
+#          that the result can actually import what the daemon needs)
+# Exits:   never
+##
+resolve_python() {
+    if [ -n "${HMI_PYTHON:-}" ] && [ -x "${HMI_PYTHON}" ]; then
+        echo "${HMI_PYTHON}"
+        return 0
+    fi
+    if [ -x "${HMI_ROOT}/opt/hmi-python/bin/python3" ]; then
+        echo "${HMI_ROOT}/opt/hmi-python/bin/python3"
+        return 0
+    fi
+    echo "/usr/bin/python3"
+}
+
+# Source operator overrides. `set -a` auto-exports so the values reach the
+# exec'd process. The file is optional.
+if [ -f "$HMI_HWD_DEFAULTS" ]; then
+    log "INFO" "sourcing overrides from ${HMI_HWD_DEFAULTS}"
+    set -a
+    # shellcheck disable=SC1090
+    . "$HMI_HWD_DEFAULTS"
+    set +a
+fi
+
+PYTHON="$(resolve_python)"
+
+if [ ! -x "$PYTHON" ]; then
+    log "ERROR" "no usable Python interpreter (tried \$HMI_PYTHON, /opt/hmi-python, /usr/bin/python3)"
+    exit 2
+fi
+
+# Fail with a diagnosable message rather than a bare ImportError traceback.
+# A split stdlib is the single most common reason this daemon will not start on
+# a stock Yocto image, and "asyncio is missing" is far more actionable than
+# systemd reporting exit status 1.
+if ! "$PYTHON" -c 'import asyncio, json, socket, logging, argparse' 2>/dev/null; then
+    log "ERROR" "${PYTHON} cannot import the stdlib modules the daemon needs"
+    log "ERROR" "a base Yocto image ships python3-core alone; install python3-asyncio,"
+    log "ERROR" "python3-json, python3-netclient, python3-logging and python3-argparse,"
+    log "ERROR" "or provision a complete interpreter with deploy/provision_panel.py"
+    exit 2
+fi
+
+log "INFO" "using interpreter: ${PYTHON}"
+log "INFO" "config: ${HWD_CONFIG}"
+
+# HMI_HWD_ARGS is intentionally unquoted so multiple space-separated arguments
+# expand into separate words.
+_extra="${HMI_HWD_ARGS:-}"
+
+# shellcheck disable=SC2086
+exec "$PYTHON" "$HWD" --config "$HWD_CONFIG" $_extra "$@"

@@ -146,15 +146,68 @@ class TestDaemonProtocol(unittest.TestCase):
         self.assertFalse(resp.get("ok"))
         self.assertEqual(resp.get("err"), "too_large")
 
-    def test_malformed_json_silence(self):
+    def test_unparseable_input_nacks_when_an_id_is_recoverable(self):
         """
-        CONTRACT 2: malformed JSON and JSON array produce NO reply at all.
+        CONTRACT 2.3 + 7: unparseable input is answered with ack{ok:false}
+        when an id can be recovered, using the closed-set error code.
+
+        This test previously asserted silence in both cases and passed for the
+        wrong reason: RateLimitedLogger.warning() raised TypeError on the line
+        before the nack, so the handler never reached _send_nack and the
+        daemon went quiet. CONTRACT 7 is explicit -- "counted, rate-limited log
+        line, ack{ok:false} if id present" -- and without a reply the bad_json
+        and not_an_object codes in the 2.3 closed set were unreachable.
         """
-        resp1 = self._send_cmd(b'{"id": "t6", "cmd": "set", ')
-        self.assertIsNone(resp1, "Daemon should not reply to malformed JSON")
-        
-        resp2 = self._send_cmd(b'[{"id": "t7", "cmd": "ping"}]')
-        self.assertIsNone(resp2, "Daemon should not reply to a JSON array")
+        # Truncated JSON: the id is still recoverable by regex from the text.
+        resp = self._send_cmd(b'{"id": "t6", "cmd": "set", ')
+        self.assertIsNotNone(resp, "Malformed JSON carrying an id must be nacked")
+        self.assertEqual(resp.get("id"), "t6")
+        self.assertFalse(resp.get("ok"))
+        self.assertEqual(resp.get("err"), "bad_json")
+
+        # Well-formed JSON that is not an object has no addressable id member,
+        # but the raw text still carries one.
+        resp = self._send_cmd(b'[{"id": "t7", "cmd": "ping"}]')
+        self.assertIsNotNone(resp, "Non-object JSON carrying an id must be nacked")
+        self.assertEqual(resp.get("id"), "t7")
+        self.assertFalse(resp.get("ok"))
+        self.assertEqual(resp.get("err"), "not_an_object")
+
+    def test_silence_when_no_id_can_be_recovered(self):
+        """
+        CONTRACT 2.3: no id, no reply.
+
+        This is what stops the daemon being used as a UDP reflector: an
+        attacker spoofing a source address gets nothing back unless they also
+        supply a correlation id, and a reflector needs the reply to be larger
+        than the request, which a bare ack never is.
+        """
+        for payload in (
+            b'{"cmd": "set", ',            # malformed, no id
+            b'[1, 2, 3]',                  # not an object, no id
+            b'\x00\xff\xfe\x10',           # invalid UTF-8
+            b'',                           # empty datagram
+        ):
+            with self.subTest(payload=payload):
+                self.assertIsNone(
+                    self._send_cmd(payload),
+                    f"Daemon must stay silent for {payload!r}",
+                )
+
+    def test_unknown_command_is_nacked(self):
+        """
+        CONTRACT 2.3: an unrecognised cmd with an id gets unknown_cmd.
+
+        Untested before, and broken: the unknown_cmd path raised TypeError in
+        its log call and returned without ever sending the nack.
+        """
+        resp = self._send_cmd(
+            json.dumps({"id": "t9", "cmd": "definitely-not-a-command"}).encode("utf-8")
+        )
+        self.assertIsNotNone(resp)
+        self.assertEqual(resp.get("id"), "t9")
+        self.assertFalse(resp.get("ok"))
+        self.assertEqual(resp.get("err"), "unknown_cmd")
 
     def test_noise_resilience(self):
         """

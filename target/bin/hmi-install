@@ -131,6 +131,24 @@ else
     PYTHON="python3"
 fi
 
+# The single implementation of CONTRACT section 4 (schema/manifest.py).
+#
+# Two locations, checked in order, exactly as the GUI loader resolves its QML
+# import path:
+#   1. /usr/lib/hmi/manifest.py -- where provisioning and the Yocto recipe
+#      install it on a real panel.
+#   2. <this script>/../../schema/manifest.py -- the repository layout, so the
+#      installer can be driven straight from a checkout in tests and in the
+#      WSL stand-in panel without an install step.
+_self_dir="$(dirname "$0")"
+if [ -f "${HMI_ROOT}/usr/lib/hmi/manifest.py" ]; then
+    VALIDATOR="${HMI_ROOT}/usr/lib/hmi/manifest.py"
+elif [ -f "${_self_dir}/../../schema/manifest.py" ]; then
+    VALIDATOR="${_self_dir}/../../schema/manifest.py"
+else
+    VALIDATOR="/usr/lib/hmi/manifest.py"
+fi
+
 # ---- Functions -------------------------------------------------------
 
 ##
@@ -194,20 +212,46 @@ die() {
 ##
 # cleanup_upload_dir -- remove all files from the upload landing zone
 #
-# Called on both success and failure to prevent stale bundles from
-# accumulating on the tmpfs.  Silently succeeds if the directory does
-# not exist or is already empty.
+# Wired to an EXIT trap (see the dispatch section) so it runs on every path,
+# including every die().  It previously claimed to be "called on both success
+# and failure" but was only ever called on the success path and on the
+# rollback path: a checksum mismatch, a bad manifest or a failed extraction
+# left its tarball behind.  UPLOAD_DIR is a tmpfs and MAX_BUNDLE_SIZE is
+# 500 MB, so repeated failed deploys consumed RAM on a running machine.
 #
 # Args:   none
 # Returns: 0
 # Exits:   never
-# Side effects: deletes all files under UPLOAD_DIR
+# Side effects: deletes all files under UPLOAD_DIR, and any staging directory
+#               this process left behind
 ##
 cleanup_upload_dir() {
     if [ -d "$UPLOAD_DIR" ]; then
         rm -rf "${UPLOAD_DIR:?}"/*
         log "INFO" "cleaned upload directory ${UPLOAD_DIR}"
     fi
+}
+
+##
+# cleanup_on_exit -- EXIT trap: drop temporary state this process created
+#
+# Removes our own staging directory if it was never promoted, then empties the
+# upload landing zone.  Only ever touches .stage.$$, which is named after this
+# process, so it can never remove a promoted release or one that `current`
+# points at.
+#
+# Args:   none
+# Returns: 0 (the shell's exit status is preserved: a trap's status is ignored
+#          unless it exits itself, which this does not)
+# Exits:   never
+# Side effects: deletes ${RELEASES_DIR}/.stage.$$ and the contents of UPLOAD_DIR
+##
+cleanup_on_exit() {
+    if [ -d "${RELEASES_DIR}/.stage.$$" ]; then
+        log "WARN" "removing unpromoted staging directory ${RELEASES_DIR}/.stage.$$"
+        rm -rf "${RELEASES_DIR}/.stage.$$"
+    fi
+    cleanup_upload_dir
 }
 
 ##
@@ -310,31 +354,166 @@ verify_sha256() {
 }
 
 ##
-# extract_bundle -- extract the tarball into a staging directory
+# prescan_bundle -- reject a hostile archive BEFORE anything is written
 #
-# Creates a new directory under RELEASES_DIR named after the bundle
-# (minus the .tar.gz suffix) and extracts the tarball into it.
+# Reads the member list without extracting and refuses absolute paths, ".."
+# components, links whose targets escape the bundle root, and any member that
+# is not a file, directory or link.
 #
-# Sets the global STAGING_DIR variable to the extraction directory.
+# This ordering is the whole point. The traversal check used to run after
+# extraction, by walking the staging directory for ".." components -- which
+# could never fire, because a member that escaped had by definition been
+# written somewhere else and was not in the tree being walked. GNU tar refuses
+# such members on its own, but busybox tar (which is what a minimal Yocto
+# image ships) historically did not, and hmi-install is documented as safe to
+# expose as a forced SSH command.
+#
+# Args:
+#   $1  bundle_path  -- path to the bundle tarball
+#
+# Returns: 0 if every member is safe
+# Exits:   1 on the first unsafe member, naming it
+# Side effects: none -- nothing is written to disk
+##
+prescan_bundle() {
+    _bp="$1"
+
+    _result=$("$PYTHON" - "$_bp" <<'PYEOF'
+import posixpath
+import sys
+import tarfile
+
+bundle = sys.argv[1]
+
+
+def is_absolute(path):
+    """True if `path` is absolute in POSIX or Windows-drive form.
+
+    Args:
+        path: a member name or link target from the archive.
+    """
+    if not path:
+        return False
+    return path.startswith("/") or (len(path) > 1 and path[1] == ":")
+
+
+def name_escapes(name):
+    """True if a member NAME would be written outside the extraction dir.
+
+    Args:
+        name: the archive member name.
+
+    A member name is rejected for any '..' component as well as for being
+    absolute. Unlike a link target, there is no legitimate reason for a
+    member's own name to walk upwards, so this does not need to normalise.
+    """
+    if is_absolute(name):
+        return True
+    return any(part == ".." for part in name.replace("\\", "/").split("/"))
+
+
+def link_escapes(name, target):
+    """True if a link would resolve outside the extraction directory.
+
+    Args:
+        name:   the link member's own name (its directory is the base).
+        target: the link target as stored in the archive.
+
+    '..' is legal in a link target -- `qml/theme.qml -> ../shared/theme.qml`
+    is an ordinary thing for a bundle to contain -- so the target is resolved
+    against the link's own directory and only rejected if the result leaves
+    the bundle root. Rejecting every '..' outright refused valid bundles.
+    """
+    if is_absolute(target):
+        return True
+    resolved = posixpath.normpath(
+        posixpath.join(posixpath.dirname(name.replace("\\", "/")),
+                       target.replace("\\", "/"))
+    )
+    return resolved == ".." or resolved.startswith("../") or resolved.startswith("/")
+
+
+try:
+    with tarfile.open(bundle, "r:gz") as tar:
+        for member in tar:
+            if name_escapes(member.name):
+                print("member escapes the bundle root: %s" % member.name)
+                sys.exit(1)
+            # A symlink or hardlink is followed by tar when a later member is
+            # written through it, so the target has to be checked too.
+            # A hardlink target names another archive member, so it is
+            # resolved from the bundle root rather than the link's directory.
+            if member.issym():
+                if link_escapes(member.name, member.linkname):
+                    print("link target escapes the bundle root: %s -> %s"
+                          % (member.name, member.linkname))
+                    sys.exit(1)
+            elif member.islnk():
+                if name_escapes(member.linkname):
+                    print("hard link target escapes the bundle root: %s -> %s"
+                          % (member.name, member.linkname))
+                    sys.exit(1)
+            # Device nodes, FIFOs and sockets have no place in an application
+            # bundle and are a classic way to smuggle something past a review.
+            if not (member.isfile() or member.isdir()
+                    or member.issym() or member.islnk()):
+                print("unsupported member type in bundle: %s" % member.name)
+                sys.exit(1)
+except tarfile.TarError as exc:
+    print("bundle is not a readable gzip tarball: %s" % exc)
+    sys.exit(1)
+
+print("OK")
+PYEOF
+    ) || true
+
+    # `|| true` so `set -e` does not kill the script the moment the helper
+    # exits non-zero: the whole point of capturing its output is to report the
+    # reason through die(), and an early exit loses both the STEP fail line and
+    # the message. Same trap as the old `[ $? -ne 0 ]` check in
+    # swap_current_symlink.
+    if [ "$_result" != "OK" ]; then
+        die 1 "prescan" "$_result"
+    fi
+
+    step "prescan" "ok" "no path traversal in archive members"
+}
+
+##
+# extract_bundle -- extract the tarball into a private staging directory
+#
+# Sets the global STAGING_DIR.
 #
 # Args:
 #   $1  bundle_path  -- path to the bundle tarball
 #
 # Returns: 0 on success
 # Exits:   1 on extraction failure
-# Side effects: creates directory and extracts files; sets STAGING_DIR
+# Side effects: creates .stage.$$ under RELEASES_DIR and extracts into it
 ##
 extract_bundle() {
     _bp="$1"
 
-    # Derive the release name from the tarball filename, stripping
-    # the .tar.gz suffix.  E.g. "myapp-1.2.3.tar.gz" -> "myapp-1.2.3".
-    _basename="${_bp##*/}"
-    _release_name="${_basename%.tar.gz}"
+    # CONTRACT section 6 step 4: extract into releases/.stage.$$, validate,
+    # then rename into place.
+    #
+    # This used to derive the release directory from the uploaded filename and
+    # extract straight into it. Two things went wrong with that. A half-written
+    # release was briefly visible in the releases tree under its final name.
+    # Worse, deploy_to_hmi.sh names its tarball <name>-<version>.tar.gz, so
+    # redeploying the same version resolved to the directory `current` already
+    # pointed at -- and the "remove a stale staging dir" step below then
+    # deleted the release the panel was running, before save_previous recorded
+    # that same directory as the rollback target. A failed deploy would then
+    # "roll back" onto the release it had just destroyed.
+    #
+    # $$ is this shell's pid, so concurrent installs cannot collide; the flock
+    # already serialises them, and this makes the isolation structural.
+    STAGING_DIR="${RELEASES_DIR}/.stage.$$"
 
-    STAGING_DIR="${RELEASES_DIR}/${_release_name}"
-
-    # If a previous failed install left a partial staging dir, remove it.
+    # A previous run killed between extract and promote can leave this behind.
+    # It is named after a pid that is no longer us, so removing it is safe --
+    # unlike removing a directory that `current` might point at.
     if [ -d "$STAGING_DIR" ]; then
         log "WARN" "removing stale staging directory: ${STAGING_DIR}"
         rm -rf "$STAGING_DIR"
@@ -354,126 +533,94 @@ extract_bundle() {
 }
 
 ##
-# validate_manifest -- validate manifest.json per CONTRACT section 4
+# promote_staging -- rename the validated staging dir to its release id
 #
-# Uses python3 to parse and validate the manifest because shell-based
-# JSON parsing is fragile and the contract requires schema validation.
+# Reads the application name from the validated manifest and builds the
+# CONTRACT section 3 release id: <name>-<UTC yyyymmddTHHMMSSZ>.  The timestamp
+# is what makes the id unique, so redeploying the same version produces a new
+# directory instead of overwriting the running one.
 #
-# Checks:
-#   1. manifest.json exists in the staging directory.
-#   2. It is valid JSON.
-#   3. Required fields: name (string), version (string), entry (string).
-#   4. name matches ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ (CONTRACT regex).
-#   5. entry is a relative path (no leading /) with no ".." components.
-#   6. The file pointed to by entry actually exists in the staging dir.
-#   7. No file in the tarball has an absolute path or ".." traversal.
+# Sets the global RELEASE_DIR and leaves STAGING_DIR pointing at it.
+#
+# Args:   none (reads STAGING_DIR)
+# Returns: 0 on success
+# Exits:   1 if the rename fails
+# Side effects: renames the staging directory
+##
+promote_staging() {
+    _name=$("$PYTHON" -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    print(json.load(f)['name'])
+" "${STAGING_DIR}/manifest.json")
+
+    _stamp=$("$PYTHON" -c "
+import datetime
+print(datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ'))
+")
+
+    RELEASE_DIR="${RELEASES_DIR}/${_name}-${_stamp}"
+
+    # A same-second redeploy would otherwise collide. Rare, but the whole point
+    # of this function is that a release id is never reused.
+    _suffix=1
+    while [ -e "$RELEASE_DIR" ]; do
+        RELEASE_DIR="${RELEASES_DIR}/${_name}-${_stamp}.${_suffix}"
+        _suffix=$(( _suffix + 1 ))
+    done
+
+    if ! mv "$STAGING_DIR" "$RELEASE_DIR"; then
+        rm -rf "$STAGING_DIR"
+        die 1 "promote" "could not rename staging dir to ${RELEASE_DIR}"
+    fi
+
+    STAGING_DIR="$RELEASE_DIR"
+    step "promote" "ok" "${RELEASE_DIR}"
+}
+
+##
+# validate_manifest -- validate the staged bundle per CONTRACT section 4
+#
+# Delegates to schema/manifest.py, the single implementation of the manifest
+# rules that the host CLI and the desktop tool also call.
+#
+# The rules used to be a third copy, embedded in this file as a heredoc. It
+# disagreed with the other two in both directions -- it required a 'version'
+# the desktop tool never checked, and knew nothing about the 'runtime'/'entry'
+# agreement CONTRACT 4.1 requires everywhere -- so a bundle could install from
+# one tool and be refused by another. The target still validates independently
+# of the host, which is what CONTRACT section 4 asks for; it just no longer
+# validates by different rules.
+#
+# The archive-traversal check that used to live here has moved to
+# prescan_bundle, which runs BEFORE extraction. Walking the staging directory
+# for ".." after extracting could never detect an escape: a member that escaped
+# is by definition not in the tree being walked.
 #
 # Args:   none (reads STAGING_DIR global)
-# Returns: 0 if manifest is valid
-# Exits:   1 if any check fails
+# Returns: 0 if the bundle is valid
+# Exits:   1 with the validator's own message on any failure
 # Side effects: none
 ##
 validate_manifest() {
-    _manifest="${STAGING_DIR}/manifest.json"
-
-    if [ ! -f "$_manifest" ]; then
+    if [ ! -f "${STAGING_DIR}/manifest.json" ]; then
         die 1 "validate-manifest" "manifest.json not found in ${STAGING_DIR}"
     fi
 
-    # Delegate to python3 for robust JSON parsing and validation.
-    # The heredoc is the validation script; it exits non-zero on any
-    # failure and prints the error message to stdout.
-    _result=$("$PYTHON" - "$STAGING_DIR" "$_manifest" <<'PYEOF'
-import json
-import os
-import re
-import sys
+    if [ ! -f "$VALIDATOR" ]; then
+        die 1 "validate-manifest" "manifest validator not found at ${VALIDATOR}"
+    fi
 
-staging_dir = sys.argv[1]
-manifest_path = sys.argv[2]
-
-try:
-    with open(manifest_path, 'r') as f:
-        m = json.load(f)
-except json.JSONDecodeError as e:
-    print(f"manifest.json is not valid JSON: {e}")
-    sys.exit(1)
-
-# Schema version, per CONTRACT section 4.
-#
-# This check has to exist HERE, not only in the host-side tooling. The target
-# is the last line of defence: a bundle can reach /tmp/hmi_upload without ever
-# passing through deploy_to_hmi.sh or the deployer GUI (a plain scp, a forced
-# SSH command, a CI job), and CONTRACT section 4 requires validation to happen
-# twice for exactly that reason. Without it, a bundle written against a future
-# schema installs cleanly and then fails to render, which is the situation the
-# two-stage validation exists to prevent.
-SUPPORTED_SCHEMA = 1
-if 'schema' not in m:
-    print("manifest.json missing required field: schema")
-    sys.exit(1)
-if m['schema'] != SUPPORTED_SCHEMA:
-    print(f"manifest.json unsupported schema {m['schema']!r}; this image supports {SUPPORTED_SCHEMA}")
-    sys.exit(1)
-
-# Required fields with type checks.
-for field in ('name', 'version', 'entry'):
-    if field not in m:
-        print(f"manifest.json missing required field: {field}")
-        sys.exit(1)
-    if not isinstance(m[field], str):
-        print(f"manifest.json field '{field}' must be a string")
-        sys.exit(1)
-
-# Name regex per CONTRACT section 4.
-# Exactly the CONTRACT section 4 pattern. It previously read
-# ^[a-zA-Z0-9][a-zA-Z0-9_-]*$, which disagreed with every other validator in
-# both directions: it accepted "MyApp" (uppercase, contract-invalid) and
-# rejected "my.app" (dotted, contract-valid). A bundle could therefore install
-# from one tool and be refused by another.
-if not re.match(r'^[a-z0-9][a-z0-9._-]{0,63}$', m['name']):
-    print(f"manifest.json 'name' does not match required pattern: {m['name']}")
-    sys.exit(1)
-
-# Entry must be relative (no leading /) and must not contain "..".
-entry = m['entry']
-if os.path.isabs(entry):
-    print(f"manifest.json 'entry' must be a relative path: {entry}")
-    sys.exit(1)
-if '..' in entry.split('/'):
-    print(f"manifest.json 'entry' contains path traversal: {entry}")
-    sys.exit(1)
-
-# Entry file must exist in the staging directory.
-entry_path = os.path.join(staging_dir, entry)
-if not os.path.isfile(entry_path):
-    print(f"manifest.json 'entry' points to non-existent file: {entry}")
-    sys.exit(1)
-
-# Walk the staging directory and reject any file whose relative path
-# contains ".." or is absolute.  This catches malicious tarballs that
-# might have slipped absolute or traversal paths into the archive.
-for dirpath, dirnames, filenames in os.walk(staging_dir):
-    for name in filenames + dirnames:
-        full = os.path.join(dirpath, name)
-        rel = os.path.relpath(full, staging_dir)
-        if '..' in rel.split(os.sep):
-            print(f"path traversal detected in archive: {rel}")
-            sys.exit(1)
-        if os.path.isabs(name):
-            print(f"absolute path detected in archive entry: {name}")
-            sys.exit(1)
-
-print("OK")
-sys.exit(0)
-PYEOF
-    )
+    # `|| true` so `set -e` does not kill the script the moment the validator
+    # exits non-zero: the whole point of capturing its output is to report the
+    # reason through die().
+    _result=$("$PYTHON" "$VALIDATOR" "$STAGING_DIR" 2>&1) || true
 
     if [ "$_result" != "OK" ]; then
         die 1 "validate-manifest" "$_result"
     fi
 
-    step "validate-manifest" "ok" "${_manifest}"
+    step "validate-manifest" "ok" "${STAGING_DIR}/manifest.json"
 }
 
 ##
@@ -516,7 +663,11 @@ PYEOF
 swap_current_symlink() {
     _target="$1"
 
-    "$PYTHON" -c "
+    # `if ! cmd` rather than `cmd` followed by `[ $? -ne 0 ]`: this script runs
+    # under `set -e`, so a failing python exited the shell before the status
+    # check could ever run. The die below was unreachable, and a failed swap
+    # aborted the install with no STEP fail line and no rollback.
+    if ! "$PYTHON" -c "
 import os, sys, tempfile
 
 target = sys.argv[1]
@@ -540,9 +691,7 @@ except Exception as e:
         pass
     print(f'atomic symlink swap failed: {e}', file=sys.stderr)
     sys.exit(1)
-" "$_target" "$CURRENT_LINK"
-
-    if [ $? -ne 0 ]; then
+" "$_target" "$CURRENT_LINK"; then
         die 1 "swap-symlink" "failed to atomically swap current symlink to ${_target}"
     fi
 
@@ -565,7 +714,12 @@ save_previous() {
     if [ -L "$CURRENT_LINK" ]; then
         _prev_target=$(readlink "$CURRENT_LINK")
         # Use the same atomic swap technique for the previous symlink.
-        "$PYTHON" -c "
+        #
+        # The exception handler here used to swallow the failure and fall off
+        # the end with status 0, so a `previous` symlink that could not be
+        # written was still reported as "ok". The rollback target then stayed
+        # pointing at a release from two deploys ago, and nothing said so.
+        if ! "$PYTHON" -c "
 import os, sys, tempfile
 target = sys.argv[1]
 link   = sys.argv[2]
@@ -576,10 +730,14 @@ os.unlink(tmp)
 os.symlink(target, tmp)
 try:
     os.replace(tmp, link)
-except Exception:
+except Exception as e:
     try: os.unlink(tmp)
     except OSError: pass
-" "$_prev_target" "$PREVIOUS_LINK"
+    print('previous symlink swap failed: %s' % e, file=sys.stderr)
+    sys.exit(1)
+" "$_prev_target" "$PREVIOUS_LINK"; then
+            die 1 "save-previous" "could not record ${_prev_target} as the rollback target"
+        fi
         step "save-previous" "ok" "previous -> ${_prev_target}"
     else
         step "save-previous" "ok" "no previous release (first install)"
@@ -823,12 +981,20 @@ cmd_install() {
     # -- Verify checksum ---
     verify_sha256 "$_bundle"
 
-    # -- Extract ---
+    # -- Reject hostile archive members BEFORE writing any of them ---
+    prescan_bundle "$_bundle"
+
+    # -- Extract into a private staging directory ---
     extract_bundle "$_bundle"
 
     # -- Validate manifest ---
     validate_manifest
     # STAGING_DIR is now set by extract_bundle.
+
+    # -- Rename the staging dir to its unique release id ---
+    # Only now, after validation, does anything appear in the releases tree
+    # under a name the rest of the system will use.
+    promote_staging
 
     # -- Save current as previous ---
     save_previous
@@ -1029,6 +1195,11 @@ exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
     die 3 "lock" "another hmi-install is already running (lock: ${LOCK_FILE})"
 fi
+
+# ---- Cleanup trap (CONTRACT section 7: "every script: trap cleanup") --
+# Installed after the lock so a lock-contention exit does not wipe the upload
+# directory out from under the instance that actually holds the lock.
+trap cleanup_on_exit EXIT
 
 # ---- Dispatch subcommand ---------------------------------------------
 

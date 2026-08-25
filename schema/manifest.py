@@ -1,0 +1,352 @@
+#!/usr/bin/env python3
+"""
+schema/manifest.py -- the single implementation of CONTRACT section 4
+=====================================================================
+
+Layer: shared (host tooling AND target installer)
+
+This module is the one place bundle validation is implemented. Everything that
+validates a bundle calls it:
+
+    tools/hmi_deployer/deployer.py   imports validate_bundle()
+    deploy/deploy_to_hmi.sh          runs it as a script
+    target/bin/hmi-install           runs it as a script, from /usr/lib/hmi/
+
+WHY THIS FILE EXISTS
+--------------------
+CONTRACT section 4 says validation happens twice, identically, and the README
+claimed a test asserted all three agreed. They did not agree, in both
+directions:
+
+    * 'qt', 'screen' and 'tags_required' were REQUIRED by the desktop tool and
+      ignored by the CLI and the installer -- so the manifest printed in the
+      README's own "Writing an app" section was rejected by App Studio.
+    * 'version' was required by the CLI and the installer and never checked by
+      the desktop tool -- so App Studio would happily package a bundle the
+      panel then refused.
+    * 'runtime'/'entry' extension agreement and 'qt_binding' were implemented
+      only in the desktop tool, despite CONTRACT 4.1 requiring all three.
+
+The cross-validator test could not see any of it: every fixture manifest was
+fully populated, so the fields that only one implementation cared about were
+never varied.
+
+Three copies of a rule cannot be kept in agreement by testing them against each
+other. One copy with three callers cannot disagree at all.
+
+REQUIRED VS OPTIONAL (settles the ambiguity CONTRACT 4 left open)
+-----------------------------------------------------------------
+Required: schema, name, version, entry.
+Optional, with the defaults below: runtime ("qml"), screen (1280x800),
+tags_required ([]), qt (unconstrained), qt_binding ("pyside6").
+
+Optional fields are still type-checked when present: a 'screen' that is a
+string is a mistake worth catching on the laptop, but its absence is not.
+
+Inputs:  a bundle directory containing manifest.json.
+Outputs: (ok, messages) from validate_bundle(), or an exit status and
+         human-readable lines when run as a script.
+"""
+
+import json
+import os
+import re
+import sys
+
+# Manifest schema version this platform understands (CONTRACT section 4).
+SUPPORTED_SCHEMA = 1
+
+# Application name pattern (CONTRACT section 4). Lowercase because the name
+# becomes a directory name on the target and a filename on the host, and a
+# case-insensitive filesystem anywhere in the chain would otherwise let two
+# distinct apps collide.
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+# Version pattern: semantic-ish. Deliberately permissive -- "1.0", "1.2.3",
+# "2.0.0-rc1" and "1.0.0+build7" are all things real projects ship -- but not
+# arbitrary text, because the value is used to name artefacts.
+VERSION_RE = re.compile(
+    r"^[0-9]+(\.[0-9]+){0,3}(-[a-zA-Z0-9._-]+)?(\+[a-zA-Z0-9._-]+)?$"
+)
+
+# Runtime kinds and the entry extension each one requires (CONTRACT 4.1).
+# A mismatch is rejected here rather than on the panel, where it would surface
+# as a blank screen after a successful-looking deploy.
+RUNTIME_ENTRY_SUFFIX = {"qml": ".qml", "python": ".py"}
+
+# Qt bindings a native Python app may declare (CONTRACT 4.1). The two cannot
+# share an interpreter, so the value decides which runtime is started.
+QT_BINDINGS = ("pyside6", "pyside2")
+
+# Default screen geometry when the manifest does not state one, in pixels.
+# 1280x800 is the most common panel in the supported range.
+DEFAULT_SCREEN = {"width": 1280, "height": 800}
+
+
+def _load(bundle_dir):
+    """Read and parse manifest.json from a bundle directory.
+
+    Args:
+        bundle_dir: path to the bundle root.
+
+    Returns:
+        (manifest_dict, error_string). On failure the dict is None and the
+        error names what went wrong.
+    """
+    manifest_path = os.path.join(bundle_dir, "manifest.json")
+    if not os.path.isfile(manifest_path):
+        return None, "manifest.json is missing from the bundle root."
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except ValueError as exc:
+        return None, "manifest.json is not valid JSON: %s" % exc
+    except OSError as exc:
+        return None, "manifest.json could not be read: %s" % exc
+    if not isinstance(manifest, dict):
+        return None, "manifest.json must contain a JSON object."
+    return manifest, ""
+
+
+# Matches a real import of either binding. Anchored to the start of a line so
+# a commented-out or quoted mention does not change which interpreter the panel
+# starts.
+_BINDING_IMPORT_RE = re.compile(r"^\s*(?:import|from)\s+(PySide2|PySide6)\b", re.M)
+
+# Directories never worth scanning for imports.
+_SKIP_DIRS = ("__pycache__", ".git", "dist", "build")
+
+# Bytes of each source file to scan. Imports live at the top, and the resource
+# modules generated by rcc are tens of megabytes of base64 -- reading those
+# whole would dominate the import of a large bundle.
+_SCAN_BYTES = 65536
+
+
+def _bindings_in(path):
+    """Return the set of Qt bindings imported by one Python file.
+
+    Args:
+        path: absolute path to a .py file.
+
+    Returns:
+        A subset of {"PySide2", "PySide6"}; empty if the file cannot be read.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            return set(_BINDING_IMPORT_RE.findall(handle.read(_SCAN_BYTES)))
+    except OSError:
+        return set()
+
+
+def detect_qt_binding(bundle_dir, entry):
+    """Work out which Python Qt binding an application imports.
+
+    Args:
+        bundle_dir: the bundle root.
+        entry:      the manifest entry file, relative to the bundle root.
+
+    Returns:
+        "pyside2" or "pyside6".
+
+    PySide2 (Qt5) and PySide6 (Qt6) are not interchangeable and cannot share an
+    interpreter -- PySide2 stopped at Python 3.11 -- so the panel keeps a
+    separate runtime for each and needs to be told which one to start. Getting
+    this wrong is not a subtle failure: the app dies on its first import line.
+
+    The entry point alone is not enough. Real projects put the imports in the
+    modules the entry pulls in, so this scans the bundle's Python sources and
+    lets the entry point break a tie.
+    """
+    found = _bindings_in(os.path.join(bundle_dir, entry)) if entry.endswith(".py") else set()
+    if found:
+        return "pyside2" if "PySide2" in found else "pyside6"
+
+    counts = {"PySide2": 0, "PySide6": 0}
+    for root, dirs, files in os.walk(bundle_dir):
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+        for fname in files:
+            if not fname.endswith(".py"):
+                continue
+            for binding in _bindings_in(os.path.join(root, fname)):
+                counts[binding] += 1
+
+    return "pyside2" if counts["PySide2"] > counts["PySide6"] else "pyside6"
+
+
+def validate_bundle(bundle_dir):
+    """Validate a bundle directory against CONTRACT section 4.
+
+    Args:
+        bundle_dir: path to the directory holding manifest.json.
+
+    Returns:
+        (ok, messages). When ok is False, messages lists every problem found,
+        each naming the offending field. When ok is True, messages holds a
+        single human-readable summary naming the runtime kind.
+
+    Never raises: a caller validating untrusted input should get a verdict,
+    not a traceback.
+    """
+    manifest, error = _load(bundle_dir)
+    if error:
+        return False, [error]
+
+    errors = []
+
+    # -- schema (required) ------------------------------------------------
+    if "schema" not in manifest:
+        errors.append("manifest.json: 'schema' is required.")
+    elif manifest["schema"] != SUPPORTED_SCHEMA:
+        errors.append(
+            "manifest.json: 'schema' must be exactly %d, got %r."
+            % (SUPPORTED_SCHEMA, manifest["schema"])
+        )
+
+    # -- name (required) --------------------------------------------------
+    name = manifest.get("name")
+    if not isinstance(name, str) or not name:
+        errors.append("manifest.json: 'name' is required and must be a string.")
+    elif not NAME_RE.match(name):
+        errors.append(
+            "manifest.json: 'name' must be lowercase alphanumeric with dots, "
+            "dashes or underscores, up to 64 characters (got %r)." % name
+        )
+
+    # -- version (required) -----------------------------------------------
+    version = manifest.get("version")
+    if not isinstance(version, str) or not version:
+        errors.append("manifest.json: 'version' is required and must be a string.")
+    elif not VERSION_RE.match(version):
+        errors.append(
+            "manifest.json: 'version' must look like 1.4.0, 1.4.0-rc1 or 1.4 "
+            "(got %r)." % version
+        )
+
+    # -- entry (required) -------------------------------------------------
+    entry = manifest.get("entry")
+    if not isinstance(entry, str) or not entry:
+        errors.append("manifest.json: 'entry' is required and must be a string.")
+        entry = ""
+    elif os.path.isabs(entry) or entry.startswith("/") or entry.startswith("\\"):
+        errors.append("manifest.json: 'entry' must be a relative path (got %r)." % entry)
+    elif ".." in entry.replace("\\", "/").split("/"):
+        errors.append("manifest.json: 'entry' must not contain '..' (got %r)." % entry)
+    elif not os.path.isfile(os.path.join(bundle_dir, entry)):
+        errors.append("manifest.json: 'entry' file %r does not exist in the bundle." % entry)
+
+    # -- runtime (optional, defaults to qml) ------------------------------
+    runtime = manifest.get("runtime", "qml")
+    if runtime not in RUNTIME_ENTRY_SUFFIX:
+        errors.append(
+            "manifest.json: 'runtime' must be one of %s (got %r)."
+            % (", ".join(sorted(RUNTIME_ENTRY_SUFFIX)), runtime)
+        )
+    elif entry:
+        # CONTRACT 4.1: a mismatch would otherwise fail only on the target.
+        wanted = RUNTIME_ENTRY_SUFFIX[runtime]
+        if not entry.endswith(wanted):
+            errors.append(
+                "manifest.json: runtime %r requires a %s entry, got %r."
+                % (runtime, wanted, entry)
+            )
+
+    # -- qt_binding (optional; only meaningful for runtime=python) --------
+    # Checked only for native Python bundles. A QML bundle is loaded by the
+    # platform's own loader, which is PySide6 whatever the manifest says, so
+    # the field is inert there and is deliberately not policed -- see
+    # tests/test_qt_binding.py::test_qml_bundle_ignores_binding.
+    binding = manifest.get("qt_binding")
+    if runtime == "python" and binding is not None:
+        if binding not in QT_BINDINGS:
+            errors.append(
+                "manifest.json: 'qt_binding' must be one of %s (got %r)."
+                % (", ".join(QT_BINDINGS), binding)
+            )
+        elif entry and entry.endswith(".py") and not errors:
+            # Declaring the wrong binding starts the wrong interpreter, and the
+            # application dies on its first import.
+            detected = detect_qt_binding(bundle_dir, entry)
+            if detected != binding:
+                errors.append(
+                    "manifest.json: 'qt_binding' says %r but the sources import %s."
+                    % (binding, "PySide2" if detected == "pyside2" else "PySide6")
+                )
+
+    # -- screen (optional) ------------------------------------------------
+    screen = manifest.get("screen")
+    if screen is not None:
+        if not isinstance(screen, dict):
+            errors.append("manifest.json: 'screen' must be an object with 'width' and 'height'.")
+        else:
+            for axis in ("width", "height"):
+                value = screen.get(axis)
+                if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                    errors.append(
+                        "manifest.json: 'screen.%s' must be a positive integer "
+                        "(got %r)." % (axis, value)
+                    )
+
+    # -- tags_required (optional) -----------------------------------------
+    tags = manifest.get("tags_required")
+    if tags is not None:
+        if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+            errors.append("manifest.json: 'tags_required' must be a list of strings.")
+
+    # -- qt (optional) ----------------------------------------------------
+    qt_version = manifest.get("qt")
+    if qt_version is not None and not isinstance(qt_version, str):
+        errors.append("manifest.json: 'qt' must be a string such as '>=6.5'.")
+
+    if errors:
+        return False, errors
+
+    if runtime == "qml":
+        kind = "Qt Quick (QML)"
+    else:
+        effective = manifest.get("qt_binding") or detect_qt_binding(bundle_dir, entry)
+        kind = "Python (Qt Widgets, %s)" % (
+            "PySide2/Qt5" if effective == "pyside2" else "PySide6/Qt6"
+        )
+    return True, ["Bundle is valid - %s." % kind]
+
+
+def screen_of(manifest):
+    """Return the screen geometry a manifest asks for, filling in defaults.
+
+    Args:
+        manifest: a parsed manifest dict (assumed already validated).
+
+    Returns:
+        {"width": int, "height": int}.
+    """
+    screen = manifest.get("screen") or {}
+    return {
+        "width": screen.get("width", DEFAULT_SCREEN["width"]),
+        "height": screen.get("height", DEFAULT_SCREEN["height"]),
+    }
+
+
+def main(argv=None):
+    """Command-line entry point used by the shell validators.
+
+    Usage:
+        python3 manifest.py <bundle_dir>
+
+    Prints "OK" and exits 0 when the bundle is valid; otherwise prints one
+    error per line and exits 1. Exits 2 on a usage error.
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if len(argv) != 1:
+        sys.stderr.write("usage: manifest.py <bundle_dir>\n")
+        return 2
+    ok, messages = validate_bundle(argv[0])
+    if ok:
+        print("OK")
+        return 0
+    for message in messages:
+        print(message)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

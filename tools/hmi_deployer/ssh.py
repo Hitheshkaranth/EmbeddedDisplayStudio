@@ -187,6 +187,34 @@ class UploadWorker(QThread):
                 self._watchdog.daemon = True
                 self._watchdog.start()
 
+            # Drain the child's stdout concurrently with the write loop.
+            #
+            # stderr is merged into stdout, so anything ssh or the remote shell
+            # says lands in this pipe. Writing the whole file before reading a
+            # single byte deadlocks once the remote produces more than one pipe
+            # buffer (~64 KB): the child blocks writing, stops reading stdin,
+            # and the local write blocks behind it until the watchdog kills the
+            # transfer minutes later.
+            collected: List[str] = []
+
+            def drain() -> None:
+                """Reader thread: collect remote output until the pipe closes."""
+                proc = self._proc
+                if proc is None or proc.stdout is None:
+                    return
+                try:
+                    for raw in iter(proc.stdout.readline, b""):
+                        line = raw.decode("utf-8", errors="replace").rstrip("\n")
+                        if line:
+                            collected.append(line)
+                except (OSError, ValueError):
+                    # cancel() closed the pipe underneath us; the exit status
+                    # already says everything there is to report.
+                    pass
+
+            reader = threading.Thread(target=drain, name="upload-drain", daemon=True)
+            reader.start()
+
             sent = 0
             self.progress.emit(0, total)
             with open(self.local_path, "rb") as f:
@@ -202,13 +230,10 @@ class UploadWorker(QThread):
             except OSError:
                 pass
 
-            # Anything the remote side said (an error from cat, a shell
-            # complaint) arrives after stdin closes.
-            if self._proc.stdout is not None:
-                for raw in iter(self._proc.stdout.readline, b""):
-                    line = raw.decode("utf-8", errors="replace").rstrip("\n")
-                    if line:
-                        self.outputLine.emit(line)
+            # The remote side finishes and closes stdout once stdin is done.
+            reader.join(timeout=30)
+            for line in collected:
+                self.outputLine.emit(line)
 
             self._proc.wait()
             if self._timed_out:

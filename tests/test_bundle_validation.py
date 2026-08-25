@@ -122,13 +122,24 @@ class TestBundleValidation(unittest.TestCase):
         return proc.returncode == 0
 
     def _assert_all(self, path: str, should_be_valid: bool):
+        """
+        Assert all three validators agree about `path`.
+
+        This used to `return` when bash/flock/python3 were unavailable, so on
+        Windows seven of eight tests reported a confident pass having exercised
+        exactly one of the three implementations. Only one test disclosed the
+        gap. A skip is the honest outcome: it is visible in the runner's
+        summary and cannot be mistaken for coverage.
+        """
         # 1. deployer.py (always runs)
         self.assertEqual(self._validate_deployer(path), should_be_valid, "deployer.py failed")
-        
-        # 2. shell scripts (conditionally skipped)
+
+        # 2. shell scripts
         if self.missing_shell_tools:
-            return
-            
+            self.skipTest(
+                "shell validators need: " + ", ".join(self.missing_shell_tools)
+            )
+
         self.assertEqual(self._validate_deploy_sh(path), should_be_valid, "deploy_to_hmi.sh failed")
         self.assertEqual(self._validate_install_sh(path), should_be_valid, "hmi-install failed")
 
@@ -144,9 +155,6 @@ class TestBundleValidation(unittest.TestCase):
         }
         b = self._create_bundle("valid", manifest)
         self._assert_all(b, True)
-        
-        if self.missing_shell_tools:
-            self.skipTest(f"Shell implementations skipped, missing: {', '.join(self.missing_shell_tools)}")
 
     def test_missing_manifest(self):
         b = self._create_bundle("missing_manifest", None)
@@ -224,6 +232,93 @@ class TestBundleValidation(unittest.TestCase):
         }
         b = self._create_bundle("uppercase_name", manifest)
         self._assert_all(b, False)
+
+    # -- the fields the three implementations used to disagree about --------
+    #
+    # Every fixture above is a fully populated manifest, which is why the
+    # divergence survived: fields that only one implementation cared about were
+    # never varied. These vary them one at a time.
+
+    def test_minimal_manifest_is_accepted_everywhere(self):
+        """
+        The README says two files are enough. 'screen', 'tags_required' and
+        'qt' were required by the desktop tool alone, so the manifest printed
+        in the README was rejected there and accepted by the other two.
+        """
+        manifest = {
+            "schema": 1, "name": "tiny", "version": "1.0.0", "entry": "main.qml",
+        }
+        b = self._create_bundle("minimal", manifest)
+        self._assert_all(b, True)
+
+    def test_readme_manifest_is_accepted_everywhere(self):
+        """The exact manifest from the README's 'Writing an app' section."""
+        manifest = {
+            "schema": 1, "name": "line-controller", "version": "1.4.0",
+            "entry": "main.qml", "runtime": "qml",
+            "screen": {"width": 1280, "height": 800},
+            "tags_required": ["ai.pot", "di.estop", "do.relay1"],
+        }
+        b = self._create_bundle("readme", manifest)
+        self._assert_all(b, True)
+
+    def test_missing_version_rejected_everywhere(self):
+        """
+        'version' was required by the CLI and the installer and never checked
+        by the desktop tool, so App Studio would package a bundle the panel
+        then refused.
+        """
+        manifest = {"schema": 1, "name": "app", "entry": "main.qml"}
+        b = self._create_bundle("no_version", manifest)
+        self._assert_all(b, False)
+
+    def test_malformed_version_rejected_everywhere(self):
+        manifest = {
+            "schema": 1, "name": "app", "version": "not a version",
+            "entry": "main.qml",
+        }
+        b = self._create_bundle("bad_version", manifest)
+        self._assert_all(b, False)
+
+    def test_runtime_entry_mismatch_rejected_everywhere(self):
+        """
+        CONTRACT 4.1 requires this in all three validators. Only the desktop
+        tool implemented it, so a python-runtime bundle with a .qml entry
+        deployed cleanly from the CLI and then failed to render on the panel.
+        """
+        manifest = {
+            "schema": 1, "name": "app", "version": "1.0.0",
+            "entry": "main.qml", "runtime": "python",
+        }
+        b = self._create_bundle("runtime_mismatch", manifest)
+        self._assert_all(b, False)
+
+    def test_unknown_runtime_rejected_everywhere(self):
+        manifest = {
+            "schema": 1, "name": "app", "version": "1.0.0",
+            "entry": "main.qml", "runtime": "wasm",
+        }
+        b = self._create_bundle("bad_runtime", manifest)
+        self._assert_all(b, False)
+
+    def test_screen_wrong_type_rejected_everywhere(self):
+        """Optional, but type-checked when present: a string 'screen' is a
+        mistake worth catching on the laptop."""
+        manifest = {
+            "schema": 1, "name": "app", "version": "1.0.0",
+            "entry": "main.qml", "screen": "1280x800",
+        }
+        b = self._create_bundle("bad_screen", manifest)
+        self._assert_all(b, False)
+
+    def test_tags_required_wrong_type_rejected_everywhere(self):
+        manifest = {
+            "schema": 1, "name": "app", "version": "1.0.0",
+            "entry": "main.qml", "tags_required": "ai.pot",
+        }
+        b = self._create_bundle("bad_tags", manifest)
+        self._assert_all(b, False)
+
 
 if __name__ == "__main__":
     unittest.main()
