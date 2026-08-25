@@ -8,8 +8,9 @@ import argparse
 import logging
 import os
 
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QIcon, QPixmap
+from PySide6.QtWidgets import QApplication, QSplashScreen
 
 from .mainwindow import MainWindow
 
@@ -17,6 +18,12 @@ from .mainwindow import MainWindow
 # its identity with no network and no install step. 512 px master; Qt scales it
 # down for window, taskbar and dialog use.
 LOGO_PATH = os.path.join(os.path.dirname(__file__), "resources", "logo.png")
+
+# Shown while the window is built. Starting up is not instant -- the settings
+# load, the last bundle is validated and its preview process is started -- and
+# several seconds of nothing on screen after a double-click reads as a launch
+# that failed.
+SPLASH_PATH = os.path.join(os.path.dirname(__file__), "resources", "splash.png")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -40,6 +47,20 @@ def main():
     # from for whichever size the platform asks for.
     app.setWindowIcon(QIcon(str(LOGO_PATH)))
     
+    splash = None
+    pixmap = QPixmap(str(SPLASH_PATH))
+    if not pixmap.isNull():
+        splash = QSplashScreen(pixmap)
+        splash.showMessage(
+            "Starting…",
+            Qt.AlignBottom | Qt.AlignHCenter,
+            QColor("#f8fafc"),
+        )
+        splash.show()
+        # The window is built on this thread, so the splash only ever paints if
+        # it is given the chance before that starts.
+        app.processEvents()
+
     window = MainWindow(exit_after_ms=args.exit_after)
     
     if args.bundle:
@@ -49,6 +70,8 @@ def main():
             window.load_bundle(bundle_abs)
         
     window.show()
+    if splash is not None:
+        splash.finish(window)
     
     if args.capture_bezel:
         def grab():
