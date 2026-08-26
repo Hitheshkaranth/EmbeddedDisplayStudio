@@ -187,6 +187,107 @@ class NativePreviewRendersARealApp(unittest.TestCase):
         self.preview.stop()  # must not raise
 
 
+# A Qt5 application, written the only way PySide2 allows: exec_(), because
+# PySide2 has no `exec` at all.
+FIXTURE_APP_QT5 = textwrap.dedent(
+    '''
+    import sys
+    from PySide2.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout
+
+    def main():
+        app = QApplication(sys.argv)
+        window = QWidget()
+        layout = QVBoxLayout(window)
+        layout.addWidget(QLabel("Pressure"))
+        layout.addWidget(QLabel("PURGE"))
+        window.resize(640, 320)
+        window.show()
+        sys.exit(app.exec_())
+
+    if __name__ == "__main__":
+        main()
+    '''
+).strip()
+
+
+@unittest.skipUnless(HAVE_QT, "PySide6 is not installed")
+class Qt5BundlePreview(unittest.TestCase):
+    """A PySide2 bundle is the class of application this platform adopts.
+
+    The shim read QApplication.exec to wrap it, which exists only in PySide6.
+    Under PySide2 that raised in the shim's own preamble, before the
+    application was given a chance to start, so every Qt5 bundle reported
+    "the application exited" and the bezel stayed empty.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QCoreApplication.instance() or QGuiApplication(sys.argv)
+        cls.interpreter = find_interpreter("pyside2")
+        if not cls.interpreter:
+            raise unittest.SkipTest("no PySide2 interpreter on this machine")
+
+    def setUp(self):
+        import tempfile
+        self.bundle = Path(tempfile.mkdtemp())
+        (self.bundle / "main.py").write_text(FIXTURE_APP_QT5, encoding="utf-8")
+        self.preview = NativePreview()
+
+    def tearDown(self):
+        self.preview.stop()
+        import shutil
+        shutil.rmtree(self.bundle, ignore_errors=True)
+
+    def test_a_qt5_application_reaches_the_bezel(self):
+        """A real PySide2 app must render, not report that it exited."""
+        received, failures = [], []
+        loop = QEventLoop()
+        self.preview.frameReady.connect(lambda img: (received.append(img), loop.quit()))
+        self.preview.failed.connect(lambda msg: (failures.append(msg), loop.quit()))
+
+        started = self.preview.start(
+            str(self.bundle),
+            {"entry": "main.py", "runtime": "python", "qt_binding": "pyside2"},
+            1280, 800,
+        )
+        self.assertTrue(started, failures[0] if failures else "start() refused")
+
+        guard = QTimer()
+        guard.setSingleShot(True)
+        guard.timeout.connect(loop.quit)
+        guard.start(60000)
+        loop.exec()
+
+        self.assertTrue(
+            received,
+            "no frame from a PySide2 bundle: "
+            + (failures[0] if failures else "timed out"),
+        )
+        image = received[0]
+        self.assertEqual((image.width(), image.height()), (1280, 800))
+        colours = {
+            image.pixel(x, y)
+            for x in range(0, image.width(), 11)
+            for y in range(0, image.height(), 11)
+        }
+        self.assertGreater(len(colours), 1, "the Qt5 frame is a single flat colour")
+
+
+@unittest.skipUnless(HAVE_QT, "PySide6 is not installed")
+class ShimBindingCompatibility(unittest.TestCase):
+    """The shim runs under both bindings and may assume neither."""
+
+    def test_the_event_loop_is_never_read_by_one_name_only(self):
+        """A bare QApplication.exec read is an AttributeError under PySide2.
+
+        Cheap to assert and worth asserting: the end-to-end Qt5 test skips on
+        any machine without a PySide2 interpreter, which includes CI.
+        """
+        from tools.hmi_deployer.native_preview import _SHIM
+        self.assertIn('getattr(QApplication, "exec", None)', _SHIM)
+        self.assertNotIn("_real_exec = QApplication.exec\n", _SHIM)
+
+
 @unittest.skipUnless(HAVE_QT, "PySide6 is not installed")
 class InterpreterResolution(unittest.TestCase):
     """Which interpreter a bundle is previewed with is not a free choice."""

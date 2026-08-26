@@ -323,14 +323,23 @@ def _tick():
         QApplication.quit()
 
 
-_real_exec = QApplication.exec
+# PySide6 spells the event loop `exec`; PySide2 spells it `exec_` and has no
+# `exec` at all. Reading the wrong name raises AttributeError here, in the
+# shim's own preamble, before the application is given a chance to start --
+# which is exactly why a Qt5 bundle never reached the bezel and reported only
+# "the application exited".
+_real_exec = getattr(QApplication, "exec", None)
+if _real_exec is None:
+    _real_exec = QApplication.exec_
 
 
 def _patched_exec(*args, **kwargs):
     """Start the grabber, then hand control to the app's real event loop.
 
-    QApplication.exec is static in both bindings, so the instance arrives as
-    the first positional argument and the real implementation takes none.
+    Called either as QApplication.exec(app) or as app.exec_(): the binding and
+    the application decide, so the instance may arrive as the first positional
+    argument. The captured original takes none, and it is captured before the
+    patch below replaces it.
     """
     timer = QTimer()
     timer.timeout.connect(_tick)
@@ -339,7 +348,11 @@ def _patched_exec(*args, **kwargs):
     return _real_exec()
 
 
-QApplication.exec = _patched_exec
+# Both spellings are patched where they exist, because an application written
+# for Qt5 calls exec_() and one written for Qt6 calls exec(), and a bundle
+# ported between them may still call either.
+if hasattr(QApplication, "exec"):
+    QApplication.exec = _patched_exec
 if hasattr(QApplication, "exec_"):
     QApplication.exec_ = _patched_exec
 
