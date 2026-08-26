@@ -1492,9 +1492,23 @@ class MainWindow(QMainWindow):
         if hasattr(self, "taglab_panel"):
             self.taglab_panel.set_sending(False)
 
+    def tag_rx_port(self) -> int:
+        """The port the preview's tag engine is actually listening on.
+
+        Not always 5001: a stale process holding it makes the engine fall back
+        to an ephemeral port, and a sender still aimed at 5001 would deliver
+        every frame to nobody. Falls back to the documented port when there is
+        no engine yet, which is the right guess for the first bundle.
+        """
+        engine = getattr(self.device_panel, "tag_engine", None)
+        port = getattr(engine, "rx_port", 0) if engine is not None else 0
+        return int(port) or 5001
+
     def start_simulator(self, expected_tags):
         self._stop_all_senders()
-        self.simulator = TelemetrySimulator(expected_tags, self)
+        self.simulator = TelemetrySimulator(
+            expected_tags, self, udp_port=self.tag_rx_port()
+        )
         self.simulator.start()
 
     def start_relay(self):
@@ -1503,7 +1517,9 @@ class MainWindow(QMainWindow):
         host = self.inp_host.text().strip()
         user = self.inp_user.text().strip()
         key = self.inp_key.text().strip()
-        self.relay = TelemetryRelay(host, user, self.ssh_port(), key, self)
+        self.relay = TelemetryRelay(
+            host, user, self.ssh_port(), key, self, udp_port=self.tag_rx_port()
+        )
         self.relay.start()
 
     # ------------------------------------------------------------------
@@ -1514,7 +1530,9 @@ class MainWindow(QMainWindow):
         """Slot: TagLabPanel requested start.  Enforce mutual exclusion."""
         self._stop_all_senders()
         model = self.taglab_panel.model()
-        self.taglab_sender = TagLabSender(model, parent=self)
+        self.taglab_sender = TagLabSender(
+            model, parent=self, port=self.tag_rx_port()
+        )
         self.taglab_sender.error.connect(self.log)
         self.taglab_sender.start()
         self.taglab_panel.set_sending(True)

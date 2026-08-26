@@ -91,6 +91,7 @@ class TagEngine(QObject):
         self,
         expected_tags: list[str],
         rx_port: int = 5001,
+        allow_any_port: bool = False,
         daemon_host: str = "127.0.0.1",
         daemon_port: int = 5000,
         parent: QObject = None,
@@ -101,6 +102,10 @@ class TagEngine(QObject):
                 manifest (`tags_required`). Each is pre-seeded into the map as
                 None so QML bindings resolve on the very first frame instead of
                 erroring on an unknown property (CONTRACT section 7).
+            allow_any_port: fall back to an ephemeral port when rx_port is
+                taken. Only safe where the caller also owns the sender and
+                can be told which port was chosen -- true of the host tool,
+                false of the panel, where hmi-hwd sends to a fixed port.
             rx_port: UDP port to bind for telemetry, 1..65535. Must match the
                 daemon's configured static sink (default 5001).
             daemon_host: address of the command socket. Loopback only by
@@ -155,13 +160,31 @@ class TagEngine(QObject):
 
         self._socket = QUdpSocket(self)
         if not self._socket.bind(QHostAddress("127.0.0.1"), rx_port):
-            # A bind failure is usually a second GUI instance already running.
-            # Degrade to permanently-offline instead of aborting startup.
-            logger.error(
-                "Could not bind telemetry port %d (%s); UI will run offline",
-                rx_port, self._socket.errorString(),
-            )
+            # Usually a second instance, or one that exited without releasing
+            # the port. On the panel there is nothing to fall back to: the
+            # hardware daemon sends to a fixed port and cannot be told about a
+            # different one, so this stays a permanent offline.
+            #
+            # A host tool owns both ends of this socket and can simply move,
+            # which is what allow_any_port asks for. Running offline with dead
+            # tags in a live preview is the worse answer wherever it can be
+            # avoided.
+            first_error = self._socket.errorString()
+            if allow_any_port and self._socket.bind(QHostAddress("127.0.0.1"), 0):
+                logger.warning(
+                    "Telemetry port %d is taken (%s); listening on %d instead",
+                    rx_port, first_error, self._socket.localPort(),
+                )
+            else:
+                logger.error(
+                    "Could not bind telemetry port %d (%s); UI will run offline",
+                    rx_port, first_error,
+                )
         self._socket.readyRead.connect(self._read_pending_datagrams)
+
+        #: The port actually bound, which is not always the one asked for.
+        #: 0 means nothing is listening and the engine is permanently offline.
+        self.rx_port = self._socket.localPort()
 
         # Declares the link dead if it fires before a frame restarts it.
         self._watchdog = QTimer(self)

@@ -283,10 +283,27 @@ class DevicePanel(QWidget):
             self.tag_engine = TagEngine(
                 expected_tags,
                 rx_port=5001,
+                # The Studio owns the senders too, so it can be told where to
+                # send. A stale process holding 5001 used to leave every
+                # preview showing dead tags, silently, for the whole session.
+                allow_any_port=True,
                 daemon_host="127.0.0.1",
                 daemon_port=5000,
                 parent=self,
             )
+            # A live tag feed is what separates this preview from a
+            # screenshot, so losing it is worth a line in the console rather
+            # than only in stderr.
+            port = getattr(self.tag_engine, "rx_port", 0)
+            if not port:
+                self.previewMessage.emit(
+                    "Tags: the telemetry port is held by another process, and "
+                    "the preview will show no live values."
+                )
+            elif port != 5001:
+                self.previewMessage.emit(
+                    f"Tags: port 5001 was taken; listening on {port} instead."
+                )
         else:
             for tag in expected_tags:
                 # Seed any tag this bundle declares that the previous one did
