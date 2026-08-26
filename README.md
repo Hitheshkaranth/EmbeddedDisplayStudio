@@ -2,7 +2,7 @@
 
 <img src="docs/assets/banner.jpg" alt="EmbeddedDisplay Studio" width="900" />
 
-### Bring Your Own App — HMI platform for Toradex Verdin i.MX8M Plus
+### Bring Your Own App — HMI platform for embedded Linux panels
 
 Ship the panel once. Let anyone drop their own Qt app onto it in seconds — over SSH, with no rebuild, no image reflash, and no hardware code in the app.
 
@@ -10,8 +10,8 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 **The panel**
 
-[![SoM](https://img.shields.io/badge/SoM-Verdin%20i.MX8M%20Plus-006fee?style=for-the-badge&labelColor=18181b)](https://www.toradex.com/computer-on-modules/verdin-arm-family/nxp-imx-8m-plus)
-[![Yocto](https://img.shields.io/badge/BSP-Yocto%20Reference%20Multimedia-006fee?style=for-the-badge&logo=yocto&logoColor=white&labelColor=18181b)](https://developer.toradex.com/linux-bsp/)
+[![Target](https://img.shields.io/badge/Target-ARM64%20Linux%20SoM-006fee?style=for-the-badge&labelColor=18181b)](#the-idea)
+[![Yocto](https://img.shields.io/badge/BSP-Yocto%20Linux-006fee?style=for-the-badge&logo=yocto&logoColor=white&labelColor=18181b)](https://www.yoctoproject.org/)
 [![Wayland](https://img.shields.io/badge/Display-Wayland%20%2F%20Weston-006fee?style=for-the-badge&labelColor=18181b)](https://wayland.freedesktop.org/)
 [![systemd](https://img.shields.io/badge/Init-systemd%20native-006fee?style=for-the-badge&logo=systemd&logoColor=white&labelColor=18181b)](https://systemd.io/)
 
@@ -145,7 +145,7 @@ python deploy/provision_panel.py --host <panel-ip>
 ```
 
 `--check` surveys the board and names anything that would stop it hosting the
-platform. Read it before assuming a stock image is ready: a **base** Toradex
+platform. Read it before assuming a stock image is ready: a **base** vendor
 image ships `python3-core` alone — no `json`, no `socket`, no `ctypes` — and no
 Qt, which is enough to stop the installer, the loader and any application. See
 [`deploy/README.md`](deploy/README.md#what-a-minimal-image-is-still-missing) for
@@ -274,8 +274,8 @@ The Qt5 runtime is not installed by default. Add it once per panel:
 ./deploy/provision_pyside2.sh --host <panel-ip>     # run from Linux or WSL
 ```
 
-It ships its own Qt 5.15 rather than using the one already on the Toradex
-image, because that is an i.MX **GLES** build while every available aarch64
+It ships its own Qt 5.15 rather than using the one already on the panel
+image, because that is a **GLES** build while every available aarch64
 PySide2 binary is compiled against desktop GL — loading one against the other
 fails with `undefined symbol: _ZTI18QOpenGLTimeMonitor`. The panel's own Qt5 is
 left untouched.
@@ -533,7 +533,7 @@ python tests/run_all.py          # 201 tests
 
 ```bash
 bitbake-layers add-layer /path/to/meta-hmi
-bitbake tdx-reference-multimedia-image
+bitbake <your-bsp-reference-image>
 ```
 
 `yocto/README.md` covers prerequisite layers (including the meta-qt6 caveat for
@@ -542,8 +542,8 @@ to verify on the target.
 
 ### Why no containers
 
-This targets the **native** Toradex Yocto reference image. No Docker, no
-TorizonOS, no container runtime — every component is a systemd unit on the
+This targets the **native** Yocto reference image. No Docker, no
+container OS, no container runtime — every component is a systemd unit on the
 rootfs. Less to boot, less to update, less to explain to a certification body.
 
 ---
@@ -551,17 +551,17 @@ rootfs. Less to boot, less to update, less to explain to a certification body.
 ## Before first power-on
 
 GPIO offsets, IIO device names and UART aliases are **board specific**.
-`daemon/hwd.json` ships a documented default for a Verdin i.MX8M Plus on a
-Dahlia carrier. Confirm yours:
+`daemon/hwd.json` ships a documented default for one reference module and
+carrier board. Confirm yours:
 
 ```bash
 gpioinfo                 # GPIO chip and line offsets
 iio_info                 # ADC device name and channels
-ls /dev/verdin-*         # stable UART aliases
+ls /dev/serial/by-id/*   # stable UART aliases
 ```
 
-Pins must first be released from their default pinmux with a Toradex device-tree
-overlay (`/boot/overlays.txt`). `daemon/README.md` walks through it.
+Pins must first be released from their default pinmux with a device-tree
+overlay, however your BSP applies them. `daemon/README.md` walks through it.
 
 ---
 
