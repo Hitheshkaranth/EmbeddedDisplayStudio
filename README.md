@@ -54,23 +54,9 @@ write a Qt/QML application and push it to the panel with a single command. The
 app never touches a GPIO line, an ADC node or a serial port: it binds to **tags**
 that arrive over a loopback socket, and the platform does the rest.
 
-```mermaid
-graph LR
-    subgraph laptop [Your laptop]
-        studio["EmbeddedDisplay Studio<br/>preview, validate, deploy"]
-        cli["deploy_to_hmi.sh<br/>the same thing, in CI"]
-    end
-    subgraph panel [The panel]
-        gui["hmi-gui.service<br/>loader + tag engine"]
-        current["/opt/hmi_apps/current<br/>the customer bundle"]
-        hwd["hmi-hwd.service<br/>libgpiod, IIO, UART"]
-    end
-    studio -->|ssh: upload + hmi-install| gui
-    cli -->|ssh: upload + hmi-install| gui
-    gui --> current
-    hwd -->|tags, UDP/JSON on loopback| gui
-    gui -->|commands| hwd
-```
+<img src="docs/assets/architecture.svg" alt="Studio and CLI deploy over SSH to hmi-gui on the panel; hmi-hwd feeds it tags over a loopback socket" width="900" />
+
+<sub>Source: <a href="docs/assets/architecture.mmd"><code>docs/assets/architecture.mmd</code></a></sub>
 
 Three layers, deliberately decoupled:
 
@@ -174,25 +160,9 @@ What happens between pressing **Deploy to Target** and the application being the
 panel's boot default. Every step is the same whether it is driven from the
 window or from `deploy_to_hmi.sh`.
 
-```mermaid
-graph TD
-    A["Your application<br/>a directory with manifest.json"] --> B["Read what it imports<br/>schema/deps.py, in a child process"]
-    B --> C{"Can the panel<br/>import all of them?"}
-    C -->|no| D["pip install the missing ones<br/>into the interpreter the bundle will run under"]
-    C -->|yes| E
-    D --> E["Package<br/>build outputs and .hmiignore excluded<br/>tar.gz plus .sha256, on a worker thread"]
-    E --> F["Stream over ssh into /tmp/hmi_upload<br/>tmpfs, so a failed upload never touches flash"]
-    F --> G["hmi-install: verify the checksum"]
-    G --> H["Extract into a staging directory"]
-    H --> I["Validate the manifest again, on the target"]
-    I --> J["Record the live release as previous"]
-    J --> K["Promote by a single rename<br/>onto the current symlink"]
-    K --> L["Restart hmi-gui and wait for its ready file"]
-    L -->|ready within 25 s| M["Enable at boot, prune old releases"]
-    L -->|no ready file| N["Swap the symlink back<br/>and restart the previous release"]
-    M --> O["Running, and the boot default"]
-    N --> P["Deploy fails; the panel keeps a working UI"]
-```
+<img src="docs/assets/deploy-pipeline.svg" alt="From reading the application's imports through packaging, upload, checksum, atomic swap and the readiness check, to either the boot default or an automatic rollback" width="760" />
+
+<sub>Source: <a href="docs/assets/deploy-pipeline.mmd"><code>docs/assets/deploy-pipeline.mmd</code></a></sub>
 
 A few of those steps are worth their own sentence.
 

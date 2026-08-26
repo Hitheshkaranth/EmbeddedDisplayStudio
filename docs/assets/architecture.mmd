@@ -1,0 +1,15 @@
+graph LR
+    subgraph laptop [Your laptop]
+        studio["EmbeddedDisplay Studio<br/>preview, validate, deploy"]
+        cli["deploy_to_hmi.sh<br/>the same thing, in CI"]
+    end
+    subgraph panel [The panel]
+        gui["hmi-gui.service<br/>loader + tag engine"]
+        current["/opt/hmi_apps/current<br/>the customer bundle"]
+        hwd["hmi-hwd.service<br/>libgpiod, IIO, UART"]
+    end
+    studio -->|ssh: upload + hmi-install| gui
+    cli -->|ssh: upload + hmi-install| gui
+    gui --> current
+    hwd -->|tags, UDP/JSON on loopback| gui
+    gui -->|commands| hwd

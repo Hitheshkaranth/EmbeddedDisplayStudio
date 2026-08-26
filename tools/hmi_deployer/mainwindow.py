@@ -1509,6 +1509,7 @@ class MainWindow(QMainWindow):
         self.simulator = TelemetrySimulator(
             expected_tags, self, udp_port=self.tag_rx_port()
         )
+        self.simulator.error.connect(self.log)
         self.simulator.start()
 
     def start_relay(self):
@@ -1520,6 +1521,7 @@ class MainWindow(QMainWindow):
         self.relay = TelemetryRelay(
             host, user, self.ssh_port(), key, self, udp_port=self.tag_rx_port()
         )
+        self.relay.error.connect(self.log)
         self.relay.start()
 
     # ------------------------------------------------------------------

@@ -1,0 +1,17 @@
+graph TD
+    A["Your application<br/>a directory with manifest.json"] --> B["Read what it imports<br/>schema/deps.py, in a child process"]
+    B --> C{"Can the panel<br/>import all of them?"}
+    C -->|no| D["pip install the missing ones<br/>into the interpreter the bundle will run under"]
+    C -->|yes| E
+    D --> E["Package<br/>build outputs and .hmiignore excluded<br/>tar.gz plus .sha256, on a worker thread"]
+    E --> F["Stream over ssh into /tmp/hmi_upload<br/>tmpfs, so a failed upload never touches flash"]
+    F --> G["hmi-install: verify the checksum"]
+    G --> H["Extract into a staging directory"]
+    H --> I["Validate the manifest again, on the target"]
+    I --> J["Record the live release as previous"]
+    J --> K["Promote by a single rename<br/>onto the current symlink"]
+    K --> L["Restart hmi-gui and wait for its ready file"]
+    L -->|ready within 25 s| M["Enable at boot, prune old releases"]
+    L -->|no ready file| N["Swap the symlink back<br/>and restart the previous release"]
+    M --> O["Running, and the boot default"]
+    N --> P["Deploy fails; the panel keeps a working UI"]

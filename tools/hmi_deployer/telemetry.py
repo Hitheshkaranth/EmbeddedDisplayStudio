@@ -24,6 +24,15 @@ class TelemetrySimulator(QObject):
     socket allocation).
     """
 
+    #: Reported once when frames stop reaching the tag engine.
+    #:
+    #: A send that fails silently is the same fault as a bind that fails
+    #: silently: the preview keeps drawing a panel whose values never change,
+    #: and nothing says why. Latched, because this fires per frame and a
+    #: message per frame is its own kind of silence.
+    error = Signal(str)
+
+
     def __init__(
         self,
         expected_tags: List[str],
@@ -120,13 +129,28 @@ class TelemetrySimulator(QObject):
             self._sock.sendto(
                 json.dumps(msg).encode("utf-8"), ("127.0.0.1", self._udp_port)
             )
-        except OSError:
-            pass
+        except OSError as exc:
+            self._report_send_failure(exc)
 
     def _step(self) -> None:
         """Timer tick: advance values then send."""
         self._advance()
         self._send_frame()
+
+
+    def _report_send_failure(self, exc: OSError) -> None:
+        """Say once that telemetry is no longer arriving.
+
+        Frames are sent many times a second, so this latches: the operator
+        needs to know the feed died, not to watch it die repeatedly.
+        """
+        if getattr(self, "_send_failed", False):
+            return
+        self._send_failed = True
+        self.error.emit(
+            f"Tags: telemetry is not reaching the preview on port "
+            f"{self._udp_port} ({exc})."
+        )
 
     def __del__(self) -> None:
         try:
@@ -209,6 +233,15 @@ class TelemetryRelay(QObject):
     renewal loop uses a proper while-True structure with exception handling).
     """
 
+    #: Reported once when frames stop reaching the tag engine.
+    #:
+    #: A send that fails silently is the same fault as a bind that fails
+    #: silently: the preview keeps drawing a panel whose values never change,
+    #: and nothing says why. Latched, because this fires per frame and a
+    #: message per frame is its own kind of silence.
+    error = Signal(str)
+
+
     def __init__(
         self,
         host: str,
@@ -269,8 +302,23 @@ class TelemetryRelay(QObject):
             self.local_sock.sendto(
                 line.encode("utf-8"), ("127.0.0.1", self._udp_port)
             )
-        except OSError:
-            pass
+        except OSError as exc:
+            self._report_send_failure(exc)
+
+
+    def _report_send_failure(self, exc: OSError) -> None:
+        """Say once that telemetry is no longer arriving.
+
+        Frames are sent many times a second, so this latches: the operator
+        needs to know the feed died, not to watch it die repeatedly.
+        """
+        if getattr(self, "_send_failed", False):
+            return
+        self._send_failed = True
+        self.error.emit(
+            f"Tags: telemetry is not reaching the preview on port "
+            f"{self._udp_port} ({exc})."
+        )
 
     def __del__(self) -> None:
         try:
