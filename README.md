@@ -125,6 +125,36 @@ python deploy/provision_panel.py --host <panel-ip>
 `--check` names anything that would stop the board hosting the platform. Run it
 before assuming an image is ready.
 
+### The hardware it runs on
+
+The platform is not tied to one module. It needs a 64-bit ARM Linux board that
+can put pixels on a display and accept an SSH connection; everything below that
+is the application's business, not the platform's.
+
+<div align="center">
+
+<img src="docs/assets/hardware.svg" alt="A 64-bit ARM SoM with storage, display and network, optional GPIO, ADC and UART, reached from a developer machine over SSH" width="820" />
+
+<sub>Source: <a href="docs/assets/hardware.mmd"><code>docs/assets/hardware.mmd</code></a></sub>
+
+</div>
+
+| | Needed | Why |
+|---|---|---|
+| **CPU** | 64-bit ARM, quad core in practice | Qt and the interpreter both live here; the tag engine is idle most of the time |
+| **RAM** | 2 GB comfortably | A Qt Widgets application with its runtime sits in the low hundreds of MB |
+| **Storage** | ~2 GB free after the OS | Retention keeps `current`, `previous` and three more releases; an unpacked release is typically 100–300 MB |
+| **Display** | Whatever the manifest declares | The Studio composes the preview at that geometry, and the panel reports its real size on connect |
+| **Touch** | Optional | Nothing in the platform requires it |
+| **Network** | Ethernet or Wi-Fi | SSH on port 22 is the only channel the Studio uses — no agent, no broker, no open port on the panel beyond sshd |
+| **GPU** | Optional | Qt Widgets renders through the raster engine and issues no desktop GL calls |
+
+Field I/O is entirely optional and independently so: `hmi-hwd` disables the
+feature it cannot reach rather than refusing to start, so a board with no ADC
+still runs an application that only uses digital inputs.
+
+---
+
 ### To develop on it
 
 The full suite needs a POSIX shell with `flock`, so run it on Linux or under
@@ -298,6 +328,55 @@ rest are optional: `screen` defaults to 1280x800, `tags_required` to none,
 | --- | --- | --- |
 | `qml` | `*.qml` | Loaded into the shell that is already running. Gets `Tags`/`Bus` injected, previews live in Studio. |
 | `python` | `*.py` | Exec'd as the GUI process itself — for an existing Qt Widgets application that owns its own window. |
+
+### What makes a bundle acceptable
+
+The Studio validates before it packages, and the panel validates again after it
+unpacks, using the same code. A bundle that opens in the window is a bundle that
+will install.
+
+**The shape.** Any directory, with `manifest.json` at its root and the entry
+point somewhere inside it. No build step, no layout convention, no imports from
+this repository — the application does not know it is being deployed.
+
+```
+my-qt-app/
+├── manifest.json          required, at the root
+├── main.py                the entry named by the manifest
+├── ui/  assets/  ...      whatever else the app needs
+└── .hmiignore             optional, extra exclusions
+```
+
+**The rules, and what each one prevents:**
+
+| Field | Rule | Why it is checked here |
+|---|---|---|
+| `schema` | exactly `1` | A future format should fail on the laptop, not halfway through an install |
+| `name` | `^[a-z0-9][a-z0-9._-]{0,63}$` | It becomes a directory on the panel and a filename on the host; a case-insensitive filesystem anywhere in that chain would let two apps collide |
+| `version` | `1.4`, `1.4.0`, `2.0.0-rc1`, `1.0.0+build7` | It names artefacts, so it cannot be arbitrary text |
+| `entry` | relative, no `..`, and the file must exist | An absolute or escaping path would resolve somewhere else entirely on the target |
+| `runtime` | `qml` needs a `.qml` entry, `python` needs a `.py` | A mismatch would otherwise fail only on the panel, after the swap |
+| `qt_binding` | must match what the sources actually import | Declaring the wrong one starts the wrong interpreter, and the app dies on its first import |
+| `screen` | positive integers | A string here is a mistake worth catching before it reaches a board |
+| `tags_required` | list of strings | These are seeded into the tag map so bindings resolve on the first frame |
+
+Only `schema`, `name`, `version` and `entry` are required. `runtime` defaults to
+`qml`, `screen` to 1280x800, `tags_required` to none, `qt_binding` to `pyside6`.
+
+**Size.** 500 MB per bundle, enforced on both sides. Build outputs, caches and
+VCS metadata are excluded automatically — `.git`, `__pycache__`, `build`,
+`dist`, `node_modules`, `.venv`, `*.egg-info`, `.pytest_cache` and the rest —
+so the number is about your application, not your working directory. Add
+`.hmiignore` for anything else.
+
+**No manifest?** Point the Studio at the directory anyway. It looks for
+`main.qml`, `Main.qml`, `app.qml`, then `main.py`, `app.py`, `__main__.py`,
+detects the Qt binding from the sources, and offers to write the manifest for
+you. QML is preferred when a project contains both.
+
+**What the application must not do:** touch a GPIO line, an ADC node or a
+serial port. It binds to tags. That is the whole contract, and it is what lets
+the same bundle run on a bench, in a preview and on a panel.
 
 ### Qt5 and Qt6 applications on the same panel
 

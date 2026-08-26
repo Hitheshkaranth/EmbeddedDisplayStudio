@@ -1,0 +1,21 @@
+graph TD
+    subgraph board [The panel: 64-bit ARM SoM plus carrier]
+        soc["SoC<br/>quad-core ARM64, 2 GB RAM<br/>GPU or raster-capable framebuffer"]
+        flash["eMMC or SD<br/>2 GB free after the OS<br/>holds up to 5 releases"]
+        disp["Display<br/>any resolution the manifest declares<br/>touch optional"]
+        net["Ethernet or Wi-Fi<br/>SSH is the only channel the Studio uses"]
+    end
+    subgraph io [Field I/O, each one optional]
+        gpio["/dev/gpiochipN<br/>digital in and out via libgpiod"]
+        adc["/sys/bus/iio<br/>analog in via IIO sysfs"]
+        uart["/dev/ttyN<br/>serial via pyserial"]
+    end
+    subgraph host [Your machine]
+        pc["Windows or Linux<br/>no special hardware<br/>network route to the panel"]
+    end
+    pc -->|SSH, port 22| net
+    soc --- flash
+    soc --- disp
+    soc --- gpio
+    soc --- adc
+    soc --- uart
