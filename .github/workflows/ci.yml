@@ -16,6 +16,7 @@ name: CI
 on:
   push:
     branches: ["**"]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -83,6 +84,97 @@ jobs:
             echo "::error::Tests were skipped on Linux, where the full suite must run."
             exit 1
           fi
+
+  package:
+    name: Windows executable
+    runs-on: windows-latest
+    # Long enough for PyInstaller to walk the whole PySide6 graph plus the
+    # standard library, and for the smoke run to wait out its own deadline.
+    timeout-minutes: 40
+
+    # Needed only by the release step below, which runs on tags.
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      # WHY THIS JOB EXISTS
+      #   The Studio ships as a single Windows binary and nothing built one
+      #   here. Every release binary was produced by hand on one machine, and
+      #   0.0.1 shipped an executable that died on a customer application's
+      #   first standard-library import while every test on this workflow
+      #   passed. A green source tree says nothing about the artefact; only
+      #   running the artefact does.
+      - name: Build the executable
+        run: python -m PyInstaller packaging/EmbeddedDisplayStudio.spec --noconfirm
+
+      # The sub-commands the packaged Studio uses to re-execute itself. Each
+      # exercises a different part of the frozen runtime, and all are headless.
+      - name: Sub-commands answer
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./dist/EmbeddedDisplayStudio.exe --pip-install --version | grep -q "^pip "
+          echo "  pip runs inside the bundle"
+          ./dist/EmbeddedDisplayStudio.exe --deps-scan tests/fixtures/ci-smoke >/dev/null
+          echo "  dependency scan runs as a child of itself"
+
+      # The real gate: launch the binary, have it preview an application whose
+      # imports were never visible to the build, and grab the bezel. The
+      # fixture imports pkgutil -- the exact module 0.0.1 could not find -- and
+      # paints a colour nothing in the Studio's own chrome uses, so finding it
+      # in the grab means the frame came from the application.
+      - name: Preview a bundle and grab the bezel
+        env:
+          # No desktop to talk to. The Studio and the preview child are both
+          # told, or the child falls back to the native plugin and dies.
+          QT_QPA_PLATFORM: offscreen
+          HMI_PREVIEW_PLATFORM: offscreen
+        run: |
+          ./dist/EmbeddedDisplayStudio.exe `
+            --bundle tests/fixtures/ci-smoke `
+            --capture-bezel smoke.png `
+            --exit-after 60000
+
+      - name: The grab contains the application
+        run: python tests/verify_smoke_capture.py smoke.png
+
+      - name: Keep the binary and the evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: EmbeddedDisplayStudio
+          path: |
+            dist/EmbeddedDisplayStudio.exe
+            smoke.png
+          if-no-files-found: error
+
+      # A tag publishes the binary this job built and proved. Nothing attached
+      # by hand: that is how a binary nobody had run reached a release page.
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          sha=$(python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" dist/EmbeddedDisplayStudio.exe)
+          echo "SHA-256 $sha"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --title "EmbeddedDisplay Studio ${tag#v}" --generate-notes
+          fi
+          gh release upload "$tag" dist/EmbeddedDisplayStudio.exe --clobber
 
   shellcheck:
     name: Shell scripts

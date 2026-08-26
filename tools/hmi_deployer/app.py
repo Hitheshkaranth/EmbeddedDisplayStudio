@@ -120,12 +120,24 @@ def main():
             if args.exit_after > 0:
                 app.quit()
 
+    # Scheduled from the same moment as the window's own exit timer, which
+    # MainWindow starts on construction.
+    #
+    # This used to be scheduled inside show_studio, which does not run until
+    # the splash has finished -- so the grab landed at exit_after + splash
+    # while the close fired at exit_after, and the window was always gone four
+    # seconds before the capture. --capture-bezel could not produce a file at
+    # all when a splash was shown, which is every ordinary run.
+    if args.capture_bezel and args.exit_after > 0:
+        QTimer.singleShot(max(100, args.exit_after - 1000), grab)
+
     def show_studio():
         window.show()
         if splash is not None:
             splash.finish(window)
-        if args.capture_bezel:
-            QTimer.singleShot(max(100, args.exit_after - 1000), grab)
+        if args.capture_bezel and args.exit_after <= 0:
+            # No deadline to race: grab shortly after the window is up.
+            QTimer.singleShot(1000, grab)
 
     if splash is None:
         QTimer.singleShot(0, show_studio)

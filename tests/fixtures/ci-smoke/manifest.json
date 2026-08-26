@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "name": "ci-smoke",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "runtime": "python",
+  "qt_binding": "pyside6",
+  "screen": { "width": 1280, "height": 800 },
+  "tags_required": [],
+  "qt": ">=6.5"
+}
