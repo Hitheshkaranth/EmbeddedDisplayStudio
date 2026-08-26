@@ -68,6 +68,76 @@ Three layers, deliberately decoupled:
 
 ---
 
+## What you need
+
+### To run the Studio
+
+The packaged **`EmbeddedDisplayStudio.exe`** needs nothing installed: it carries
+its own Python, PySide6 and the standard library. Download it from a
+[release](../../releases) and run it.
+
+From a checkout:
+
+| | |
+|---|---|
+| **Python** | 3.12 — the version CI runs and the executable is built from |
+| **PySide6** | `6.8.1`, pinned in `requirements.txt` |
+| **pyserial** | `3.5`, only for the simulated hardware daemon |
+| **An SSH client** | `ssh` and `scp`. Windows: the built-in OpenSSH at `System32\OpenSSH`, which the tool resolves by absolute path so a PATH wrapper cannot shadow it |
+
+```bash
+python -m pip install -r requirements.txt
+python main.py
+```
+
+Previewing a **PySide2** bundle needs a second interpreter with PySide2
+installed, because the two bindings cannot share a process. It is found on PATH
+or named explicitly with `HMI_PREVIEW_PYTHON_QT5`. This is the one thing the
+packaged executable cannot supply for itself; PySide6 bundles preview with no
+Python on the machine at all.
+
+### To reach a panel
+
+Key-based SSH as `root`, and nothing else from this end:
+
+```bash
+ssh-copy-id root@<panel-ip>
+```
+
+### On the panel
+
+| | |
+|---|---|
+| **A 64-bit Linux image** | Yocto or similar, with **systemd**, and **Wayland/Weston** for the display |
+| **A complete Python 3** | Read this twice: a Yocto image can ship `python3-core` alone — no `json`, `socket`, `hashlib` or `ctypes` — and the installer itself cannot run on that. `provision_panel.py` puts a self-contained interpreter at `/opt/hmi-python`, which every target script prefers |
+| **A Qt runtime** | PySide6 for a Qt6 application; PySide2 at `/opt/hmi-python-qt5` for a Qt5 one. A panel can carry both |
+| **coreutils** | `flock`, `tar` and `sha256sum` — `hmi-install` serialises on the first and verifies with the last |
+| **libgpiod, IIO, pyserial** | Only for real I/O. Each is optional: `hmi-hwd` disables the feature it cannot reach rather than refusing to start |
+
+If the panel is running a stock image, install the platform onto it first — no
+reflash needed:
+
+```bash
+python deploy/provision_panel.py --host <panel-ip> --check   # survey only
+python deploy/provision_panel.py --host <panel-ip>
+```
+
+`--check` names anything that would stop the board hosting the platform. Run it
+before assuming an image is ready.
+
+### To develop on it
+
+The full suite needs a POSIX shell with `flock`, so run it on Linux or under
+WSL; on Windows the installer and shell-validator suites skip. Regenerating the
+diagrams in this README needs `npx` and `@mermaid-js/mermaid-cli`.
+
+### No hardware at all
+
+Everything above is for a real panel. The whole stack also runs on a desktop —
+see [Quick start](#quick-start), where the daemon simulates its I/O.
+
+---
+
 ## Quick start
 
 **On your laptop — no hardware needed.** The daemon simulates I/O so the whole
