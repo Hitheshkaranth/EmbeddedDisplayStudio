@@ -60,12 +60,13 @@ Outputs: frameReady(QImage) signals, and failed(str) when the preview cannot
 
 import logging
 import os
+import re
 import shutil
 import struct
 import subprocess
 import sys
 
-from PySide6.QtCore import QByteArray, QObject, QTimer, Signal
+from PySide6.QtCore import QByteArray, QObject, QProcess, QTimer, Signal
 from PySide6.QtGui import QImage
 from PySide6.QtNetwork import QHostAddress, QTcpServer
 
@@ -93,6 +94,90 @@ CONNECT_TIMEOUT_MS = 20000
 # under this; anything larger means the stream has lost sync.
 MAX_FRAME_BYTES = 32 * 1024 * 1024
 
+# How the packaged Studio asks itself to be the preview child. main.py owns the
+# dispatch; the constant lives here so the launcher and the flag it passes
+# cannot drift apart.
+PREVIEW_SHIM_FLAG = "--preview-shim"
+
+# How the packaged Studio asks itself to run pip. pip is pure Python, so the
+# frozen runtime can execute it; this is what lets the executable install a
+# bundle's packages on a machine with no Python on it.
+PIP_FLAG = "--pip-install"
+
+
+def preview_site_dir() -> str:
+    """Where third-party packages for the preview are installed.
+
+    Kept per-user and outside the bundle: a frozen application's own directory
+    is read-only in the places it is usually installed, and unpacked afresh on
+    every run when it is onefile. This directory persists, so a bundle's
+    packages are installed once rather than on every preview.
+    """
+    base = (
+        os.environ.get("LOCALAPPDATA")
+        or os.environ.get("XDG_DATA_HOME")
+        or os.path.expanduser("~/.local/share")
+    )
+    return os.path.join(base, "EmbeddedDisplayStudio", "preview-packages")
+
+
+def pip_install_argv(distributions) -> list:
+    """The command that installs `distributions` for the preview to import."""
+    target = preview_site_dir()
+    base = (
+        [sys.executable, PIP_FLAG]
+        if getattr(sys, "frozen", False)
+        else [sys.executable, "-m", "pip"]
+    )
+    return base + [
+        "install",
+        "--no-input",
+        "--disable-pip-version-check",
+        "--target", target,
+        "--upgrade",
+        *distributions,
+    ]
+
+
+#: `ModuleNotFoundError: No module named 'x'`, with the quote style Python
+#: uses and tolerating a truncated tail.
+_MISSING_MODULE_RE = re.compile(
+    r"ModuleNotFoundError: No module named ['\"]([A-Za-z_][A-Za-z0-9_]*)"
+)
+
+
+def missing_module(output: str) -> str:
+    """Return the top-level module a traceback says is missing, or "".
+
+    Only the first component is taken: `No module named 'foo.bar'` is a
+    missing `foo`, and it is `foo` that a package manager can be asked for.
+    """
+    if not output:
+        return ""
+    match = _MISSING_MODULE_RE.search(output)
+    return match.group(1) if match else ""
+
+
+def preview_argv(interpreter: str) -> list:
+    """Return the child command that runs the shim under `interpreter`.
+
+    From a checkout the shim is handed to a real interpreter as source on the
+    command line. A packaged build has no interpreter to hand it to, so the
+    Studio re-executes itself with PREVIEW_SHIM_FLAG and runs the same shim out
+    of the runtime it already carries -- which is why the executable can
+    preview a PySide6 application on a machine with no Python installed.
+
+    A PySide2 bundle is never previewed this way: `interpreter` is then a real
+    external Python, and the ordinary `-c` form is used for it.
+    """
+    same_binary = (
+        os.path.normcase(os.path.abspath(interpreter))
+        == os.path.normcase(os.path.abspath(sys.executable))
+    )
+    if getattr(sys, "frozen", False) and same_binary:
+        return [interpreter, PREVIEW_SHIM_FLAG]
+    return [interpreter, "-c", _SHIM]
+
 
 # The bootstrap executed by the child interpreter.
 #
@@ -108,6 +193,15 @@ _W = int(os.environ["HMI_PREVIEW_WIDTH"])
 _H = int(os.environ["HMI_PREVIEW_HEIGHT"])
 _ENTRY = os.environ["HMI_PREVIEW_ENTRY"]
 _FPS = float(os.environ.get("HMI_PREVIEW_FPS", "10"))
+
+# Packages installed for the preview, ahead of everything else so a bundle's
+# own version of a library wins over any copy inside a frozen runtime. This is
+# read from the environment rather than PYTHONPATH because a PyInstaller
+# bootloader ignores PYTHONPATH, and the packaged Studio is exactly the case
+# that needs it.
+_SITE = os.environ.get("HMI_PREVIEW_SITE", "")
+if _SITE and os.path.isdir(_SITE):
+    sys.path.insert(0, _SITE)
 
 try:
     from PySide6.QtWidgets import QApplication, QWidget
@@ -334,28 +428,23 @@ def find_interpreter(binding: str) -> str:
     Returns:
         Path to a usable interpreter, or "" when none was found.
 
-    Run from source, App Studio is itself a PySide6 process, so its own
-    interpreter serves a pyside6 bundle. Packaged as an executable it is not:
-    sys.executable is the Studio, and handing that to the preview shim would
-    relaunch the Studio instead of the customer's application. A frozen build
-    therefore has to go looking for a real interpreter for either binding.
+    App Studio is itself a PySide6 process, so a pyside6 bundle is hosted by
+    this process's own runtime -- the interpreter from a checkout, or the
+    packaged Studio re-executing itself, which preview_argv arranges. Either
+    way the PySide6 the bundle needs is already present, which is what lets the
+    executable preview on a machine with no Python installed at all.
 
     A pyside2 bundle always needs a second interpreter, because the two
-    bindings cannot coexist in one process. $HMI_PREVIEW_PYTHON_QT5 names it
-    explicitly; otherwise conventional PATH names and interpreters recorded by
-    the Windows ``py`` launcher are probed. Returning "" is a normal outcome,
-    not an error: the caller falls back to the explanatory card and says why.
+    bindings cannot coexist in one process, and the packaged Studio cannot
+    supply one either. $HMI_PREVIEW_PYTHON_QT5 names it explicitly; otherwise
+    conventional PATH names and interpreters recorded by the Windows ``py``
+    launcher are probed. Returning "" is a normal outcome, not an error: the
+    caller falls back to the explanatory card and says why.
     """
-    frozen = getattr(sys, "frozen", False)
-    if binding != "pyside2" and not frozen:
+    if binding != "pyside2":
         return sys.executable
 
-    module = "PySide2" if binding == "pyside2" else "PySide6"
-
-    explicit = os.environ.get(
-        "HMI_PREVIEW_PYTHON_QT5" if binding == "pyside2" else "HMI_PREVIEW_PYTHON_QT6",
-        "",
-    )
+    explicit = os.environ.get("HMI_PREVIEW_PYTHON_QT5", "")
     if explicit and os.path.isfile(explicit):
         return explicit
 
@@ -376,7 +465,7 @@ def find_interpreter(binding: str) -> str:
         seen.add(identity)
         try:
             probe = subprocess.run(
-                [path, "-c", f"import {module}"],
+                [path, "-c", "import PySide2"],
                 capture_output=True, timeout=20,
             )
         except (OSError, subprocess.SubprocessError):
@@ -402,6 +491,9 @@ class NativePreview(QObject):
     frameReady = Signal(QImage)
     failed = Signal(str)
     stopped = Signal()
+    #: A package is being fetched for the preview; carries a line for the
+    #: console so a pause of tens of seconds explains itself.
+    installing = Signal(str)
 
     def __init__(self, parent: QObject = None) -> None:
         """Create an idle preview. Nothing is started until start() is called."""
@@ -412,6 +504,14 @@ class NativePreview(QObject):
         self._buffer = QByteArray()
         self._connect_timer: QTimer = None
         self._reaper: QTimer = None
+        self._installer: QProcess = None
+        # Arguments of the current start(), so a preview can be run again
+        # after a missing package has been fetched.
+        self._pending_start: dict = {}
+        # Modules already installed for this bundle: one attempt each, so a
+        # package that installs but still will not import fails honestly
+        # rather than looping.
+        self._installed: set = set()
 
     # ------------------------------------------------------------------ api
 
@@ -432,6 +532,11 @@ class NativePreview(QObject):
         another never leaves an orphan rendering into a socket nobody reads.
         """
         self.stop()
+
+        self._pending_start = {
+            "bundle_dir": bundle_dir, "manifest": manifest,
+            "width": width, "height": height,
+        }
 
         entry = manifest.get("entry", "")
         entry_path = os.path.join(bundle_dir, entry)
@@ -476,10 +581,15 @@ class NativePreview(QObject):
         # rather than sitting in a pipe until the process dies.
         env["PYTHONUNBUFFERED"] = "1"
 
+        # Anything installed for the preview has to be importable by the child.
+        # The shim puts this on sys.path itself; PYTHONPATH would not survive a
+        # PyInstaller bootloader, which is the case that needs it most.
+        env["HMI_PREVIEW_SITE"] = preview_site_dir()
+
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
             self._proc = subprocess.Popen(
-                [interpreter, "-c", _SHIM],
+                preview_argv(interpreter),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
@@ -622,9 +732,72 @@ class NativePreview(QObject):
         if self._proc.poll() is None:
             return
         output = self._drain_child_output()
+
+        missing = missing_module(output)
+        if missing and missing not in self._installed:
+            # The application needs a package this runtime does not carry.
+            # Fetch it and try again rather than reporting a traceback the user
+            # would have to read, diagnose and act on themselves -- which in a
+            # packaged build they often cannot, having no Python to install
+            # into. One attempt per module, so a package that installs but
+            # still will not import fails honestly instead of looping.
+            self._installed.add(missing)
+            self._install_and_retry(missing, output)
+            return
+
         detail = f"\n{output}" if output else ""
         self.failed.emit(f"Preview: the application exited.{detail}")
         self.stop()
+
+    def _install_and_retry(self, module: str, output: str) -> None:
+        """Install the distribution providing `module`, then start again.
+
+        Run through QProcess rather than subprocess.run: fetching a wheel is
+        seconds at best and minutes over a slow link, and this is called from
+        the UI thread. Everything else in this tool that takes real time is
+        kept off it, and an installer that freezes the window would undo that
+        at the exact moment there is something to say.
+        """
+        from schema.deps import IMPORT_TO_DISTRIBUTION
+
+        distribution = IMPORT_TO_DISTRIBUTION.get(module, module)
+        pending = dict(self._pending_start or {})
+        self.stop()
+
+        self.installing.emit(
+            f"The application needs {distribution!r}, which this preview does "
+            "not carry. Installing it..."
+        )
+
+        argv = pip_install_argv([distribution])
+        process = QProcess(self)
+        self._installer = process
+        process.setProcessChannelMode(QProcess.MergedChannels)
+
+        def on_finished(code, _status):
+            tail = bytes(process.readAllStandardOutput()).decode(
+                "utf-8", errors="replace"
+            )
+            self._installer = None
+            if code != 0:
+                trimmed = "\n".join(tail.strip().splitlines()[-15:])
+                self.failed.emit(
+                    f"Preview: {distribution!r} is missing and could not be "
+                    f"installed.\n{trimmed}"
+                )
+                return
+            self.installing.emit(f"Installed {distribution!r}; starting the preview again.")
+            if pending:
+                self.start(**pending)
+
+        process.finished.connect(on_finished)
+        process.errorOccurred.connect(
+            lambda _err: self.failed.emit(
+                f"Preview: {distribution!r} is missing and the installer could "
+                f"not be run.\n{output}"
+            )
+        )
+        process.start(argv[0], argv[1:])
 
     def _drain_child_output(self) -> str:
         """Return whatever the child wrote to stdout/stderr, trimmed.

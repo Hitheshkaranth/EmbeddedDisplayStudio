@@ -26,7 +26,7 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 **The project**
 
-[![Tests](https://img.shields.io/badge/tests-193%20passing-17c964?style=for-the-badge&labelColor=18181b)](tests/)
+[![Tests](https://img.shields.io/badge/tests-201%20passing-17c964?style=for-the-badge&labelColor=18181b)](tests/)
 [![CI](https://img.shields.io/badge/CI-Linux%20full%20suite-006fee?style=for-the-badge&logo=githubactions&logoColor=white&labelColor=18181b)](.github/workflows/ci.yml)
 [![No containers](https://img.shields.io/badge/containers-none-a1a1aa?style=for-the-badge&logo=docker&logoColor=white&labelColor=18181b)](#why-no-containers)
 [![License](https://img.shields.io/badge/license-MIT-006fee?style=for-the-badge&labelColor=18181b)](LICENSE)
@@ -98,14 +98,14 @@ python daemon/hmi_hwd.py --config daemon/hwd.json --sim
 python gui/hmi_loader/main.py --apps-dir apps/demo-app --windowed
 
 # terminal 3 — EmbeddedDisplay Studio
-python -m tools.hmi_deployer.app
+python main.py
 ```
 
 ### Running EmbeddedDisplay Studio
 
 ```bash
 python -m pip install PySide6              # once
-python -m tools.hmi_deployer.app           # from the repository root
+python main.py                             # from the repository root
 ```
 
 `--bundle <dir>` opens an application on start; with no argument the last one
@@ -505,7 +505,7 @@ tests/                protocol, integration and cross-validator suites
 ## Verification
 
 ```bash
-python tests/run_all.py          # 193 tests
+python tests/run_all.py          # 201 tests
 ```
 
 | Area | Coverage |

@@ -37,7 +37,16 @@ except ImportError:  # pragma: no cover - environment without PySide6
     HAVE_QT = False
 
 if HAVE_QT:
-    from tools.hmi_deployer.native_preview import NativePreview, find_interpreter
+    from tools.hmi_deployer.native_preview import (
+        PIP_FLAG,
+        PREVIEW_SHIM_FLAG,
+        NativePreview,
+        find_interpreter,
+        missing_module,
+        pip_install_argv,
+        preview_argv,
+        preview_site_dir,
+    )
 
 
 # A customer application, written the ordinary way. Nothing here knows it is
@@ -186,20 +195,73 @@ class InterpreterResolution(unittest.TestCase):
         """App Studio is PySide6, so it can host a PySide6 bundle itself."""
         self.assertEqual(find_interpreter("pyside6"), sys.executable)
 
-    def test_frozen_studio_never_previews_with_itself(self):
-        """Packaged as an executable, sys.executable is the Studio itself.
+    def test_frozen_studio_runs_the_shim_through_its_own_flag(self):
+        """A packaged Studio hosts the preview in a child of itself.
 
-        Handing that to the preview shim would relaunch App Studio instead of
-        running the customer's application -- a second window claiming to be a
-        panel preview. A frozen build has to find a real interpreter, and
-        returning "" so the card explains why is the honest failure.
+        `EmbeddedDisplayStudio.exe -c <shim>` is not a command: the binary is
+        not an interpreter and would simply open a second Studio window
+        claiming to be a panel preview. It must re-execute itself with the
+        sub-command flag instead, which is what lets the executable preview a
+        PySide6 bundle on a machine with no Python installed.
         """
         with mock.patch.object(sys, "frozen", True, create=True):
-            found = find_interpreter("pyside6")
-        self.assertNotEqual(
-            found, sys.executable,
-            "A frozen Studio must not preview a bundle with its own binary.",
+            argv = preview_argv(sys.executable)
+        self.assertEqual(argv, [sys.executable, PREVIEW_SHIM_FLAG])
+        self.assertNotIn("-c", argv)
+
+    def test_source_checkout_hands_the_shim_to_a_real_interpreter(self):
+        """Unfrozen, the interpreter takes the shim as source on argv."""
+        argv = preview_argv(sys.executable)
+        self.assertEqual(argv[:2], [sys.executable, "-c"])
+
+    def test_an_external_interpreter_is_never_given_the_flag(self):
+        """A PySide2 preview runs under a real Python, which has no such flag."""
+        with mock.patch.object(sys, "frozen", True, create=True):
+            argv = preview_argv(r"C:\other\python.exe")
+        self.assertEqual(argv[:2], [r"C:\other\python.exe", "-c"])
+
+    def test_a_missing_module_is_read_out_of_the_traceback(self):
+        """The child's own error names what to install; nothing else does.
+
+        This is the exact shape reported from a packaged build, where the
+        customer's application reached for a standard-library module the
+        frozen runtime did not carry.
+        """
+        output = (
+            'File "<preview-shim>", line 156, in <module>\n'
+            '  File "<frozen runpy>", line 280, in run_path\n'
+            "ModuleNotFoundError: No module named 'pkgutil'"
         )
+        self.assertEqual(missing_module(output), "pkgutil")
+
+    def test_a_dotted_module_reports_its_top_level_package(self):
+        """`No module named 'foo.bar'` is a missing foo, and foo is installable."""
+        self.assertEqual(
+            missing_module("ModuleNotFoundError: No module named 'foo.bar'"),
+            "foo",
+        )
+
+    def test_ordinary_output_names_nothing(self):
+        """An application that merely printed must not trigger an install."""
+        self.assertEqual(missing_module("Traceback: ValueError: bad"), "")
+        self.assertEqual(missing_module(""), "")
+
+    def test_packages_install_into_a_writable_directory(self):
+        """Never into the bundle: a frozen app's own directory is not writable,
+        and a onefile build unpacks a fresh one on every run."""
+        target = preview_site_dir()
+        self.assertTrue(os.path.isabs(target))
+        argv = pip_install_argv(["requests"])
+        self.assertIn("--target", argv)
+        self.assertEqual(argv[argv.index("--target") + 1], target)
+        self.assertEqual(argv[-1], "requests")
+
+    def test_a_frozen_build_installs_through_its_own_pip(self):
+        """There is no `python -m pip` to call when there is no python."""
+        with mock.patch.object(sys, "frozen", True, create=True):
+            argv = pip_install_argv(["requests"])
+        self.assertEqual(argv[:2], [sys.executable, PIP_FLAG])
+        self.assertNotIn("-m", argv)
 
     def test_pyside2_never_uses_this_interpreter(self):
         """

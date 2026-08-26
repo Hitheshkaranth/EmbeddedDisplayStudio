@@ -63,7 +63,17 @@ class TestFallbackScreenRenders(unittest.TestCase):
             UDP port so the real loader wiring is exercised.
         """
         from tagengine import TagEngine
-        import main as loader
+
+        # Loaded by path, not as `import main`. Two files in this repository
+        # are named main.py -- the panel loader here, and the Studio entry
+        # point at the root -- and a plain import gets whichever the suite
+        # happened to put in sys.modules first, which made this test pass
+        # alone and fail in the full run.
+        import importlib.util
+        loader_path = REPO_ROOT / "gui" / "hmi_loader" / "main.py"
+        spec = importlib.util.spec_from_file_location("hmi_loader_main", loader_path)
+        loader = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(loader)
 
         cls.warnings = []
 

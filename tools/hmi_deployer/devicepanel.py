@@ -146,6 +146,9 @@ class DevicePanel(QWidget):
         self.native_preview.frameReady.connect(self._on_preview_frame)
         self.native_preview.failed.connect(self._on_preview_failed)
         self.native_preview.stopped.connect(self._on_preview_stopped)
+        # Fetching a package can take tens of seconds. Forwarded to the
+        # console so the pause reads as work rather than as a hang.
+        self.native_preview.installing.connect(self.previewMessage.emit)
 
         # The most recent frame at full target resolution, kept so a resize can
         # rescale without waiting for the next one.

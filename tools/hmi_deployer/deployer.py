@@ -52,6 +52,13 @@ from schema.manifest import (  # noqa: E402
 # declaration is the primary source.
 from schema.deps import Dependency, dependencies  # noqa: E402,F401
 
+
+#: How the packaged Studio asks itself to scan a bundle. main.py owns the
+#: dispatch; the constant lives here so the caller and the flag it passes
+#: cannot drift apart.
+DEPS_SCAN_FLAG = "--deps-scan"
+
+
 class DependencyWorker(QThread):
     """
     Reads a bundle's third-party imports off the UI thread.
@@ -106,14 +113,23 @@ class DependencyWorker(QThread):
         child process shares no interpreter lock, so the window keeps painting
         no matter what the bundle contains.
         """
-        if getattr(sys, "frozen", False):
-            return None
         repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        if getattr(sys, "frozen", False):
+            # A packaged build has no interpreter to call: sys.executable is
+            # the Studio. It re-executes itself instead, which keeps the scan
+            # off the UI thread here too -- the fallback below still works, but
+            # it holds the GIL for the whole of every ast.parse and stutters
+            # the window on exactly the large bundles this exists to handle.
+            command = [sys.executable, DEPS_SCAN_FLAG, self.bundle_dir]
+            cwd = None
+        else:
+            command = [sys.executable, "-m", "schema.deps", self.bundle_dir]
+            cwd = repo_root
         try:
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             completed = subprocess.run(
-                [sys.executable, "-m", "schema.deps", self.bundle_dir],
-                cwd=repo_root, capture_output=True, text=True,
+                command,
+                cwd=cwd, capture_output=True, text=True,
                 timeout=180, creationflags=creationflags,
             )
         except Exception:
