@@ -7,7 +7,9 @@ Purpose: The centred hardware mock-up of the panel with a live QML preview.
 import os
 import sys
 import logging
-from PySide6.QtCore import Qt, QUrl, QRectF, QPropertyAnimation, Property, QRect, Signal, QTimer
+from PySide6.QtCore import (
+    Qt, QUrl, QRectF, QPropertyAnimation, Property, QRect, Signal, QTimer, QEvent
+)
 from PySide6.QtGui import QPainter, QColor, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PySide6.QtQuickWidgets import QQuickWidget
@@ -126,6 +128,11 @@ class DevicePanel(QWidget):
         self.native_view.setAlignment(Qt.AlignCenter)
         self.native_view.setStyleSheet("background: #343434;")
         self.native_view.setScaledContents(False)
+        # A preview you can operate needs the events a widget only gets when
+        # it can be focused and is told to track the mouse between presses.
+        self.native_view.setMouseTracking(True)
+        self.native_view.setFocusPolicy(Qt.StrongFocus)
+        self.native_view.setCursor(Qt.PointingHandCursor)
         self.native_view.hide()
 
         # QML is composed at the real panel dimensions offscreen, then its
@@ -149,6 +156,10 @@ class DevicePanel(QWidget):
         # Fetching a package can take tens of seconds. Forwarded to the
         # console so the pause reads as work rather than as a hang.
         self.native_preview.installing.connect(self.previewMessage.emit)
+        # Installed only now: the filter reads native_preview, and widget
+        # calls as ordinary as setCursor() deliver events into it, so an
+        # earlier install fires before there is anything to read.
+        self.native_view.installEventFilter(self)
 
         # The most recent frame at full target resolution, kept so a resize can
         # rescale without waiting for the next one.
@@ -381,6 +392,102 @@ class DevicePanel(QWidget):
             self.qml_view.hide()
             self.native_view.show()
         self._rescale_native_frame()
+
+    # ------------------------------------------------------------------
+    # Touching the preview
+    # ------------------------------------------------------------------
+
+    def _panel_pos(self, pos):
+        """Map a point on the preview widget to a pixel on the panel.
+
+        Args:
+            pos: a QPoint in native_view coordinates.
+
+        Returns:
+            (x, y) in the panel's own pixels, or None for a click outside the
+            displayed image -- the grey around a letterboxed frame is not part
+            of the panel and must not be reported as a touch on its edge.
+
+        The frame is drawn KeepAspectRatio and centred, so undoing the fit is
+        the scale and the centring offset taken back off.
+        """
+        pixmap = self.native_view.pixmap()
+        if pixmap is None or pixmap.isNull() or self._native_frame is None:
+            return None
+        pw, ph = pixmap.width(), pixmap.height()
+        if pw <= 0 or ph <= 0:
+            return None
+
+        ox = (self.native_view.width() - pw) / 2.0
+        oy = (self.native_view.height() - ph) / 2.0
+        x = pos.x() - ox
+        y = pos.y() - oy
+        if x < 0 or y < 0 or x >= pw or y >= ph:
+            return None
+
+        return (
+            int(x * self._native_frame.width() / pw),
+            int(y * self._native_frame.height() / ph),
+        )
+
+    def eventFilter(self, watched, event):
+        """Forward interaction with the preview to the application behind it.
+
+        The bezel shows a running application, and until now it was a
+        photograph of one: the only way to press a button was to deploy first.
+        Events are translated to panel coordinates here and sent on; the child
+        turns them into Qt events for the widget under the point.
+        """
+        preview = getattr(self, "native_preview", None)
+        if watched is not self.native_view or preview is None or not preview.is_running():
+            return super().eventFilter(watched, event)
+
+        kind = event.type()
+
+        if kind in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease,
+                    QEvent.MouseButtonDblClick, QEvent.MouseMove):
+            point = self._panel_pos(event.position().toPoint())
+            if point is None:
+                return False
+            if kind == QEvent.MouseButtonPress:
+                # Keystrokes should follow the panel once it has been touched.
+                self.native_view.setFocus(Qt.MouseFocusReason)
+            preview.send_input(
+                t={
+                    QEvent.MouseButtonPress: "press",
+                    QEvent.MouseButtonRelease: "release",
+                    QEvent.MouseButtonDblClick: "dblclick",
+                    QEvent.MouseMove: "move",
+                }[kind],
+                x=point[0], y=point[1],
+                b=int(event.button().value),
+                buttons=int(event.buttons().value),
+                mods=int(event.modifiers().value),
+            )
+            return True
+
+        if kind == QEvent.Wheel:
+            point = self._panel_pos(event.position().toPoint())
+            if point is None:
+                return False
+            delta = event.angleDelta()
+            preview.send_input(
+                t="wheel", x=point[0], y=point[1],
+                dx=delta.x(), dy=delta.y(),
+                mods=int(event.modifiers().value),
+            )
+            return True
+
+        if kind in (QEvent.KeyPress, QEvent.KeyRelease):
+            preview.send_input(
+                t="keypress" if kind == QEvent.KeyPress else "keyrelease",
+                key=int(event.key()),
+                mods=int(event.modifiers().value),
+                text=event.text(),
+            )
+            return True
+
+        return super().eventFilter(watched, event)
 
     def _rescale_native_frame(self) -> None:
         """Fit the held frame to the screen rect, preserving aspect ratio.

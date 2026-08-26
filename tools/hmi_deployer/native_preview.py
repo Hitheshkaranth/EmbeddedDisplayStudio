@@ -58,6 +58,7 @@ Outputs: frameReady(QImage) signals, and failed(str) when the preview cannot
          run, so the caller can fall back to the explanatory card.
 """
 
+import json
 import logging
 import os
 import re
@@ -76,6 +77,10 @@ logger = logging.getLogger("native-preview")
 # bytes of PNG. The magic lets the reader resynchronise loudly instead of
 # silently mis-framing if anything ever writes to the socket that should not.
 FRAME_MAGIC = b"HMIF"
+
+# Input travels the other way on the same socket, with its own magic so
+# neither side can mistake a touch for a frame.
+INPUT_MAGIC = b"HMIE"
 
 # Header size in bytes: len(FRAME_MAGIC) + 4-byte length.
 FRAME_HEADER_BYTES = len(FRAME_MAGIC) + 4
@@ -186,7 +191,7 @@ def preview_argv(interpreter: str) -> list:
 # assume the Qt version. Both bindings are probed and whichever is present is
 # used.
 _SHIM = r'''
-import os, socket, struct, sys, runpy
+import json, os, select, socket, struct, sys, runpy
 
 _PORT = int(os.environ["HMI_PREVIEW_PORT"])
 _W = int(os.environ["HMI_PREVIEW_WIDTH"])
@@ -205,12 +210,16 @@ if _SITE and os.path.isdir(_SITE):
 
 try:
     from PySide6.QtWidgets import QApplication, QWidget
-    from PySide6.QtCore import Qt, QTimer, QBuffer, QByteArray, QIODevice
-    from PySide6.QtGui import QImage, QPainter
+    from PySide6.QtCore import (
+        Qt, QTimer, QBuffer, QByteArray, QIODevice, QEvent, QPoint, QPointF
+    )
+    from PySide6.QtGui import QImage, QPainter, QMouseEvent, QKeyEvent, QWheelEvent
 except ImportError:
     from PySide2.QtWidgets import QApplication, QWidget
-    from PySide2.QtCore import Qt, QTimer, QBuffer, QByteArray, QIODevice
-    from PySide2.QtGui import QImage, QPainter
+    from PySide2.QtCore import (
+        Qt, QTimer, QBuffer, QByteArray, QIODevice, QEvent, QPoint, QPointF
+    )
+    from PySide2.QtGui import QImage, QPainter, QMouseEvent, QKeyEvent, QWheelEvent
 
 # Keep every top-level window off the screen without leaving the windowing
 # system.
@@ -323,6 +332,151 @@ def _tick():
         QApplication.quit()
 
 
+# ---- Input, travelling the other way ---------------------------------------
+# The socket the frames leave by is bidirectional, so the panel's touches come
+# back down it. Studio sends coordinates in framebuffer space -- the panel's
+# own pixels -- and the mapping into the application's window is done here,
+# because the offset is the one this process chose when it composed the frame.
+_inbox = bytearray()
+
+
+def _window_pos(fx, fy, window):
+    """Map a panel pixel to a point inside the application's window.
+
+    _tick centres the window in the framebuffer, so the same offset taken off
+    again is the position the application believes was touched. Returns None
+    for a touch on the letterbox, which belongs to no widget.
+    """
+    ox = (_W - window.width()) // 2
+    oy = (_H - window.height()) // 2
+    x = fx - ox
+    y = fy - oy
+    if x < 0 or y < 0 or x >= window.width() or y >= window.height():
+        return None
+    return QPoint(int(x), int(y))
+
+
+def _deliver(event, widget):
+    """Send one event and report whether anything took it."""
+    try:
+        return QApplication.sendEvent(widget, event)
+    except Exception:
+        return False
+
+
+def _dispatch(message):
+    """Turn one decoded input message into Qt events for the application."""
+    window = _pick_window()
+    if window is None:
+        return
+
+    kind = message.get("t", "")
+
+    if kind in ("press", "release", "move", "dblclick"):
+        point = _window_pos(message.get("x", 0), message.get("y", 0), window)
+        if point is None:
+            return
+        # The widget under the point, not the window: a QPushButton only reacts
+        # to an event delivered to the button itself.
+        target = window.childAt(point) or window
+        local = target.mapFrom(window, point)
+        gpos = target.mapToGlobal(local)
+        button = Qt.MouseButton(message.get("b", 1))
+        buttons = Qt.MouseButtons(message.get("buttons", 0))
+        mods = Qt.KeyboardModifiers(message.get("mods", 0))
+        etype = {
+            "press": QEvent.MouseButtonPress,
+            "release": QEvent.MouseButtonRelease,
+            "move": QEvent.MouseMove,
+            "dblclick": QEvent.MouseButtonDblClick,
+        }[kind]
+        try:
+            event = QMouseEvent(
+                etype, QPointF(local), QPointF(gpos), button, buttons, mods
+            )
+        except Exception:
+            return
+        if kind == "press":
+            # Keystrokes follow the last thing pressed, as they would on glass.
+            try:
+                if target.focusPolicy() != Qt.NoFocus:
+                    target.setFocus(Qt.MouseFocusReason)
+            except Exception:
+                pass
+        _deliver(event, target)
+        return
+
+    if kind == "wheel":
+        point = _window_pos(message.get("x", 0), message.get("y", 0), window)
+        if point is None:
+            return
+        target = window.childAt(point) or window
+        local = target.mapFrom(window, point)
+        angle = QPoint(int(message.get("dx", 0)), int(message.get("dy", 0)))
+        mods = Qt.KeyboardModifiers(message.get("mods", 0))
+        # QWheelEvent's signature differs between the bindings more than any
+        # other event here; a wheel that cannot be built is not worth taking
+        # the preview down for.
+        try:
+            event = QWheelEvent(
+                QPointF(local), QPointF(target.mapToGlobal(local)),
+                QPoint(0, 0), angle,
+                Qt.NoButton, mods, Qt.ScrollUpdate, False,
+            )
+        except Exception:
+            return
+        _deliver(event, target)
+        return
+
+    if kind in ("keypress", "keyrelease"):
+        target = QApplication.focusWidget() or window
+        etype = QEvent.KeyPress if kind == "keypress" else QEvent.KeyRelease
+        try:
+            event = QKeyEvent(
+                etype, int(message.get("key", 0)),
+                Qt.KeyboardModifiers(message.get("mods", 0)),
+                message.get("text", ""),
+            )
+        except Exception:
+            return
+        _deliver(event, target)
+
+
+def _poll_input():
+    """Drain whatever Studio has sent and dispatch complete messages.
+
+    Polled rather than driven by a reader thread: every Qt event built here
+    must be delivered on the thread that owns the widgets, and this timer runs
+    on it. select() with a zero timeout keeps the socket blocking for sends,
+    which is what the frame path relies on.
+    """
+    try:
+        while select.select([_sock], [], [], 0)[0]:
+            chunk = _sock.recv(65536)
+            if not chunk:
+                return
+            _inbox.extend(chunk)
+    except OSError:
+        return
+
+    while len(_inbox) >= 8:
+        if bytes(_inbox[:4]) != b"HMIE":
+            # Never seen in practice, but a desynchronised stream must not spin
+            # forever on a byte it cannot use.
+            del _inbox[:1]
+            continue
+        size = struct.unpack(">I", bytes(_inbox[4:8]))[0]
+        if len(_inbox) < 8 + size:
+            return
+        payload = bytes(_inbox[8:8 + size])
+        del _inbox[:8 + size]
+        try:
+            _dispatch(json.loads(payload.decode("utf-8")))
+        except Exception:
+            # One malformed or unhandled event must not end the preview.
+            pass
+
+
 # PySide6 spells the event loop `exec`; PySide2 spells it `exec_` and has no
 # `exec` at all. Reading the wrong name raises AttributeError here, in the
 # shim's own preamble, before the application is given a chance to start --
@@ -345,6 +499,13 @@ def _patched_exec(*args, **kwargs):
     timer.timeout.connect(_tick)
     timer.start(int(1000.0 / _FPS))
     _patched_exec.timer = timer   # outlive this frame
+
+    # Input is polled far faster than frames are sent: ten frames a second
+    # is enough to watch and nowhere near enough to touch.
+    input_timer = QTimer()
+    input_timer.timeout.connect(_poll_input)
+    input_timer.start(16)
+    _patched_exec.input_timer = input_timer
     return _real_exec()
 
 
@@ -695,6 +856,31 @@ class NativePreview(QObject):
         self._conn.disconnected.connect(self._on_disconnected)
         if self._connect_timer is not None:
             self._connect_timer.stop()
+
+    def send_input(self, **event) -> bool:
+        """Send one input event to the previewed application.
+
+        Args:
+            **event: the wire fields -- `t` names the kind, `x`/`y` are in
+                framebuffer pixels (the panel's own coordinates), and the rest
+                depend on the kind. See the shim's _dispatch.
+
+        Returns:
+            True when the event was written. False is the ordinary answer when
+            nothing is being previewed, not an error.
+
+        Coordinates are deliberately the panel's rather than the application's:
+        the offset between them was chosen by the child when it composed the
+        frame, so the child is the only side that can undo it correctly.
+        """
+        if self._conn is None:
+            return False
+        payload = json.dumps(event, separators=(",", ":")).encode("utf-8")
+        try:
+            self._conn.write(INPUT_MAGIC + struct.pack(">I", len(payload)) + payload)
+        except (RuntimeError, OSError):
+            return False
+        return True
 
     def _on_ready_read(self) -> None:
         """Drain the socket and emit every complete frame it now holds."""

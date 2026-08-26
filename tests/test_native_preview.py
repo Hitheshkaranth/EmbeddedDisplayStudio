@@ -187,6 +187,111 @@ class NativePreviewRendersARealApp(unittest.TestCase):
         self.preview.stop()  # must not raise
 
 
+# An application that can only change if a real mouse event reaches the button
+# under the point. The colour is what the test reads back out of the frame.
+FIXTURE_APP_CLICKABLE = textwrap.dedent(
+    '''
+    import sys
+    from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QVBoxLayout
+
+    def main():
+        app = QApplication(sys.argv)
+        window = QWidget()
+        layout = QVBoxLayout(window)
+        layout.setContentsMargins(0, 0, 0, 0)
+        button = QPushButton("")
+        button.setStyleSheet("background: #ff0000; border: none;")
+        button.clicked.connect(
+            lambda: button.setStyleSheet("background: #00ff00; border: none;")
+        )
+        layout.addWidget(button)
+        window.resize(400, 200)
+        window.show()
+        sys.exit(app.exec())
+
+    if __name__ == "__main__":
+        main()
+    '''
+).strip()
+
+
+@unittest.skipUnless(HAVE_QT, "PySide6 is not installed")
+class PreviewAcceptsInput(unittest.TestCase):
+    """The bezel shows a running application; it must also be operable.
+
+    Until this existed the preview was a photograph: the only way to press a
+    button in your own panel UI was to deploy it to hardware first.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QCoreApplication.instance() or QGuiApplication(sys.argv)
+
+    def setUp(self):
+        import tempfile
+        self.bundle = Path(tempfile.mkdtemp())
+        (self.bundle / "main.py").write_text(FIXTURE_APP_CLICKABLE, encoding="utf-8")
+        self.preview = NativePreview()
+        self.frames = []
+        self.preview.frameReady.connect(self.frames.append)
+
+    def tearDown(self):
+        self.preview.stop()
+        import shutil
+        shutil.rmtree(self.bundle, ignore_errors=True)
+
+    def _spin(self, ms):
+        loop = QEventLoop()
+        timer = QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(loop.quit)
+        timer.start(ms)
+        loop.exec()
+
+    def test_a_click_reaches_the_widget_under_the_point(self):
+        """The button must change colour, which only its own handler can do."""
+        width, height = 1280, 800
+        started = self.preview.start(
+            str(self.bundle),
+            {"entry": "main.py", "runtime": "python", "qt_binding": "pyside6"},
+            width, height,
+        )
+        self.assertTrue(started)
+
+        deadline = 30000
+        while not self.frames and deadline > 0:
+            self._spin(500)
+            deadline -= 500
+        self.assertTrue(self.frames, "no first frame")
+
+        # The window is 400x200 centred in the framebuffer, and the button
+        # fills it. Aim at the centre, in panel coordinates.
+        cx, cy = width // 2, height // 2
+        before = self.frames[-1].pixel(cx, cy)
+
+        from PySide6.QtCore import Qt as _Qt
+        left = int(_Qt.LeftButton.value)
+        self.assertTrue(
+            self.preview.send_input(t="press", x=cx, y=cy, b=left, buttons=left, mods=0)
+        )
+        self._spin(300)
+        self.preview.send_input(t="release", x=cx, y=cy, b=left, buttons=0, mods=0)
+
+        deadline = 15000
+        while deadline > 0 and self.frames[-1].pixel(cx, cy) == before:
+            self._spin(500)
+            deadline -= 500
+
+        self.assertNotEqual(
+            self.frames[-1].pixel(cx, cy), before,
+            "the pixel under the click never changed: the event did not arrive",
+        )
+
+    def test_input_is_refused_when_nothing_is_previewing(self):
+        """A click on an empty bezel is an ordinary no, not an error."""
+        self.assertFalse(self.preview.send_input(t="press", x=1, y=1, b=1))
+
+
 # A Qt5 application, written the only way PySide2 allows: exec_(), because
 # PySide2 has no `exec` at all.
 FIXTURE_APP_QT5 = textwrap.dedent(
