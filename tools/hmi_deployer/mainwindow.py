@@ -38,7 +38,7 @@ except ImportError:
     def qml_import_path(): return ""
 
 # Product version, shown hard right in the footer. Single source of truth.
-APP_VERSION = "0.0.1"
+APP_VERSION = "0.0.2"
 
 # Exact, machine-readable marker emitted by DISPLAY_PROBE_COMMAND over SSH.
 DISPLAY_RESOLUTION_RE = re.compile(r"^HMI_DISPLAY=(\d{1,5})x(\d{1,5})$")
