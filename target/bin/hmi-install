@@ -36,6 +36,8 @@
 #                        the step that makes the app the boot default
 #   HMI_SKIP_GUI_WAIT -- if set to "1", skip waiting for gui-ready and
 #                        skip enabling autostart (for off-target testing)
+#   HMI_GUI_READY_TIMEOUT -- seconds to wait for gui-ready (default 25);
+#                        lowered by tests that exercise the rollback path
 #
 # SAFETY
 #   The script uses flock(2) to serialise concurrent invocations.
@@ -87,7 +89,13 @@ READY_FILE="${RUN_DIR}/gui-ready"
 # How long (seconds) to wait for the GUI to signal readiness after a
 # restart.  If the GUI is not ready by this deadline the install is
 # considered failed and the previous release is restored.
-GUI_READY_TIMEOUT=25
+#
+# Overridable so the failure path can actually be tested.  Exercising the
+# rollback means waiting out this deadline once per case, and at 25s a test
+# that proves the platform's central safety guarantee costs more than the rest
+# of the suite put together -- which is the kind of arithmetic that leaves a
+# guarantee untested.
+GUI_READY_TIMEOUT="${HMI_GUI_READY_TIMEOUT:-25}"
 
 # Maximum acceptable bundle size in bytes (500 MB).  Reject anything
 # larger to prevent filling the rootfs.  Adjust if bundles are
@@ -1008,16 +1016,31 @@ cmd_install() {
         log "ERROR" "GUI failed to start with new release; initiating rollback"
         step "auto-rollback-start" "ok" "GUI did not come up"
 
-        rollback_to_previous
+        # Tested in the condition, not called plainly: this script runs under
+        # `set -e`, and rollback_to_previous returns 1 when there is no
+        # previous release -- a first deploy that never rendered. Called
+        # plainly that return killed the script here, so neither the cleanup
+        # below nor the install-complete line ever ran, and a host parsing STEP
+        # output saw a deploy that simply stopped mid-sentence.
+        if rollback_to_previous; then
+            # Safe only now: current points at the previous release, so the
+            # release that failed is no longer the one the panel would load.
+            if [ -d "$STAGING_DIR" ]; then
+                rm -rf "$STAGING_DIR"
+                log "INFO" "removed failed release: ${STAGING_DIR}"
+            fi
 
-        # Clean up the failed release directory.
-        if [ -d "$STAGING_DIR" ]; then
-            rm -rf "$STAGING_DIR"
-            log "INFO" "removed failed release: ${STAGING_DIR}"
+            cleanup_upload_dir
+            die 1 "install-complete" "deployment FAILED -- rolled back to previous release"
         fi
 
+        # Nothing to return to. The failed release is deliberately kept: it is
+        # what `current` points at, and a dangling `current` is worse than one
+        # naming an application that did not come up -- the loader follows it
+        # either way, and only one of the two can be inspected afterwards.
         cleanup_upload_dir
-        die 1 "install-complete" "deployment FAILED -- rolled back to previous release"
+        die 1 "install-complete" \
+            "deployment FAILED -- no previous release to roll back to"
     fi
 
     # -- Make this the application the panel boots into ---
@@ -1227,6 +1250,7 @@ ENVIRONMENT
   HMI_RESTART_CMD    Override the systemctl restart command (testing)
   HMI_ENABLE_CMD     Override the systemctl enable command (testing)
   HMI_SKIP_GUI_WAIT  Set to "1" to skip GUI restart/wait and autostart (testing)
+  HMI_GUI_READY_TIMEOUT  Seconds to wait for gui-ready (default 25)
 
 NOTES
   A successful `install` also enables hmi-gui.service, so the release becomes

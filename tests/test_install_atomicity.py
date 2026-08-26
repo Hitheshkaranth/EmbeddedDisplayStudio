@@ -137,7 +137,170 @@ class InstallerAtomicity(unittest.TestCase):
             capture_output=True, text=True, env=env,
         )
 
+    def _install_for_real(self, tgz, renders=True, enable_ok=True):
+        """Install with the GUI wait and rollback path actually enabled.
+
+        Args:
+            tgz:       the bundle to install.
+            renders:   whether the restart stub creates the readiness sentinel,
+                       which is the only thing that distinguishes an
+                       application that came up from one that did not.
+            enable_ok: whether making the release the boot default succeeds.
+
+        Every other test here sets HMI_SKIP_GUI_WAIT=1, which returns early
+        from restart_gui -- and with it skips the readiness wait, the automatic
+        rollback and enable_boot. Those four behaviours are what the platform
+        is sold on, so at least one path has to run them.
+        """
+        ready = self.root / "run" / "hmi" / "gui-ready"
+        restart = f"touch {ready}" if renders else "true"
+        enable = (
+            f"touch {self.enable_marker}" if enable_ok else "false"
+        )
+        env = dict(
+            os.environ,
+            HMI_ROOT=str(self.root),
+            HMI_RESTART_CMD=restart,
+            HMI_ENABLE_CMD=enable,
+            # The real deadline is 25s. The rollback case has to wait it out,
+            # and the guarantee is worth proving in seconds.
+            HMI_GUI_READY_TIMEOUT="2",
+        )
+        env.pop("HMI_SKIP_GUI_WAIT", None)
+        return subprocess.run(
+            ["bash", str(INSTALLER), "install", str(tgz)],
+            capture_output=True, text=True, env=env,
+        )
+
+    @property
+    def enable_marker(self):
+        """Written by the stub standing in for `systemctl enable`."""
+        return self.root / "run" / "hmi" / "boot-enabled"
+
     # -- tests -----------------------------------------------------------
+
+    def test_a_release_that_never_renders_is_rolled_back(self):
+        """The promise the platform is sold on: a bad deploy cannot leave a
+        machine without a UI.
+
+        Until this test existed the branch was unreachable from the suite --
+        every installer test disabled the GUI wait, and the same switch
+        disables the rollback it guards.
+        """
+        good = self._install_for_real(
+            self._upload(self._bundle(name="renders"), "good.tar.gz")
+        )
+        self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+        running = self._current_target()
+
+        bad = self._install_for_real(
+            self._upload(self._bundle(name="never-renders"), "bad.tar.gz"),
+            renders=False,
+        )
+
+        self.assertNotEqual(bad.returncode, 0, "a deploy that never rendered reported success")
+        self.assertIn("auto-rollback-start", bad.stdout)
+        self.assertEqual(
+            self._current_target(), running,
+            "the panel was left pointing at a release that never came up",
+        )
+
+    def test_the_release_that_failed_is_not_left_behind(self):
+        """A release that never rendered is not one to keep or roll forward to."""
+        self._install_for_real(self._upload(self._bundle(name="renders"), "good.tar.gz"))
+        before = set(self._release_dirs())
+
+        self._install_for_real(
+            self._upload(self._bundle(name="never-renders"), "bad.tar.gz"),
+            renders=False,
+        )
+
+        self.assertEqual(
+            set(self._release_dirs()), before,
+            "the failed release is still on the panel after rollback",
+        )
+
+    def test_a_release_that_renders_becomes_the_boot_default(self):
+        """Deploying is the only step; nothing is enabled by hand afterwards.
+
+        enable_boot runs after the readiness check and not before, so only a
+        release proven to render is made the one the panel starts at power-on.
+        """
+        result = self._install_for_real(
+            self._upload(self._bundle(name="renders"), "good.tar.gz")
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(
+            self.enable_marker.exists(),
+            "the release renders but was never made the boot default",
+        )
+        self.assertIn("enable-boot ok", result.stdout)
+
+    def test_a_release_that_never_renders_is_never_made_the_boot_default(self):
+        """The worst outcome is a panel that boots into a UI that cannot start."""
+        self._install_for_real(self._upload(self._bundle(name="renders"), "good.tar.gz"))
+        self.enable_marker.unlink()
+
+        self._install_for_real(
+            self._upload(self._bundle(name="never-renders"), "bad.tar.gz"),
+            renders=False,
+        )
+
+        self.assertFalse(
+            self.enable_marker.exists(),
+            "a release that never rendered was made the panel's boot default",
+        )
+
+    def test_a_first_install_that_never_renders_still_reports_completion(self):
+        """A fresh panel has nothing to roll back to, and must still say so.
+
+        rollback_to_previous returns 1 in that case, and under `set -e` a plain
+        call to it killed the script on the spot -- so the cleanup never ran and
+        the terminal install-complete line was never printed. Both host tools
+        parse STEP output; a deploy that stops mid-sentence reads as a crash
+        rather than as the reportable failure it is.
+        """
+        result = self._install_for_real(
+            self._upload(self._bundle(name="never-renders"), "first.tar.gz"),
+            renders=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("auto-rollback-start", result.stdout)
+        self.assertIn(
+            "STEP install-complete", result.stdout,
+            "the installer exited without a terminal STEP line",
+        )
+        self.assertIn("no previous release", result.stdout)
+
+    def test_a_first_install_that_never_renders_leaves_current_resolvable(self):
+        """A dangling `current` is worse than one naming a broken release.
+
+        The loader follows it either way, and only one of the two can be
+        inspected afterwards to find out what happened.
+        """
+        self._install_for_real(
+            self._upload(self._bundle(name="never-renders"), "first.tar.gz"),
+            renders=False,
+        )
+        current = self.root / "opt" / "hmi_apps" / "current"
+        if current.is_symlink():
+            self.assertTrue(
+                os.path.exists(os.path.realpath(current)),
+                "current points at a release that no longer exists",
+            )
+
+    def test_the_boot_default_failing_does_not_fail_the_deploy(self):
+        """The application is running; it simply will not survive a reboot.
+
+        Reporting that as a failed deploy would roll back a release that came
+        up perfectly well, which is a worse outcome than a warning.
+        """
+        result = self._install_for_real(
+            self._upload(self._bundle(name="renders"), "good.tar.gz"),
+            enable_ok=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("enable-boot fail", result.stdout)
 
     def test_activate_reaches_a_release_rollback_cannot(self):
         """Rollback goes one release back; the board keeps more than one.
