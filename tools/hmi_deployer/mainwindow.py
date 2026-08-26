@@ -10,7 +10,8 @@ import re
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QApplication,
     QSplitter, QGroupBox, QFormLayout, QLineEdit, QProgressBar,
-    QPlainTextEdit, QFileDialog, QMessageBox, QTabWidget, QLabel, QFrame
+    QPlainTextEdit, QFileDialog, QMessageBox, QTabWidget, QLabel, QFrame,
+    QScrollArea, QSizePolicy
 )
 from PySide6.QtCore import Qt, QSettings, QTimer, QSize
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
@@ -276,7 +277,7 @@ class MainWindow(QMainWindow):
     def __init__(self, exit_after_ms=0):
         super().__init__()
         self.setWindowTitle("EmbeddedDisplay Studio")
-        self.resize(1280, DEFAULT_WINDOW_HEIGHT)
+        self._open_at_a_size_that_fits()
         self.exit_after_ms = exit_after_ms
 
         self.settings = QSettings("MIL-HMI", "Deployer")
@@ -414,6 +415,46 @@ class MainWindow(QMainWindow):
         row.addStretch()
         return row
 
+    def _open_at_a_size_that_fits(self) -> None:
+        """Open at the preferred size, or the screen's, whichever is smaller.
+
+        The preferred size is a desktop-sized window. Display scaling shrinks
+        the desktop in the units Qt lays out in -- a 1920x1080 screen is
+        1280x720 at 150% -- so a fixed opening size puts part of the window,
+        and the controls on it, past the edge of the screen. Margins leave room
+        for the taskbar and the frame.
+        """
+        width, height = 1280, DEFAULT_WINDOW_HEIGHT
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            width = min(width, max(640, available.width() - 40))
+            height = min(height, max(480, available.height() - 60))
+        self.resize(width, height)
+
+    def _scrollable(self, page):
+        """Wrap a workspace page so it scrolls instead of growing the window.
+
+        A page's own minimum height was the window's minimum height: Display
+        Console alone asked for 998 px, which with the chrome forced a floor of
+        1214 px. On a 1920x1080 screen at 150% scaling the desktop is 1280x720
+        in the units Qt lays out in, so the window could not fit on the screen
+        at all and its contents were pushed over each other.
+
+        Scrolling is the honest answer at any scale: the cards keep their
+        readable size and the pane shows as many as fit.
+        """
+        area = QScrollArea()
+        area.setWidget(page)
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # The pages paint their own cards on the workspace ground; a viewport
+        # with its own background would draw a lighter rectangle behind them.
+        area.setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget "
+                           "{ background: transparent; }")
+        return area
+
     def _page_heading(self, title: str, icon_name: str) -> QHBoxLayout:
         """Build the title row that opens a workspace page.
 
@@ -501,11 +542,25 @@ class MainWindow(QMainWindow):
         self.lbl_title.setObjectName("productTitle")
         self.lbl_subtitle = QLabel("HMI DEPLOYMENT & VALIDATION CONSOLE")
         self.lbl_subtitle.setObjectName("productSubtitle")
+
+        # A QLabel never offers to be narrower than its text, and these two are
+        # the widest things in the command strip: together they put a 389 px
+        # floor under the window. On a 1920x1080 screen at 150% scaling the
+        # desktop is 1280x720 in the units Qt lays out in, so a floor built
+        # from text the window title already carries is not one worth keeping.
+        # Ignored lets them give way first; nothing else in the row can.
+        for label in (self.lbl_title, self.lbl_subtitle):
+            label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            label.setMinimumWidth(0)
         title_layout.addWidget(self.lbl_title)
         title_layout.addWidget(self.lbl_subtitle)
 
         self.lbl_connection = QLabel("●  DISCONNECTED")
         self.lbl_connection.setObjectName("connectionBadge")
+        # Reports state; it is not operated. It gives way before any control
+        # does, and its colour still reads when the word is clipped.
+        self.lbl_connection.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.lbl_connection.setMinimumWidth(0)
 
         # The target is operated from a compact command strip: Target IP ->
         # Port -> Connect -> live link state. This keeps the common path in
@@ -551,6 +606,9 @@ class MainWindow(QMainWindow):
         target_label.setObjectName("connectionFieldLabel")
         port_label = QLabel("PORT")
         port_label.setObjectName("connectionFieldLabel")
+        for caption in (target_label, port_label):
+            caption.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            caption.setMinimumWidth(0)
         top_bar.addWidget(target_label)
         top_bar.addWidget(self.inp_host)
         top_bar.addSpacing(8)
@@ -835,7 +893,7 @@ class MainWindow(QMainWindow):
         console_layout.addWidget(console_body, 1)
         right_layout.addWidget(console_box, 1)
 
-        self._right_tabs.addTab(deploy_page, "Display Console")
+        self._right_tabs.addTab(self._scrollable(deploy_page), "Display Console")
 
         # ── Tag Lab tab ────────────────────────────────────────────────────
         # Imported here (deferred) so the tab is only instantiated after
@@ -845,7 +903,7 @@ class MainWindow(QMainWindow):
         self._themed_page_icon(self.taglab_panel.title_icon, "activity")
         self.taglab_panel.sendingStarted.connect(self._on_taglab_start)
         self.taglab_panel.sendingStopped.connect(self._on_taglab_stop)
-        self._right_tabs.addTab(self.taglab_panel, "Tag Lab")
+        self._right_tabs.addTab(self._scrollable(self.taglab_panel), "Tag Lab")
 
         # ── Panel Logs tab ────────────────────────────────────────────────
         # The deploy console shows what this tool did. It says nothing about
@@ -911,7 +969,7 @@ class MainWindow(QMainWindow):
         logs_body_layout.addWidget(self.logs_view, 1)
         logs_outer.addWidget(logs_body, 1)
         logs_layout.addWidget(logs_box, 1)
-        self._right_tabs.addTab(logs_page, "Panel Logs")
+        self._right_tabs.addTab(self._scrollable(logs_page), "Panel Logs")
 
         # The profile uses the same cards, labels, and outline button treatment
         # as Deploy so target diagnostics feel like part of one application.
@@ -999,8 +1057,10 @@ class MainWindow(QMainWindow):
         resources_outer.addWidget(resources_body)
         profile_layout.addWidget(resources_box)
         profile_layout.addStretch()
-        self._profile_page = profile_page
-        self._right_tabs.addTab(profile_page, "System Profile")
+        # Identity is compared against whatever the tab holds, which is now
+        # the scroll area rather than the page itself.
+        self._profile_page = self._scrollable(profile_page)
+        self._right_tabs.addTab(self._profile_page, "System Profile")
         # Selecting the tab is the request for the measurement.
         self._right_tabs.currentChanged.connect(self._on_tab_changed)
 
@@ -1025,6 +1085,13 @@ class MainWindow(QMainWindow):
 
         self.lbl_version = QLabel(APP_VERSION)
         self.lbl_version.setObjectName("footerVersion")
+
+        # The footer is a signature. It put a 612 px floor under the window on
+        # its own, which is a lot of screen to reserve for something nobody
+        # clicks.
+        for chrome in (self.lbl_footer, self.lbl_version):
+            chrome.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            chrome.setMinimumWidth(0)
 
         footer.addWidget(self.lbl_footer)
         footer.addStretch()

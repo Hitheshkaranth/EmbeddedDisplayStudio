@@ -11,7 +11,7 @@ from PySide6.QtCore import (
     Qt, QUrl, QRectF, QPropertyAnimation, Property, QRect, Signal, QTimer, QEvent
 )
 from PySide6.QtGui import QPainter, QColor, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QApplication
 from PySide6.QtQuickWidgets import QQuickWidget
 from PySide6.QtQml import QQmlComponent, QQmlContext
 
@@ -65,6 +65,34 @@ PANEL_PRESETS = [
 MIN_PANEL_WIDTH = 720
 MIN_PANEL_HEIGHT = 520
 
+# Below this the bezel stops being a preview at all, at any scaling. The
+# adaptive floor never goes under it.
+ABSOLUTE_MIN_PANEL_WIDTH = 380
+ABSOLUTE_MIN_PANEL_HEIGHT = 280
+
+
+
+def panel_floor(available=None):
+    """Return the (width, height) floor for the preview on this screen.
+
+    Args:
+        available: the usable screen rectangle, or None to ask the application.
+
+    Returns:
+        The preferred floor, reduced to a share of the screen when the screen
+        is too small to grant it. Never returns less than a size the bezel can
+        still be read at.
+    """
+    if available is None:
+        screen = QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen is not None else None
+    if available is None:
+        return MIN_PANEL_WIDTH, MIN_PANEL_HEIGHT
+    return (
+        min(MIN_PANEL_WIDTH, max(ABSOLUTE_MIN_PANEL_WIDTH, int(available.width() * 0.45))),
+        min(MIN_PANEL_HEIGHT, max(ABSOLUTE_MIN_PANEL_HEIGHT, int(available.height() * 0.55))),
+    )
+
 
 class DevicePanel(QWidget):
     """
@@ -81,10 +109,18 @@ class DevicePanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Hard floor on the preview. The bezel is aspect-locked, so the widget
-        # can still be given more room than this, but never less - the splitter
-        # is prevented from squeezing the panel down to an unreadable sliver.
-        self.setMinimumSize(MIN_PANEL_WIDTH, MIN_PANEL_HEIGHT)
+        # Floor on the preview. The bezel is aspect-locked, so the widget can
+        # still be given more room than this, but never less - the splitter is
+        # prevented from squeezing the panel down to an unreadable sliver.
+        #
+        # Taken against the screen, not fixed. Display scaling shrinks the
+        # desktop in the units Qt lays out in: a 1920x1080 screen is 1280x720
+        # at 150%, and a floor of 720x520 there is most of the desktop, so the
+        # window could not fit and the pane was clipped instead. The floor
+        # exists to keep the preview judgeable; one that stops the window
+        # fitting the screen defeats itself. Everything is drawn larger at that
+        # scale anyway, so a smaller floor is the same physical size.
+        self.setMinimumSize(*panel_floor())
         self.setObjectName("devicePanel")
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAutoFillBackground(False)

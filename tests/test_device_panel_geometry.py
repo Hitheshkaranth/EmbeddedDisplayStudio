@@ -28,7 +28,12 @@ except ImportError:  # pragma: no cover - environment without PySide6
     HAVE_QT = False
 
 if HAVE_QT:
-    from tools.hmi_deployer.devicepanel import PANEL_PRESETS, DevicePanel
+    from PySide6.QtCore import QRect
+    from tools.hmi_deployer.devicepanel import (
+        ABSOLUTE_MIN_PANEL_HEIGHT, ABSOLUTE_MIN_PANEL_WIDTH,
+        MIN_PANEL_HEIGHT, MIN_PANEL_WIDTH, PANEL_PRESETS, DevicePanel,
+        panel_floor,
+    )
 
 
 @unittest.skipUnless(HAVE_QT, "PySide6 is required for the bezel preview")
@@ -43,6 +48,34 @@ class TestBezelFill(unittest.TestCase):
         panel = DevicePanel()
         panel.resize(width, height)
         return panel
+
+    def test_a_large_screen_gets_the_whole_floor(self):
+        """Nothing is given up where there is room for it."""
+        self.assertEqual(
+            panel_floor(QRect(0, 0, 1920, 1040)),
+            (MIN_PANEL_WIDTH, MIN_PANEL_HEIGHT),
+        )
+
+    def test_display_scaling_lowers_the_floor(self):
+        """Scaling shrinks the desktop in the units Qt lays out in.
+
+        A 1920x1080 screen is 1280x720 at 150%. A fixed 720x520 floor is most
+        of that, so the window could not fit on the screen it was opened on and
+        the pane was clipped rather than sized. Everything is drawn larger at
+        that scale, so a smaller floor is the same size to the eye.
+        """
+        for scale, width, height in (("125%", 1536, 824), ("150%", 1280, 680),
+                                     ("200%", 960, 500)):
+            with self.subTest(scale=scale):
+                w, h = panel_floor(QRect(0, 0, width, height))
+                self.assertLessEqual(w, width, "the floor is wider than the screen")
+                self.assertLessEqual(h, height, "the floor is taller than the screen")
+
+    def test_the_floor_never_goes_below_being_a_preview(self):
+        """A bezel can be small; it cannot be a sliver."""
+        w, h = panel_floor(QRect(0, 0, 400, 300))
+        self.assertGreaterEqual(w, ABSOLUTE_MIN_PANEL_WIDTH)
+        self.assertGreaterEqual(h, ABSOLUTE_MIN_PANEL_HEIGHT)
 
     def test_fill_is_twenty_percent_above_the_original(self):
         """The widened fill is exactly the 0.90 baseline plus 20%."""

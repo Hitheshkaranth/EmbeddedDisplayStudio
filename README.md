@@ -26,7 +26,7 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 **The project**
 
-[![Tests](https://img.shields.io/badge/tests-224%20passing-17c964?style=for-the-badge&labelColor=18181b)](tests/)
+[![Tests](https://img.shields.io/badge/tests-227%20passing-17c964?style=for-the-badge&labelColor=18181b)](tests/)
 [![CI](https://img.shields.io/badge/CI-Linux%20full%20suite-006fee?style=for-the-badge&logo=githubactions&logoColor=white&labelColor=18181b)](.github/workflows/ci.yml)
 [![No containers](https://img.shields.io/badge/containers-none-a1a1aa?style=for-the-badge&logo=docker&logoColor=white&labelColor=18181b)](#why-no-containers)
 [![License](https://img.shields.io/badge/license-MIT-006fee?style=for-the-badge&labelColor=18181b)](LICENSE)
@@ -634,7 +634,7 @@ tests/                protocol, integration and cross-validator suites
 ## Verification
 
 ```bash
-python tests/run_all.py          # 224 tests
+python tests/run_all.py          # 227 tests
 ```
 
 | Area | Coverage |
