@@ -176,6 +176,74 @@ jobs:
           fi
           gh release upload "$tag" dist/EmbeddedDisplayStudio.exe --clobber
 
+  qt5-preview:
+    name: Qt5 preview (PySide2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Two interpreters, deliberately. The bindings cannot coexist in one
+      # process -- that incompatibility is why the panel carries two runtimes
+      # -- so the Studio runs under PySide6 and hands a Qt5 bundle to a
+      # separate interpreter. PySide2 has no wheels for 3.12, which is the
+      # other reason this cannot simply be added to the suite above.
+      - name: Python for the Studio
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Python for the Qt5 bundle
+        id: qt5
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install PySide2 into the Qt5 interpreter
+        run: ${{ steps.qt5.outputs.python-path }} -m pip install PySide2==5.15.2.1
+
+      - name: Install the Studio's own dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             libegl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4             libxcb-keysyms1 libxcb-shape0 libgl1
+
+      # WHY THIS JOB EXISTS
+      #   A PySide2 bundle is the class of application this platform exists to
+      #   adopt. The shim wrapped QApplication.exec -- a name PySide6 has and
+      #   PySide2 does not -- so every Qt5 bundle failed before its entry point
+      #   was reached, and nothing here would have failed on the day it broke.
+      #   The regression test written for it skips wherever no PySide2
+      #   interpreter exists, which was everywhere this workflow runs.
+      - name: Preview a real Qt5 application
+        env:
+          QT_QPA_PLATFORM: offscreen
+          HMI_PREVIEW_PLATFORM: offscreen
+          HMI_PREVIEW_PYTHON_QT5: ${{ steps.qt5.outputs.python-path }}
+        run: |
+          python -m unittest -v             tests.test_native_preview.Qt5BundlePreview             tests.test_native_preview.ShimBindingCompatibility
+
+      # The test skips itself when it cannot find an interpreter, and a job
+      # that silently passes by skipping is the thing this workflow exists to
+      # prevent.
+      - name: Fail if the Qt5 test skipped
+        env:
+          QT_QPA_PLATFORM: offscreen
+          HMI_PREVIEW_PLATFORM: offscreen
+          HMI_PREVIEW_PYTHON_QT5: ${{ steps.qt5.outputs.python-path }}
+        run: |
+          python -m unittest tests.test_native_preview.Qt5BundlePreview 2>&1             | tee qt5.log
+          if grep -qi "skipped" qt5.log; then
+            echo "::error::the Qt5 preview test skipped; PySide2 was not usable"
+            exit 1
+          fi
+
   shellcheck:
     name: Shell scripts
     runs-on: ubuntu-latest

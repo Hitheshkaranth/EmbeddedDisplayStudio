@@ -680,6 +680,26 @@ QPushButton#connectButton:pressed {{
     background-color: {hex_to_rgba(p['brand'], 0.8)};
     color: {p['brandForeground']};
 }}
+/* The deploy button carries the same identity as Connect and for the same
+   reason: `primary` is brand blue in dark and near-black in light, so the
+   window's most important action changed colour with the theme while a
+   secondary control beside it did not. */
+QPushButton#primaryAction {{
+    background-color: {p['brand']};
+    color: {p['brandForeground']};
+}}
+QPushButton#primaryAction:hover {{
+    background-color: {hex_to_rgba(p['brand'], 0.9)};
+    color: {p['brandForeground']};
+}}
+QPushButton#primaryAction:pressed {{
+    background-color: {hex_to_rgba(p['brand'], 0.8)};
+    color: {p['brandForeground']};
+}}
+QPushButton#primaryAction:disabled {{
+    background-color: {hex_to_rgba(p['brand'], 0.5)};
+    color: {hex_to_rgba(p['brandForeground'], 0.6)};
+}}
 QPushButton#connectButton:disabled {{
     background-color: {hex_to_rgba(p['brand'], 0.5)};
     color: {hex_to_rgba(p['brandForeground'], 0.6)};

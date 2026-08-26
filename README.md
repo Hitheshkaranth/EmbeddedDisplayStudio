@@ -26,7 +26,7 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 **The project**
 
-[![Tests](https://img.shields.io/badge/tests-223%20passing-17c964?style=for-the-badge&labelColor=18181b)](tests/)
+[![Tests](https://img.shields.io/badge/tests-224%20passing-17c964?style=for-the-badge&labelColor=18181b)](tests/)
 [![CI](https://img.shields.io/badge/CI-Linux%20full%20suite-006fee?style=for-the-badge&logo=githubactions&logoColor=white&labelColor=18181b)](.github/workflows/ci.yml)
 [![No containers](https://img.shields.io/badge/containers-none-a1a1aa?style=for-the-badge&logo=docker&logoColor=white&labelColor=18181b)](#why-no-containers)
 [![License](https://img.shields.io/badge/license-MIT-006fee?style=for-the-badge&labelColor=18181b)](LICENSE)
@@ -39,8 +39,9 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 <img src="docs/assets/screenshot-studio.png" alt="The Studio window, connected to a panel" width="900" />
 
-<em>A customer's application running inside a live preview of the panel, beside
-the target it deploys to — composed here against a 10.1", 1280 x 800 panel.</em>
+<em>A customer's Qt5 application running inside a live preview of the panel,
+beside the target it deploys to — connected here to a 10.1", 1024 x 768 panel,
+which is the geometry the bezel composes it at.</em>
 
 </div>
 
@@ -113,7 +114,9 @@ is restored. Then, in the window:
 
 1. **Open Bundle…** — point it at your application's directory. The manifest is
    validated, or proposed and written for you if there is none, and the
-   application starts rendering in the bezel at the target's resolution.
+   application starts rendering in the bezel at the target's resolution. The
+   preview is live, not a picture: click it, drag it, type into it, and the
+   events reach the widget under your cursor in the real application.
 2. **Target IP** and **Port** in the command strip, with `root` and the private
    key that reaches the panel under **Target Details** on the Display Console
    tab. `ssh-copy-id root@<panel-ip>` once, if you have not.
@@ -123,11 +126,16 @@ is restored. Then, in the window:
 4. **Deploy to Target** — everything in [the pipeline below](#from-a-python-app-to-the-panel).
    The bar names the stage it is in, and the console carries the panel's own
    words.
-5. **Rollback** returns to the previous release; **Restart GUI** restarts the
-   current one.
-6. **System Profile** reports what the live release costs the board, and
-   **Tag Lab** injects tag values into the preview so the panel's behaviour can
-   be exercised without the hardware that would normally drive it.
+5. **Rollback** returns to the previous release. **Installed Releases** reaches
+   any of the others the board still holds: activating one re-points the panel
+   at it and makes the outgoing release the new rollback target, so it is
+   undoable in turn. **Restart GUI** restarts what is running.
+6. **Tag Lab** drives the application with signals instead of hardware — sine,
+   square, ramp, noise or a constant, per tag — so panel behaviour can be
+   exercised before the I/O it binds to exists. **Panel Logs** follows the
+   journal from `hmi-gui` and `hmi-hwd`, which is where a fault that appears an
+   hour after a successful deploy shows up. **System Profile** reports what the
+   live release costs the board.
 
 **From the command line**, for CI or a headless machine:
 
@@ -368,35 +376,39 @@ the panel, then push it.
 
 <div align="center">
 
-<img src="docs/assets/screenshot-packaging.png" alt="Dependency check before packaging" width="860" />
+<img src="docs/assets/screenshot-taglab.png" alt="Tag Lab injecting waveforms" width="880" />
 
-<em>Creation of the package from the input GUI: the application's imports are
-read, the panel is asked whether it can import each one, and the bar reports
-the stage.</em>
-
-<br /><br />
-
-<img src="docs/assets/screenshot-installing.png" alt="Installing on the hardware" width="860" />
-
-<em>Uploading the GUI onto the hardware: the installer's own steps arrive as
-the panel reaches them, down to the release it is switching to — ending with
-the application running on the panel and set as its boot default.</em>
+<em><strong>Tag Lab.</strong> Drive the application with signals instead of
+hardware: a sine on a bus voltage, a square wave on an interlock, a constant on
+a contactor. The panel's behaviour can be exercised long before the I/O it
+binds to exists.</em>
 
 <br /><br />
 
-<img src="docs/assets/screenshot-light.png" alt="Studio in light mode" width="860" />
+<img src="docs/assets/screenshot-logs.png" alt="Panel Logs following the journal" width="880" />
 
-<em>Light mode. The same window, the same deploy; the theme follows the
-operator, and the preview inside the bezel follows the theme with it.</em>
+<em><strong>Panel Logs.</strong> The journal from the panel's own services,
+followed live. Here it is doing the job it exists for: the hardware daemon is
+crash-looping on a missing standard-library module, and the restart counter is
+in the thousands — a fault no deploy would have reported, because the deploy
+succeeded.</em>
 
 <br /><br />
 
-<img src="docs/assets/screenshot-memory-profile.png" alt="Memory profile of the deployed release" width="860" />
+<img src="docs/assets/screenshot-memory-profile.png" alt="System Profile of the deployed release" width="880" />
 
-<em>What the release costs the panel, read from the SOM after it is deployed:
-the active package and where it landed, the application unpacked against its
-compressed size, how the root filesystem is divided between the OS image, the
+<em><strong>System Profile.</strong> What the release costs the board, read
+back over SSH: the active package and where it landed, the application against
+its compressed size, how the root filesystem divides between the OS image, the
 application and free space, and the RAM left over.</em>
+
+<br /><br />
+
+<img src="docs/assets/screenshot-light.png" alt="The Studio in light mode" width="880" />
+
+<em><strong>Light mode.</strong> The same window and the same panel; the theme
+follows the operator, and the preview inside the bezel follows the theme with
+it.</em>
 
 <br /><br />
 
@@ -505,7 +517,7 @@ tests/                protocol, integration and cross-validator suites
 ## Verification
 
 ```bash
-python tests/run_all.py          # 223 tests
+python tests/run_all.py          # 224 tests
 ```
 
 | Area | Coverage |

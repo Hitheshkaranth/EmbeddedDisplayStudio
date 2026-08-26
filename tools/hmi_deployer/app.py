@@ -6,6 +6,7 @@ Purpose: Entry point, argparse, theme bootstrap.
 import sys
 import argparse
 import logging
+import logging.handlers
 import os
 
 from PySide6.QtCore import Qt, QElapsedTimer, QTimer
@@ -26,6 +27,47 @@ LOGO_PATH = os.path.join(os.path.dirname(__file__), "resources", "logo.png")
 SPLASH_PATH = os.path.join(os.path.dirname(__file__), "resources", "splash.png")
 SPLASH_HOLD_MS = 5_000
 
+# Where the Studio keeps its own record.
+#
+# Everything it says went to stderr, which exists only if something happened
+# to be capturing it -- so a crash during ordinary use left nothing behind at
+# all, and the only trace of one was an exception code in the Windows event
+# log naming Qt rather than anything the tool was doing. A file the user can
+# attach to a bug report is worth more than any amount of guessing from it.
+LOG_DIR = os.path.join(
+    os.environ.get("LOCALAPPDATA")
+    or os.environ.get("XDG_STATE_HOME")
+    or os.path.expanduser("~/.local/state"),
+    "EmbeddedDisplayStudio", "logs",
+)
+
+#: Kept small: this is for reading the tail after something went wrong, not
+#: for archiving. Five files of a megabyte covers days of ordinary use.
+LOG_BYTES = 1_000_000
+LOG_BACKUPS = 4
+
+
+def _install_log_file():
+    """Add a rotating file to the root logger; return its path or "".
+
+    Never raises. A read-only or missing application-data directory is a
+    reason to run without a log, not a reason to refuse to start.
+    """
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        path = os.path.join(LOG_DIR, "studio.log")
+        handler = logging.handlers.RotatingFileHandler(
+            path, maxBytes=LOG_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8"
+        )
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+        ))
+        logging.getLogger().addHandler(handler)
+        return path
+    except OSError:
+        return ""
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="EmbeddedDisplay Studio - BYOA HMI deployment tool"
@@ -36,6 +78,16 @@ def main():
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+    log_path = _install_log_file()
+    if log_path:
+        # First line in the file names the build and the target, because a
+        # log that does not say which version produced it answers half a
+        # question.
+        from .mainwindow import APP_VERSION
+        logging.getLogger("EmbeddedDisplay Studio").info(
+            "Studio %s starting; log at %s", APP_VERSION, log_path
+        )
 
     app = QApplication(sys.argv)
 

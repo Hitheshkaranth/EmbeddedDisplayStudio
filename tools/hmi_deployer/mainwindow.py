@@ -698,6 +698,7 @@ class MainWindow(QMainWindow):
         deploy_body_layout.addWidget(self.val_label)
 
         self.btn_deploy = QPushButton("Deploy to Target")
+        self.btn_deploy.setObjectName("primaryAction")
         self.btn_deploy.setProperty("variant", "default")
         self.btn_deploy.setProperty("deploymentAction", True)
         self._themed_icon(self.btn_deploy, "upload")
@@ -2493,10 +2494,21 @@ class MainWindow(QMainWindow):
         self._render_logs()
 
     def _on_logs_finished(self, code: int) -> None:
-        """The stream ended: the panel dropped, or the user stopped it."""
-        if self._log_worker is not None:
+        """The stream ended: the panel dropped, or the user stopped it.
+
+        The thread is waited on before the reference is let go. run() emits
+        this as its last act, so it is microseconds from returning -- but
+        dropping the last reference inside that window destroys a QThread that
+        is still running, and Qt aborts the process when that happens. Every
+        other worker in this window is released the same way; this one was not,
+        which made it the one shaped like the crash the codebase already
+        documents.
+        """
+        worker = self._log_worker
+        if worker is not None:
             self._log_lines.append(f"[studio] journal stream ended (exit {code})")
             self._render_logs()
+            worker.wait(2000)
         self._log_worker = None
         self.btn_logs_follow.setText("Start Following")
 

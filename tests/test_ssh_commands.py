@@ -95,6 +95,15 @@ class TestPanelLogs(unittest.TestCase):
         """journalctl pages when it sees a terminal, and ssh gives it one."""
         self.assertIn("--no-pager", ssh.build_logs_command())
 
+    def test_the_hostname_is_not_repeated_on_every_line(self):
+        """The pane is narrow and the panel is already known.
+
+        journalctl prints the host on every record; in a column this width
+        that is thirty characters per line spent restating the thing the
+        operator selected in order to get here.
+        """
+        self.assertIn("--no-hostname", ssh.build_logs_command())
+
     def test_both_panel_services_are_followed(self):
         """A fault in either unit is what the operator is looking for."""
         command = ssh.build_logs_command()

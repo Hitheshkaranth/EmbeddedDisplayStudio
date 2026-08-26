@@ -644,7 +644,11 @@ def build_logs_command(lines: int = 200, follow: bool = True) -> str:
     """
     units = " ".join(f"-u {unit}" for unit in LOG_UNITS)
     follow_flag = " -f" if follow else ""
+    # --no-hostname because you already know which panel you connected to, and
+    # the name is repeated on every line: roughly thirty characters of the pane
+    # spent saying the same thing, in a view that is mostly long messages
+    # wrapping in a narrow column.
     return (
-        f"journalctl --no-pager -o short-iso {units} "
+        f"journalctl --no-pager --no-hostname -o short-iso {units} "
         f"-n {int(lines)}{follow_flag}"
     )
