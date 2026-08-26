@@ -52,6 +52,62 @@ class TestDisplayResolutionParsing(unittest.TestCase):
         self.assertIsNone(parse_display_resolution("HMI_DISPLAY=0x768"))
 
 
+class TestReleaseListing(unittest.TestCase):
+    """The release picker is only as good as its reading of `hmi-install list`."""
+
+    def test_markers_are_read_off_the_installer_listing(self):
+        """`[current]` and `[previous]` are the installer's stable vocabulary."""
+        self.assertEqual(
+            ssh.parse_release_line("  app-20260303T000000Z [current]"),
+            ssh.Release("app-20260303T000000Z", True, False),
+        )
+        self.assertEqual(
+            ssh.parse_release_line("  app-20260202T000000Z [previous]"),
+            ssh.Release("app-20260202T000000Z", False, True),
+        )
+        self.assertEqual(
+            ssh.parse_release_line("  app-20260101T000000Z"),
+            ssh.Release("app-20260101T000000Z", False, False),
+        )
+
+    def test_one_release_can_be_both(self):
+        """After a rollback the same release is current and previous."""
+        release = ssh.parse_release_line("  app-1 [current] [previous]")
+        self.assertTrue(release.is_current and release.is_previous)
+
+    def test_everything_that_is_not_a_release_row_is_ignored(self):
+        """STEP lines and installer logs share the stream with the listing."""
+        for line in ("STEP list ok ", "[hmi-install] INFO: cleaned upload", "", "no-indent"):
+            with self.subTest(line=line):
+                self.assertIsNone(ssh.parse_release_line(line))
+
+    def test_a_release_name_reaching_the_shell_is_quoted(self):
+        """The name comes back from the panel, but it is still shell input."""
+        command = ssh.build_activate_command("rel a; rm -rf /")
+        self.assertIn("'rel a; rm -rf /'", command)
+        self.assertTrue(command.startswith("hmi-install activate "))
+
+
+class TestPanelLogs(unittest.TestCase):
+    """A follow that hangs in a pager is indistinguishable from a dead panel."""
+
+    def test_the_journal_is_never_paged(self):
+        """journalctl pages when it sees a terminal, and ssh gives it one."""
+        self.assertIn("--no-pager", ssh.build_logs_command())
+
+    def test_both_panel_services_are_followed(self):
+        """A fault in either unit is what the operator is looking for."""
+        command = ssh.build_logs_command()
+        for unit in ssh.LOG_UNITS:
+            self.assertIn(f"-u {unit}", command)
+
+    def test_history_then_follow(self):
+        """Opening the tab on a quiet panel must not show an empty view."""
+        self.assertIn("-n 50", ssh.build_logs_command(lines=50))
+        self.assertTrue(ssh.build_logs_command(follow=True).endswith("-f"))
+        self.assertFalse(ssh.build_logs_command(follow=False).endswith("-f"))
+
+
 class TestMemoryProfileParsing(unittest.TestCase):
     """Validate streamed SOM memory-profile fields and their display formats."""
 

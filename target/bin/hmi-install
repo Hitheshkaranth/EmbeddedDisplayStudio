@@ -12,6 +12,7 @@
 # USAGE
 #   hmi-install install <bundle.tar.gz>
 #   hmi-install rollback
+#   hmi-install activate <release-name>
 #   hmi-install list
 #   hmi-install status
 #   hmi-install help
@@ -1056,6 +1057,70 @@ cmd_rollback() {
 }
 
 ##
+# cmd_activate -- the `activate` subcommand
+#
+# Makes an already-installed release current.  `rollback` reaches exactly
+# one release back; the board retains KEEP_RELEASES more than that, and
+# without this they can be listed but never returned to.  A regression
+# noticed two deploys late had no route home.
+#
+# The release must already exist under RELEASES_DIR: this never unpacks
+# anything, it only re-points `current`.  The outgoing release becomes
+# `previous`, so a mistaken activation is itself undoable by `rollback`.
+#
+# Args:   $1 -- release directory name (not a path)
+# Returns: 0
+# Exits:   2 on a missing or malformed name, 1 on an unknown release
+# Side effects: swaps the current symlink, rewrites previous, restarts the GUI
+##
+cmd_activate() {
+    if [ $# -lt 1 ] || [ -z "${1:-}" ]; then
+        die 2 "usage" "usage: hmi-install activate <release-name>"
+    fi
+    _release="$1"
+
+    # A name, never a path. The argument arrives over SSH, and a release that
+    # could contain a slash or `..` would make this a way to point `current`
+    # at anything on the filesystem.
+    case "$_release" in
+        */*|*..*|.*)
+            die 2 "activate" "invalid release name: ${_release}"
+            ;;
+    esac
+
+    _target="${RELEASES_DIR}/${_release}"
+    if [ ! -d "$_target" ]; then
+        die 1 "activate" "no such release: ${_release}"
+    fi
+
+    step "activate-start" "ok" "release=${_release}"
+
+    _current_real=""
+    if [ -L "$CURRENT_LINK" ]; then
+        _current_real=$("$PYTHON" -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$CURRENT_LINK")
+    fi
+    _target_real=$("$PYTHON" -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$_target")
+
+    if [ "$_current_real" = "$_target_real" ]; then
+        step "activate-complete" "ok" "${_release} is already current"
+        return 0
+    fi
+
+    # Recorded before the swap, exactly as an install does, so `rollback`
+    # returns to whatever was running before this activation.
+    save_previous
+    swap_current_symlink "$_target"
+
+    if [ "$HMI_SKIP_GUI_WAIT" != "1" ]; then
+        rm -f "$READY_FILE"
+        # 9>&- as in restart_gui: never let the GUI inherit the install lock.
+        eval "$HMI_RESTART_CMD" 9>&- || true
+    fi
+
+    step "activate-complete" "ok" "current -> ${_target}"
+}
+
+##
 # cmd_list -- the `list` subcommand
 #
 # Lists all installed releases, marking which is current and which is
@@ -1152,6 +1217,7 @@ hmi-install -- HMI Atomic Bundle Installer
 USAGE
   hmi-install install <bundle.tar.gz>   Install a new application bundle
   hmi-install rollback                  Roll back to the previous release
+  hmi-install activate <release>        Make an installed release current
   hmi-install list                      List installed releases
   hmi-install status                    Show current/previous release and GUI state
   hmi-install help                      Show this help
@@ -1209,6 +1275,7 @@ shift || true
 case "$_cmd" in
     install)    cmd_install "$@" ;;
     rollback)   cmd_rollback ;;
+    activate)   cmd_activate "$@" ;;
     list)       cmd_list ;;
     status)     cmd_status ;;
     help)       cmd_help ;;

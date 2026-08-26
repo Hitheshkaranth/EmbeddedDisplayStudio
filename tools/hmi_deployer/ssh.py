@@ -6,12 +6,13 @@ into bash, to support Windows natively. (CONTRACT section 6).
 """
 import os
 import posixpath
+import re
 import shlex
 import subprocess
 import logging
 import threading
 from PySide6.QtCore import QObject, Signal, QThread
-from typing import Optional, List, Sequence
+from typing import NamedTuple, Optional, List, Sequence
 
 logger = logging.getLogger("ssh")
 
@@ -555,3 +556,95 @@ def build_scp_cmd(host: str, user: str, port: int, key_path: str, src: str, dest
         args.extend(["-i", key_path])
     args.extend([src, f"{user}@{host}:{dest}"])
     return args
+
+
+# ---- Release history --------------------------------------------------------
+# `hmi-install list` prints one indented line per release, marking the active
+# one and the one rollback would reach:
+#
+#     rel-a
+#     rel-b [previous]
+#     rel-c [current]
+#
+# The markers are part of the installer's stable output; see target/README.md.
+_RELEASE_LINE_RE = re.compile(
+    r"^\s{2}(?P<name>\S+)(?P<markers>(?:\s+\[(?:current|previous)\])*)\s*$"
+)
+
+
+class Release(NamedTuple):
+    """One release retained on the panel."""
+
+    name: str
+    is_current: bool
+    is_previous: bool
+
+    def label(self) -> str:
+        """How the release reads in a picker."""
+        if self.is_current:
+            return f"{self.name}  — running now"
+        if self.is_previous:
+            return f"{self.name}  — rollback target"
+        return self.name
+
+
+def parse_release_line(line: str):
+    """Parse one line of `hmi-install list`, or None if it is not one.
+
+    STEP lines, log output and blank lines all arrive on the same stream, so
+    anything that is not a release row has to be ignored rather than guessed
+    at.
+    """
+    if not line or line.startswith("STEP ") or line.lstrip().startswith("["):
+        return None
+    match = _RELEASE_LINE_RE.match(line.rstrip("\r\n"))
+    if match is None:
+        return None
+    markers = match.group("markers")
+    return Release(
+        name=match.group("name"),
+        is_current="[current]" in markers,
+        is_previous="[previous]" in markers,
+    )
+
+
+def build_release_list_command() -> str:
+    """Remote command listing the releases the panel still holds."""
+    return "hmi-install list"
+
+
+def build_activate_command(release: str) -> str:
+    """Remote command making an already-installed release current.
+
+    The name is quoted rather than interpolated: it comes from the panel's own
+    listing, but it reaches a shell, and a release directory is only ever
+    validated on the far side.
+    """
+    return f"hmi-install activate {shlex.quote(release)}"
+
+
+# ---- Panel logs -------------------------------------------------------------
+# The units that make up a running panel: the loader that hosts the customer's
+# application, and the daemon that owns the hardware. A fault in either is
+# something the operator needs to see, and neither writes anywhere but the
+# journal.
+LOG_UNITS = ("hmi-gui", "hmi-hwd")
+
+
+def build_logs_command(lines: int = 200, follow: bool = True) -> str:
+    """Remote command tailing the panel's service journals.
+
+    Args:
+        lines: how much history to fetch before following.
+        follow: keep the connection open and stream new entries.
+
+    `--no-pager` matters: journalctl pipes into less when it thinks it has a
+    terminal, and ssh gives it one, which would hang the reader forever
+    waiting for output that is sitting in a pager.
+    """
+    units = " ".join(f"-u {unit}" for unit in LOG_UNITS)
+    follow_flag = " -f" if follow else ""
+    return (
+        f"journalctl --no-pager -o short-iso {units} "
+        f"-n {int(lines)}{follow_flag}"
+    )

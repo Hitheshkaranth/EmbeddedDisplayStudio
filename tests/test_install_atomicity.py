@@ -124,7 +124,76 @@ class InstallerAtomicity(unittest.TestCase):
             if p.is_dir() and not p.name.startswith(".stage.")
         )
 
+    def _run(self, *args):
+        """Run any hmi-install subcommand against the throwaway root."""
+        env = dict(
+            os.environ,
+            HMI_ROOT=str(self.root),
+            HMI_RESTART_CMD="true",
+            HMI_SKIP_GUI_WAIT="1",
+        )
+        return subprocess.run(
+            ["bash", str(INSTALLER), *args],
+            capture_output=True, text=True, env=env,
+        )
+
     # -- tests -----------------------------------------------------------
+
+    def test_activate_reaches_a_release_rollback_cannot(self):
+        """Rollback goes one release back; the board keeps more than one.
+
+        A regression noticed two deploys late could be listed and never
+        returned to, which is the whole reason retention exists.
+        """
+        first = self._install(self._upload(self._bundle(name="app-one"), "a.tar.gz"))
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        oldest = os.path.basename(self._current_target())
+
+        self._install(self._upload(self._bundle(name="app-two"), "b.tar.gz"))
+        self._install(self._upload(self._bundle(name="app-three"), "c.tar.gz"))
+        newest = os.path.basename(self._current_target())
+        self.assertNotEqual(newest, oldest)
+
+        result = self._run("activate", oldest)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(os.path.basename(self._current_target()), oldest)
+
+    def test_activation_is_itself_undoable(self):
+        """The outgoing release becomes previous, so rollback returns to it."""
+        self._install(self._upload(self._bundle(name="app-one"), "a.tar.gz"))
+        oldest = os.path.basename(self._current_target())
+        self._install(self._upload(self._bundle(name="app-two"), "b.tar.gz"))
+        was_running = os.path.basename(self._current_target())
+
+        self._run("activate", oldest)
+        self.assertEqual(os.path.basename(self._current_target()), oldest)
+
+        rolled = self._run("rollback")
+        self.assertEqual(rolled.returncode, 0, rolled.stdout + rolled.stderr)
+        self.assertEqual(os.path.basename(self._current_target()), was_running)
+
+    def test_activate_refuses_a_name_that_is_a_path(self):
+        """The name crosses SSH and is joined onto a directory.
+
+        Anything with a separator or a parent reference would make this a way
+        to point `current` at somewhere else on the filesystem entirely.
+        """
+        self._install(self._upload(self._bundle(name="app-one"), "a.tar.gz"))
+        running = self._current_target()
+
+        for hostile in ("../../etc", "a/b", "..", ".hidden"):
+            with self.subTest(name=hostile):
+                result = self._run("activate", hostile)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertEqual(self._current_target(), running)
+
+    def test_activate_refuses_a_release_that_is_not_installed(self):
+        """A stale picker must not be able to break the running panel."""
+        self._install(self._upload(self._bundle(name="app-one"), "a.tar.gz"))
+        running = self._current_target()
+        result = self._run("activate", "never-installed")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(self._current_target(), running)
 
     def test_same_version_twice_keeps_the_running_release(self):
         """

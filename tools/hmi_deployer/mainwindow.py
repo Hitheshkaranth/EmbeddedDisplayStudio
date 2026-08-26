@@ -21,8 +21,10 @@ from .deployer import (
 )
 from .telemetry import TelemetrySimulator, TelemetryRelay
 from .ssh import (
-    SshWorker, UploadWorker, build_ssh_cmd, build_upload_cmd,
-    build_dep_check_command, build_dep_install_command,
+    LOG_UNITS, SshWorker, UploadWorker, build_activate_command,
+    build_dep_check_command, build_dep_install_command, build_logs_command,
+    build_release_list_command, build_ssh_cmd, build_upload_cmd,
+    parse_release_line,
 )
 from .scaffold import create_bundle
 from .taglab import TagLabSender
@@ -177,6 +179,18 @@ SSH_TEST_TIMEOUT_S = 60
 # was really a deadline.
 MEMORY_PROFILE_TIMEOUT_S = 420
 
+# A journal follow has no natural end: it runs until the user stops it or
+# the panel goes away. The watchdog is a backstop against a session that has
+# silently died, not an expectation of how long anyone watches logs.
+LOG_FOLLOW_TIMEOUT_S = 24 * 60 * 60
+
+# How much journal history to fetch before following.
+LOG_HISTORY_LINES = 200
+
+# Lines kept in memory. A panel that logs steadily for a day would grow the
+# view without bound; this keeps the most recent window instead.
+LOG_BUFFER_LINES = 5000
+
 # Fallback for callers that do not say what they are running.
 DEFAULT_SSH_TIMEOUT_S = 60
 
@@ -286,6 +300,10 @@ class MainWindow(QMainWindow):
         self._profile_values = {}
         self._profile_bars = {}
         self._profile_bar_values = {}
+        # Releases the panel reported, and the live journal follow.
+        self._releases = []
+        self._log_worker = None
+        self._log_lines = []
         self.ssh_worker = None
         # Every SSH/SCP worker still running. A deploy chains four of them, and
         # a QThread destroyed while running takes the process down with it.
@@ -747,6 +765,57 @@ class MainWindow(QMainWindow):
 
         right_layout.addWidget(deploy_box)
 
+        # Installed releases.
+        #
+        # The panel retains KEEP_RELEASES beyond current and previous, but
+        # Rollback reaches exactly one back. A regression noticed two deploys
+        # late could be listed and never returned to.
+        releases_box = QGroupBox()
+        releases_box.setProperty("class", "consoleSectionPanel")
+        releases_layout = QVBoxLayout(releases_box)
+        releases_layout.setContentsMargins(14, 14, 14, 14)
+        releases_layout.setSpacing(8)
+        releases_layout.addLayout(self._section_heading("Installed Releases", "history"))
+        releases_body = QFrame()
+        releases_body.setProperty("class", "consoleSectionBody")
+        releases_body_layout = QVBoxLayout(releases_body)
+        releases_body_layout.setContentsMargins(14, 12, 14, 12)
+        releases_body_layout.setSpacing(8)
+
+        self.cmb_releases = QComboBox()
+        self.cmb_releases.setAccessibleName("Installed releases on the panel")
+        self.cmb_releases.setToolTip(
+            "Releases the panel still holds. Activating one re-points the "
+            "panel at it and restarts the GUI; the release running now becomes "
+            "the rollback target."
+        )
+        self.cmb_releases.addItem("Connect to list releases")
+        self.cmb_releases.setEnabled(False)
+        releases_body_layout.addWidget(self.cmb_releases)
+
+        releases_actions = QHBoxLayout()
+        releases_actions.setSpacing(8)
+        self.btn_refresh_releases = QPushButton("Refresh")
+        self.btn_refresh_releases.setProperty("variant", "outline")
+        self.btn_refresh_releases.setProperty("deploymentAction", True)
+        self._themed_icon(self.btn_refresh_releases, "refresh")
+        self.btn_refresh_releases.clicked.connect(self.refresh_releases)
+        self.btn_refresh_releases.setFixedHeight(28)
+
+        self.btn_activate = QPushButton("Activate Release")
+        self.btn_activate.setProperty("variant", "secondary")
+        self.btn_activate.setProperty("deploymentAction", True)
+        self._themed_icon(self.btn_activate, "upload")
+        self.btn_activate.clicked.connect(self.on_activate_release)
+        self.btn_activate.setFixedHeight(28)
+        self.btn_activate.setEnabled(False)
+
+        releases_actions.addWidget(self.btn_refresh_releases)
+        releases_actions.addWidget(self.btn_activate)
+        releases_body_layout.addLayout(releases_actions)
+        releases_layout.addWidget(releases_body)
+        right_layout.addWidget(releases_box)
+
         # Console Output
         self.console = QPlainTextEdit()
         self.console.setReadOnly(True)
@@ -776,6 +845,72 @@ class MainWindow(QMainWindow):
         self.taglab_panel.sendingStarted.connect(self._on_taglab_start)
         self.taglab_panel.sendingStopped.connect(self._on_taglab_stop)
         self._right_tabs.addTab(self.taglab_panel, "Tag Lab")
+
+        # ── Panel Logs tab ────────────────────────────────────────────────
+        # The deploy console shows what this tool did. It says nothing about
+        # what the panel does afterwards, and an application that dies an hour
+        # later leaves no trace here -- the journal on the board is the only
+        # record, and until now reading it meant leaving the window for a
+        # terminal.
+        logs_page = QWidget()
+        logs_layout = QVBoxLayout(logs_page)
+        logs_layout.setContentsMargins(12, 12, 12, 12)
+        logs_layout.setSpacing(12)
+        logs_layout.addLayout(self._page_heading("Panel Logs", "terminal-2"))
+        logs_subtitle = QLabel(
+            "Live journal from the panel's own services: the loader hosting "
+            "your application, and the hardware daemon."
+        )
+        logs_subtitle.setObjectName("consolePageSubtitle")
+        logs_subtitle.setWordWrap(True)
+        logs_layout.addWidget(logs_subtitle)
+
+        logs_box = QGroupBox()
+        logs_box.setProperty("class", "consoleSectionPanel")
+        logs_outer = QVBoxLayout(logs_box)
+        logs_outer.setContentsMargins(14, 14, 14, 14)
+        logs_outer.setSpacing(8)
+        logs_outer.addLayout(self._section_heading("Journal", "terminal-2"))
+
+        logs_controls = QHBoxLayout()
+        logs_controls.setSpacing(8)
+        self.btn_logs_follow = QPushButton("Start Following")
+        self.btn_logs_follow.setProperty("variant", "default")
+        self.btn_logs_follow.setProperty("deploymentAction", True)
+        self._themed_icon(self.btn_logs_follow, "activity")
+        self.btn_logs_follow.setFixedHeight(28)
+        self.btn_logs_follow.clicked.connect(self.on_toggle_logs)
+
+        self.inp_log_filter = QLineEdit()
+        self.inp_log_filter.setPlaceholderText("Filter (substring, case-insensitive)")
+        self.inp_log_filter.setObjectName("targetDetailInput")
+        self.inp_log_filter.textChanged.connect(self._render_logs)
+
+        self.btn_logs_clear = QPushButton("Clear")
+        self.btn_logs_clear.setProperty("variant", "outline")
+        self.btn_logs_clear.setProperty("deploymentAction", True)
+        self.btn_logs_clear.setFixedHeight(28)
+        self.btn_logs_clear.clicked.connect(self.on_clear_logs)
+
+        logs_controls.addWidget(self.btn_logs_follow)
+        logs_controls.addWidget(self.inp_log_filter, 1)
+        logs_controls.addWidget(self.btn_logs_clear)
+        logs_outer.addLayout(logs_controls)
+
+        logs_body = QFrame()
+        logs_body.setProperty("class", "consoleSectionBody")
+        logs_body_layout = QVBoxLayout(logs_body)
+        logs_body_layout.setContentsMargins(12, 12, 12, 12)
+        self.logs_view = QPlainTextEdit()
+        self.logs_view.setReadOnly(True)
+        self.logs_view.setMinimumHeight(200)
+        self.logs_view.setPlaceholderText(
+            "Not following. Connect to the panel and press Start Following."
+        )
+        logs_body_layout.addWidget(self.logs_view, 1)
+        logs_outer.addWidget(logs_body, 1)
+        logs_layout.addWidget(logs_box, 1)
+        self._right_tabs.addTab(logs_page, "Panel Logs")
 
         # The profile uses the same cards, labels, and outline button treatment
         # as Deploy so target diagnostics feel like part of one application.
@@ -868,7 +1003,7 @@ class MainWindow(QMainWindow):
         # Selecting the tab is the request for the measurement.
         self._right_tabs.currentChanged.connect(self._on_tab_changed)
 
-        tab_icons = ("device-desktop", "activity", "cpu")
+        tab_icons = ("device-desktop", "activity", "terminal-2", "cpu")
         for index in range(self._right_tabs.count()):
             self.primary_nav.addTab(self._right_tabs.tabText(index))
             self._themed_tab_icon(self.primary_nav, index, tab_icons[index])
@@ -2297,6 +2432,195 @@ class MainWindow(QMainWindow):
         # Rollback restarts the GUI on its way out, so it is not instant.
         self.run_ssh_worker(cmd, "Rollback", timeout_s=INSTALL_TIMEOUT_S)
 
+    # ------------------------------------------------------------------
+    # Panel logs
+    # ------------------------------------------------------------------
+
+    def on_toggle_logs(self) -> None:
+        """Start or stop following the panel's journal."""
+        if self._log_worker is not None:
+            self.stop_logs()
+            return
+
+        self.save_settings()
+        self._log_lines = []
+        self.logs_view.setPlaceholderText("Waiting for the panel...")
+        self._render_logs()
+
+        cmd = build_ssh_cmd(
+            self.inp_host.text().strip(), self.inp_user.text().strip(),
+            self.ssh_port(), self.inp_key.text().strip(),
+            build_logs_command(LOG_HISTORY_LINES, follow=True),
+        )
+        # A follow has no natural end, so the ordinary watchdog would kill it
+        # mid-stream. SshWorker is used directly rather than through
+        # run_ssh_worker: this must not disable the deploy button, must not
+        # touch the link badge, and must not write the journal into the deploy
+        # console.
+        worker = SshWorker(cmd, timeout_s=LOG_FOLLOW_TIMEOUT_S, parent=self)
+        self._log_worker = worker
+        worker.outputLine.connect(self._on_log_line)
+        worker.error.connect(self._on_log_error)
+        worker.finished.connect(self._on_logs_finished)
+        worker.start()
+
+        self.btn_logs_follow.setText("Stop Following")
+        self.log("Following the panel's journal.")
+
+    def stop_logs(self) -> None:
+        """Cancel the follow, if one is running."""
+        worker = self._log_worker
+        if worker is None:
+            return
+        self._log_worker = None
+        try:
+            worker.cancel()
+            worker.wait(2000)
+        except RuntimeError:
+            pass
+        self.btn_logs_follow.setText("Start Following")
+
+    def _on_log_line(self, line: str) -> None:
+        """Keep one journal line, bounded so a long follow cannot grow forever."""
+        self._log_lines.append(line)
+        if len(self._log_lines) > LOG_BUFFER_LINES:
+            del self._log_lines[: len(self._log_lines) - LOG_BUFFER_LINES]
+        self._render_logs()
+
+    def _on_log_error(self, message: str) -> None:
+        """Report a follow that could not run, in the log view itself."""
+        self._log_lines.append(f"[studio] {message}")
+        self._render_logs()
+
+    def _on_logs_finished(self, code: int) -> None:
+        """The stream ended: the panel dropped, or the user stopped it."""
+        if self._log_worker is not None:
+            self._log_lines.append(f"[studio] journal stream ended (exit {code})")
+            self._render_logs()
+        self._log_worker = None
+        self.btn_logs_follow.setText("Start Following")
+
+    def on_clear_logs(self) -> None:
+        """Empty the view without stopping the follow."""
+        self._log_lines = []
+        self._render_logs()
+
+    def _render_logs(self) -> None:
+        """Paint the buffer through the filter, staying pinned to the tail.
+
+        Rewriting the whole document keeps filtering and following the same
+        operation: typing a filter re-reads history rather than only applying
+        to lines that arrive next.
+        """
+        needle = self.inp_log_filter.text().strip().lower()
+        lines = (
+            [line for line in self._log_lines if needle in line.lower()]
+            if needle else self._log_lines
+        )
+        scrollbar = self.logs_view.verticalScrollBar()
+        at_tail = scrollbar.value() >= scrollbar.maximum() - 4
+        self.logs_view.setPlainText("\n".join(lines))
+        if at_tail:
+            scrollbar.setValue(scrollbar.maximum())
+
+    # ------------------------------------------------------------------
+    # Installed releases
+    # ------------------------------------------------------------------
+
+    def refresh_releases(self) -> None:
+        """Ask the panel which releases it still holds."""
+        self.save_settings()
+        self._releases = []
+        self.btn_refresh_releases.setEnabled(False)
+        self.log("Listing releases on the panel...")
+        cmd = build_ssh_cmd(
+            self.inp_host.text().strip(), self.inp_user.text().strip(),
+            self.ssh_port(), self.inp_key.text().strip(),
+            build_release_list_command(),
+        )
+
+        def on_finished(code):
+            self.btn_refresh_releases.setEnabled(True)
+            self._render_releases(code == 0)
+
+        self.run_ssh_worker(
+            cmd, "List Releases", callback=on_finished,
+            timeout_s=SSH_SHORT_TIMEOUT_S,
+            line_hook=self._record_release_line,
+        )
+
+    def _record_release_line(self, line: str) -> None:
+        """Collect one release row from the panel's listing."""
+        release = parse_release_line(line)
+        if release is not None:
+            self._releases.append(release)
+
+    def _render_releases(self, ok: bool) -> None:
+        """Put the panel's releases in the picker, newest first.
+
+        The listing arrives in directory order; release names carry a UTC
+        timestamp suffix, so sorting by name descending is newest first and
+        puts the release most likely to be wanted at the top.
+        """
+        self.cmb_releases.clear()
+        if not ok or not self._releases:
+            self.cmb_releases.addItem(
+                "No releases listed" if ok else "Could not list releases"
+            )
+            self.cmb_releases.setEnabled(False)
+            self.btn_activate.setEnabled(False)
+            return
+
+        for release in sorted(self._releases, key=lambda r: r.name, reverse=True):
+            self.cmb_releases.addItem(release.label(), release.name)
+            if release.is_current:
+                self.cmb_releases.setCurrentIndex(self.cmb_releases.count() - 1)
+
+        self.cmb_releases.setEnabled(True)
+        self.btn_activate.setEnabled(True)
+        self.log(f"Panel holds {len(self._releases)} release(s).")
+
+    def on_activate_release(self) -> None:
+        """Re-point the panel at the selected release."""
+        release = self.cmb_releases.currentData()
+        if not release:
+            return
+
+        current = next((r.name for r in self._releases if r.is_current), "")
+        if release == current:
+            self.log(f"{release} is already running on the panel.")
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "Activate release?",
+            f"Point the panel at this release and restart the GUI?\n\n"
+            f"  {release}\n\n"
+            f"The release running now ({current or 'none'}) becomes the "
+            f"rollback target, so this is undoable with Rollback.\n\n"
+            f"Unlike a deploy, an activated release is not health-checked: it "
+            f"is not rolled back automatically if it fails to render.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            self.log("Activation cancelled.")
+            return
+
+        self.save_settings()
+        self.log(f"Activating {release}...")
+        cmd = build_ssh_cmd(
+            self.inp_host.text().strip(), self.inp_user.text().strip(),
+            self.ssh_port(), self.inp_key.text().strip(),
+            build_activate_command(release),
+        )
+        # Activation restarts the GUI on its way out, as rollback does.
+        self.run_ssh_worker(
+            cmd, "Activate Release",
+            callback=lambda code: self.refresh_releases() if code == 0 else None,
+            timeout_s=INSTALL_TIMEOUT_S,
+        )
+
     def on_restart(self):
         self.save_settings()
         self.log("Restarting GUI...")
@@ -2320,6 +2644,12 @@ class MainWindow(QMainWindow):
         Never raises: this runs on the way out, and a failure here would only
         replace a clean exit with a crash.
         """
+        # The journal follow is a live ssh session like any other, and it is
+        # the one most likely to still be open: it runs until stopped.
+        try:
+            self.stop_logs()
+        except Exception:
+            pass
         try:
             self._stop_all_senders()
         except Exception:
