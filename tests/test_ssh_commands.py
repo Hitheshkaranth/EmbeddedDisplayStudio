@@ -168,5 +168,24 @@ class TestMemoryProfileParsing(unittest.TestCase):
         )
 
 
+class TestSignedExitCode(unittest.TestCase):
+    """Keep Windows exit codes inside the range of the finished(int) signal."""
+
+    def test_unsigned_windows_failure_becomes_negative(self):
+        """0xFFFFFFFF is the -1 the process meant, not an out-of-range value."""
+        self.assertEqual(ssh._signed_exit_code(0xFFFFFFFF), -1)
+        self.assertEqual(ssh._signed_exit_code(0xC000013A), -1073741510)
+
+    def test_ordinary_codes_pass_through(self):
+        """Success and small failure codes are already signed 32-bit."""
+        self.assertEqual(ssh._signed_exit_code(0), 0)
+        self.assertEqual(ssh._signed_exit_code(255), 255)
+        self.assertEqual(ssh._signed_exit_code(0x7FFFFFFF), 0x7FFFFFFF)
+
+    def test_unreaped_process_reports_failure(self):
+        """A missing code stands for the failure the callers already emit."""
+        self.assertEqual(ssh._signed_exit_code(None), -1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -42,6 +42,29 @@ def _openssh_executable(name: str) -> str:
     return name
 
 
+def _signed_exit_code(code: Optional[int]) -> int:
+    """Return a process exit code that fits the ``finished(int)`` signal.
+
+    Windows reports exit codes as an unsigned DWORD, so a process that exits
+    with -1 arrives as 4294967295. Qt's ``int`` argument is signed 32-bit, and
+    Shiboken drops the value with an overflow warning rather than converting
+    it, leaving the receiver with a code that never matches the real failure.
+    Reinterpret the high half of the range as the negative value it stands for.
+
+    Args:
+        code: Exit code from :attr:`subprocess.Popen.returncode`, or None when
+            the process has not been reaped.
+
+    Returns:
+        The same code as a signed 32-bit integer; -1 when no code is available.
+    """
+    if code is None:
+        return -1
+    if code > 0x7FFFFFFF:
+        return code - 0x100000000
+    return code
+
+
 # One job object for the whole process, created on first use. 0 records that
 # the mechanism was tried and is unavailable, so it is not retried per command.
 _kill_job = None
@@ -225,7 +248,7 @@ class SshWorker(QThread):
                 self.error.emit(f"Command timed out after {self.timeout_s}s")
                 self.finished.emit(-1)
             else:
-                self.finished.emit(self._proc.returncode if not self._cancelled else -1)
+                self.finished.emit(_signed_exit_code(self._proc.returncode) if not self._cancelled else -1)
         except Exception as e:
             self.error.emit(str(e))
             self.finished.emit(-1)
@@ -375,7 +398,7 @@ class UploadWorker(QThread):
                 self.error.emit(f"Upload timed out after {self.timeout_s}s")
                 self.finished.emit(-1)
             else:
-                self.finished.emit(self._proc.returncode if not self._cancelled else -1)
+                self.finished.emit(_signed_exit_code(self._proc.returncode) if not self._cancelled else -1)
         except Exception as e:
             self.error.emit(str(e))
             self.finished.emit(-1)
