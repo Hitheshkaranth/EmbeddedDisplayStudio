@@ -16,6 +16,7 @@ from PySide6.QtQuickWidgets import QQuickWidget
 from PySide6.QtQml import QQmlComponent, QQmlContext
 
 from .native_preview import NativePreview
+from .bezel import BEZEL_MARGIN_PCT, bezel_logo, paint_device_bezel
 
 # Add repo's gui/ to sys.path to import tagengine
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -134,10 +135,7 @@ class DevicePanel(QWidget):
         self.target_inches = 10.1
         # The same FlyVi wordmark used on the reference hardware bezel. It is
         # painted on the lower-right bezel margin, never over the active LCD.
-        logo_path = os.path.join(
-            os.path.dirname(__file__), "resources", "flyvi_logo_full.png"
-        )
-        self._bezel_logo = QPixmap(logo_path)
+        self._bezel_logo = bezel_logo()
         
         # LED state: 0 = idle/disconnected, 1 = link up, 2 = deploying, 3 = fault
         self._led_state = 0
@@ -591,7 +589,7 @@ class DevicePanel(QWidget):
 
     # Bezel margin as a fraction of bezel width (CONTRACT section 10:
     # "uniform bezel margin ~9.5% of bezel width").
-    BEZEL_MARGIN_PCT = 0.095
+    BEZEL_MARGIN_PCT = BEZEL_MARGIN_PCT
 
     # The largest panel the tool offers. The preview scales every other panel
     # against this one, so relative physical size is visible at a glance.
@@ -712,53 +710,9 @@ class DevicePanel(QWidget):
             return
         bx, by, bw, bh = rect
         
-        # Soft drop shadow (simplified)
-        shadow_rect = QRectF(bx + 4, by + 4, bw, bh)
-        shadow_path = QPainterPath()
-        shadow_path.addRoundedRect(shadow_rect, 28, 28)
-        painter.fillPath(shadow_path, QColor(0, 0, 0, 40))
-        
-        # Bezel: near-black (#050505), radius ~28
         bezel_rect = QRectF(bx, by, bw, bh)
-        bezel_path = QPainterPath()
-        bezel_path.addRoundedRect(bezel_rect, 28, 28)
-        painter.fillPath(bezel_path, QColor("#050505"))
-
-        # The same inset defines both the active LCD opening and the hardware
-        # logo location in the lower bezel margin.
         margin = bw * self.BEZEL_MARGIN_PCT
-
-        # Brand mark on the lower-right bezel, positioned within the physical
-        # margin below the display just as it is on the deployed hardware.
-        if not self._bezel_logo.isNull():
-            # Keep the whole mark inside the lower bezel margin, including on
-            # the smallest selectable panel. This is deliberately tied to the
-            # available margin rather than an absolute preview size.
-            logo_height = int(max(14, min(46, margin * 0.52)))
-            logo = self._bezel_logo.scaledToHeight(
-                logo_height, Qt.SmoothTransformation
-            )
-            logo_x = int(bx + bw - margin * 0.56 - logo.width())
-            screen_bottom = by + bh - margin
-            logo_y = int(screen_bottom + (margin - logo.height()) / 2)
-            painter.drawPixmap(logo_x, logo_y, logo)
-
-        # LED: top-left corner
-        # ~10px diameter, position it inside the bezel margin
-        led_radius = 5.0
-        # Place roughly in the center of the top margin area (x: left margin / 2, y: top margin / 2)
-        led_cx = bx + margin / 2
-        led_cy = by + margin / 2
-        
-        led_colors = [
-            QColor("#1a3d7c"), # idle
-            QColor("#3b82f6"), # link up (brighter blue)
-            QColor("#f59e0b"), # deploying (amber)
-            QColor("#ef4444")  # fault (red)
-        ]
-        
-        painter.setBrush(led_colors[self._led_state])
-        painter.setPen(Qt.NoPen)
-        painter.drawEllipse(QPointF(led_cx, led_cy), led_radius, led_radius)
+        paint_device_bezel(painter, bezel_rect, margin,
+                            self._bezel_logo, self._led_state)
 
 from PySide6.QtCore import QPointF

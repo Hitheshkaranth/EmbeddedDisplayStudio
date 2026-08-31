@@ -506,6 +506,8 @@ class MainWindow(QMainWindow):
         # apply() is what tells the icon renderer which palette is on screen,
         # so the re-render has to follow it, not precede it.
         self._restyle_icons()
+        if hasattr(self, "designer_workspace"):
+            self.designer_workspace.apply_theme(self.theme)
         logging.getLogger("EmbeddedDisplay Studio").info(
             "theme=%s stylesheet=%d chars", self.theme, len(app.styleSheet() or "")
         )
@@ -638,6 +640,7 @@ class MainWindow(QMainWindow):
 
         # Splitter
         splitter = QSplitter(Qt.Horizontal)
+        self._workspace_splitter = splitter
         main_layout.addWidget(splitter, 1)
 
         # Left: Device Panel, with a caption strip directly beneath the bezel
@@ -645,6 +648,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QComboBox
 
         panel_wrap = QWidget()
+        self._preview_panel_wrap = panel_wrap
         panel_wrap.setObjectName("previewPanel")
         panel_layout = QVBoxLayout(panel_wrap)
         panel_layout.setContentsMargins(12, 12, 12, 12)
@@ -695,6 +699,16 @@ class MainWindow(QMainWindow):
         self._right_tabs = QTabWidget()
         self._right_tabs.setObjectName("workspaceTabs")
         self._right_tabs.setAccessibleName("Deployer tool tabs")
+
+        # Native visual authoring is additive: raw QML bundles still load and
+        # deploy exactly as before, while .edsui projects use the same preview,
+        # Tag Lab and deployment contracts after generation.
+        from designer.ui import DesignerWorkspace
+        self.designer_workspace = DesignerWorkspace()
+        self.designer_workspace.message.connect(self.log)
+        self.designer_workspace.previewRequested.connect(self._preview_designed_bundle)
+        self.designer_workspace.deployRequested.connect(self._deploy_designed_bundle)
+        self._right_tabs.addTab(self.designer_workspace, "Designer")
 
         # ── Deploy tab ────────────────────────────────────────────────────
         deploy_page = QWidget()
@@ -1064,7 +1078,7 @@ class MainWindow(QMainWindow):
         # Selecting the tab is the request for the measurement.
         self._right_tabs.currentChanged.connect(self._on_tab_changed)
 
-        tab_icons = ("device-desktop", "activity", "terminal-2", "cpu")
+        tab_icons = ("device-imac", "device-desktop", "activity", "terminal-2", "cpu")
         for index in range(self._right_tabs.count()):
             self.primary_nav.addTab(self._right_tabs.tabText(index))
             self._themed_tab_icon(self.primary_nav, index, tab_icons[index])
@@ -1074,6 +1088,7 @@ class MainWindow(QMainWindow):
 
         splitter.addWidget(self._right_tabs)
         splitter.setSizes([800, 400])
+        self._on_tab_changed(self._right_tabs.currentIndex())
 
         # Footer: attribution on the left, version hard right. Kept to the muted
         # token so it reads as chrome and never competes with the panel preview.
@@ -1089,8 +1104,9 @@ class MainWindow(QMainWindow):
         # The footer is a signature. It put a 612 px floor under the window on
         # its own, which is a lot of screen to reserve for something nobody
         # clicks.
+        self.lbl_footer.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        self.lbl_version.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
         for chrome in (self.lbl_footer, self.lbl_version):
-            chrome.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             chrome.setMinimumWidth(0)
 
         footer.addWidget(self.lbl_footer)
@@ -1347,7 +1363,12 @@ class MainWindow(QMainWindow):
         self._render_memory_profile()
 
     def _on_tab_changed(self, _index: int) -> None:
-        """Take the profile when its tab is opened, not before."""
+        """Adapt the shell to the selected workspace and lazily profile."""
+        # Designer owns a resolution-accurate bezel around its canvas. Hide
+        # the separate runtime preview there so the editor gets the full
+        # workspace; every operational tab retains the established preview.
+        in_designer = self._right_tabs.currentWidget() is self.designer_workspace
+        self._preview_panel_wrap.setVisible(not in_designer)
         if self._right_tabs.currentWidget() is self._profile_page and not self.memory_profile:
             self.refresh_memory_profile()
 
@@ -1534,11 +1555,23 @@ class MainWindow(QMainWindow):
             # Bind the bundle's tags into Tag Lab so the user can inject signals
             # for any tag the app declares.
             self.taglab_panel.bind_tags(tags)
+            self.designer_workspace.set_bundle(dir_path, manifest)
         else:
             err_text = "\n".join(msgs)
             self.val_label.setText(f"Validation Failed:\n{err_text}")
             self.val_label.setStyleSheet("color: #ef4444;")  # destructive
             self.btn_deploy.setEnabled(False)
+
+    def _preview_designed_bundle(self, bundle_dir: str) -> None:
+        """Reload generated QML through the established in-process preview."""
+        self.load_bundle(bundle_dir)
+        self.log("Designer preview loaded.")
+
+    def _deploy_designed_bundle(self, bundle_dir: str) -> None:
+        """Generate first, then enter the existing validated deploy pipeline."""
+        self.load_bundle(bundle_dir)
+        if self.btn_deploy.isEnabled():
+            self.on_deploy()
 
     def _stop_all_senders(self) -> None:
         """

@@ -699,3 +699,54 @@ overlay, however your BSP applies them. `daemon/README.md` walks through it.
 **MIT licensed.** Tabler Icons are MIT — see `ui/icons/LICENSE.tabler`.
 
 </div>
+# Visual Designer
+
+EmbeddedDisplay Studio includes a native visual authoring workspace alongside
+the existing raw-QML and Python application workflow. Open an application
+bundle, select **Designer** in the workspace navigation, then drag controls from
+the palette onto the canvas. Selection, rubber-band multi-selection, movement,
+resize handles, copy/paste, keyboard nudging, z-order, grid snapping and common
+alignment commands are available directly on the canvas.
+
+The property inspector is generated from the central widget registry. It edits
+geometry and control-specific values immediately, while the binding inspector
+connects bindable properties to the same dotted tag names used by Tag Lab and
+the deployed `TagEngine`. Binding metadata can include a format, multiplier,
+offset, unit, warning expression and critical expression. **Preview** generates
+QML and reloads it through Studio's existing live preview; **Deploy** generates,
+validates, and hands the same bundle to the existing deployment pipeline.
+The **Design Chat** panel provides offline text commands such as
+`add Value Tile named inputVoltage`, `set inputVoltage title=Input Voltage`,
+`bind inputVoltage value=power.input_voltage`, and `remove inputVoltage`.
+Its command adapter is deliberately separate from the model, leaving a clean
+integration point for a future conversational model without making network
+access part of the designer runtime.
+
+The editable source is `project.edsui`, a human-readable JSON document. It is
+not generated QML. A designed bundle has this shape:
+
+```text
+project.edsui
+generated/
+  Main.qml
+  Settings.qml
+assets/
+manifest.json
+```
+
+`manifest.json` remains the runtime/deployment contract. Generation updates its
+screen resolution, QML entry, and `tags_required`, so Tag Lab simulation,
+preview and target deployment all use the established runtime. Images are kept
+as project-relative `assets/...` paths; absolute machine paths are rejected.
+
+Version 1 intentionally supports only `.edsui` → QML generation. Arbitrary QML
+is left untouched and is not imported or round-tripped. Container hierarchy is
+represented in the model and generator; the initial canvas primarily optimizes
+top-level absolute-positioned HMI screens. Threshold metadata is preserved in
+bindings but is not yet converted into visual state expressions by the QML
+backend.
+
+The visual designer is implemented as part of EmbeddedDisplayStudio using
+ordinary PySide6 APIs and does not incorporate Qt Designer source code. It adds
+no third-party dependency; the model and generator use Python's standard
+library, and the editor uses the project's existing PySide6 dependency.
