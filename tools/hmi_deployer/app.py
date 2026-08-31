@@ -112,7 +112,11 @@ def main():
     splash = None
     splash_progress = None
     splash_status = None
-    pixmap = QPixmap(str(SPLASH_PATH))
+    # Automation needs the real Studio window immediately. In particular, the
+    # offscreen Qt plugin can treat finishing QSplashScreen as closing the last
+    # window and terminate a frozen GUI executable before its capture timer
+    # runs. The splash is presentation only, so omit it for capture runs.
+    pixmap = QPixmap(str(SPLASH_PATH)) if not args.capture_bezel else QPixmap()
     if not pixmap.isNull():
         # The original artwork was composed for a much larger launch window.
         # Keep its proportions but present it at half scale in Studio.
