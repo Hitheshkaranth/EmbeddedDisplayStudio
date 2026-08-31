@@ -1,8 +1,9 @@
 """Interactive graphics canvas backed by DesignerProject objects."""
 from __future__ import annotations
+import os
 
 from PySide6.QtCore import QByteArray, QDataStream, QIODevice, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QDrag, QPainter, QPen
+from PySide6.QtGui import QBrush, QColor, QDrag, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView
 
 from tools.hmi_deployer.bezel import bezel_logo, paint_device_bezel, screen_bezel_geometry
@@ -27,19 +28,46 @@ class DesignerItem(QGraphicsRectItem):
             (QGraphicsItem.ItemIsMovable if not widget.locked else QGraphicsItem.GraphicsItemFlag(0))
         )
         self.setAcceptHoverEvents(True)
+        self.setOpacity(max(0.08, min(1.0, float(widget.properties.get("opacity", 1.0)))))
         self.setToolTip(f"{definition.display_name} — {widget.id}")
 
     def paint(self, painter, option, widget=None):
         selected = self.isSelected()
-        color = QColor(self.widget_model.properties.get("color") or
+        color = QColor(self.widget_model.properties.get("backgroundColor") or
+                       self.widget_model.properties.get("color") or
                        self.widget_model.properties.get("background") or "#27272a")
         painter.setBrush(QBrush(color))
-        painter.setPen(QPen(QColor("#3b82f6") if selected else QColor("#52525b"), 2 if selected else 1))
-        painter.drawRoundedRect(self.rect(), 5, 5)
-        painter.setPen(QColor("#f4f4f5" if color.lightness() < 128 else "#18181b"))
+        border = QColor(self.widget_model.properties.get("borderColor") or "#52525b")
+        border_width = max(1, int(self.widget_model.properties.get("borderWidth", 1)))
+        painter.setPen(QPen(QColor("#3b82f6") if selected else border, 2 if selected else border_width))
+        radius = float(self.widget_model.properties.get("cornerRadius",
+                       self.widget_model.properties.get("radius", 5)))
+        painter.drawRoundedRect(self.rect(), radius, radius)
+        image_drawn = False
+        if self.widget_model.type == "Image":
+            source = self.widget_model.properties.get("source", "")
+            path = source if source and not self._designer_scene.project_dir else ""
+            if source and self._designer_scene.project_dir:
+                path = source if os.path.isabs(source) else os.path.join(
+                    self._designer_scene.project_dir, source.replace('/', os.sep))
+            pixmap = QPixmap(path) if path else QPixmap()
+            if not pixmap.isNull():
+                target = self.rect().toRect()
+                mode = self.widget_model.properties.get("fillMode", "Image.PreserveAspectFit")
+                aspect = Qt.IgnoreAspectRatio if mode == "Image.Stretch" else Qt.KeepAspectRatio
+                scaled = pixmap.scaled(target.size(), aspect, Qt.SmoothTransformation)
+                painter.drawPixmap(target.center() - scaled.rect().center(), scaled)
+                image_drawn = True
+        painter.setPen(QColor(self.widget_model.properties.get("textColor") or
+                              ("#f4f4f5" if color.lightness() < 128 else "#18181b")))
         label = (self.widget_model.properties.get("title") or
                  self.widget_model.properties.get("text") or self.definition.display_name)
-        painter.drawText(self.rect().adjusted(7, 5, -7, -5), Qt.AlignCenter | Qt.TextWordWrap, str(label))
+        if not image_drawn:
+            painter.drawText(self.rect().adjusted(7, 5, -7, -5), Qt.AlignCenter | Qt.TextWordWrap, str(label))
+        if self.widget_model.properties.get("visible") is False:
+            painter.setPen(QPen(QColor("#ef4444"), 1, Qt.DashLine))
+            painter.drawLine(self.rect().topLeft(), self.rect().bottomRight())
+            painter.drawLine(self.rect().topRight(), self.rect().bottomLeft())
         if selected:
             painter.setBrush(QColor("#fafafa"))
             painter.setPen(QPen(QColor("#2563eb"), 1))
@@ -107,6 +135,7 @@ class DesignerScene(QGraphicsScene):
         self.page = None
         self._bezel_logo = bezel_logo()
         self.theme = "dark"
+        self.project_dir = ""
         self.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
         self.selectionChanged.connect(self._emit_selection)
 

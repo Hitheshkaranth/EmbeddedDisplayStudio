@@ -34,6 +34,7 @@ except ImportError:
 class PropertyEditor(QWidget):
     propertyEdited = Signal(str, object)
     geometryEdited = Signal(str, object)
+    assetRequested = Signal(str)
 
     def __init__(self, registry, parent=None):
         super().__init__(parent)
@@ -69,7 +70,7 @@ class PropertyEditor(QWidget):
             return
         for name, value_type in definition.properties.items():
             value = widget.properties.get(name, definition.defaults.get(name))
-            editor = self._editor(name, value_type, value)
+            editor = self._editor(definition, name, value_type, value)
             self.form.addRow(name, editor)
         self._sync_form_height()
 
@@ -82,8 +83,37 @@ class PropertyEditor(QWidget):
         self.form.activate()
         self.setMinimumHeight(self.form.sizeHint().height() + 12)
 
-    def _editor(self, name, value_type, value):
-        if value_type is bool:
+    def _editor(self, definition, name, value_type, value):
+        if name in definition.choices:
+            editor = QComboBox()
+            editor.addItems(definition.choices[name])
+            editor.setCurrentText(str(value or ""))
+            editor.currentTextChanged.connect(lambda v: self.propertyEdited.emit(name, v))
+        elif name in definition.color_properties:
+            editor = QWidget()
+            row = QHBoxLayout(editor); row.setContentsMargins(0, 0, 0, 0); row.setSpacing(4)
+            text = QLineEdit(str(value or "")); text.setPlaceholderText("Theme default or #RRGGBB")
+            choose = QPushButton("Color"); choose.setToolTip(f"Choose {name}")
+            choose.setFixedHeight(36)
+            text.editingFinished.connect(lambda e=text: self.propertyEdited.emit(name, e.text().strip()))
+            def pick_color():
+                initial = QColor(text.text()) if QColor(text.text()).isValid() else QColor("#3b82f6")
+                selected = QColorDialog.getColor(initial, self, f"Choose {name}")
+                if selected.isValid():
+                    text.setText(selected.name(QColor.HexArgb) if selected.alpha() < 255 else selected.name())
+                    self.propertyEdited.emit(name, text.text())
+            choose.clicked.connect(pick_color)
+            row.addWidget(text, 1); row.addWidget(choose)
+        elif name in definition.asset_properties:
+            editor = QWidget()
+            row = QHBoxLayout(editor); row.setContentsMargins(0, 0, 0, 0); row.setSpacing(4)
+            text = QLineEdit(str(value or "")); text.setPlaceholderText("assets/image.png")
+            browse = QPushButton("Browse"); browse.setToolTip("Select and copy an image into project assets")
+            browse.setFixedHeight(36)
+            text.editingFinished.connect(lambda e=text: self.propertyEdited.emit(name, e.text().strip()))
+            browse.clicked.connect(lambda: self.assetRequested.emit(name))
+            row.addWidget(text, 1); row.addWidget(browse)
+        elif value_type is bool:
             editor = QCheckBox(); editor.setChecked(bool(value))
             editor.toggled.connect(lambda v: self.propertyEdited.emit(name, v))
         elif value_type is int:
@@ -253,7 +283,13 @@ class DesignerWorkspace(QWidget):
         self.scene.geometryEdited.connect(self._geometry_command); self.tree.itemSelectionChanged.connect(self._tree_selection)
         self.tree.itemChanged.connect(self._tree_renamed); self.properties.propertyEdited.connect(self._property_command)
         self.properties.geometryEdited.connect(self._single_geometry_command); self.bindings.bindingEdited.connect(self._binding_command)
+        self.properties.assetRequested.connect(self._choose_property_asset)
         self.view.zoomChanged.connect(lambda value: self.zoom_label.setText(f"{value}%  "))
+        # Match the Studio's Connect control exactly. QSS height is content-box
+        # based for QPushButton on Windows, so a direct widget height avoids a
+        # two-pixel platform-style expansion.
+        for button in self.findChildren(QPushButton):
+            button.setFixedHeight(36)
 
     def apply_theme(self, theme: str) -> None:
         """Re-render Designer icons and canvas chrome for the active theme."""
@@ -272,7 +308,8 @@ class DesignerWorkspace(QWidget):
             QToolBar#designerPrimaryToolbar QToolButton,
             QToolBar#designerCanvasToolbar QToolButton {{
                 background: transparent; color: {foreground}; border: 1px solid transparent;
-                border-radius: 6px; padding: 4px 7px;
+                border-radius: 8px; padding: 0 8px;
+                min-height: 34px; max-height: 34px;
             }}
             QToolBar#designerPrimaryToolbar QToolButton:hover,
             QToolBar#designerCanvasToolbar QToolButton:hover {{ background: {accent}; }}
@@ -308,11 +345,16 @@ class DesignerWorkspace(QWidget):
                 background: {color('background', theme)}; color: {foreground};
                 padding-top: 0; padding-bottom: 0;
             }}
+            QWidget#designerWorkspace QPushButton {{
+                border-radius: 8px; padding-top: 0; padding-bottom: 0;
+            }}
             QPlainTextEdit {{
                 background: {color('background', theme)}; color: {foreground};
                 border: 1px solid {border}; border-radius: 6px;
             }}
         """)
+        for button in self.findChildren(QPushButton):
+            button.setFixedHeight(36)
 
     def _build_chat(self):
         panel = QWidget(); layout = QVBoxLayout(panel); layout.setContentsMargins(4, 8, 4, 4)
@@ -411,6 +453,7 @@ class DesignerWorkspace(QWidget):
 
     def set_bundle(self, bundle_dir, manifest=None):
         self.bundle_dir = os.path.abspath(bundle_dir) if bundle_dir else ""
+        self.scene.project_dir = self.bundle_dir
         self.bindings.set_tags((manifest or {}).get("tags_required", []))
         path = os.path.join(self.bundle_dir, "project.edsui") if self.bundle_dir else ""
         if path and os.path.isfile(path):
@@ -433,6 +476,7 @@ class DesignerWorkspace(QWidget):
     def load_file(self, path):
         try:
             self.project = DesignerProject.load(path); self.file_path = os.path.abspath(path); self.bundle_dir = os.path.dirname(self.file_path)
+            self.scene.project_dir = self.bundle_dir
             self.current_page_index = 0; self.undo_stack.clear(); self._load_page(); self.message.emit(f"Opened {path}")
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             QMessageBox.critical(self, "Could not open UI", str(exc))
@@ -665,3 +709,18 @@ class DesignerWorkspace(QWidget):
         destination = os.path.join(assets, os.path.basename(source_path))
         if os.path.abspath(source_path) != os.path.abspath(destination): shutil.copy2(source_path, destination)
         return os.path.relpath(destination, self.bundle_dir).replace(os.sep, "/")
+
+    def _choose_property_asset(self, property_name):
+        if not self.bundle_dir:
+            QMessageBox.warning(self, "Open a project", "Open or save a UI project before adding image assets.")
+            return
+        source, _ = QFileDialog.getOpenFileName(
+            self, "Select image", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.svg);;All files (*)")
+        if not source:
+            return
+        try:
+            relative = self.choose_image_asset(source)
+        except OSError as exc:
+            QMessageBox.critical(self, "Could not add image", str(exc))
+            return
+        self._property_command(property_name, relative)

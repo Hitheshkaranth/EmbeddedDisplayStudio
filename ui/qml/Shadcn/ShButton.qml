@@ -25,6 +25,14 @@ Item {
      * Size of the button (default/sm/lg/icon). Defaults to "default".
      */
     property string size: "default"
+
+    // Optional designer overrides. Empty colors preserve the theme/variant,
+    // so existing hand-written QML continues to look exactly as before.
+    property color backgroundColor: "transparent"
+    property color textColor: "transparent"
+    property color borderColor: "transparent"
+    property int borderWidth: 0
+    property real cornerRadius: Theme.radiusMd
     
     /**
      * @property {bool} enabled
@@ -60,9 +68,10 @@ Item {
     Rectangle {
         id: bgRect
         anchors.fill: parent
-        radius: Theme.radiusMd
+        radius: root.cornerRadius
         
         color: {
+            if (root.backgroundColor.a > 0) return root.backgroundColor
             if (variant === "default") return root.hovered ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.9) : Theme.primary
             if (variant === "secondary") return root.hovered ? Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, 0.8) : Theme.secondary
             if (variant === "destructive") return root.hovered ? Qt.rgba(Theme.destructive.r, Theme.destructive.g, Theme.destructive.b, 0.9) : Theme.destructive
@@ -70,8 +79,8 @@ Item {
             return "transparent"
         }
         
-        border.color: variant === "outline" ? Theme.border : "transparent"
-        border.width: variant === "outline" ? 1 : 0
+        border.color: root.borderColor.a > 0 ? root.borderColor : (variant === "outline" ? Theme.border : "transparent")
+        border.width: root.borderWidth > 0 ? root.borderWidth : (variant === "outline" ? 1 : 0)
         
         Behavior on color { ColorAnimation { duration: Theme.colorTransition } }
     }
@@ -86,6 +95,7 @@ Item {
         font.underline: variant === "link" && root.hovered
         
         color: {
+            if (root.textColor.a > 0) return root.textColor
             if (variant === "default") return Theme.primaryForeground
             if (variant === "secondary") return Theme.secondaryForeground
             if (variant === "destructive") return Theme.destructiveForeground
@@ -104,7 +114,7 @@ Item {
         color: "transparent"
         border.color: Theme.ring
         border.width: 2
-        radius: Theme.radiusMd + 2
+        radius: root.cornerRadius + 2
         visible: root.activeFocus
     }
 

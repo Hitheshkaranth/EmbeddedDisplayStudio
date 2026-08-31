@@ -24,7 +24,8 @@ Item {
      * @property {bool} enabled
      * Whether the input is editable. Defaults to true.
      */
-    property bool enabled: true
+    // `enabled` is inherited from Item. The designer can set it directly;
+    // redeclaring it here shadows the Qt property and produces a QML warning.
     
     /**
      * @property {bool} readOnly

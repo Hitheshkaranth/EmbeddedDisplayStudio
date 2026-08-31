@@ -18,7 +18,7 @@ def _literal(value: Any) -> str:
     if isinstance(value, (int, float)):
         return repr(value)
     text = str(value)
-    if re.fullmatch(r"(?:Image\.|Qt\.)[A-Za-z0-9_.]+", text):
+    if re.fullmatch(r"(?:Image\.|Qt\.|Text\.|Grid\.)[A-Za-z0-9_.]+", text):
         return text
     return json.dumps(text, ensure_ascii=False)
 
@@ -68,7 +68,10 @@ class QmlGenerator:
         if widget.z:
             lines.append(f"{indent}    z: {widget.z}")
         aliases = {("ShValueTile", "title"): "label", ("ShGauge", "minimum"): "minValue",
-                   ("ShGauge", "maximum"): "maxValue", ("Text", "fontSize"): "font.pixelSize"}
+                   ("ShGauge", "maximum"): "maxValue", ("Text", "fontSize"): "font.pixelSize",
+                   ("Text", "bold"): "font.bold", ("Rectangle", "borderColor"): "border.color",
+                   ("Rectangle", "borderWidth"): "border.width", ("ShCard", "borderColor"): "border.color",
+                   ("ShCard", "borderWidth"): "border.width"}
         for key, value in widget.properties.items():
             if key in widget.bindings or value == "":
                 continue

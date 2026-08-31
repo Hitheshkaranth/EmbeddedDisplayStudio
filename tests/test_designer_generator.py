@@ -16,6 +16,39 @@ class DesignerGeneratorTests(unittest.TestCase):
         self.assertEqual(self.registry.get("ShValueTile").qml_component, "ShValueTile")
         self.assertGreaterEqual(len(self.registry.definitions()), 16)
 
+    def test_every_widget_has_individual_visibility_and_opacity_controls(self):
+        for definition in self.registry.definitions():
+            with self.subTest(widget=definition.type):
+                self.assertIs(definition.properties["visible"], bool)
+                self.assertIs(definition.properties["opacity"], float)
+
+    def test_registry_describes_color_asset_and_choice_editors(self):
+        button = self.registry.get("ShButton")
+        self.assertIn("backgroundColor", button.color_properties)
+        self.assertIn("textColor", button.color_properties)
+        self.assertIn("variant", button.choices)
+        image = self.registry.get("Image")
+        self.assertEqual(image.asset_properties, ("source",))
+        self.assertIn("fillMode", image.choices)
+
+    def test_generates_widget_specific_styling(self):
+        project = DesignerProject()
+        project.pages[0].widgets.extend([
+            DesignerWidget("ShButton", "startButton", {"x": 0, "y": 0, "width": 120, "height": 40},
+                           {"text": "START", "backgroundColor": "#00875a", "textColor": "#ffffff",
+                            "cornerRadius": 8}),
+            DesignerWidget("Rectangle", "panel", {"x": 0, "y": 50, "width": 120, "height": 80},
+                           {"color": "#101418", "borderColor": "#3b82f6", "borderWidth": 2}),
+            DesignerWidget("Text", "heading", {"x": 0, "y": 140, "width": 120, "height": 30},
+                           {"text": "Power", "bold": True, "wrapMode": "Text.WordWrap"}),
+        ])
+        qml = self.generator.generate(project)["Main.qml"]
+        self.assertIn('backgroundColor: "#00875a"', qml)
+        self.assertIn('textColor: "#ffffff"', qml)
+        self.assertIn('border.color: "#3b82f6"', qml)
+        self.assertIn("font.bold: true", qml)
+        self.assertIn("wrapMode: Text.WordWrap", qml)
+
     def test_generates_existing_control_and_bus_binding(self):
         project = DesignerProject()
         project.pages[0].widgets.append(DesignerWidget(
