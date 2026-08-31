@@ -11,12 +11,12 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (
     QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSpinBox,
     QFrame, QPlainTextEdit, QScrollArea, QSizePolicy, QSplitter, QToolBar,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-from designer.canvas.designer_view import DesignerScene, DesignerView
+from designer.canvas.designer_view import POSITIONERS, DesignerScene, DesignerView
 from designer.commands import CallbackCommand
 from designer.generators import QmlGenerationError, QmlGenerator
 from designer.model import DesignerBinding, DesignerPage, DesignerProject, DesignerWidget
@@ -42,7 +42,7 @@ class PropertyEditor(QWidget):
         self.form = QFormLayout(self)
         self.form.setContentsMargins(6, 6, 6, 6)
 
-    def set_widget(self, widget):
+    def set_widget(self, widget, positioned=False):
         self.widget_model = widget
         self.setMinimumHeight(0)
         while self.form.rowCount():
@@ -62,7 +62,11 @@ class PropertyEditor(QWidget):
             editor = QSpinBox()
             editor.setRange(-100000 if key in ("x", "y") else 1, 100000)
             editor.setValue(round(widget.geometry[key]))
-            editor.valueChanged.connect(lambda value, name=key: self.geometryEdited.emit(name, value))
+            if positioned and key in ("x", "y"):
+                editor.setEnabled(False)
+                editor.setToolTip("The parent Row, Column or Grid places this widget.")
+            else:
+                editor.valueChanged.connect(lambda value, name=key: self.geometryEdited.emit(name, value))
             self.form.addRow(key.capitalize(), editor)
         definition = self.registry.get(widget.type)
         if not definition:
@@ -284,6 +288,10 @@ class DesignerWorkspace(QWidget):
         self.tree.itemChanged.connect(self._tree_renamed); self.properties.propertyEdited.connect(self._property_command)
         self.properties.geometryEdited.connect(self._single_geometry_command); self.bindings.bindingEdited.connect(self._binding_command)
         self.properties.assetRequested.connect(self._choose_property_asset)
+        self.scene.assetRequested.connect(self._asset_requested)
+        self.scene.contextMenuRequested.connect(self._show_context_menu)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._tree_context_menu)
         self.view.zoomChanged.connect(lambda value: self.zoom_label.setText(f"{value}%  "))
         # Match the Studio's Connect control exactly. QSS height is content-box
         # based for QPushButton on Windows, so a direct widget height avoids a
@@ -487,42 +495,67 @@ class DesignerWorkspace(QWidget):
             if not path: return False
             self.file_path = path if path.lower().endswith(".edsui") else path + ".edsui"
             self.bundle_dir = os.path.dirname(os.path.abspath(self.file_path))
+            self.scene.project_dir = self.bundle_dir
         try:
             self.project.save(self.file_path); self.undo_stack.setClean(); self.message.emit(f"Saved {self.file_path}"); return True
         except OSError as exc:
             QMessageBox.critical(self, "Could not save UI", str(exc)); return False
 
-    def add_widget(self, widget_type, x=20, y=20):
+    def parent_id_of(self, model):
+        """The container holding this widget; empty for a page-level widget."""
+        for candidate in self.current_page.walk():
+            if any(child is model for child in candidate.children):
+                return candidate.id
+        return ""
+
+    def siblings_of(self, parent_id):
+        """The list a widget lives in: a container's children, or the page."""
+        parent = self._find(parent_id) if parent_id else None
+        definition = self.registry.get(parent.type) if parent else None
+        if parent is not None and definition is not None and definition.container:
+            return parent.children
+        return self.current_page.widgets
+
+    def add_widget(self, widget_type, x=20, y=20, parent_id=""):
         definition = self.registry.get(widget_type)
         if not definition: return
         model = DesignerWidget(widget_type, self.project.unique_id(widget_type[2:].lower() if widget_type.startswith("Sh") else widget_type.lower()),
             {"x": max(0, x), "y": max(0, y), "width": definition.default_width, "height": definition.default_height}, copy.deepcopy(definition.defaults))
-        page = self.current_page
-        def redo(): page.widgets.append(model) if model not in page.widgets else None; self._load_page(select=[model.id])
-        def undo(): page.widgets.remove(model) if model in page.widgets else None; self._load_page()
+        siblings = self.siblings_of(parent_id)
+        def redo(): siblings.append(model) if model not in siblings else None; self._load_page(select=[model.id])
+        def undo(): siblings.remove(model) if model in siblings else None; self._load_page()
         self.undo_stack.push(CallbackCommand(f"Add {definition.display_name}", redo, undo))
 
     def delete_selected(self):
         models = self.scene.selected_models()
         if not models: return
-        page = self.current_page; positions = [(page.widgets.index(m), m) for m in models if m in page.widgets]
+        positions = []
+        for model in models:
+            siblings = self.siblings_of(self.parent_id_of(model))
+            if model in siblings: positions.append((siblings, siblings.index(model), model))
+        if not positions: return
         def redo():
-            for _, model in positions:
-                if model in page.widgets: page.widgets.remove(model)
+            for siblings, _, model in positions:
+                if model in siblings: siblings.remove(model)
             self._load_page()
         def undo():
-            for index, model in positions: page.widgets.insert(min(index, len(page.widgets)), model)
-            self._load_page(select=[m.id for _, m in positions])
+            for siblings, index, model in positions: siblings.insert(min(index, len(siblings)), model)
+            self._load_page(select=[m.id for _, _, m in positions])
         self.undo_stack.push(CallbackCommand("Delete widgets", redo, undo))
 
-    def copy(self): self.clipboard = [copy.deepcopy(model) for model in self.scene.selected_models()]
+    def copy(self):
+        # Remember the container too, so a duplicated child stays in its container.
+        self.clipboard = [(self.parent_id_of(model), copy.deepcopy(model))
+                          for model in self.scene.selected_models()]
     def cut(self): self.copy(); self.delete_selected()
     def paste(self):
-        for source in self.clipboard:
+        for parent_id, source in self.clipboard:
             model = copy.deepcopy(source); model.id = self.project.unique_id(source.id); model.geometry["x"] += 10; model.geometry["y"] += 10
-            definition = self.registry.get(model.type); page = self.current_page
-            def redo(m=model): page.widgets.append(m) if m not in page.widgets else None; self._load_page(select=[m.id])
-            def undo(m=model): page.widgets.remove(m) if m in page.widgets else None; self._load_page()
+            for child in model.walk():
+                if child is not model: child.id = self.project.unique_id(child.id)
+            siblings = self.siblings_of(parent_id)
+            def redo(m=model, s=siblings): s.append(m) if m not in s else None; self._load_page(select=[m.id])
+            def undo(m=model, s=siblings): s.remove(m) if m in s else None; self._load_page()
             self.undo_stack.push(CallbackCommand("Paste widget", redo, undo))
     def duplicate(self): self.copy(); self.paste()
 
@@ -593,7 +626,9 @@ class DesignerWorkspace(QWidget):
 
     def _selection_changed(self, ids):
         model = self._find(ids[0]) if len(ids) == 1 else None
-        self.properties.set_widget(model); self.bindings.set_widget(model)
+        parent = self._find(self.parent_id_of(model)) if model else None
+        self.properties.set_widget(model, positioned=bool(parent and parent.type in POSITIONERS))
+        self.bindings.set_widget(model)
         self.tree.blockSignals(True); self.tree.clearSelection()
         if ids:
             iterator = self.tree.findItems(ids[0], Qt.MatchExactly | Qt.MatchRecursive)
@@ -710,17 +745,82 @@ class DesignerWorkspace(QWidget):
         if os.path.abspath(source_path) != os.path.abspath(destination): shutil.copy2(source_path, destination)
         return os.path.relpath(destination, self.bundle_dir).replace(os.sep, "/")
 
+    def _ensure_project_location(self):
+        """Assets are copied beside the project, so it needs a home on disk first."""
+        if self.bundle_dir:
+            return True
+        answer = QMessageBox.question(
+            self, "Save the project first",
+            "Images are copied into the project's assets folder, so this UI needs a "
+            "location on disk before an image can be added.\n\nSave it now?",
+            QMessageBox.Save | QMessageBox.Cancel, QMessageBox.Save)
+        if answer != QMessageBox.Save:
+            return False
+        return bool(self.save() and self.bundle_dir)
+
+    def _asset_requested(self, widget_id, property_name):
+        """Double-clicking the widget itself is the shortest way to its image."""
+        item = self.scene.item_for_id(widget_id)
+        if item:
+            self.scene.clearSelection(); item.setSelected(True)
+        self._choose_property_asset(property_name)
+
+    def context_menu(self, widget_id):
+        """The actions a widget offers on right-click, Qt Designer style."""
+        menu = QMenu(self)
+        model = self._find(widget_id) if widget_id else None
+        definition = self.registry.get(model.type) if model else None
+        if model is not None:
+            for name in (definition.asset_properties if definition else ()):
+                label = "Image" if name == "source" else name
+                current = model.properties.get(name)
+                menu.addAction(f"Change {label}..." if current else f"Set {label}...",
+                               lambda checked=False, n=name: self._asset_requested(widget_id, n))
+                if current:
+                    menu.addAction(f"Clear {label}",
+                                   lambda checked=False, n=name: self._property_command(n, ""))
+            if definition and definition.asset_properties:
+                menu.addSeparator()
+            menu.addAction("Cut", self.cut)
+            menu.addAction("Copy", self.copy)
+            menu.addAction("Duplicate", self.duplicate)
+            menu.addAction("Delete", self.delete_selected)
+            menu.addSeparator()
+            menu.addAction("Bring to Front", lambda: self.z_order("front"))
+            menu.addAction("Send to Back", lambda: self.z_order("back"))
+            locked = menu.addAction("Locked")
+            locked.setCheckable(True); locked.setChecked(model.locked)
+            locked.toggled.connect(lambda value: self._property_command("locked", value))
+            menu.addSeparator()
+        paste = menu.addAction("Paste", self.paste)
+        paste.setEnabled(bool(self.clipboard))
+        if model is None:
+            menu.addAction("Select All", self.select_all)
+        return menu
+
+    def _show_context_menu(self, widget_id, position):
+        self.context_menu(widget_id).exec(position)
+
+    def _tree_context_menu(self, position):
+        item = self.tree.itemAt(position)
+        widget_id = item.data(0, Qt.UserRole) if item else ""
+        if widget_id:
+            canvas_item = self.scene.item_for_id(widget_id)
+            if canvas_item:
+                self.scene.clearSelection(); canvas_item.setSelected(True)
+        self._show_context_menu(widget_id, self.tree.viewport().mapToGlobal(position))
+
     def _choose_property_asset(self, property_name):
-        if not self.bundle_dir:
-            QMessageBox.warning(self, "Open a project", "Open or save a UI project before adding image assets.")
+        if not self._ensure_project_location():
             return
         source, _ = QFileDialog.getOpenFileName(
-            self, "Select image", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.svg);;All files (*)")
+            self, "Select image", self.bundle_dir,
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.svg);;All files (*)")
         if not source:
             return
         try:
             relative = self.choose_image_asset(source)
-        except OSError as exc:
+        except (OSError, ValueError, shutil.Error) as exc:
             QMessageBox.critical(self, "Could not add image", str(exc))
             return
         self._property_command(property_name, relative)

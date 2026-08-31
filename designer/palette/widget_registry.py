@@ -113,5 +113,6 @@ def default_registry() -> WidgetRegistry:
     add("Item", "Page", "Navigation", "Item", 320, 240,
         {"clip": bool, **common}, {"clip": False, **common_defaults}, (), True)
     add("ShTabs", "Tab Container", "Navigation", "ShTabs", 360, 240,
-        {"currentIndex": int, **common}, {"currentIndex": 0, **common_defaults}, (), True)
+        {"tabs": str, "currentIndex": int, **common},
+        {"tabs": "Overview, Details", "currentIndex": 0, **common_defaults}, (), True)
     return registry

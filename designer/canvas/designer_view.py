@@ -10,12 +10,15 @@ from tools.hmi_deployer.bezel import bezel_logo, paint_device_bezel, screen_beze
 
 MIME_TYPE = "application/x-embedded-display-widget"
 
+# Containers that place their own children, exactly as QtQuick does at runtime.
+POSITIONERS = ("Row", "Column", "Grid")
+
 
 class DesignerItem(QGraphicsRectItem):
     HANDLE = 9.0
 
-    def __init__(self, widget, definition, scene):
-        super().__init__(0, 0, widget.geometry["width"], widget.geometry["height"])
+    def __init__(self, widget, definition, scene, parent=None):
+        super().__init__(0, 0, widget.geometry["width"], widget.geometry["height"], parent)
         self.widget_model = widget
         self.definition = definition
         self._designer_scene = scene
@@ -28,18 +31,43 @@ class DesignerItem(QGraphicsRectItem):
             (QGraphicsItem.ItemIsMovable if not widget.locked else QGraphicsItem.GraphicsItemFlag(0))
         )
         self.setAcceptHoverEvents(True)
+        self.positioned = False
         self.setOpacity(max(0.08, min(1.0, float(widget.properties.get("opacity", 1.0)))))
         self.setToolTip(f"{definition.display_name} — {widget.id}")
 
+    def fill_color(self):
+        """Canvas fill. On a Text, ``color`` is the glyph color, not a background."""
+        properties = self.widget_model.properties
+        explicit = (properties.get("backgroundColor") or properties.get("background") or
+                    ("" if self.widget_model.type == "Text" else properties.get("color")))
+        if not explicit and self.widget_model.type == "Text":
+            return QColor(Qt.transparent)
+        return QColor(explicit or "#27272a")
+
+    def label_text(self):
+        """The caption each component actually shows on the panel."""
+        properties = self.widget_model.properties
+        if self.widget_model.type == "Image" and not properties.get("source"):
+            return "Double-click to add an image"
+        for key in ("title", "label", "text", "placeholderText", "tabs"):
+            value = properties.get(key)
+            if value:
+                return str(value)
+        return self.definition.display_name
+
     def paint(self, painter, option, widget=None):
         selected = self.isSelected()
-        color = QColor(self.widget_model.properties.get("backgroundColor") or
-                       self.widget_model.properties.get("color") or
-                       self.widget_model.properties.get("background") or "#27272a")
+        color = self.fill_color()
         painter.setBrush(QBrush(color))
         border = QColor(self.widget_model.properties.get("borderColor") or "#52525b")
         border_width = max(1, int(self.widget_model.properties.get("borderWidth", 1)))
-        painter.setPen(QPen(QColor("#3b82f6") if selected else border, 2 if selected else border_width))
+        if selected:
+            painter.setPen(QPen(QColor("#3b82f6"), 2))
+        elif color.alpha() == 0:
+            # An unfilled element still needs an outline to be found and grabbed.
+            painter.setPen(QPen(QColor(161, 161, 170, 110), 1, Qt.DashLine))
+        else:
+            painter.setPen(QPen(border, border_width))
         radius = float(self.widget_model.properties.get("cornerRadius",
                        self.widget_model.properties.get("radius", 5)))
         painter.drawRoundedRect(self.rect(), radius, radius)
@@ -58,12 +86,25 @@ class DesignerItem(QGraphicsRectItem):
                 scaled = pixmap.scaled(target.size(), aspect, Qt.SmoothTransformation)
                 painter.drawPixmap(target.center() - scaled.rect().center(), scaled)
                 image_drawn = True
+        is_text = self.widget_model.type == "Text"
         painter.setPen(QColor(self.widget_model.properties.get("textColor") or
-                              ("#f4f4f5" if color.lightness() < 128 else "#18181b")))
-        label = (self.widget_model.properties.get("title") or
-                 self.widget_model.properties.get("text") or self.definition.display_name)
+                              (self.widget_model.properties.get("color") if is_text else "") or
+                              ("#f4f4f5" if color.alpha() == 0 or color.lightness() < 128 else "#18181b")))
         if not image_drawn:
-            painter.drawText(self.rect().adjusted(7, 5, -7, -5), Qt.AlignCenter | Qt.TextWordWrap, str(label))
+            font = painter.font()
+            size = self.widget_model.properties.get("fontSize")
+            if size:
+                font.setPixelSize(max(1, int(size)))
+            font.setBold(bool(self.widget_model.properties.get("bold")))
+            painter.setFont(font)
+            if is_text:
+                wrapping = "Wrap" in str(self.widget_model.properties.get("wrapMode", ""))
+                flags = Qt.AlignLeft | Qt.AlignTop
+                painter.drawText(self.rect(), flags | Qt.TextWordWrap if wrapping else flags,
+                                 self.label_text())
+            else:
+                painter.drawText(self.rect().adjusted(7, 5, -7, -5),
+                                 Qt.AlignCenter | Qt.TextWordWrap, self.label_text())
         if self.widget_model.properties.get("visible") is False:
             painter.setPen(QPen(QColor("#ef4444"), 1, Qt.DashLine))
             painter.drawLine(self.rect().topLeft(), self.rect().bottomRight())
@@ -84,6 +125,23 @@ class DesignerItem(QGraphicsRectItem):
     def hoverMoveEvent(self, event):
         self.setCursor(Qt.SizeFDiagCursor if self.isSelected() and self._handles()[-1].contains(event.pos()) else Qt.ArrowCursor)
         super().hoverMoveEvent(event)
+
+    def contextMenuEvent(self, event):
+        if not self.isSelected():
+            self._designer_scene.clearSelection()
+            self.setSelected(True)
+        self._designer_scene.contextMenuRequested.emit(self.widget_model.id, event.screenPos())
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event):
+        if self.definition.asset_properties:
+            self._designer_scene.clearSelection()
+            self.setSelected(True)
+            self._designer_scene.assetRequested.emit(self.widget_model.id,
+                                                     self.definition.asset_properties[0])
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def mousePressEvent(self, event):
         self._before = dict(self.widget_model.geometry)
@@ -111,9 +169,10 @@ class DesignerItem(QGraphicsRectItem):
         else:
             super().mouseReleaseEvent(event)
         step = self._designer_scene.grid_size if self._designer_scene.snap_enabled else 1
-        if not self.widget_model.locked:
+        if not self.widget_model.locked and not self.positioned:
             self.setPos(round(self.pos().x() / step) * step, round(self.pos().y() / step) * step)
-        after = {"x": self.pos().x(), "y": self.pos().y(),
+        after = {"x": self.widget_model.geometry["x"] if self.positioned else self.pos().x(),
+                 "y": self.widget_model.geometry["y"] if self.positioned else self.pos().y(),
                  "width": self.rect().width(), "height": self.rect().height()}
         if self._before != after:
             self._designer_scene.geometryEdited.emit(self.widget_model.id, self._before, after)
@@ -121,9 +180,11 @@ class DesignerItem(QGraphicsRectItem):
 
 
 class DesignerScene(QGraphicsScene):
-    widgetDropped = Signal(str, float, float)
+    widgetDropped = Signal(str, float, float, str)
     geometryEdited = Signal(str, object, object)
     selectionIdsChanged = Signal(list)
+    contextMenuRequested = Signal(str, object)
+    assetRequested = Signal(str, str)
 
     def __init__(self, registry, parent=None):
         super().__init__(parent)
@@ -156,10 +217,68 @@ class DesignerScene(QGraphicsScene):
         self.bezel_rect, self.bezel_margin = bezel, margin
         self.setSceneRect(bezel.adjusted(-12, -12, 12, 12))
 
-    def add_model(self, widget):
+    def add_model(self, widget, parent_item=None):
         definition = self.registry.get(widget.type)
-        if definition:
-            self.addItem(DesignerItem(widget, definition, self))
+        if not definition:
+            return None
+        item = DesignerItem(widget, definition, self, parent_item)
+        if parent_item is None:
+            self.addItem(item)
+        for child in widget.children:
+            self.add_model(child, item)
+        if widget.type in POSITIONERS:
+            self.layout_children(item)
+        return item
+
+    def layout_children(self, item):
+        """Mirror the QtQuick positioner: Row/Column/Grid own their children's places."""
+        children = [child for child in item.childItems() if isinstance(child, DesignerItem)]
+        if not children:
+            return
+        properties = item.widget_model.properties
+        spacing = max(0, int(properties.get("spacing", 0) or 0))
+        for child in children:
+            child.positioned = True
+            child.setFlag(QGraphicsItem.ItemIsMovable, False)
+        if item.widget_model.type == "Row":
+            offset = 0.0
+            reversed_flow = properties.get("layoutDirection") == "Qt.RightToLeft"
+            for child in children:
+                width = child.rect().width()
+                x = item.rect().width() - offset - width if reversed_flow else offset
+                child.setPos(x, 0)
+                offset += width + spacing
+        elif item.widget_model.type == "Column":
+            offset = 0.0
+            for child in children:
+                child.setPos(0, offset)
+                offset += child.rect().height() + spacing
+        else:
+            cell_width = max(child.rect().width() for child in children)
+            cell_height = max(child.rect().height() for child in children)
+            down = properties.get("flow") == "Grid.TopToBottom"
+            span = max(1, int((properties.get("rows") if down else properties.get("columns")) or 4))
+            for index, child in enumerate(children):
+                row, column = (index % span, index // span) if down else (index // span, index % span)
+                child.setPos(column * (cell_width + spacing), row * (cell_height + spacing))
+
+    def container_at(self, point):
+        """The container a drop at ``point`` lands in, or None for the page itself."""
+        for item in self.items(point):
+            if isinstance(item, DesignerItem):
+                node = item
+                while node is not None:
+                    if node.definition.container:
+                        return node
+                    node = node.parentItem()
+                return None
+        return None
+
+    def contextMenuEvent(self, event):
+        super().contextMenuEvent(event)
+        if not event.isAccepted():
+            self.contextMenuRequested.emit("", event.screenPos())
+            event.accept()
 
     def item_for_id(self, widget_id):
         return next((item for item in self.items() if isinstance(item, DesignerItem)
@@ -238,7 +357,12 @@ class DesignerView(QGraphicsView):
         scene = self.scene()
         point.setX(max(0, min(point.x(), scene.project.screen.width)))
         point.setY(max(0, min(point.y(), scene.project.screen.height)))
-        scene.widgetDropped.emit(widget_type, point.x(), point.y())
+        container = scene.container_at(point)
+        if container is not None:
+            local = container.mapFromScene(point)
+            scene.widgetDropped.emit(widget_type, local.x(), local.y(), container.widget_model.id)
+        else:
+            scene.widgetDropped.emit(widget_type, point.x(), point.y(), "")
         event.acceptProposedAction()
 
     def set_zoom(self, percent):

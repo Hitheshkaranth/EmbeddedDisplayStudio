@@ -6,6 +6,9 @@ import re
 from typing import Any
 
 
+POSITIONERS = ("Row", "Column", "Grid")
+
+
 class QmlGenerationError(ValueError):
     pass
 
@@ -17,6 +20,8 @@ def _literal(value: Any) -> str:
         return "null"
     if isinstance(value, (int, float)):
         return repr(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_literal(item) for item in value) + "]"
     text = str(value)
     if re.fullmatch(r"(?:Image\.|Qt\.|Text\.|Grid\.)[A-Za-z0-9_.]+", text):
         return text
@@ -57,11 +62,14 @@ class QmlGenerator:
         lines.extend(["}", ""])
         return "\n".join(lines)
 
-    def _widget(self, widget, depth):
+    def _widget(self, widget, depth, parent_type=""):
         definition = self.registry.get(widget.type)
         indent = "    " * depth
         lines = ["", f"{indent}{definition.qml_component} {{", f"{indent}    id: {widget.id}"]
         for key in ("x", "y", "width", "height"):
+            # A positioner assigns its children's x/y; emitting them is noise.
+            if key in ("x", "y") and parent_type in POSITIONERS:
+                continue
             value = widget.geometry[key]
             value = int(value) if float(value).is_integer() else value
             lines.append(f"{indent}    {key}: {value}")
@@ -71,13 +79,18 @@ class QmlGenerator:
                    ("ShGauge", "maximum"): "maxValue", ("Text", "fontSize"): "font.pixelSize",
                    ("Text", "bold"): "font.bold", ("Rectangle", "borderColor"): "border.color",
                    ("Rectangle", "borderWidth"): "border.width", ("ShCard", "borderColor"): "border.color",
-                   ("ShCard", "borderWidth"): "border.width"}
+                   ("ShCard", "borderWidth"): "border.width", ("ShTabs", "tabs"): "model"}
         for key, value in widget.properties.items():
             if key in widget.bindings or value == "":
                 continue
             qml_key = aliases.get((widget.type, key), key)
             if key == "source" and isinstance(value, str) and value.startswith("assets/"):
                 value = "../" + value
+            if widget.type == "ShTabs" and key == "tabs":
+                # ShTabs takes tab titles as a list; authors type them as text.
+                value = [part.strip() for part in str(value).split(",") if part.strip()]
+                if not value:
+                    continue
             lines.append(f"{indent}    {qml_key}: {_literal(value)}")
         for key, binding in widget.bindings.items():
             expression = f'Bus.value({_literal(binding.tag)}, 0)'
@@ -89,6 +102,6 @@ class QmlGenerator:
                 expression = f'{_literal(binding.format)}.arg({expression})'
             lines.append(f"{indent}    {key}: {expression}")
         for child in widget.children:
-            lines.extend(self._widget(child, depth + 1))
+            lines.extend(self._widget(child, depth + 1, widget.type))
         lines.append(f"{indent}}}")
         return lines
