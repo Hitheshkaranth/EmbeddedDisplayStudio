@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 import json
+import ntpath
 import os
 import re
 from typing import Any
@@ -185,7 +186,13 @@ class DesignerProject:
                 source = widget.properties.get("source")
                 if source:
                     normalized = os.path.normpath(str(source))
-                    if os.path.isabs(normalized) or normalized.startswith(".."):
+                    # A design is portable between the Windows Studio and a
+                    # Linux panel. os.path.isabs() only recognises the host's
+                    # path syntax, so Linux previously accepted C:/private as
+                    # a project-relative asset.
+                    if (os.path.isabs(normalized)
+                            or ntpath.isabs(str(source))
+                            or normalized.startswith("..")):
                         issues.append(ValidationIssue(path, "asset path must be project-relative"))
                     elif project_dir and not os.path.isfile(os.path.join(project_dir, normalized)):
                         issues.append(ValidationIssue(path, f"missing asset {source!r}"))

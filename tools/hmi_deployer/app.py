@@ -91,6 +91,15 @@ def main():
 
     app = QApplication(sys.argv)
 
+    # In headless release smoke runs, closing the splash can briefly leave Qt
+    # with no visible top-level window even though show_studio() has just shown
+    # one. The default quit-on-last-window policy then ends the event loop long
+    # before the delayed bezel capture. A capture run has its own explicit
+    # quit path (and MainWindow's --exit-after safety timer), so it must not be
+    # governed by that transient window count.
+    if args.capture_bezel:
+        app.setQuitOnLastWindowClosed(False)
+
     # Needs to be set for Settings
     app.setOrganizationName("MIL-HMI")
     app.setApplicationName("EmbeddedDisplay Studio")
