@@ -26,7 +26,8 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 **The project**
 
-[![Tests](https://img.shields.io/badge/tests-227%20passing-17c964?style=for-the-badge&labelColor=18181b)](tests/)
+[![Release](https://img.shields.io/badge/release-0.0.4-8b5cf6?style=for-the-badge&labelColor=18181b)](../../releases/tag/v0.0.4)
+[![Tests](https://img.shields.io/badge/tests-306-17c964?style=for-the-badge&labelColor=18181b)](tests/)
 [![CI](https://img.shields.io/badge/CI-Linux%20full%20suite-006fee?style=for-the-badge&logo=githubactions&logoColor=white&labelColor=18181b)](.github/workflows/ci.yml)
 [![No containers](https://img.shields.io/badge/containers-none-a1a1aa?style=for-the-badge&logo=docker&logoColor=white&labelColor=18181b)](#why-no-containers)
 [![License](https://img.shields.io/badge/license-MIT-006fee?style=for-the-badge&labelColor=18181b)](LICENSE)
@@ -72,9 +73,9 @@ Three layers, deliberately decoupled:
 
 ### To run the Studio
 
-The packaged **`EmbeddedDisplayStudio.exe`** needs nothing installed: it carries
+The packaged **`EmbeddedDisplayStudio.exe`** (current release: **0.0.4**) needs nothing installed: it carries
 its own Python, PySide6 and the standard library. Download it from a
-[release](../../releases) and run it.
+[release](../../releases/tag/v0.0.4) and run it.
 
 From a checkout:
 

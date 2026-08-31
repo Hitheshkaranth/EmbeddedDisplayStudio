@@ -188,7 +188,26 @@ class DesignerItem(QGraphicsRectItem):
         after = {"x": self.widget_model.geometry["x"] if self.positioned else self.pos().x(),
                  "y": self.widget_model.geometry["y"] if self.positioned else self.pos().y(),
                  "width": self.rect().width(), "height": self.rect().height()}
-        if self._before != after:
+        # Where the drag ended decides the parent. Without this a widget
+        # dragged onto a Card only *looked* as though it had joined it: the
+        # model kept it a page-level sibling and the generated QML emitted it
+        # outside the container. Dragging one out again was equally inert.
+        target = None
+        if not self.widget_model.locked and not self._resizing:
+            target = self._designer_scene.container_at(
+                self.mapToScene(self.rect().center()), ignore=self)
+        target_id = target.widget_model.id if target is not None else ""
+        parent = self.parentItem()
+        current_id = parent.widget_model.id if isinstance(parent, DesignerItem) else ""
+        if target_id != current_id:
+            # The reparent carries the new position, so it replaces the plain
+            # geometry edit rather than racing it: both reload the page, and
+            # the second would act on an item the first has already rebuilt.
+            local = (target.mapFromScene(self.scenePos()) if target is not None
+                     else self.scenePos())
+            self._designer_scene.reparentRequested.emit(
+                self.widget_model.id, target_id, local.x(), local.y())
+        elif self._before != after:
             self._designer_scene.geometryEdited.emit(self.widget_model.id, self._before, after)
         self._before = None
 
@@ -200,6 +219,7 @@ class DesignerScene(QGraphicsScene):
     contextMenuRequested = Signal(str, object)
     assetRequested = Signal(str, str)
     textRequested = Signal(str, str)
+    reparentRequested = Signal(str, str, float, float)
 
     def __init__(self, registry, parent=None):
         super().__init__(parent)
@@ -277,17 +297,37 @@ class DesignerScene(QGraphicsScene):
                 row, column = (index % span, index // span) if down else (index // span, index % span)
                 child.setPos(column * (cell_width + spacing), row * (cell_height + spacing))
 
-    def container_at(self, point):
-        """The container a drop at ``point`` lands in, or None for the page itself."""
+    def container_at(self, point, ignore=None):
+        """The container a drop at ``point`` lands in, or None for the page itself.
+
+        Args:
+            point: scene coordinates of the drop.
+            ignore: the item being dragged, when this is a move rather than a
+                new drop. Neither it nor anything inside it can become its own
+                parent, so both are looked straight through.
+        """
         for item in self.items(point):
-            if isinstance(item, DesignerItem):
-                node = item
-                while node is not None:
-                    if node.definition.container:
-                        return node
-                    node = node.parentItem()
-                return None
+            if not isinstance(item, DesignerItem):
+                continue
+            if ignore is not None and self._within(item, ignore):
+                continue
+            node = item
+            while node is not None:
+                if node.definition.container:
+                    return node
+                node = node.parentItem()
+            return None
         return None
+
+    @staticmethod
+    def _within(item, ancestor):
+        """True when ``item`` is ``ancestor`` or sits inside it."""
+        node = item
+        while node is not None:
+            if node is ancestor:
+                return True
+            node = node.parentItem()
+        return False
 
     def contextMenuEvent(self, event):
         super().contextMenuEvent(event)

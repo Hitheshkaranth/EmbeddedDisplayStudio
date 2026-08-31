@@ -222,6 +222,42 @@ def build_remote_relay_command() -> str:
     return resolve + f'exec "$P" -c "import base64;exec(base64.b64decode(\'{encoded}\'))"'
 
 
+# Workers whose thread has outlived the relay that owned them.
+#
+# Qt aborts the process when a running QThread is destroyed, and the relay is
+# dropped at exactly the moment that is most likely: _stop_all_senders() calls
+# stop() and then rebinds self.relay to None, which releases the last Python
+# reference. stop() cancels the ssh child first, but that wait is bounded and
+# a wedged ssh can outlast it -- so the worker is parked here instead of dying
+# with its owner, and released once its thread has really returned.
+#
+# A worker that never finishes leaks one object. That is the right trade
+# against terminating the process.
+_RETIRED_WORKERS = set()
+
+
+def _retire_worker(worker) -> None:
+    """Keep a still-running worker alive independently of its owner.
+
+    Args:
+        worker: the SshWorker to guard. A worker that is not running needs no
+            protection and is ignored.
+    """
+    if worker is None or not worker.isRunning() or worker in _RETIRED_WORKERS:
+        return
+    _RETIRED_WORKERS.add(worker)
+
+    def _release(*_args) -> None:
+        # SshWorker shadows QThread.finished with its own int signal, so this
+        # is the only completion notice available. It is emitted as run()'s
+        # last act, which makes the join here microseconds long.
+        worker.wait(2000)
+        _RETIRED_WORKERS.discard(worker)
+
+    worker.finished.connect(_release)
+    worker.error.connect(_release)
+
+
 class TelemetryRelay(QObject):
     """
     Spawns an SSH process running a small Python script on the target.
@@ -254,7 +290,11 @@ class TelemetryRelay(QObject):
         super().__init__(parent)
 
         cmd = build_ssh_cmd(host, user, port, key_path, build_remote_relay_command())
-        self.worker = SshWorker(cmd, timeout_s=3600, parent=self)
+        # Deliberately unparented. As a QObject child the worker would be
+        # destroyed with the relay, and Qt aborts the process when the QThread
+        # being destroyed is still running. Its lifetime is managed by the
+        # reference held here plus _RETIRED_WORKERS during shutdown.
+        self.worker = SshWorker(cmd, timeout_s=3600)
         self.worker.outputLine.connect(self._on_line)
 
         self._udp_port = udp_port
@@ -267,6 +307,7 @@ class TelemetryRelay(QObject):
         if self._closed:
             return
         self.worker.start()
+        _retire_worker(self.worker)
 
     def stop(self) -> None:
         """
@@ -282,11 +323,17 @@ class TelemetryRelay(QObject):
         practice it returns immediately.
         """
         if self._closed:
+            # An earlier stop may have timed out; the thread still needs a
+            # guardian if this relay is now on its way to being destroyed.
+            _retire_worker(self.worker)
             return
         self._closed = True
         self.worker.cancel()
         if self.worker.isRunning():
             self.worker.wait(2000)
+        # The wait above is bounded and may have returned with the thread
+        # still in its read loop.
+        _retire_worker(self.worker)
         if self.local_sock is not None:
             try:
                 self.local_sock.close()

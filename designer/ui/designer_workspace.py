@@ -7,13 +7,14 @@ import os
 import re
 import shutil
 
+import shiboken6
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (
     QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSpinBox,
     QFrame, QPlainTextEdit, QScrollArea, QSizePolicy, QSplitter, QToolBar,
-    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from designer.canvas.designer_view import POSITIONERS, DesignerScene, DesignerView
@@ -219,70 +220,159 @@ class DesignerWorkspace(QWidget):
     def _build_ui(self):
         self.setObjectName("designerWorkspace")
         layout = QVBoxLayout(self); layout.setContentsMargins(8, 8, 8, 8); layout.setSpacing(6)
-        primary = QToolBar("Designer primary actions")
-        canvas_bar = QToolBar("Designer canvas actions")
+        primary = QToolBar("Designer file and edit actions")
+        canvas_bar = QToolBar("Designer page, screen and view actions")
+        arrange_bar = QToolBar("Designer arrange actions")
         primary.setObjectName("designerPrimaryToolbar")
         canvas_bar.setObjectName("designerCanvasToolbar")
-        for bar in (primary, canvas_bar):
+        arrange_bar.setObjectName("designerArrangeToolbar")
+        for bar in (primary, canvas_bar, arrange_bar):
             bar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-            bar.setFixedHeight(38)
+            bar.setFixedHeight(46)
+            # Toolbars pack their children edge to edge by default, which ran
+            # one group of controls straight into the next.
+            bar.layout().setSpacing(6)
+            bar.layout().setContentsMargins(6, 2, 6, 2)
+
         def action(bar, text, slot, icon_name="adjustments", shortcut=None, checkable=False):
             item = bar.addAction(icon(icon_name), text); item.triggered.connect(slot); item.setCheckable(checkable)
             self._designer_icon_names[item] = icon_name
             item.setToolTip(text + (f" ({shortcut})" if shortcut else ""))
             if shortcut: item.setShortcut(QKeySequence(shortcut))
             return item
+
+        def field(bar, text, widget, width=0, tooltip=""):
+            """A labelled input, spaced away from whatever precedes it."""
+            label = QLabel(text)
+            label.setContentsMargins(6, 0, 4, 0)
+            if tooltip:
+                label.setToolTip(tooltip); widget.setToolTip(tooltip)
+            label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+            bar.addWidget(label)
+            if width:
+                widget.setFixedWidth(width)
+            # Match the buttons exactly: a field even a few pixels taller than
+            # its bar spills into the next row.
+            widget.setFixedHeight(30)
+            bar.addWidget(widget)
+            return widget
+
+        # -- row 1: the project, then editing, then what leaves the Studio ----
         action(primary, "New UI", self.new_ui, "file-code")
-        primary.addWidget(QLabel(" Project "))
-        self.project_name = QLineEdit()
-        self.project_name.setPlaceholderText("deployment-name")
-        self.project_name.setMaximumWidth(220)
-        self.project_name.setToolTip("Project name used for deployment and release files")
-        self.project_name.editingFinished.connect(self._project_name_edited)
-        primary.addWidget(self.project_name)
         action(primary, "Open", self.open_ui, "folder-open")
         action(primary, "Save", self.save, "download", "Ctrl+S")
         primary.addSeparator()
+        self.project_name = QLineEdit()
+        self.project_name.setPlaceholderText("deployment-name")
+        self.project_name.editingFinished.connect(self._project_name_edited)
+        field(primary, "Project", self.project_name, 120,
+              "Project name used for deployment and release files")
+        primary.addSeparator()
         undo = self.undo_stack.createUndoAction(self, "Undo"); undo.setIcon(icon("history")); self._designer_icon_names[undo] = "history"; primary.addAction(undo)
         redo = self.undo_stack.createRedoAction(self, "Redo"); redo.setIcon(icon("rotate-clockwise")); self._designer_icon_names[redo] = "rotate-clockwise"; primary.addAction(redo)
+        # createUndoAction keeps rewriting the label to "Undo <last command>",
+        # so the row's width depended on the last edit -- "Undo Reparent Text"
+        # is wide enough to push Deploy into the overflow menu, and the button
+        # positions shifted after every action. Fixed label, detail in the tip.
+        def _pin(item, verb, text):
+            # The stack outlives the actions when the workspace is torn down,
+            # and it keeps emitting into them; touching a deleted QAction from
+            # here raises out of Qt's own signal delivery.
+            if not shiboken6.isValid(item):
+                return
+            item.setText(verb)
+            item.setToolTip(f"{verb} {text}" if text else verb)
+        self.undo_stack.undoTextChanged.connect(lambda t: _pin(undo, "Undo", t))
+        self.undo_stack.redoTextChanged.connect(lambda t: _pin(redo, "Redo", t))
+        _pin(undo, "Undo", self.undo_stack.undoText())
+        _pin(redo, "Redo", self.undo_stack.redoText())
+        for item in (undo, redo):
+            button = primary.widgetForAction(item)
+            if button is not None:
+                button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        primary.addSeparator()
         action(primary, "Cut", self.cut, "x", "Ctrl+X")
         action(primary, "Copy", self.copy, "clipboard-text", "Ctrl+C")
         action(primary, "Paste", self.paste, "clipboard-text", "Ctrl+V")
         action(primary, "Delete", self.delete_selected, "trash", "Delete")
         action(primary, "Duplicate", self.duplicate, "plus", "Ctrl+D")
-        primary.addSeparator()
-        action(primary, "Preview", self.preview, "player-play")
-        action(primary, "Generate", self.generate, "file-code")
-        action(primary, "Deploy", self.deploy, "upload")
 
+        # -- row 2: pages, the screen being designed for, and the view -------
         action(canvas_bar, "New Page", self.new_page, "folder-plus")
         action(canvas_bar, "Duplicate Page", self.duplicate_page, "clipboard-text")
         action(canvas_bar, "Delete Page", self.delete_page, "trash")
-        self.pages = QComboBox(); self.pages.currentIndexChanged.connect(self.change_page); canvas_bar.addWidget(self.pages)
-        canvas_bar.addSeparator(); canvas_bar.addWidget(QLabel(" W")); self.screen_width = QSpinBox(); self.screen_width.setRange(64, 16384); self.screen_width.setValue(1280); canvas_bar.addWidget(self.screen_width)
-        canvas_bar.addWidget(QLabel(" H")); self.screen_height = QSpinBox(); self.screen_height.setRange(64, 16384); self.screen_height.setValue(800); canvas_bar.addWidget(self.screen_height)
-        canvas_bar.addWidget(QLabel(" Theme"))
+        self.pages = QComboBox(); self.pages.currentIndexChanged.connect(self.change_page)
+        field(canvas_bar, "Page", self.pages, 130, "The page being edited")
+        canvas_bar.addSeparator()
+        self.screen_width = QSpinBox(); self.screen_width.setRange(64, 16384); self.screen_width.setValue(1280)
+        field(canvas_bar, "W", self.screen_width, 78, "Design width in pixels")
+        self.screen_height = QSpinBox(); self.screen_height.setRange(64, 16384); self.screen_height.setValue(800)
+        field(canvas_bar, "H", self.screen_height, 78, "Design height in pixels")
         self.screen_theme = QComboBox(); self.screen_theme.addItems(["dark", "light"])
-        self.screen_theme.setToolTip(
-            "Shadcn colour mode this design targets; written to the manifest and "
-            "applied by the panel shell before the app loads")
-        canvas_bar.addWidget(self.screen_theme)
+        field(canvas_bar, "Theme", self.screen_theme, 88,
+              "Shadcn colour mode this design targets; written to the manifest "
+              "and applied by the panel shell before the app loads")
         self.screen_width.valueChanged.connect(self._screen_changed); self.screen_height.valueChanged.connect(self._screen_changed)
         self.screen_theme.currentTextChanged.connect(self._screen_changed)
+        canvas_bar.addSeparator()
         self.grid_action = action(canvas_bar, "Grid", self.toggle_grid, "adjustments", checkable=True); self.grid_action.setChecked(True)
         self.snap_action = action(canvas_bar, "Snap", self.toggle_snap, "plug-connected", checkable=True); self.snap_action.setChecked(True)
-        canvas_bar.addSeparator()
-        for label, mode in (("Left", "left"), ("Right", "right"), ("Top", "top"), ("Bottom", "bottom"),
-                            ("H Center", "hcenter"), ("V Center", "vcenter"), ("Same W", "same_width"),
-                            ("Same H", "same_height"), ("Distribute H", "distribute_h"), ("Distribute V", "distribute_v")):
-            action(canvas_bar, label, lambda _checked=False, m=mode: self.align(m), "adjustments")
-        action(canvas_bar, "Front", lambda: self.z_order("front"), "upload")
-        action(canvas_bar, "Back", lambda: self.z_order("back"), "download")
-        canvas_bar.addSeparator(); action(canvas_bar, "−", lambda: self.view.set_zoom(round(self.view.transform().m11()*100)-10), "x")
-        self.zoom_label = QLabel("100%  "); canvas_bar.addWidget(self.zoom_label)
-        action(canvas_bar, "+", lambda: self.view.set_zoom(round(self.view.transform().m11()*100)+10), "plus")
-        action(canvas_bar, "Fit", self.view_fit, "device-desktop")
-        layout.addWidget(primary); layout.addWidget(canvas_bar)
+
+        # -- row 3: arranging the selection, and what leaves the Studio ------
+        # Ten align actions as separate buttons is more than any row can hold
+        # at the width this pane actually gets inside the Studio, and Qt hides
+        # the overflow behind a chevron most people never find. One menu, and
+        # every mode stays reachable at every window size.
+        self.align_menu = QMenu(self)
+        for label, mode in (("Align Left", "left"), ("Align Right", "right"),
+                            ("Align Top", "top"), ("Align Bottom", "bottom"),
+                            ("Centre Horizontally", "hcenter"),
+                            ("Centre Vertically", "vcenter"), (None, None),
+                            ("Same Width", "same_width"), ("Same Height", "same_height"),
+                            (None, None),
+                            ("Distribute Horizontally", "distribute_h"),
+                            ("Distribute Vertically", "distribute_v")):
+            if label is None:
+                self.align_menu.addSeparator()
+                continue
+            item = self.align_menu.addAction(label)
+            item.triggered.connect(lambda _checked=False, m=mode: self.align(m))
+        self.align_button = QToolButton()
+        self.align_button.setText("Align")
+        self.align_button.setIcon(icon("adjustments"))
+        self.align_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.align_button.setPopupMode(QToolButton.InstantPopup)
+        self.align_button.setMenu(self.align_menu)
+        self.align_button.setToolTip("Align, match size or distribute the selection")
+        arrange_bar.addWidget(self.align_button)
+        arrange_bar.addSeparator()
+        action(arrange_bar, "Front", lambda: self.z_order("front"), "upload")
+        action(arrange_bar, "Back", lambda: self.z_order("back"), "download")
+        arrange_bar.addSeparator()
+        zoom_out = action(arrange_bar, "−", lambda: self.view.set_zoom(round(self.view.transform().m11()*100)-10), "x")
+        zoom_out.setToolTip("Zoom out")
+        self.zoom_label = QLabel("100%")
+        self.zoom_label.setContentsMargins(4, 0, 4, 0)
+        self.zoom_label.setMinimumWidth(48)
+        self.zoom_label.setAlignment(Qt.AlignCenter)
+        arrange_bar.addWidget(self.zoom_label)
+        zoom_in = action(arrange_bar, "+", lambda: self.view.set_zoom(round(self.view.transform().m11()*100)+10), "plus")
+        zoom_in.setToolTip("Zoom in")
+        for item in (zoom_out, zoom_in):
+            button = arrange_bar.widgetForAction(item)
+            if button is not None:
+                button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+                button.setFixedWidth(34)
+        action(arrange_bar, "Fit", self.view_fit, "device-desktop")
+        # Push the actions that leave the Studio to the right, where they read
+        # as the end of the workflow rather than one more editing button.
+        spacer = QWidget(); spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        arrange_bar.addWidget(spacer)
+        action(arrange_bar, "Preview", self.preview, "player-play")
+        action(arrange_bar, "Generate", self.generate, "file-code")
+        action(arrange_bar, "Deploy", self.deploy, "upload")
+
+        layout.addWidget(primary); layout.addWidget(canvas_bar); layout.addWidget(arrange_bar)
         split = QSplitter(Qt.Horizontal); split.setObjectName("designerMainSplitter"); split.setHandleWidth(4)
         left = QSplitter(Qt.Vertical); left.setHandleWidth(4)
         self.palette = WidgetPalette(self.registry); self.palette.setObjectName("designerPalette")
@@ -305,6 +395,7 @@ class DesignerWorkspace(QWidget):
         self.properties.assetRequested.connect(self._choose_property_asset)
         self.scene.assetRequested.connect(self._asset_requested)
         self.scene.textRequested.connect(self._text_requested)
+        self.scene.reparentRequested.connect(self._reparent_requested)
         self.scene.contextMenuRequested.connect(self._show_context_menu)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._tree_context_menu)
@@ -325,21 +416,50 @@ class DesignerWorkspace(QWidget):
         accent = color("accent", theme)
         self.setStyleSheet(f"""
             QWidget#designerWorkspace {{ background: {color('background', theme)}; }}
-            QToolBar#designerPrimaryToolbar, QToolBar#designerCanvasToolbar {{
+            QToolBar#designerPrimaryToolbar, QToolBar#designerCanvasToolbar,
+            QToolBar#designerArrangeToolbar {{
                 background: {panel}; border: 1px solid {border}; border-radius: 8px;
-                spacing: 2px; padding: 2px 5px;
+                spacing: 6px; padding: 2px 8px;
+            }}
+            /* A visible rule between groups, with air on both sides: without
+               it one cluster of controls ran straight into the next. */
+            QToolBar#designerPrimaryToolbar::separator,
+            QToolBar#designerCanvasToolbar::separator,
+            QToolBar#designerArrangeToolbar::separator {{
+                background: {border}; width: 1px; margin: 6px 7px;
             }}
             QToolBar#designerPrimaryToolbar QToolButton,
-            QToolBar#designerCanvasToolbar QToolButton {{
+            QToolBar#designerCanvasToolbar QToolButton,
+            QToolBar#designerArrangeToolbar QToolButton {{
                 background: transparent; color: {foreground}; border: 1px solid transparent;
                 border-radius: 8px; padding: 0 8px;
                 min-height: 34px; max-height: 34px;
             }}
             QToolBar#designerPrimaryToolbar QToolButton:hover,
-            QToolBar#designerCanvasToolbar QToolButton:hover {{ background: {accent}; }}
+            QToolBar#designerCanvasToolbar QToolButton:hover,
+            QToolBar#designerArrangeToolbar QToolButton:hover {{ background: {accent}; }}
             QToolBar#designerPrimaryToolbar QToolButton:checked,
-            QToolBar#designerCanvasToolbar QToolButton:checked {{
+            QToolBar#designerCanvasToolbar QToolButton:checked,
+            QToolBar#designerArrangeToolbar QToolButton:checked {{
                 background: {muted}; border-color: {border};
+            }}
+            QToolBar#designerPrimaryToolbar QLabel,
+            QToolBar#designerCanvasToolbar QLabel,
+            QToolBar#designerArrangeToolbar QLabel {{
+                color: {foreground}; background: transparent; font-size: 12px;
+            }}
+            QToolBar#designerPrimaryToolbar QLineEdit,
+            QToolBar#designerCanvasToolbar QComboBox,
+            QToolBar#designerCanvasToolbar QSpinBox {{
+                background: {muted}; color: {foreground};
+                border: 1px solid {border}; border-radius: 7px;
+                padding: 0 6px; min-height: 28px; max-height: 30px;
+            }}
+            QToolBar#designerCanvasToolbar QComboBox::drop-down {{
+                border: none; width: 18px;
+            }}
+            QToolBar#designerArrangeToolbar QToolButton::menu-indicator {{
+                image: none; width: 0px;
             }}
             QSplitter#designerMainSplitter::handle {{ background: {border}; }}
             QGroupBox[designerPanel="true"] {{
@@ -596,6 +716,45 @@ class DesignerWorkspace(QWidget):
             self.undo_stack.push(CallbackCommand("Paste widget", redo, undo))
     def duplicate(self): self.copy(); self.paste()
 
+    def _reparent_requested(self, widget_id, parent_id, x, y):
+        """Move a widget into (or out of) a container, undoably.
+
+        Args:
+            widget_id: the widget that was dragged.
+            parent_id: the container it was dropped on, or "" for the page.
+            x, y: its new position in the new parent's coordinates.
+        """
+        model = self._find(widget_id)
+        if model is None or model.locked:
+            return
+        previous_id = self.parent_id_of(model)
+        if previous_id == parent_id:
+            return
+        # A container cannot be dropped into its own subtree; the canvas
+        # filters this out, but the object tree will reach here too.
+        if any(child is self._find(parent_id) for child in model.walk()):
+            return
+        source = self.siblings_of(previous_id)
+        target = self.siblings_of(parent_id)
+        before = dict(model.geometry)
+        after = dict(model.geometry)
+        after["x"], after["y"] = max(0, x), max(0, y)
+        label = self.registry.get(model.type).display_name
+
+        def redo():
+            if model in source: source.remove(model)
+            if model not in target: target.append(model)
+            model.geometry.update(after)
+            self._load_page(select=[widget_id])
+
+        def undo():
+            if model in target: target.remove(model)
+            if model not in source: source.append(model)
+            model.geometry.update(before)
+            self._load_page(select=[widget_id])
+
+        self.undo_stack.push(CallbackCommand(f"Reparent {label}", redo, undo))
+
     def _geometry_command(self, widget_id, before, after):
         model = self._find(widget_id)
         if not model: return
@@ -761,9 +920,17 @@ class DesignerWorkspace(QWidget):
         )
         self.project_name.setText(self.project.name)
     def align(self, mode):
+        """Align, size-match or distribute the selection, undoably.
+
+        Every other edit goes on the undo stack. These did not: they rewrote
+        the geometry dicts in place, so Ctrl+Z after an align undid whatever
+        came *before* it and left the align standing -- the stack and the
+        model drifting apart with no way back.
+        """
         models = self.scene.selected_models()
         if len(models) < 2: return
-        g = [model.geometry for model in models]; anchor = g[0]
+        before = [dict(model.geometry) for model in models]
+        g = [dict(model.geometry) for model in models]; anchor = g[0]
         if mode == "left":
             for item in g[1:]: item["x"] = anchor["x"]
         elif mode == "right":
@@ -788,14 +955,41 @@ class DesignerWorkspace(QWidget):
             axis = "x" if mode.endswith("h") else "y"; ordered = sorted(g, key=lambda item: item[axis])
             span = ordered[-1][axis] - ordered[0][axis]
             for index, item in enumerate(ordered[1:-1], 1): item[axis] = ordered[0][axis] + span * index / (len(ordered)-1)
-        self._load_page(select=[m.id for m in models])
+        if g == before:
+            return
+        after = [dict(item) for item in g]
+        ids = [m.id for m in models]
+
+        def redo():
+            for model, geometry in zip(models, after): model.geometry.update(geometry)
+            self._load_page(select=ids)
+
+        def undo():
+            for model, geometry in zip(models, before): model.geometry.update(geometry)
+            self._load_page(select=ids)
+
+        self.undo_stack.push(CallbackCommand(f"Align {mode}", redo, undo))
     def z_order(self, mode):
+        """Raise or lower the selection, undoably."""
         models = self.scene.selected_models()
         if not models: return
         values = [widget.z for widget in self.current_page.walk()]
         target = (max(values or [0]) + 1) if mode == "front" else (min(values or [0]) - 1)
-        for model in models: model.z = target
-        self._load_page(select=[m.id for m in models])
+        before = [model.z for model in models]
+        if all(z == target for z in before):
+            return
+        ids = [m.id for m in models]
+
+        def redo():
+            for model in models: model.z = target
+            self._load_page(select=ids)
+
+        def undo():
+            for model, z in zip(models, before): model.z = z
+            self._load_page(select=ids)
+
+        self.undo_stack.push(CallbackCommand(
+            "Bring to front" if mode == "front" else "Send to back", redo, undo))
     def toggle_grid(self, checked): self.scene.grid_visible = checked; self.scene.update()
     def toggle_snap(self, checked): self.scene.snap_enabled = checked
     def view_fit(self): self.view.fit_canvas()
