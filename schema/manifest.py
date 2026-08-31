@@ -82,6 +82,18 @@ QT_BINDINGS = ("pyside6", "pyside2")
 # 1280x800 is the most common panel in the supported range.
 DEFAULT_SCREEN = {"width": 1280, "height": 800}
 
+# The Shadcn Theme singleton's two colour modes. A bundle declares the one it
+# was designed against: the shell applies it before loading the app, and the
+# app cannot set it itself (Shell.qml assigns Theme.mode from its own
+# Component.onCompleted, which runs *after* the Loader has completed the app,
+# so anything the app sets is overwritten). Without this the shell's CLI
+# default decides, and a light-background design gets dark-mode tokens --
+# near-white glyphs on a near-white screen.
+THEMES = ("light", "dark")
+
+# Matches the shell's --theme default, and CONTRACT 11.1.
+DEFAULT_THEME = "dark"
+
 
 def _load(bundle_dir):
     """Read and parse manifest.json from a bundle directory.
@@ -286,6 +298,14 @@ def validate_bundle(bundle_dir):
                         "(got %r)." % (axis, value)
                     )
 
+    # -- theme (optional) --------------------------------------------------
+    theme = manifest.get("theme")
+    if theme is not None and theme not in THEMES:
+        errors.append(
+            "manifest.json: 'theme' must be one of %s (got %r)."
+            % (", ".join(repr(t) for t in THEMES), theme)
+        )
+
     # -- tags_required (optional) -----------------------------------------
     tags = manifest.get("tags_required")
     if tags is not None:
@@ -324,6 +344,19 @@ def screen_of(manifest):
         "width": screen.get("width", DEFAULT_SCREEN["width"]),
         "height": screen.get("height", DEFAULT_SCREEN["height"]),
     }
+
+
+def theme_of(manifest):
+    """Return the colour mode a manifest asks for, filling in the default.
+
+    Args:
+        manifest: a parsed manifest dict (assumed already validated).
+
+    Returns:
+        "light" or "dark".
+    """
+    theme = (manifest or {}).get("theme")
+    return theme if theme in THEMES else DEFAULT_THEME
 
 
 def main(argv=None):

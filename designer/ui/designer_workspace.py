@@ -22,7 +22,7 @@ from designer.generators import QmlGenerationError, QmlGenerator
 from designer.model import DesignerBinding, DesignerPage, DesignerProject, DesignerWidget
 from designer.palette.widget_palette import WidgetPalette
 from designer.palette.widget_registry import default_registry
-from schema.manifest import NAME_RE
+from schema.manifest import NAME_RE, theme_of
 
 try:
     from ui.python.shadcn import color, icon
@@ -261,7 +261,14 @@ class DesignerWorkspace(QWidget):
         self.pages = QComboBox(); self.pages.currentIndexChanged.connect(self.change_page); canvas_bar.addWidget(self.pages)
         canvas_bar.addSeparator(); canvas_bar.addWidget(QLabel(" W")); self.screen_width = QSpinBox(); self.screen_width.setRange(64, 16384); self.screen_width.setValue(1280); canvas_bar.addWidget(self.screen_width)
         canvas_bar.addWidget(QLabel(" H")); self.screen_height = QSpinBox(); self.screen_height.setRange(64, 16384); self.screen_height.setValue(800); canvas_bar.addWidget(self.screen_height)
+        canvas_bar.addWidget(QLabel(" Theme"))
+        self.screen_theme = QComboBox(); self.screen_theme.addItems(["dark", "light"])
+        self.screen_theme.setToolTip(
+            "Shadcn colour mode this design targets; written to the manifest and "
+            "applied by the panel shell before the app loads")
+        canvas_bar.addWidget(self.screen_theme)
         self.screen_width.valueChanged.connect(self._screen_changed); self.screen_height.valueChanged.connect(self._screen_changed)
+        self.screen_theme.currentTextChanged.connect(self._screen_changed)
         self.grid_action = action(canvas_bar, "Grid", self.toggle_grid, "adjustments", checkable=True); self.grid_action.setChecked(True)
         self.snap_action = action(canvas_bar, "Snap", self.toggle_snap, "plug-connected", checkable=True); self.snap_action.setChecked(True)
         canvas_bar.addSeparator()
@@ -482,6 +489,7 @@ class DesignerWorkspace(QWidget):
         else:
             screen = (manifest or {}).get("screen", {})
             self.project = DesignerProject(name=self._bundle_project_name(manifest)); self.project.screen.width = int(screen.get("width", 1280)); self.project.screen.height = int(screen.get("height", 800))
+            self.project.screen.theme = theme_of(manifest or {})
             self.file_path = path; self.current_page_index = 0; self.undo_stack.clear(); self._load_page()
 
     def new_ui(self):
@@ -640,6 +648,9 @@ class DesignerWorkspace(QWidget):
         self.screen_width.blockSignals(True); self.screen_height.blockSignals(True)
         self.screen_width.setValue(self.project.screen.width); self.screen_height.setValue(self.project.screen.height)
         self.screen_width.blockSignals(False); self.screen_height.blockSignals(False)
+        self.screen_theme.blockSignals(True)
+        self.screen_theme.setCurrentText(self.project.screen.theme)
+        self.screen_theme.blockSignals(False)
         self.project_name.blockSignals(True)
         self.project_name.setText(self.project.name)
         self.project_name.blockSignals(False)
@@ -702,7 +713,41 @@ class DesignerWorkspace(QWidget):
     def _screen_changed(self):
         if not hasattr(self, "scene"): return
         self.project.screen.width = self.screen_width.value(); self.project.screen.height = self.screen_height.value()
+        self.project.screen.theme = self.screen_theme.currentText()
         self.scene.update_screen_rect(); self.scene.update()
+
+    def apply_target_resolution(self, width, height):
+        """Match the canvas to the display the Studio is connected to.
+
+        A design is drawn for one piece of glass. When the Studio learns the
+        connected SOM's real geometry, the canvas has to follow, or the author
+        places widgets against a screen that does not exist and only finds out
+        after a deploy. Widget coordinates are left alone: this moves the
+        design surface, not the contents.
+
+        Args:
+            width: panel width in pixels, > 0.
+            height: panel height in pixels, > 0.
+
+        Returns:
+            True when the canvas changed, False when the call was a no-op.
+        """
+        if width <= 0 or height <= 0:
+            return False
+        if (self.project.screen.width, self.project.screen.height) == (width, height):
+            return False
+        self.project.screen.width = width
+        self.project.screen.height = height
+        self.screen_width.blockSignals(True); self.screen_height.blockSignals(True)
+        self.screen_width.setValue(width); self.screen_height.setValue(height)
+        self.screen_width.blockSignals(False); self.screen_height.blockSignals(False)
+        if hasattr(self, "scene"):
+            self.scene.update_screen_rect(); self.scene.update()
+        if self.view.isVisible():
+            self.view.fit_canvas()
+        self.message.emit(
+            f"Designer canvas set to the connected display: {width} x {height} px")
+        return True
 
     def _project_name_edited(self):
         name = self.project_name.text().strip()
@@ -765,6 +810,7 @@ class DesignerWorkspace(QWidget):
         manifest.update({"schema": 1, "name": project_name, "version": manifest.get("version", "1.0.0"),
                          "entry": entry.replace(os.sep, "/"), "runtime": "qml",
                          "screen": {"width": self.project.screen.width, "height": self.project.screen.height},
+                         "theme": self.project.screen.theme,
                          "tags_required": self.project.required_tags()})
         with open(path, "w", encoding="utf-8", newline="\n") as handle: json.dump(manifest, handle, indent=2); handle.write("\n")
 

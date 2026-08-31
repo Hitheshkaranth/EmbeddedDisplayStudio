@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QApplication
 from PySide6.QtQuickWidgets import QQuickWidget
 from PySide6.QtQml import QQmlComponent, QQmlContext
 
+from schema.manifest import theme_of
 from .native_preview import NativePreview
 from .bezel import BEZEL_MARGIN_PCT, bezel_logo, paint_device_bezel
 
@@ -300,6 +301,9 @@ class DevicePanel(QWidget):
     def load_bundle(self, bundle_dir: str, manifest: dict):
         self.bundle_dir = bundle_dir
         self.manifest = manifest
+        # The panel applies the manifest's mode before loading the app, so the
+        # preview must too or it shows colours the device will never produce.
+        self.set_preview_theme(theme_of(manifest))
         
         screen = manifest.get("screen", {})
         self.target_width = screen.get("width", 1280)

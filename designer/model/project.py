@@ -89,6 +89,10 @@ class DesignerScreen:
     width: int = 1280
     height: int = 800
     background: str = "#101418"
+    # The Shadcn colour mode this design assumes. It travels to the panel in
+    # the manifest, because the app cannot set Theme.mode itself: the shell
+    # assigns it after the Loader has already completed the app.
+    theme: str = "dark"
 
 
 @dataclass(frozen=True)
@@ -117,6 +121,7 @@ class DesignerProject:
         screen = DesignerScreen(
             int(raw_screen.get("width", 1280)), int(raw_screen.get("height", 800)),
             str(raw_screen.get("background", "#101418")),
+            "light" if str(raw_screen.get("theme", "dark")) == "light" else "dark",
         )
         pages = [DesignerPage.from_dict(page) for page in data.get("pages", [])]
         return cls(1, str(data.get("name", "")).strip(), screen,

@@ -1228,7 +1228,16 @@ class MainWindow(QMainWindow):
             self._detected_panel_index,
             f"Connected target — {display_text}",
         )
+        # setCurrentIndex emits nothing when the row is already current, so a
+        # reconnect to a panel of a different size would leave the preview on
+        # the previous geometry. Apply it directly instead of relying on the
+        # signal.
         self.cmb_panel.setCurrentIndex(self._detected_panel_index)
+        self.on_panel_size_changed(self._detected_panel_index)
+        # The designer draws against the same glass the preview emulates, so it
+        # follows the detected geometry rather than the manifest's guess.
+        if hasattr(self, "designer_workspace"):
+            self.designer_workspace.apply_target_resolution(width, height)
         self.log(f"Connected SOM display detected: {display_text}")
 
     def _profile_number(self, key):
@@ -1556,6 +1565,10 @@ class MainWindow(QMainWindow):
             # for any tag the app declares.
             self.taglab_panel.bind_tags(tags)
             self.designer_workspace.set_bundle(dir_path, manifest)
+            # A bundle opened after Connect still targets the real panel: the
+            # manifest's screen is only a default for an unknown display.
+            if self.detected_resolution:
+                self.designer_workspace.apply_target_resolution(*self.detected_resolution)
         else:
             err_text = "\n".join(msgs)
             self.val_label.setText(f"Validation Failed:\n{err_text}")

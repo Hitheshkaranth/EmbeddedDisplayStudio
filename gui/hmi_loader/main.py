@@ -150,6 +150,27 @@ class Hmi(QObject):
         """
         logger.info(f"App Log: {msg}")
 
+def resolve_theme(manifest: dict, override: str = None) -> str:
+    """Pick the Shadcn colour mode to start in.
+
+    The bundle decides, because the app cannot: Shell.qml assigns Theme.mode
+    from its own Component.onCompleted, which runs after the Loader has
+    completed the app, so anything the app sets is immediately overwritten.
+    An explicit --theme still wins, for desktop development.
+
+    Args:
+        manifest: parsed manifest dict, possibly empty.
+        override: the value of --theme, or None when it was not passed.
+
+    Returns:
+        "light" or "dark".
+    """
+    if override in ("light", "dark"):
+        return override
+    theme = (manifest or {}).get("theme")
+    return theme if theme in ("light", "dark") else "dark"
+
+
 def validate_manifest(manifest_path: Path) -> tuple[dict, str]:
     """
     Validates manifest.json against CONTRACT Section 4.
@@ -197,7 +218,11 @@ def main():
     parser.add_argument("--daemon-port", type=int, default=5000, help="Hardware daemon port")
     parser.add_argument("--ready-file", default="/run/hmi/gui-ready", help="Readiness marker file")
     parser.add_argument("--windowed", action="store_true", help="Run windowed for desktop dev")
-    parser.add_argument("--theme", choices=["light", "dark"], default="dark", help="Initial theme")
+    # No default: the bundle's manifest decides, and an explicit --theme still
+    # wins for desktop development. Falling back to a hardcoded "dark" here is
+    # what made a light-background design unreadable on the panel.
+    parser.add_argument("--theme", choices=["light", "dark"], default=None,
+                        help="Initial theme (default: the manifest's, else dark)")
     parser.add_argument("--exit-after", type=int, help=argparse.SUPPRESS) # Hidden, for smoke tests
     parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"], default="INFO")
     
@@ -256,7 +281,7 @@ def main():
         
     # We expose command line args as properties or just let QML use windowed
     engine.rootContext().setContextProperty("isWindowed", args.windowed)
-    engine.rootContext().setContextProperty("initialTheme", args.theme)
+    engine.rootContext().setContextProperty("initialTheme", resolve_theme(manifest, args.theme))
     
     engine.load(QUrl.fromLocalFile(shell_qml))
     if not engine.rootObjects():
