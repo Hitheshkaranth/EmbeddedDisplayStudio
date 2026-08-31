@@ -173,6 +173,11 @@ class TestRemoteCommands(unittest.TestCase):
 
         self.assertNotIn("; rm -rf /", command.replace("'evil; rm -rf /'", ""))
 
+    def test_hid_import_installs_self_contained_hidapi_distribution(self):
+        from schema.deps import IMPORT_TO_DISTRIBUTION
+
+        self.assertEqual(IMPORT_TO_DISTRIBUTION["hid"], "hidapi")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (
     QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSpinBox,
+    QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSpinBox,
     QFrame, QPlainTextEdit, QScrollArea, QSizePolicy, QSplitter, QToolBar,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -22,6 +22,7 @@ from designer.generators import QmlGenerationError, QmlGenerator
 from designer.model import DesignerBinding, DesignerPage, DesignerProject, DesignerWidget
 from designer.palette.widget_palette import WidgetPalette
 from designer.palette.widget_registry import default_registry
+from schema.manifest import NAME_RE
 
 try:
     from ui.python.shadcn import color, icon
@@ -232,6 +233,13 @@ class DesignerWorkspace(QWidget):
             if shortcut: item.setShortcut(QKeySequence(shortcut))
             return item
         action(primary, "New UI", self.new_ui, "file-code")
+        primary.addWidget(QLabel(" Project "))
+        self.project_name = QLineEdit()
+        self.project_name.setPlaceholderText("deployment-name")
+        self.project_name.setMaximumWidth(220)
+        self.project_name.setToolTip("Project name used for deployment and release files")
+        self.project_name.editingFinished.connect(self._project_name_edited)
+        primary.addWidget(self.project_name)
         action(primary, "Open", self.open_ui, "folder-open")
         action(primary, "Save", self.save, "download", "Ctrl+S")
         primary.addSeparator()
@@ -289,6 +297,7 @@ class DesignerWorkspace(QWidget):
         self.properties.geometryEdited.connect(self._single_geometry_command); self.bindings.bindingEdited.connect(self._binding_command)
         self.properties.assetRequested.connect(self._choose_property_asset)
         self.scene.assetRequested.connect(self._asset_requested)
+        self.scene.textRequested.connect(self._text_requested)
         self.scene.contextMenuRequested.connect(self._show_context_menu)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._tree_context_menu)
@@ -466,14 +475,34 @@ class DesignerWorkspace(QWidget):
         path = os.path.join(self.bundle_dir, "project.edsui") if self.bundle_dir else ""
         if path and os.path.isfile(path):
             self.load_file(path)
+            # Projects saved before the name field was introduced inherit the
+            # bundle name once, then persist it in project.edsui on save.
+            if not self.project.name:
+                self.project.name = self._bundle_project_name(manifest)
         else:
             screen = (manifest or {}).get("screen", {})
-            self.project = DesignerProject(); self.project.screen.width = int(screen.get("width", 1280)); self.project.screen.height = int(screen.get("height", 800))
+            self.project = DesignerProject(name=self._bundle_project_name(manifest)); self.project.screen.width = int(screen.get("width", 1280)); self.project.screen.height = int(screen.get("height", 800))
             self.file_path = path; self.current_page_index = 0; self.undo_stack.clear(); self._load_page()
 
     def new_ui(self):
         width = self.project.screen.width; height = self.project.screen.height
-        self.project = DesignerProject(); self.project.screen.width = width; self.project.screen.height = height
+        name = ""
+        if self.isVisible():
+            name, accepted = QInputDialog.getText(
+                self, "New design", "Project name used for deployment:",
+                QLineEdit.Normal, "")
+            if not accepted:
+                return
+            name = name.strip()
+            if not NAME_RE.fullmatch(name):
+                QMessageBox.warning(
+                    self, "Invalid project name",
+                    "Use 1-64 lowercase letters, numbers, dots, underscores, or hyphens."
+                )
+                return
+        else:
+            name = self._bundle_project_name()
+        self.project = DesignerProject(name=name); self.project.screen.width = width; self.project.screen.height = height
         self.file_path = os.path.join(self.bundle_dir, "project.edsui") if self.bundle_dir else ""
         self.current_page_index = 0; self.undo_stack.clear(); self._load_page()
 
@@ -611,6 +640,9 @@ class DesignerWorkspace(QWidget):
         self.screen_width.blockSignals(True); self.screen_height.blockSignals(True)
         self.screen_width.setValue(self.project.screen.width); self.screen_height.setValue(self.project.screen.height)
         self.screen_width.blockSignals(False); self.screen_height.blockSignals(False)
+        self.project_name.blockSignals(True)
+        self.project_name.setText(self.project.name)
+        self.project_name.blockSignals(False)
         for widget_id in select or []:
             item = self.scene.item_for_id(widget_id)
             if item: item.setSelected(True)
@@ -671,6 +703,18 @@ class DesignerWorkspace(QWidget):
         if not hasattr(self, "scene"): return
         self.project.screen.width = self.screen_width.value(); self.project.screen.height = self.screen_height.value()
         self.scene.update_screen_rect(); self.scene.update()
+
+    def _project_name_edited(self):
+        name = self.project_name.text().strip()
+        if NAME_RE.fullmatch(name):
+            self.project.name = name
+            self.project_name.setText(name)
+            return
+        QMessageBox.warning(
+            self, "Invalid project name",
+            "Use 1-64 lowercase letters, numbers, dots, underscores, or hyphens."
+        )
+        self.project_name.setText(self.project.name)
     def align(self, mode):
         models = self.scene.selected_models()
         if len(models) < 2: return
@@ -716,11 +760,21 @@ class DesignerWorkspace(QWidget):
         manifest = {}
         if os.path.isfile(path):
             with open(path, "r", encoding="utf-8") as handle: manifest = json.load(handle)
-        manifest.update({"schema": 1, "name": manifest.get("name", "designed-ui"), "version": manifest.get("version", "1.0.0"),
+        project_name = self.project.name or self._bundle_project_name(manifest)
+        self.project.name = project_name
+        manifest.update({"schema": 1, "name": project_name, "version": manifest.get("version", "1.0.0"),
                          "entry": entry.replace(os.sep, "/"), "runtime": "qml",
                          "screen": {"width": self.project.screen.width, "height": self.project.screen.height},
                          "tags_required": self.project.required_tags()})
         with open(path, "w", encoding="utf-8", newline="\n") as handle: json.dump(manifest, handle, indent=2); handle.write("\n")
+
+    def _bundle_project_name(self, manifest=None):
+        """Return the deployable name for this designer project."""
+        manifest_name = str((manifest or {}).get("name", "")).strip()
+        if manifest_name:
+            return manifest_name
+        folder_name = os.path.basename(os.path.normpath(self.bundle_dir)) if self.bundle_dir else ""
+        return folder_name or "designed-ui"
 
     def generate(self):
         if not self.bundle_dir:
@@ -736,6 +790,21 @@ class DesignerWorkspace(QWidget):
     def preview(self):
         if self.generate(): self.previewRequested.emit(self.bundle_dir)
     def deploy(self):
+        if self.isVisible():
+            name, accepted = QInputDialog.getText(
+                self, "Deploy design", "Project name used for deployment:",
+                QLineEdit.Normal, self.project.name or self._bundle_project_name())
+            if not accepted:
+                return
+            name = name.strip()
+            if not NAME_RE.fullmatch(name):
+                QMessageBox.warning(
+                    self, "Invalid project name",
+                    "Use 1-64 lowercase letters, numbers, dots, underscores, or hyphens."
+                )
+                return
+            self.project.name = name
+            self.project_name.setText(name)
         if self.generate(): self.deployRequested.emit(self.bundle_dir)
 
     def choose_image_asset(self, source_path):
@@ -764,6 +833,20 @@ class DesignerWorkspace(QWidget):
         if item:
             self.scene.clearSelection(); item.setSelected(True)
         self._choose_property_asset(property_name)
+
+    def _text_requested(self, widget_id, property_name):
+        """Edit a widget's visible caption by double-clicking it on the canvas."""
+        model = self._find(widget_id)
+        if model is None:
+            return
+        item = self.scene.item_for_id(widget_id)
+        if item:
+            self.scene.clearSelection(); item.setSelected(True)
+        current = str(model.properties.get(property_name, ""))
+        value, accepted = QInputDialog.getMultiLineText(
+            self, "Edit widget text", property_name, current)
+        if accepted:
+            self._property_command(property_name, value)
 
     def context_menu(self, widget_id):
         """The actions a widget offers on right-click, Qt Designer style."""

@@ -65,6 +65,11 @@ IMPORT_TO_DISTRIBUTION: Dict[str, str] = {
     "fitz": "PyMuPDF",
     "gi": "PyGObject",
     "google": "protobuf",
+    # The PyPI project named ``hid`` is a ctypes wrapper that still needs a
+    # separately installed libhidapi shared library. ``hidapi`` ships the
+    # importable native ``hid`` extension and is therefore the deployable
+    # distribution on our self-contained panel runtime.
+    "hid": "hidapi",
     "jwt": "PyJWT",
     "OpenGL": "PyOpenGL",
     "PIL": "pillow",

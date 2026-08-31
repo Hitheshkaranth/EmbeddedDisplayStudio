@@ -111,20 +111,34 @@ DevicePolicy=closed
 # GPIO lines.  "rw" because the daemon both reads inputs (buttons,
 # sensors) and writes outputs (LEDs, relays).
 # Without this line the daemon cannot control GPIOs at all.
-DeviceAllow=/dev/gpiochip* rw
+# DeviceAllow paths are not shell globs. Listing the BSP's possible nodes is
+# required; a literal /dev/gpiochip* rule leaves every real chip blocked by
+# the devices cgroup and libgpiod fails with EPERM even when the line is free.
+DeviceAllow=/dev/gpiochip0 rw
+DeviceAllow=/dev/gpiochip1 rw
+DeviceAllow=/dev/gpiochip2 rw
+DeviceAllow=/dev/gpiochip3 rw
+DeviceAllow=/dev/gpiochip4 rw
+DeviceAllow=/dev/gpiochip5 rw
 
 # IIO subsystem -- the daemon reads ADC values, accelerometer data,
 # etc. through sysfs but the kernel exposes /dev/iio:deviceN for
 # buffered/triggered reads.  "r" because the daemon only reads
 # sensor data, never configures trigger hardware.
 # Without this line buffered IIO reads fail with EACCES.
-DeviceAllow=/dev/iio:device* r
+DeviceAllow=/dev/iio:device0 r
+DeviceAllow=/dev/iio:device1 r
+DeviceAllow=/dev/iio:device2 r
+DeviceAllow=/dev/iio:device3 r
 
 # UART devices -- the daemon communicates with external peripherals
 # (RS-485 sensors, Modbus devices) over the Verdin UART pins.
 # "rw" because UART is bidirectional.
 # Without this line all serial communication fails.
-DeviceAllow=/dev/verdin-uart* rw
+DeviceAllow=/dev/verdin-uart1 rw
+DeviceAllow=/dev/verdin-uart2 rw
+DeviceAllow=/dev/verdin-uart3 rw
+DeviceAllow=/dev/verdin-uart4 rw
 
 # Also allow /dev/null, /dev/zero, /dev/urandom which Python and
 # glibc always need.  DevicePolicy=closed blocks even these unless

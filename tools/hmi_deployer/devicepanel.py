@@ -369,6 +369,13 @@ class DevicePanel(QWidget):
             self.native_preview.stop()
             self._show_qml_view()
             entry_path = os.path.join(bundle_dir, entry)
+            # setSource() is a no-op when given the same URL, and the engine
+            # caches compiled components by URL. Designer regeneration writes
+            # that same generated/Main.qml path, so without explicitly
+            # unloading and invalidating the cache the Display Console keeps
+            # showing the previous design indefinitely.
+            self.quick_widget.setSource(QUrl())
+            self.quick_widget.engine().clearComponentCache()
             self.quick_widget.setSource(QUrl.fromLocalFile(entry_path))
 
         self.update_geometry()

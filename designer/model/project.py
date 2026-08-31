@@ -103,6 +103,7 @@ class ValidationIssue:
 @dataclass
 class DesignerProject:
     version: int = 1
+    name: str = ""
     screen: DesignerScreen = field(default_factory=DesignerScreen)
     pages: list[DesignerPage] = field(default_factory=lambda: [DesignerPage()])
 
@@ -118,10 +119,12 @@ class DesignerProject:
             str(raw_screen.get("background", "#101418")),
         )
         pages = [DesignerPage.from_dict(page) for page in data.get("pages", [])]
-        return cls(1, screen, pages or [DesignerPage()])
+        return cls(1, str(data.get("name", "")).strip(), screen,
+                   pages or [DesignerPage()])
 
     def to_dict(self) -> dict[str, Any]:
-        return {"version": self.version, "screen": asdict(self.screen),
+        return {"version": self.version, "name": self.name,
+                "screen": asdict(self.screen),
                 "pages": [{"id": p.id, "name": p.name,
                            "widgets": [w.to_dict() for w in p.widgets]} for p in self.pages]}
 

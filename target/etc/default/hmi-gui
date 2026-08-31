@@ -45,6 +45,12 @@
 # Default: 1 (set by hmi-gui-launch).
 #QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 
+# QT_QUICK_BACKEND -- Qt Quick scenegraph backend. The provisioned PySide6
+# runtime cannot create an OpenGL RHI context against the panel BSP's GLES
+# stack, so generated QML uses the software backend by default.
+# Default: software (set by hmi-gui-launch).
+#QT_QUICK_BACKEND=software
+
 # ---- HMI application behaviour ----
 #
 # HMI_LOG_LEVEL -- Python logging level for the GUI loader

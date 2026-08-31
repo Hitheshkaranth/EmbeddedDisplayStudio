@@ -2267,10 +2267,21 @@ class MainWindow(QMainWindow):
             self._pip_failed.append(text.split(None, 1)[1])
 
     def _on_deps_installed(self, code: int) -> None:
-        """Continue only if the panel really can import what it was sent."""
+        """Re-import packages after pip; installed does not mean loadable."""
         if code == 0 and not self._pip_failed:
-            self.log(f"Installed {self._pip_total} package(s) on the panel.")
-            self._begin_packaging()
+            self.log("Package installation finished; verifying imports...")
+            self._deps_missing = []
+            self.run_ssh_worker(
+                build_ssh_cmd(
+                    self.inp_host.text().strip(), self.inp_user.text().strip(),
+                    self.ssh_port(), self.inp_key.text().strip(),
+                    build_dep_check_command(
+                        [module for module, _ in self._dependencies], self._qt_binding()
+                    ),
+                ),
+                "Verify packages", self._on_deps_rechecked,
+                timeout_s=SSH_TEST_TIMEOUT_S, line_hook=self._note_dep_line,
+            )
             return
 
         names = ", ".join(self._pip_failed) or "the packages"
@@ -2279,6 +2290,20 @@ class MainWindow(QMainWindow):
             "The console above has pip's own output. A panel with no route to "
             "an index needs the packages installed by hand; deploying without "
             "them would only crash-loop and roll back."
+        )
+        self.btn_deploy.setEnabled(self.bundle_dir is not None)
+
+    def _on_deps_rechecked(self, code: int) -> None:
+        """Package only when every dependency imports after installation."""
+        if code == 0 and not self._deps_missing:
+            self.log(f"Installed and verified {self._pip_total} package(s) on the panel.")
+            self._begin_packaging()
+            return
+        names = ", ".join(self._deps_missing) or "the installed packages"
+        self._progress_fail(f"The panel still cannot import {names} after installation.")
+        self.log(
+            "Installation did not make the package importable. This usually means "
+            "a native shared library required by the Python package is absent."
         )
         self.btn_deploy.setEnabled(self.bundle_dir is not None)
 

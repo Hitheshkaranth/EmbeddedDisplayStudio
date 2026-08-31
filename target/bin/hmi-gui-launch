@@ -235,6 +235,13 @@ export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
 # fullscreen; decorations waste screen space and look wrong.
 export QT_WAYLAND_DISABLE_WINDOWDECORATION="${QT_WAYLAND_DISABLE_WINDOWDECORATION:-1}"
 
+# The provisioned PySide6 wheel is a portable desktop-GL build, while the
+# i.MX8 panel compositor exposes the BSP's GLES stack. Asking Qt Quick to make
+# an OpenGL RHI context on that combination aborts the process before the
+# readiness marker can be written. The software scenegraph is deterministic
+# and works for generated QML bundles on every supported panel.
+export QT_QUICK_BACKEND="${QT_QUICK_BACKEND:-software}"
+
 # Source operator overrides.  `set -a` auto-exports every variable set
 # by the file so they are visible to the exec'd Python process.
 # The file is optional (protected by the -f test and the leading dash
@@ -372,6 +379,7 @@ log "INFO" "launching GUI: ${GUI_LOADER}"
 log "INFO" "  XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}"
 log "INFO" "  WAYLAND_DISPLAY=${WAYLAND_DISPLAY}"
 log "INFO" "  QT_QPA_PLATFORM=${QT_QPA_PLATFORM}"
+log "INFO" "  QT_QUICK_BACKEND=${QT_QUICK_BACKEND}"
 log "INFO" "  APPS_DIR=${APPS_DIR}"
 
 # exec replaces this shell process with the Python GUI loader.

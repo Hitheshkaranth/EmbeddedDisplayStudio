@@ -55,6 +55,13 @@ class DesignerItem(QGraphicsRectItem):
                 return str(value)
         return self.definition.display_name
 
+    def editable_text_property(self):
+        """Return the primary caption-like property authors expect to edit in place."""
+        for key in ("text", "title", "label", "placeholderText", "tabs", "description"):
+            if key in self.definition.properties:
+                return key
+        return ""
+
     def paint(self, painter, option, widget=None):
         selected = self.isSelected()
         color = self.fill_color()
@@ -141,6 +148,13 @@ class DesignerItem(QGraphicsRectItem):
                                                      self.definition.asset_properties[0])
             event.accept()
             return
+        property_name = self.editable_text_property()
+        if property_name:
+            self._designer_scene.clearSelection()
+            self.setSelected(True)
+            self._designer_scene.textRequested.emit(self.widget_model.id, property_name)
+            event.accept()
+            return
         super().mouseDoubleClickEvent(event)
 
     def mousePressEvent(self, event):
@@ -185,6 +199,7 @@ class DesignerScene(QGraphicsScene):
     selectionIdsChanged = Signal(list)
     contextMenuRequested = Signal(str, object)
     assetRequested = Signal(str, str)
+    textRequested = Signal(str, str)
 
     def __init__(self, registry, parent=None):
         super().__init__(parent)
