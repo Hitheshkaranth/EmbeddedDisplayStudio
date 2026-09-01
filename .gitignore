@@ -31,6 +31,10 @@ desktop.ini
 /*.png
 /gui-ready*
 /tmp/
+# The scratch directory the deployer and the smoke captures actually use.
+# The rule above says /tmp/ and never matched it, so bundle tarballs and
+# bezel grabs sat in the working tree waiting for a `git add -A`.
+/.tmp/
 build/
 dist/
 
