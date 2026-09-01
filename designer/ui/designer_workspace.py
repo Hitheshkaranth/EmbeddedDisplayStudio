@@ -1160,19 +1160,29 @@ class DesignerWorkspace(QWidget):
         model = self._find(widget_id) if widget_id else None
         definition = self.registry.get(model.type) if model else None
         if model is not None:
+            # Qt opens a context menu with its top-left under the cursor, so
+            # whatever is first sits directly beneath the pointer. "Clear
+            # Image" was second: one twitch of the wrist between right-clicking
+            # a picture and wiping it, with the file still on disk and nothing
+            # on screen to say what happened. Destructive entries go to the
+            # bottom, beside Delete, behind a separator.
+            clearable = []
             for name in (definition.asset_properties if definition else ()):
                 label = "Image" if name == "source" else name
                 current = model.properties.get(name)
                 menu.addAction(f"Change {label}..." if current else f"Set {label}...",
                                lambda checked=False, n=name: self._asset_requested(widget_id, n))
                 if current:
-                    menu.addAction(f"Clear {label}",
-                                   lambda checked=False, n=name: self._property_command(n, ""))
+                    clearable.append((name, label))
             if definition and definition.asset_properties:
                 menu.addSeparator()
             menu.addAction("Cut", self.cut)
             menu.addAction("Copy", self.copy)
             menu.addAction("Duplicate", self.duplicate)
+            menu.addSeparator()
+            for name, label in clearable:
+                menu.addAction(f"Clear {label}",
+                               lambda checked=False, n=name: self._property_command(n, ""))
             menu.addAction("Delete", self.delete_selected)
             menu.addSeparator()
             menu.addAction("Bring to Front", lambda: self.z_order("front"))
