@@ -16,6 +16,8 @@ POSITIONERS = ("Row", "Column", "Grid")
 
 class DesignerItem(QGraphicsRectItem):
     HANDLE = 9.0
+    # Width of the border paint() strokes around a selected item.
+    SELECTION_PEN = 2.0
 
     def __init__(self, widget, definition, scene, parent=None):
         super().__init__(0, 0, widget.geometry["width"], widget.geometry["height"], parent)
@@ -121,6 +123,24 @@ class DesignerItem(QGraphicsRectItem):
             painter.setPen(QPen(QColor("#2563eb"), 1))
             for rect in self._handles():
                 painter.drawRect(rect)
+
+    def boundingRect(self):
+        """The rect, widened to cover everything paint() actually draws.
+
+        QGraphicsRectItem measures itself by its rect and its own pen. The
+        eight resize handles are drawn centred on the rect's corners and edge
+        midpoints, so half of every handle falls outside that -- and the
+        selection border is a 2px pen this item never told Qt about, because
+        paint() sets it on the painter rather than through setPen().
+
+        Qt repaints only the area an item claims. Dragging a selected widget
+        therefore left the outer half of each handle, and the outer edge of
+        the selection border, painted on the canvas at every position the
+        widget passed through: a ghost trail that nothing erased until the
+        view was scrolled or the page reloaded.
+        """
+        margin = self.HANDLE / 2 + self.SELECTION_PEN
+        return super().boundingRect().adjusted(-margin, -margin, margin, margin)
 
     def _handles(self):
         r, h = self.rect(), self.HANDLE
