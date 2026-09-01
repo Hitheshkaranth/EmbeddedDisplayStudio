@@ -225,16 +225,36 @@ _CANDIDATES = {
 }.get(_BINDING, ("PySide6", "PySide2"))
 
 _QT = ""
+_WHY = {}
 for _candidate in _CANDIDATES:
     try:
         importlib.import_module(_candidate + ".QtWidgets")
-    except ImportError:
+    except ImportError as _exc:
+        _WHY[_candidate] = str(_exc)
         continue
     _QT = _candidate
     break
 if not _QT:
+    # Name the real reason. A bundle that ships its own PySide2/ -- commonly a
+    # desktop shim that re-exports PySide6 -- sits on sys.path ahead of the
+    # installed bindings, so the import fails inside the bundle's own copy
+    # while the genuine one is present and unused. Reporting only "needs
+    # PySide2" sends the reader off to install what they already have.
+    _shadow = [
+        _name for _name in _CANDIDATES
+        if os.path.isdir(os.path.join(os.path.dirname(os.path.abspath(_ENTRY)), _name))
+        or os.path.isfile(os.path.join(os.path.dirname(os.path.abspath(_ENTRY)), _name + ".py"))
+    ]
+    _detail = "; ".join(_name + ": " + _WHY[_name] for _name in _CANDIDATES if _name in _WHY)
+    if _shadow:
+        raise ImportError(
+            "the bundle ships its own " + "/, ".join(_shadow) + "/, which shadows "
+            "the Qt bindings in " + sys.executable + " (" + _detail + "). Add it to "
+            ".hmiignore or remove it; the preview and the panel both supply Qt."
+        )
     raise ImportError(
         "the preview needs " + " or ".join(_CANDIDATES) + " in " + sys.executable
+        + " (" + _detail + ")"
     )
 
 _QtWidgets = importlib.import_module(_QT + ".QtWidgets")
