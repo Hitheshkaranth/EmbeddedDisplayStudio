@@ -78,6 +78,11 @@ RUNTIME_ENTRY_SUFFIX = {"qml": ".qml", "python": ".py"}
 # share an interpreter, so the value decides which runtime is started.
 QT_BINDINGS = ("pyside6", "pyside2")
 
+# Package names the panel provides and a bundle must never ship. The platform
+# installs one Qt per runtime -- PySide6 for Qt6 bundles, PySide2 under
+# /opt/hmi-python-qt5 for Qt5 ones -- and shiboken comes with them.
+QT_PACKAGE_NAMES = ("PySide2", "PySide6", "PyQt5", "PyQt6", "shiboken2", "shiboken6")
+
 # Default screen geometry when the manifest does not state one, in pixels.
 # 1280x800 is the most common panel in the supported range.
 DEFAULT_SCREEN = {"width": 1280, "height": 800}
@@ -185,6 +190,46 @@ def detect_qt_binding(bundle_dir, entry):
     return "pyside2" if counts["PySide2"] > counts["PySide6"] else "pyside6"
 
 
+def _vendored_qt_bindings(bundle_dir):
+    """Qt binding packages this bundle would ship, shadowing the panel's own.
+
+    Args:
+        bundle_dir: the bundle root.
+
+    Returns:
+        The set of Qt package names present at the root and not excluded from
+        packaging.
+
+    The bundle's own directory sits first on sys.path on the panel, so anything
+    named like a Qt binding wins over the one the platform installed -- whether
+    it is a real copy built for the wrong architecture or a desktop
+    compatibility shim. Either way the application dies on its first import,
+    with the platform's genuine bindings sitting unused beside it, and the
+    install rolls back after the upload rather than being refused before it.
+
+    .hmiignore is honoured, because a directory that is not shipped cannot
+    shadow anything. On the panel the file is never present -- it is excluded
+    from the archive itself -- so the same call sees a vendored package as
+    shipped, which by then it is.
+    """
+    # Imported here rather than at module scope: schema.bundle imports this
+    # module for the validators it reuses, so the dependency only runs one way.
+    from schema.bundle import load_excludes, _excluded
+
+    patterns = load_excludes(bundle_dir)
+    found = set()
+    for name in QT_PACKAGE_NAMES:
+        if os.path.isdir(os.path.join(bundle_dir, name)):
+            candidate = name
+        elif os.path.isfile(os.path.join(bundle_dir, name + ".py")):
+            candidate = name + ".py"
+        else:
+            continue
+        if not _excluded(candidate, candidate, patterns):
+            found.add(name)
+    return found
+
+
 def validate_bundle(bundle_dir):
     """Validate a bundle directory against CONTRACT section 4.
 
@@ -283,6 +328,18 @@ def validate_bundle(bundle_dir):
                     "manifest.json: 'qt_binding' says %r but the sources import %s."
                     % (binding, "PySide2" if detected == "pyside2" else "PySide6")
                 )
+
+    # -- vendored Qt bindings ---------------------------------------------
+    # Caught here rather than on the panel: this is a 60 MB upload, a failed
+    # health check and a rollback otherwise, and the reason only appears in the
+    # panel's journal.
+    for name in sorted(_vendored_qt_bindings(bundle_dir)):
+        errors.append(
+            "the bundle ships its own %s/, which lands first on sys.path and "
+            "shadows the Qt bindings the panel installed. Add %r to .hmiignore "
+            "if it is only needed on your desktop, or remove it."
+            % (name, name)
+        )
 
     # -- screen (optional) ------------------------------------------------
     screen = manifest.get("screen")
