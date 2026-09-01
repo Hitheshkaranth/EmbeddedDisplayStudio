@@ -334,6 +334,8 @@ class MainWindow(QMainWindow):
         if app is not None:
             app.aboutToQuit.connect(self._shutdown_transport)
 
+        self._restore_detected_resolution()
+
         if self.bundle_dir and os.path.isdir(self.bundle_dir):
             self.load_bundle(self.bundle_dir)
 
@@ -1255,12 +1257,34 @@ class MainWindow(QMainWindow):
             return
 
         width, height = resolution
+        # Remembered across runs. Without this the Studio opened on its default
+        # 10.1" 1280x800 every time and only learned the truth when Connect was
+        # pressed -- so a 1024x768 panel was designed for, previewed and judged
+        # at 16:10 until then, and the difference was read as the panel being
+        # wrong rather than the Studio guessing.
+        self.settings.setValue("panel_width", width)
+        self.settings.setValue("panel_height", height)
+        self._apply_detected_resolution(width, height, live=True)
+        self.log(f"Connected SOM display detected: {width} x {height} px")
+
+    def _apply_detected_resolution(self, width, height, live):
+        """Point the readout, the picker, the preview and the canvas at a panel.
+
+        Args:
+            width, height: the panel's pixel geometry.
+            live: True when a probe just reported it, False when it is being
+                restored from the last session -- which the labels say, because
+                a remembered geometry presented as a live one is how the wrong
+                board gets designed for.
+        """
         display_text = f"{width} x {height} px"
-        self.detected_resolution = resolution
-        self.lbl_target_resolution.setText(display_text)
+        self.detected_resolution = (width, height)
+        self.lbl_target_resolution.setText(
+            display_text if live else f"{display_text} (last seen)")
         self.cmb_panel.setItemText(
             self._detected_panel_index,
-            f"Connected target — {display_text}",
+            f"Connected target — {display_text}" if live
+            else f"Last connected target — {display_text}",
         )
         # setCurrentIndex emits nothing when the row is already current, so a
         # reconnect to a panel of a different size would leave the preview on
@@ -1272,7 +1296,16 @@ class MainWindow(QMainWindow):
         # follows the detected geometry rather than the manifest's guess.
         if hasattr(self, "designer_workspace"):
             self.designer_workspace.apply_target_resolution(width, height)
-        self.log(f"Connected SOM display detected: {display_text}")
+
+    def _restore_detected_resolution(self):
+        """Open on the geometry of the panel this Studio last spoke to."""
+        try:
+            width = int(self.settings.value("panel_width", 0) or 0)
+            height = int(self.settings.value("panel_height", 0) or 0)
+        except (TypeError, ValueError):
+            return
+        if width > 0 and height > 0:
+            self._apply_detected_resolution(width, height, live=False)
 
     def _profile_number(self, key):
         """Return one non-negative integer field from the current SOM profile."""

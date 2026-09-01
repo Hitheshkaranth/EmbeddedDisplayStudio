@@ -157,6 +157,11 @@ class StudioPushesTheDetectedGeometryTests(unittest.TestCase):
         def __init__(self): self.applied = []
         def apply_target_resolution(self, w, h): self.applied.append((w, h)); return True
 
+    class _Settings:
+        def __init__(self): self.values = {}
+        def setValue(self, key, value): self.values[key] = value
+        def value(self, key, default=None): return self.values.get(key, default)
+
     def _studio(self):
         studio = MainWindow.__new__(MainWindow)
         studio.detected_resolution = None
@@ -164,6 +169,7 @@ class StudioPushesTheDetectedGeometryTests(unittest.TestCase):
         studio.cmb_panel = self._Combo()
         studio.lbl_target_resolution = self._Label()
         studio.designer_workspace = self._Designer()
+        studio.settings = self._Settings()
         studio.applied_sizes = []
         studio.on_panel_size_changed = lambda index: studio.applied_sizes.append(index)
         studio.log = lambda *_a, **_k: None
@@ -195,6 +201,41 @@ class StudioPushesTheDetectedGeometryTests(unittest.TestCase):
         studio = self._studio()
 
         MainWindow._record_detected_resolution(studio, "Setting up hmi-gui...")
+
+        self.assertIsNone(studio.detected_resolution)
+        self.assertEqual(studio.designer_workspace.applied, [])
+
+    def test_a_detected_geometry_outlives_the_session(self):
+        """The Studio opened on its default panel every time otherwise.
+
+        Nothing persisted the probe's answer, so a 1024x768 panel was designed
+        for and previewed at the default 10.1" 1280x800 until Connect was
+        pressed -- and the difference read as the panel being wrong rather than
+        as the Studio guessing.
+        """
+        studio = self._studio()
+
+        MainWindow._record_detected_resolution(studio, "HMI_DISPLAY=1024x768")
+
+        self.assertEqual(studio.settings.value("panel_width"), 1024)
+        self.assertEqual(studio.settings.value("panel_height"), 768)
+
+    def test_a_restored_geometry_is_applied_and_labelled_as_remembered(self):
+        studio = self._studio()
+        studio.settings.setValue("panel_width", 1024)
+        studio.settings.setValue("panel_height", 768)
+
+        MainWindow._restore_detected_resolution(studio)
+
+        self.assertEqual(studio.detected_resolution, (1024, 768))
+        self.assertEqual(studio.designer_workspace.applied, [(1024, 768)])
+        self.assertIn("last seen", studio.lbl_target_resolution.text)
+        self.assertIn("Last connected", studio.cmb_panel.texts[5])
+
+    def test_nothing_remembered_leaves_the_default_alone(self):
+        studio = self._studio()
+
+        MainWindow._restore_detected_resolution(studio)
 
         self.assertIsNone(studio.detected_resolution)
         self.assertEqual(studio.designer_workspace.applied, [])
