@@ -2,7 +2,7 @@ graph TD
     subgraph board [The panel: 64-bit ARM SoM plus carrier]
         soc["SoC<br/>quad-core ARM64, 2 GB RAM<br/>GPU or raster-capable framebuffer"]
         flash["eMMC or SD<br/>2 GB free after the OS<br/>holds up to 5 releases"]
-        disp["Display<br/>any resolution the manifest declares<br/>touch optional"]
+        disp["Display<br/>its real geometry is read from DRM on connect<br/>touch optional"]
         net["Ethernet or Wi-Fi<br/>SSH is the only channel the Studio uses"]
     end
     subgraph io [Field I/O, each one optional]

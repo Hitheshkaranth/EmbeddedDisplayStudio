@@ -1,15 +1,23 @@
 graph LR
     subgraph laptop [Your laptop]
-        studio["EmbeddedDisplay Studio<br/>preview, validate, deploy"]
+        designer["Visual designer<br/>project.edsui to generated QML"]
+        studio["EmbeddedDisplay Studio<br/>validate, preview, deploy"]
+        child["Preview child<br/>a second interpreter<br/>PySide6 or PySide2, per the manifest"]
         cli["deploy_to_hmi.sh<br/>the same thing, in CI"]
     end
     subgraph panel [The panel]
         gui["hmi-gui.service<br/>loader + tag engine"]
         current["/opt/hmi_apps/current<br/>the customer bundle"]
+        runtimes["Qt runtimes<br/>PySide6, plus PySide2 at /opt/hmi-python-qt5"]
+        display["Connected display<br/>DRM reports its real geometry"]
         hwd["hmi-hwd.service<br/>libgpiod, IIO, UART"]
     end
+    designer -->|generates a bundle| studio
+    studio -->|runs it unmapped, streams frames back| child
     studio -->|ssh: upload + hmi-install| gui
     cli -->|ssh: upload + hmi-install| gui
     gui --> current
+    current --> runtimes
     hwd -->|tags, UDP/JSON on loopback| gui
     gui -->|commands| hwd
+    display -.->|probed on connect; the bezel and the canvas follow it| studio
