@@ -704,6 +704,34 @@ QPushButton#connectButton:disabled {{
     background-color: {hex_to_rgba(p['brand'], 0.5)};
     color: {hex_to_rgba(p['brandForeground'], 0.6)};
 }}
+/* The link's state, on the control that owns it. Brand blue means "press me";
+   it said that just as loudly while an attempt was in flight and after one had
+   failed. The disabled rule above is what `connecting` would otherwise get,
+   and a greyed-out button reads as "unavailable", not as "working". */
+QPushButton#connectButton[linkState="connecting"] {{
+    background-color: {p['warning']};
+    color: {p['warningForeground']};
+}}
+QPushButton#connectButton[linkState="connecting"]:disabled {{
+    background-color: {p['warning']};
+    color: {p['warningForeground']};
+}}
+QPushButton#connectButton[linkState="connected"] {{
+    background-color: {p['success']};
+    color: {p['successForeground']};
+}}
+QPushButton#connectButton[linkState="connected"]:hover {{
+    background-color: {hex_to_rgba(p['success'], 0.9)};
+    color: {p['successForeground']};
+}}
+QPushButton#connectButton[linkState="fault"] {{
+    background-color: {p['destructive']};
+    color: {p['destructiveForeground']};
+}}
+QPushButton#connectButton[linkState="fault"]:hover {{
+    background-color: {hex_to_rgba(p['destructive'], 0.9)};
+    color: {p['destructiveForeground']};
+}}
 QLineEdit#targetDetailInput {{
     border-radius: 16px;
     height: 34px;

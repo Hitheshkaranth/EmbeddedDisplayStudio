@@ -341,6 +341,40 @@ class MainWindow(QMainWindow):
             from PySide6.QtCore import QTimer
             QTimer.singleShot(self.exit_after_ms, self.close)
 
+    # What the Connect button says the link is doing. The button used to read
+    # "Connect" throughout: while a connection was being attempted, after one
+    # succeeded, and after one timed out. A connect to an unreachable panel
+    # takes its full timeout to fail, so for that whole minute the only
+    # feedback was a console line, and pressing the button again queued a
+    # second attempt behind the first.
+    #
+    # text, icon, enabled
+    LINK_STATES = {
+        "idle": ("Connect", "plug-connected", True),
+        "connecting": ("Connecting...", "loader-2", False),
+        "connected": ("Connected", "plug-connected", True),
+        "fault": ("Reconnect", "plug-off", True),
+    }
+
+    def _set_link_state(self, state: str) -> None:
+        """Show on the Connect button whether the link is trying or established.
+
+        Args:
+            state: one of LINK_STATES. An unknown state falls back to "idle"
+                rather than leaving the button describing the previous attempt.
+
+        Side effects: rewrites the button's text, icon, enabled state and its
+        `linkState` property, which the stylesheet colours.
+        """
+        text, icon_name, enabled = self.LINK_STATES.get(state, self.LINK_STATES["idle"])
+        self.btn_test.setText(text)
+        self.btn_test.setEnabled(enabled)
+        self._themed_icon(self.btn_test, icon_name)
+        # Qt does not restyle on a property change by itself.
+        self.btn_test.setProperty("linkState", state)
+        self.btn_test.style().unpolish(self.btn_test)
+        self.btn_test.style().polish(self.btn_test)
+
     def _themed_icon(self, widget, name: str) -> None:
         """
         Give a widget an icon that follows the theme.
@@ -1893,6 +1927,11 @@ class MainWindow(QMainWindow):
         self.save_settings()
         self.log("Testing connection...")
         self.device_panel.set_led_state(2)  # deploying (amber)
+        self._set_link_state("connecting")
+        # The geometry on screen belongs to the previous panel until this
+        # attempt reports one of its own. Saying so beats showing a resolution
+        # that may belong to a board no longer on the other end of the cable.
+        self.lbl_target_resolution.setText("Probing the connected display...")
         cmd = build_ssh_cmd(
             self.inp_host.text().strip(),
             self.inp_user.text().strip(),
@@ -2041,6 +2080,8 @@ class MainWindow(QMainWindow):
             self.log(f"{desc} exited with {code} ({elapsed:.0f}s)")
             if code == 0:
                 self.device_panel.set_led_state(1)  # Link up
+                if desc == "Test Connection":
+                    self._set_link_state("connected")
                 if hasattr(self, "lbl_connection"):
                     self.lbl_connection.setText("●  LINK ESTABLISHED")
                     self.lbl_connection.setProperty("state", "connected")
@@ -2050,6 +2091,17 @@ class MainWindow(QMainWindow):
                     self.start_relay()
             else:
                 self.device_panel.set_led_state(3)  # Fault
+                if desc == "Test Connection":
+                    self._set_link_state("fault")
+                    # Nothing answered, so nothing reported a display. Leaving
+                    # the previous panel's geometry up reads as a live value.
+                    if self.detected_resolution is None:
+                        self.lbl_target_resolution.setText("Not detected")
+                    else:
+                        width, height = self.detected_resolution
+                        self.lbl_target_resolution.setText(
+                            f"{width} x {height} px (last seen; not connected)"
+                        )
                 if hasattr(self, "lbl_connection"):
                     self.lbl_connection.setText("●  CONNECTION FAULT")
                     self.lbl_connection.setProperty("state", "fault")
