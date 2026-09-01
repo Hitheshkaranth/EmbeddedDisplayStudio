@@ -8,40 +8,20 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 <br />
 
-**The panel** — one image, shipped once
-
-[![Target](https://img.shields.io/badge/Target-ARM64%20Linux%20SoM-006fee?style=for-the-badge&labelColor=18181b)](#the-hardware-it-runs-on)
-[![Yocto](https://img.shields.io/badge/BSP-Yocto%20%C2%B7%20meta--hmi-006fee?style=for-the-badge&logo=yocto&logoColor=white&labelColor=18181b)](yocto/)
-[![Wayland](https://img.shields.io/badge/Display-Wayland%20%2F%20Weston-006fee?style=for-the-badge&labelColor=18181b)](https://wayland.freedesktop.org/)
-[![systemd](https://img.shields.io/badge/Init-systemd%20units%20%C2%B7%20no%20containers-006fee?style=for-the-badge&logo=systemd&logoColor=white&labelColor=18181b)](#why-no-containers)
-[![GPIO](https://img.shields.io/badge/GPIO-libgpiod%20v1%20%2B%20v2-f59e0b?style=for-the-badge&labelColor=18181b)](https://libgpiod.readthedocs.io/)
-[![IIO](https://img.shields.io/badge/ADC-Linux%20IIO%20sysfs-f59e0b?style=for-the-badge&labelColor=18181b)](https://www.kernel.org/doc/html/latest/driver-api/iio/index.html)
-[![UART](https://img.shields.io/badge/UART-pyserial%203.5%20%C2%B7%20optional-f59e0b?style=for-the-badge&labelColor=18181b)](https://pyserial.readthedocs.io/)
-
-**The application** — bring your own, either Qt
-
-[![Qt6](https://img.shields.io/badge/Qt%206-PySide6%206.8.1%20%C2%B7%20QML%20%2B%20Widgets-41cd52?style=for-the-badge&logo=qt&logoColor=white&labelColor=18181b)](https://doc.qt.io/qtforpython-6/)
-[![Qt5](https://img.shields.io/badge/Qt%205-PySide2%205.15.2%20%C2%B7%20side%20by%20side-41cd52?style=for-the-badge&logo=qt&logoColor=white&labelColor=18181b)](#qt5-and-qt6-applications-on-the-same-panel)
-[![Python](https://img.shields.io/badge/Python-3.12%20host%20%C2%B7%20self--contained%20on%20panel-3776ab?style=for-the-badge&logo=python&logoColor=white&labelColor=18181b)](https://www.python.org/)
-[![Tags](https://img.shields.io/badge/I%2FO%20contract-tags%20over%20UDP%20loopback-a1a1aa?style=for-the-badge&labelColor=18181b)](#the-tag-protocol)
-[![No hardware code](https://img.shields.io/badge/app%20hardware%20code-none-a1a1aa?style=for-the-badge&labelColor=18181b)](#the-idea)
-
-**The Studio** — the desktop tool that pushes it
-
-[![Windows binary](https://img.shields.io/badge/Windows-single%20.exe%20%C2%B7%20PyInstaller-8b5cf6?style=for-the-badge&logo=windows&logoColor=white&labelColor=18181b)](../../releases/tag/v0.0.4)
-[![Designer](https://img.shields.io/badge/Designer-.edsui%20%E2%86%92%20QML-8b5cf6?style=for-the-badge&labelColor=18181b)](#visual-designer)
-[![Preview](https://img.shields.io/badge/Preview-live%20%C2%B7%20interactive%20bezel-8b5cf6?style=for-the-badge&labelColor=18181b)](#embeddeddisplay-studio)
-[![Deploy](https://img.shields.io/badge/Deploy-OpenSSH%20%C2%B7%20atomic%20%2B%20rollback-8b5cf6?style=for-the-badge&logo=openssh&logoColor=white&labelColor=18181b)](#from-a-python-app-to-the-panel)
-[![shadcn/ui](https://img.shields.io/badge/UI-shadcn%2Fui%20port%20%C2%B7%20tokens.json-a1a1aa?style=for-the-badge&labelColor=18181b)](#design-system)
-[![Tabler](https://img.shields.io/badge/Icons-Tabler-206bc4?style=for-the-badge&logo=tabler&logoColor=white&labelColor=18181b)](https://github.com/tabler/tabler-icons)
-
-**The project**
-
-[![CI](https://github.com/Hitheshkaranth/EmbeddedDisplayStudio/actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/release-0.0.4-8b5cf6?style=for-the-badge&labelColor=18181b)](../../releases/tag/v0.0.4)
-[![Tests](https://img.shields.io/badge/tests-309%20%C2%B7%20no%20skips%20on%20Linux-17c964?style=for-the-badge&labelColor=18181b)](#verification)
-[![Smoke](https://img.shields.io/badge/release%20gate-the%20built%20.exe%20is%20run-17c964?style=for-the-badge&labelColor=18181b)](#verification)
-[![License](https://img.shields.io/badge/license-MIT-006fee?style=for-the-badge&labelColor=18181b)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![PySide6](https://img.shields.io/badge/PySide6-6.8.1-41CD52?style=flat-square&logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
+[![PySide2](https://img.shields.io/badge/PySide2-5.15.2-41CD52?style=flat-square&logo=qt&logoColor=white)](#qt5-and-qt6-applications-on-the-same-panel)
+[![QML](https://img.shields.io/badge/QML-Qt%20Quick-41CD52?style=flat-square&logo=qt&logoColor=white)](ui/qml/)
+[![Yocto](https://img.shields.io/badge/Yocto-meta--hmi-1A5FB4?style=flat-square&logo=yocto&logoColor=white)](yocto/)
+[![systemd](https://img.shields.io/badge/systemd-units-30D475?style=flat-square&logo=systemd&logoColor=white)](target/systemd/)
+[![Wayland](https://img.shields.io/badge/Wayland-Weston-FFB300?style=flat-square)](https://wayland.freedesktop.org/)
+[![libgpiod](https://img.shields.io/badge/libgpiod-v1%20%2B%20v2-F59E0B?style=flat-square)](https://libgpiod.readthedocs.io/)
+[![OpenSSH](https://img.shields.io/badge/OpenSSH-deploy-4D4D4D?style=flat-square&logo=openssh&logoColor=white)](#from-a-python-app-to-the-panel)
+[![PyInstaller](https://img.shields.io/badge/PyInstaller-single%20exe-306998?style=flat-square)](packaging/)
+[![Tabler Icons](https://img.shields.io/badge/Tabler%20Icons-MIT-206BC4?style=flat-square&logo=tabler&logoColor=white)](ui/icons/)
+[![Platform](https://img.shields.io/badge/Platform-ARM64%20Linux%20%C2%B7%20Windows-555555?style=flat-square&logo=linux&logoColor=white)](#the-hardware-it-runs-on)
+[![CI](https://img.shields.io/github/actions/workflow/status/Hitheshkaranth/EmbeddedDisplayStudio/ci.yml?branch=main&style=flat-square&label=CI)](../../actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-MIT-006FEE?style=flat-square)](LICENSE)
 
 </div>
 
@@ -84,9 +64,9 @@ Three layers, deliberately decoupled:
 
 ### To run the Studio
 
-The packaged **`EmbeddedDisplayStudio.exe`** (current release: **0.0.4**) needs nothing installed: it carries
-its own Python, PySide6 and the standard library. Download it from a
-[release](../../releases/tag/v0.0.4) and run it.
+The packaged **`EmbeddedDisplayStudio.exe`** needs nothing installed: it carries
+its own Python, PySide6 and the standard library. Download it from the
+[latest release](../../releases/latest) and run it.
 
 From a checkout:
 
