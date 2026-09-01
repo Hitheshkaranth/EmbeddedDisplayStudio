@@ -205,6 +205,10 @@ class DesignerWorkspace(QWidget):
         self.registry = default_registry()
         self.generator = QmlGenerator(self.registry)
         self.project = DesignerProject()
+        # The connected panel's real geometry, once the Studio has probed it.
+        # Held here rather than only applied on arrival, because a design
+        # opened later has to be retargeted to the same glass.
+        self.target_resolution = None
         self.bundle_dir = ""
         self.file_path = ""
         self.current_page_index = 0
@@ -611,6 +615,7 @@ class DesignerWorkspace(QWidget):
             self.project = DesignerProject(name=self._bundle_project_name(manifest)); self.project.screen.width = int(screen.get("width", 1280)); self.project.screen.height = int(screen.get("height", 800))
             self.project.screen.theme = theme_of(manifest or {})
             self.file_path = path; self.current_page_index = 0; self.undo_stack.clear(); self._load_page()
+            self._retarget_to_connected_display()
 
     def new_ui(self):
         width = self.project.screen.width; height = self.project.screen.height
@@ -643,6 +648,7 @@ class DesignerWorkspace(QWidget):
             self.project = DesignerProject.load(path); self.file_path = os.path.abspath(path); self.bundle_dir = os.path.dirname(self.file_path)
             self.scene.project_dir = self.bundle_dir
             self.current_page_index = 0; self.undo_stack.clear(); self._load_page(); self.message.emit(f"Opened {path}")
+            self._retarget_to_connected_display()
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             QMessageBox.critical(self, "Could not open UI", str(exc))
 
@@ -893,6 +899,10 @@ class DesignerWorkspace(QWidget):
         """
         if width <= 0 or height <= 0:
             return False
+        # Remembered even when the canvas already matches, and before the
+        # no-op return: the Studio probes the display once, on Connect, so by
+        # the time a design is opened there is nothing left to send it again.
+        self.target_resolution = (width, height)
         if (self.project.screen.width, self.project.screen.height) == (width, height):
             return False
         self.project.screen.width = width
@@ -907,6 +917,22 @@ class DesignerWorkspace(QWidget):
         self.message.emit(
             f"Designer canvas set to the connected display: {width} x {height} px")
         return True
+
+    def _retarget_to_connected_display(self):
+        """Re-apply the connected panel's geometry after a project is loaded.
+
+        A saved design carries the screen it was drawn for, and loading one
+        overwrites the canvas with it. While the Studio is connected that put
+        the author back on a screen that is not plugged in -- exactly the
+        mismatch apply_target_resolution exists to prevent, and harder to
+        notice, because the canvas had been right until the file was opened.
+
+        The connected display wins. Widget coordinates are untouched, so a
+        design drawn for a smaller panel keeps its layout and simply gains
+        room; nothing is moved or rescaled behind the author's back.
+        """
+        if self.target_resolution:
+            self.apply_target_resolution(*self.target_resolution)
 
     def _project_name_edited(self):
         name = self.project_name.text().strip()

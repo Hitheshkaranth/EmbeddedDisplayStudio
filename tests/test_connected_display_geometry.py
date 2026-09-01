@@ -71,6 +71,72 @@ class DesignerFollowsTheDisplayTests(unittest.TestCase):
                          (width, height))
 
 
+class OpeningADesignKeepsTheConnectedGeometryTests(unittest.TestCase):
+    """A saved design carries a screen size; the connected panel outranks it.
+
+    The canvas followed the display on Connect, and then any design opened
+    afterwards silently moved it back to whatever that file had been drawn
+    for. The author was returned to a screen that was not plugged in at the
+    one moment they were least likely to check -- having just watched the
+    canvas be correct.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _workspace(self):
+        workspace = DesignerWorkspace()
+        self.addCleanup(workspace.close)
+        return workspace
+
+    def _saved_design(self, width, height):
+        """Write a design authored for a panel of the given size."""
+        import tempfile
+        workspace = self._workspace()
+        workspace.apply_target_resolution(width, height)
+        workspace.add_widget("Rectangle", 40, 60)
+        path = Path(tempfile.mkdtemp()) / "project.edsui"
+        workspace.project.save(str(path))
+        return path
+
+    def test_opening_a_design_retargets_it_to_the_connected_panel(self):
+        path = self._saved_design(800, 480)
+
+        workspace = self._workspace()
+        workspace.apply_target_resolution(1920, 1080)
+        workspace.load_file(str(path))
+
+        self.assertEqual(
+            (workspace.project.screen.width, workspace.project.screen.height),
+            (1920, 1080),
+        )
+
+    def test_the_opened_design_keeps_its_widget_coordinates(self):
+        """Retargeting moves the surface. It must not move the design."""
+        path = self._saved_design(800, 480)
+
+        workspace = self._workspace()
+        workspace.apply_target_resolution(1920, 1080)
+        workspace.load_file(str(path))
+
+        geometry = workspace.current_page.widgets[0].geometry
+        self.assertEqual((geometry["x"], geometry["y"]), (40, 60))
+
+    def test_with_nothing_connected_the_saved_screen_stands(self):
+        """Unconnected, the file is the only authority on its own geometry."""
+        path = self._saved_design(800, 480)
+
+        workspace = self._workspace()
+        workspace.target_resolution = None
+        workspace.load_file(str(path))
+
+        self.assertEqual(
+            (workspace.project.screen.width, workspace.project.screen.height),
+            (800, 480),
+        )
+
+
 class StudioPushesTheDetectedGeometryTests(unittest.TestCase):
     """_record_detected_resolution is driven by a line of remote SSH output."""
 
