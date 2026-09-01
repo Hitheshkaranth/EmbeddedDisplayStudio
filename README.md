@@ -37,7 +37,7 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 **The project**
 
-[![CI](https://github.com/Hitheshkaranth/EmbeddedDisplay/actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
+[![CI](https://github.com/Hitheshkaranth/EmbeddedDisplayStudio/actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
 [![Release](https://img.shields.io/badge/release-0.0.4-8b5cf6?style=for-the-badge&labelColor=18181b)](../../releases/tag/v0.0.4)
 [![Tests](https://img.shields.io/badge/tests-309%20%C2%B7%20no%20skips%20on%20Linux-17c964?style=for-the-badge&labelColor=18181b)](#verification)
 [![Smoke](https://img.shields.io/badge/release%20gate-the%20built%20.exe%20is%20run-17c964?style=for-the-badge&labelColor=18181b)](#verification)
