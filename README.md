@@ -8,28 +8,39 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 <br />
 
-**The panel**
+**The panel** — one image, shipped once
 
-[![Target](https://img.shields.io/badge/Target-ARM64%20Linux%20SoM-006fee?style=for-the-badge&labelColor=18181b)](#the-idea)
-[![Yocto](https://img.shields.io/badge/BSP-Yocto%20Linux-006fee?style=for-the-badge&logo=yocto&logoColor=white&labelColor=18181b)](https://www.yoctoproject.org/)
+[![Target](https://img.shields.io/badge/Target-ARM64%20Linux%20SoM-006fee?style=for-the-badge&labelColor=18181b)](#the-hardware-it-runs-on)
+[![Yocto](https://img.shields.io/badge/BSP-Yocto%20%C2%B7%20meta--hmi-006fee?style=for-the-badge&logo=yocto&logoColor=white&labelColor=18181b)](yocto/)
 [![Wayland](https://img.shields.io/badge/Display-Wayland%20%2F%20Weston-006fee?style=for-the-badge&labelColor=18181b)](https://wayland.freedesktop.org/)
-[![systemd](https://img.shields.io/badge/Init-systemd%20native-006fee?style=for-the-badge&logo=systemd&logoColor=white&labelColor=18181b)](https://systemd.io/)
+[![systemd](https://img.shields.io/badge/Init-systemd%20units%20%C2%B7%20no%20containers-006fee?style=for-the-badge&logo=systemd&logoColor=white&labelColor=18181b)](#why-no-containers)
+[![GPIO](https://img.shields.io/badge/GPIO-libgpiod%20v1%20%2B%20v2-f59e0b?style=for-the-badge&labelColor=18181b)](https://libgpiod.readthedocs.io/)
+[![IIO](https://img.shields.io/badge/ADC-Linux%20IIO%20sysfs-f59e0b?style=for-the-badge&labelColor=18181b)](https://www.kernel.org/doc/html/latest/driver-api/iio/index.html)
+[![UART](https://img.shields.io/badge/UART-pyserial%203.5%20%C2%B7%20optional-f59e0b?style=for-the-badge&labelColor=18181b)](https://pyserial.readthedocs.io/)
 
-**The stack**
+**The application** — bring your own, either Qt
 
-[![Qt](https://img.shields.io/badge/Qt%206-QML%20%2F%20PySide6-41cd52?style=for-the-badge&logo=qt&logoColor=white&labelColor=18181b)](https://doc.qt.io/qtforpython-6/)
-[![Python](https://img.shields.io/badge/Python-3.12-3776ab?style=for-the-badge&logo=python&logoColor=white&labelColor=18181b)](https://www.python.org/)
-[![libgpiod](https://img.shields.io/badge/GPIO-libgpiod%20v1%20%2B%20v2-f59e0b?style=for-the-badge&labelColor=18181b)](https://libgpiod.readthedocs.io/)
-[![IIO](https://img.shields.io/badge/ADC-Linux%20IIO-f59e0b?style=for-the-badge&labelColor=18181b)](https://www.kernel.org/doc/html/latest/driver-api/iio/index.html)
-[![shadcn/ui](https://img.shields.io/badge/UI-shadcn%2Fui%20port-a1a1aa?style=for-the-badge&labelColor=18181b)](https://github.com/shadcn-ui/ui)
+[![Qt6](https://img.shields.io/badge/Qt%206-PySide6%206.8.1%20%C2%B7%20QML%20%2B%20Widgets-41cd52?style=for-the-badge&logo=qt&logoColor=white&labelColor=18181b)](https://doc.qt.io/qtforpython-6/)
+[![Qt5](https://img.shields.io/badge/Qt%205-PySide2%205.15.2%20%C2%B7%20side%20by%20side-41cd52?style=for-the-badge&logo=qt&logoColor=white&labelColor=18181b)](#qt5-and-qt6-applications-on-the-same-panel)
+[![Python](https://img.shields.io/badge/Python-3.12%20host%20%C2%B7%20self--contained%20on%20panel-3776ab?style=for-the-badge&logo=python&logoColor=white&labelColor=18181b)](https://www.python.org/)
+[![Tags](https://img.shields.io/badge/I%2FO%20contract-tags%20over%20UDP%20loopback-a1a1aa?style=for-the-badge&labelColor=18181b)](#the-tag-protocol)
+[![No hardware code](https://img.shields.io/badge/app%20hardware%20code-none-a1a1aa?style=for-the-badge&labelColor=18181b)](#the-idea)
+
+**The Studio** — the desktop tool that pushes it
+
+[![Windows binary](https://img.shields.io/badge/Windows-single%20.exe%20%C2%B7%20PyInstaller-8b5cf6?style=for-the-badge&logo=windows&logoColor=white&labelColor=18181b)](../../releases/tag/v0.0.4)
+[![Designer](https://img.shields.io/badge/Designer-.edsui%20%E2%86%92%20QML-8b5cf6?style=for-the-badge&labelColor=18181b)](#visual-designer)
+[![Preview](https://img.shields.io/badge/Preview-live%20%C2%B7%20interactive%20bezel-8b5cf6?style=for-the-badge&labelColor=18181b)](#embeddeddisplay-studio)
+[![Deploy](https://img.shields.io/badge/Deploy-OpenSSH%20%C2%B7%20atomic%20%2B%20rollback-8b5cf6?style=for-the-badge&logo=openssh&logoColor=white&labelColor=18181b)](#from-a-python-app-to-the-panel)
+[![shadcn/ui](https://img.shields.io/badge/UI-shadcn%2Fui%20port%20%C2%B7%20tokens.json-a1a1aa?style=for-the-badge&labelColor=18181b)](#design-system)
 [![Tabler](https://img.shields.io/badge/Icons-Tabler-206bc4?style=for-the-badge&logo=tabler&logoColor=white&labelColor=18181b)](https://github.com/tabler/tabler-icons)
 
 **The project**
 
+[![CI](https://github.com/Hitheshkaranth/EmbeddedDisplay/actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
 [![Release](https://img.shields.io/badge/release-0.0.4-8b5cf6?style=for-the-badge&labelColor=18181b)](../../releases/tag/v0.0.4)
-[![Tests](https://img.shields.io/badge/tests-306-17c964?style=for-the-badge&labelColor=18181b)](tests/)
-[![CI](https://img.shields.io/badge/CI-Linux%20full%20suite-006fee?style=for-the-badge&logo=githubactions&logoColor=white&labelColor=18181b)](.github/workflows/ci.yml)
-[![No containers](https://img.shields.io/badge/containers-none-a1a1aa?style=for-the-badge&logo=docker&logoColor=white&labelColor=18181b)](#why-no-containers)
+[![Tests](https://img.shields.io/badge/tests-309%20%C2%B7%20no%20skips%20on%20Linux-17c964?style=for-the-badge&labelColor=18181b)](#verification)
+[![Smoke](https://img.shields.io/badge/release%20gate-the%20built%20.exe%20is%20run-17c964?style=for-the-badge&labelColor=18181b)](#verification)
 [![License](https://img.shields.io/badge/license-MIT-006fee?style=for-the-badge&labelColor=18181b)](LICENSE)
 
 </div>
@@ -468,6 +479,20 @@ the panel, then push it.
   1280×800 or 15.6" 1920×1080, with the live resolution reported under the
   bezel. The preview never shrinks below a readable size and always holds the
   panel's aspect ratio.
+* **The connected panel outranks the picker** — on Connect the Studio reads the
+  SOM's DRM connector and adopts its real pixel geometry, for the bezel *and*
+  the designer canvas. A design opened afterwards is retargeted to the glass
+  that is plugged in, so nobody lays out widgets against a screen that is not
+  there and finds out after a deploy.
+* **An operable bezel, not a photograph** — clicks, drags, wheel and keys are
+  mapped from panel pixels into the application's own window and delivered as
+  real Qt events, so the preview is something you use rather than watch.
+* **Qt5 applications too** — a PySide2 bundle is previewed by a second
+  interpreter, because the two bindings cannot share a process. The binding is
+  read from the bundle's sources and the child is told which Qt to host.
+* **Ships as one file** — `EmbeddedDisplayStudio.exe` carries its own Python,
+  PySide6 and the whole standard library, so it previews a customer application
+  on a machine with no Python installed at all.
 * **Adopts apps that were never written for this platform** — point it at an
   existing Qt project with no `manifest.json` and it detects the entry point,
   proposes a manifest and writes it for you.
@@ -635,7 +660,7 @@ tests/                protocol, integration and cross-validator suites
 ## Verification
 
 ```bash
-python tests/run_all.py          # 227 tests
+python tests/run_all.py          # 309 tests
 ```
 
 | Area | Coverage |
@@ -647,9 +672,25 @@ python tests/run_all.py          # 227 tests
 | Fallback screen | the card lays out, sections do not overlap, the error text is shown |
 | Design tokens | `tokens.json` and `Theme.qml` cannot drift |
 | Gallery render | painted pixels asserted, not just "it ran" |
-| Native preview | a real Qt Widgets app renders at the target resolution with content |
+| Native preview | a real Qt Widgets app renders at the target resolution with content, and answers a click |
+| Qt5 bundles | a real **PySide2** application reaches the bezel, hosted by a second interpreter |
+| Qt binding | the binding is read from the sources, and a manifest that disagrees is refused |
+| Connected display | the detected panel geometry reaches the preview *and* the designer, and survives opening a design drawn for another screen |
+| Theme contract | the designed colour mode reaches the manifest, the loader and the panel |
+| Designer | model, reparenting, containers, arrange, assets, toolbars, generator and deploy |
 | Dependency scan | imports against stdlib, bundle-local and guarded ones; distribution names; the commands sent to the panel |
 | Deploy bookkeeping | a step that finishes late cannot delete the files of the deploy that replaced it |
+| SSH commands | every argv the Studio builds, including the display probe and the release list |
+
+### The release gate
+
+A green source tree says nothing about the artefact. Tagging builds
+`EmbeddedDisplayStudio.exe` on CI and then **runs it**: the binary previews a
+fixture application whose imports were never visible to the build, grabs its
+bezel, and `tests/verify_smoke_capture.py` asserts the fixture's colour is
+actually in the picture. Only a binary that passed that is attached to a
+release — 0.0.1 shipped one that died on a customer application's first
+standard-library import while every test above passed.
 
 > **Run the installer tests on Linux.** Windows has no `flock`, so the
 > atomic-swap and cross-validator suites skip there rather than pretending to
@@ -695,12 +736,7 @@ overlay, however your BSP applies them. `daemon/README.md` walks through it.
 
 ---
 
-<div align="center">
-
-**MIT licensed.** Tabler Icons are MIT — see `ui/icons/LICENSE.tabler`.
-
-</div>
-# Visual Designer
+## Visual Designer
 
 EmbeddedDisplay Studio includes a native visual authoring workspace alongside
 the existing raw-QML and Python application workflow. Open an application
@@ -736,8 +772,18 @@ manifest.json
 ```
 
 `manifest.json` remains the runtime/deployment contract. Generation updates its
-screen resolution, QML entry, and `tags_required`, so Tag Lab simulation,
-preview and target deployment all use the established runtime. Images are kept
+screen resolution, colour mode, QML entry, and `tags_required`, so Tag Lab
+simulation, preview and target deployment all use the established runtime — the
+mode the design was drawn in is the mode the panel boots in, rather than a
+default the loader picks on its own.
+
+**The canvas follows the glass.** When the Studio is connected, the panel's real
+geometry — read from its DRM connector, not from the manifest — sets the canvas
+size, and keeps it: a design saved for another screen is retargeted on open
+rather than quietly moving the canvas back to whatever that file was drawn for.
+Widget coordinates are never touched by this; the surface moves, the design does
+not. Disconnected, the saved screen stands, because then the file is the only
+authority on its own geometry. Images are kept
 as project-relative `assets/...` paths; absolute machine paths are rejected.
 
 Version 1 intentionally supports only `.edsui` → QML generation. Arbitrary QML
@@ -751,3 +797,11 @@ The visual designer is implemented as part of EmbeddedDisplayStudio using
 ordinary PySide6 APIs and does not incorporate Qt Designer source code. It adds
 no third-party dependency; the model and generator use Python's standard
 library, and the editor uses the project's existing PySide6 dependency.
+
+---
+
+<div align="center">
+
+**MIT licensed.** Tabler Icons are MIT — see `ui/icons/LICENSE.tabler`.
+
+</div>
