@@ -24,7 +24,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 # Script identity — used in log prefixes and help text.
-readonly SCRIPT_NAME="$(basename "$0")"
+SCRIPT_NAME="$(basename "$0")"
+readonly SCRIPT_NAME
 readonly SCRIPT_VERSION="1.0.0"
 
 # Maximum bundle size that triggers a warning (100 MiB).  Larger bundles are
@@ -51,7 +52,11 @@ readonly LOG_LINES=200
 # constant, and that copy disagreed with the desktop tool and the target
 # installer in both directions -- so the same bundle deployed or not depending
 # on which tool you used. schema/manifest.py is now called by all three.
-readonly REPO_ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Assigned before it is made readonly: `readonly x="$(cmd)"` returns the
+# status of readonly, not of cmd, so a failed cd here would have been
+# silently accepted and every path below resolved against the wrong root.
+REPO_ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly REPO_ROOT_DIR
 readonly SCHEMA_VALIDATOR="${REPO_ROOT_DIR}/schema/manifest.py"
 
 # Path to the shared bundle packer (exclusion rules + deterministic tar).
@@ -284,6 +289,9 @@ usage() {
     # Args:    $1 — exit code (default 0).
     # Returns: does not return (exits).
     local code="${1:-0}"
+    printf 'deploy_to_hmi.sh %s
+
+' "${SCRIPT_VERSION}"
     cat <<'EOF'
 Usage: deploy_to_hmi.sh [ACTION] -H HOST [OPTIONS] [-b BUNDLE]
 
@@ -709,7 +717,7 @@ print(m['schema'])
         log_warn "Bundle size is $(( bundle_bytes / 1048576 )) MiB, which exceeds the advisory limit of $(( BUNDLE_WARN_BYTES / 1048576 )) MiB. Consider splitting large assets."
     fi
 
-    log_ok "Bundle validated: name=${MANIFEST_NAME}, version=${MANIFEST_VERSION}, entry=${MANIFEST_ENTRY}"
+    log_ok "Bundle validated: name=${MANIFEST_NAME}, version=${MANIFEST_VERSION}, entry=${MANIFEST_ENTRY}, schema=${MANIFEST_SCHEMA}"
 }
 
 validate_bundle_archive() {
@@ -874,9 +882,9 @@ Run '$SCRIPT_NAME --help' for usage."
 
     open_master_connection
 
-    local app_name="${OPT_NAME_OVERRIDE:-${MANIFEST_NAME}}"
-    local remote_tarball="${REMOTE_UPLOAD_DIR}/$(basename "${tarball}")"
-    local remote_sidecar="${REMOTE_UPLOAD_DIR}/$(basename "${sidecar}")"
+    local remote_tarball remote_sidecar
+    remote_tarball="${REMOTE_UPLOAD_DIR}/$(basename "${tarball}")"
+    remote_sidecar="${REMOTE_UPLOAD_DIR}/$(basename "${sidecar}")"
 
     log_step "Preparing remote staging directory"
     ssh_run "mkdir -p '${REMOTE_UPLOAD_DIR}' && chmod 0700 '${REMOTE_UPLOAD_DIR}'"
