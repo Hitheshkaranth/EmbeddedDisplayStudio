@@ -18,6 +18,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -25,10 +26,12 @@ sys.path.insert(0, str(REPO_ROOT))
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtCore import QEventLoop, QPoint, QPointF, Qt, QTimer
+from PySide6.QtGui import QWheelEvent
 from PySide6.QtWidgets import QApplication, QLabel, QToolBar
 
 from designer.ui import DesignerWorkspace
+from designer.ui.designer_workspace import SpinBox
 
 # Designer pane widths inside the Studio at 1366 / 1600 / 1920 window widths.
 STUDIO_PANE_WIDTHS = (1328, 1562, 1882)
@@ -123,3 +126,65 @@ class ToolbarLayoutTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScrollingPastAnEditorMustNotEditIt(unittest.TestCase):
+    """The wheel belongs to the panel, not to whatever it passes over.
+
+    Qt hands a wheel event to the widget under the pointer whether or not it
+    is focused, so scrolling the designer silently changed the first spin box
+    or combo the pointer crossed. On the canvas bar those fields are the
+    design surface: two notches over W moved a 1280 px design to 1278, the
+    canvas redrew at the new size, and nothing reported it -- the kind of edit
+    that is found after a deploy, on the panel, by someone else.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _workspace(self):
+        workspace = DesignerWorkspace()
+        self.addCleanup(workspace.close)
+        return workspace
+
+    def _scroll(self, widget, notches=1):
+        event = QWheelEvent(
+            QPointF(widget.rect().center()),
+            QPointF(widget.mapToGlobal(widget.rect().center())),
+            QPoint(0, 0), QPoint(0, 120 * notches),
+            Qt.NoButton, Qt.NoModifier, Qt.NoScrollPhase, False,
+        )
+        QApplication.sendEvent(widget, event)
+
+    def test_scrolling_over_the_width_leaves_the_design_target_alone(self):
+        workspace = self._workspace()
+        before = workspace.project.screen.width
+
+        for _ in range(2):
+            self._scroll(workspace.screen_width)
+
+        self.assertEqual(workspace.screen_width.value(), before)
+        self.assertEqual(workspace.project.screen.width, before)
+
+    def test_scrolling_over_the_theme_leaves_it_alone(self):
+        """A silently flipped colour mode ships to the panel like any other."""
+        workspace = self._workspace()
+        before = workspace.screen_theme.currentText()
+
+        self._scroll(workspace.screen_theme)
+
+        self.assertEqual(workspace.screen_theme.currentText(), before)
+
+    def test_a_focused_editor_still_takes_the_wheel(self):
+        """The guard is about accidents, not about disabling the control."""
+        # The offscreen plugin never activates a window, so real keyboard focus
+        # cannot be handed out here. The guard's decision is what matters, so
+        # the answer it asks for is the thing to control.
+        workspace = self._workspace()
+        before = workspace.screen_height.value()
+
+        with mock.patch.object(SpinBox, "hasFocus", return_value=True):
+            self._scroll(workspace.screen_height)
+
+        self.assertNotEqual(workspace.screen_height.value(), before)

@@ -33,6 +33,46 @@ except ImportError:
     def color(_name, theme="dark"): return "#18181b"
 
 
+class _WheelGuard:
+    """Ignore wheel events unless the widget has keyboard focus.
+
+    Qt delivers a wheel event to whichever widget the pointer happens to be
+    over, focused or not. Every value editor in this workspace lives inside a
+    scrolling panel, so scrolling one silently edited whatever the pointer
+    crossed on the way past -- and on the canvas bar that is the design
+    surface itself. Two notches over W retargets the design to a screen nobody
+    chose, the canvas quietly redraws at the new size, and nothing says so
+    until the layout reaches a panel it no longer fits.
+
+    Ignoring the event lets it through to the scroll area, which is what the
+    scroll was for. A focused editor still takes the wheel, so deliberate
+    adjustment is unchanged.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Wheel focus is what let an unfocused editor consume the event at all.
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
+class SpinBox(_WheelGuard, QSpinBox):
+    """A QSpinBox that cannot be changed by scrolling past it."""
+
+
+class DoubleSpinBox(_WheelGuard, QDoubleSpinBox):
+    """A QDoubleSpinBox that cannot be changed by scrolling past it."""
+
+
+class ComboBox(_WheelGuard, QComboBox):
+    """A QComboBox whose selection cannot be changed by scrolling past it."""
+
+
 class PropertyEditor(QWidget):
     propertyEdited = Signal(str, object)
     geometryEdited = Signal(str, object)
@@ -61,7 +101,7 @@ class PropertyEditor(QWidget):
         locked.toggled.connect(lambda value: self.propertyEdited.emit("locked", value))
         self.form.addRow("Locked", locked)
         for key in ("x", "y", "width", "height"):
-            editor = QSpinBox()
+            editor = SpinBox()
             editor.setRange(-100000 if key in ("x", "y") else 1, 100000)
             editor.setValue(round(widget.geometry[key]))
             if positioned and key in ("x", "y"):
@@ -91,7 +131,7 @@ class PropertyEditor(QWidget):
 
     def _editor(self, definition, name, value_type, value):
         if name in definition.choices:
-            editor = QComboBox()
+            editor = ComboBox()
             editor.addItems(definition.choices[name])
             editor.setCurrentText(str(value or ""))
             editor.currentTextChanged.connect(lambda v: self.propertyEdited.emit(name, v))
@@ -123,10 +163,10 @@ class PropertyEditor(QWidget):
             editor = QCheckBox(); editor.setChecked(bool(value))
             editor.toggled.connect(lambda v: self.propertyEdited.emit(name, v))
         elif value_type is int:
-            editor = QSpinBox(); editor.setRange(-100000, 100000); editor.setValue(int(value or 0))
+            editor = SpinBox(); editor.setRange(-100000, 100000); editor.setValue(int(value or 0))
             editor.valueChanged.connect(lambda v: self.propertyEdited.emit(name, v))
         elif value_type is float:
-            editor = QDoubleSpinBox(); editor.setRange(-1e9, 1e9); editor.setDecimals(4); editor.setValue(float(value or 0))
+            editor = DoubleSpinBox(); editor.setRange(-1e9, 1e9); editor.setDecimals(4); editor.setValue(float(value or 0))
             editor.valueChanged.connect(lambda v: self.propertyEdited.emit(name, v))
         else:
             editor = QLineEdit(str(value or ""))
@@ -143,9 +183,9 @@ class BindingEditor(QWidget):
         super().__init__(parent)
         self.registry, self.widget_model, self.tags = registry, None, []
         form = QFormLayout(self)
-        self.property = QComboBox(); self.tag = QComboBox(); self.tag.setEditable(True)
+        self.property = ComboBox(); self.tag = ComboBox(); self.tag.setEditable(True)
         self.search = QLineEdit(); self.search.setPlaceholderText("Search tags")
-        self.format = QLineEdit(); self.multiplier = QDoubleSpinBox(); self.offset = QDoubleSpinBox()
+        self.format = QLineEdit(); self.multiplier = DoubleSpinBox(); self.offset = DoubleSpinBox()
         self.multiplier.setRange(-1e9, 1e9); self.multiplier.setValue(1.0)
         self.offset.setRange(-1e9, 1e9)
         self.unit = QLineEdit(); self.warning = QLineEdit(); self.critical = QLineEdit()
@@ -305,14 +345,14 @@ class DesignerWorkspace(QWidget):
         action(canvas_bar, "New Page", self.new_page, "folder-plus")
         action(canvas_bar, "Duplicate Page", self.duplicate_page, "clipboard-text")
         action(canvas_bar, "Delete Page", self.delete_page, "trash")
-        self.pages = QComboBox(); self.pages.currentIndexChanged.connect(self.change_page)
+        self.pages = ComboBox(); self.pages.currentIndexChanged.connect(self.change_page)
         field(canvas_bar, "Page", self.pages, 130, "The page being edited")
         canvas_bar.addSeparator()
-        self.screen_width = QSpinBox(); self.screen_width.setRange(64, 16384); self.screen_width.setValue(1280)
+        self.screen_width = SpinBox(); self.screen_width.setRange(64, 16384); self.screen_width.setValue(1280)
         field(canvas_bar, "W", self.screen_width, 78, "Design width in pixels")
-        self.screen_height = QSpinBox(); self.screen_height.setRange(64, 16384); self.screen_height.setValue(800)
+        self.screen_height = SpinBox(); self.screen_height.setRange(64, 16384); self.screen_height.setValue(800)
         field(canvas_bar, "H", self.screen_height, 78, "Design height in pixels")
-        self.screen_theme = QComboBox(); self.screen_theme.addItems(["dark", "light"])
+        self.screen_theme = ComboBox(); self.screen_theme.addItems(["dark", "light"])
         field(canvas_bar, "Theme", self.screen_theme, 88,
               "Shadcn colour mode this design targets; written to the manifest "
               "and applied by the panel shell before the app loads")
