@@ -34,6 +34,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Ahead of the Studio's own interpreter, deliberately. Two setup-python
+      # steps both prepend to PATH and the last one wins, so putting this
+      # first keeps bare `python` meaning 3.12 for every step below; this one
+      # is only ever named through its step output.
+      #
+      # It is here so the Qt5 preview test can actually run. PySide2 has no
+      # wheels for 3.12 and cannot share a process with PySide6, so without a
+      # second interpreter that test skipped itself -- and the no-skips rule
+      # below then failed this job over a missing runtime rather than a defect,
+      # which is the opposite of what that rule is for.
+      - name: Python for Qt5 bundles
+        id: qt5
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install PySide2 into the Qt5 interpreter
+        run: ${{ steps.qt5.outputs.python-path }} -m pip install PySide2==5.15.2.1
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -70,6 +89,8 @@ jobs:
       - name: Run the full test suite
         env:
           QT_QPA_PLATFORM: offscreen
+          HMI_PREVIEW_PLATFORM: offscreen
+          HMI_PREVIEW_PYTHON_QT5: ${{ steps.qt5.outputs.python-path }}
         run: python tests/run_all.py
 
       # The suite is only meaningful if nothing skipped. run_all.py prints a
@@ -78,6 +99,8 @@ jobs:
       - name: Fail if any test skipped
         env:
           QT_QPA_PLATFORM: offscreen
+          HMI_PREVIEW_PLATFORM: offscreen
+          HMI_PREVIEW_PYTHON_QT5: ${{ steps.qt5.outputs.python-path }}
         run: |
           python tests/run_all.py 2>&1 | tee /tmp/suite.log
           if grep -q "test(s) were skipped" /tmp/suite.log; then
@@ -136,16 +159,26 @@ jobs:
       # paints a colour nothing in the Studio's own chrome uses, so finding it
       # in the grab means the frame came from the application.
       - name: Preview a bundle and grab the bezel
+        # bash, not PowerShell, and that is the whole point of this line.
+        # The Studio is built with console=False, so it is a Windows
+        # GUI-subsystem binary, and PowerShell does not wait for one: it
+        # returns in about a tenth of a second and leaves $LASTEXITCODE unset,
+        # so the step passes no matter what the process goes on to do. The
+        # capture is taken a second before the 60s deadline, so the next step
+        # looked for smoke.png roughly a minute before it could exist and
+        # reported that the executable "did not reach the point of grabbing
+        # its bezel" -- when in truth it had barely started. bash waits for a
+        # GUI-subsystem child, which is also why the sub-command step above
+        # has always worked.
+        shell: bash
         env:
           # No desktop to talk to. The Studio and the preview child are both
           # told, or the child falls back to the native plugin and dies.
           QT_QPA_PLATFORM: offscreen
           HMI_PREVIEW_PLATFORM: offscreen
         run: |
-          ./dist/EmbeddedDisplayStudio.exe `
-            --bundle tests/fixtures/ci-smoke `
-            --capture-bezel smoke.png `
-            --exit-after 60000
+          set -euo pipefail
+          ./dist/EmbeddedDisplayStudio.exe --bundle tests/fixtures/ci-smoke --capture-bezel smoke.png --exit-after 60000
 
       - name: The grab contains the application
         run: python tests/verify_smoke_capture.py smoke.png
@@ -190,6 +223,7 @@ jobs:
       # separate interpreter. PySide2 has no wheels for 3.12, which is the
       # other reason this cannot simply be added to the suite above.
       - name: Python for the Studio
+        id: studio
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -201,13 +235,40 @@ jobs:
         with:
           python-version: "3.10"
 
+      # Every step below names its interpreter through the step output rather
+      # than saying `python`. Two setup-python steps both prepend to PATH, so
+      # bare `python` is whichever ran last -- 3.10 here -- and that is not a
+      # detail: it put PySide6 into the Qt5 interpreter, so the preview child
+      # had both bindings, hosted this PySide2 bundle under PySide6 and sent
+      # no frames at all. The job was testing one interpreter wearing two hats.
       - name: Install PySide2 into the Qt5 interpreter
         run: ${{ steps.qt5.outputs.python-path }} -m pip install PySide2==5.15.2.1
 
       - name: Install the Studio's own dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          ${{ steps.studio.outputs.python-path }} -m pip install --upgrade pip
+          ${{ steps.studio.outputs.python-path }} -m pip install -r requirements.txt
+
+      # The separation is the premise of this job, so it is asserted rather
+      # than assumed: PySide6 must not be importable in the Qt5 interpreter,
+      # and PySide2 must not be importable in the Studio's.
+      - name: The two interpreters are actually separate
+        run: |
+          qt5='${{ steps.qt5.outputs.python-path }}'
+          studio='${{ steps.studio.outputs.python-path }}'
+          if ! "$qt5" -c "import PySide2"; then
+            echo '::error::PySide2 is not usable in the Qt5 interpreter'
+            exit 1
+          fi
+          if "$qt5" -c "import PySide6" 2>/dev/null; then
+            echo '::error::PySide6 leaked into the Qt5 interpreter; the child would host Qt5 under Qt6'
+            exit 1
+          fi
+          if "$studio" -c "import PySide2" 2>/dev/null; then
+            echo '::error::PySide2 leaked into the Studio interpreter'
+            exit 1
+          fi
+          echo "  PySide2 in the Qt5 interpreter, PySide6 in the Studio's, and neither in both"
 
       - name: Install Qt runtime libraries
         run: |
@@ -227,7 +288,7 @@ jobs:
           HMI_PREVIEW_PLATFORM: offscreen
           HMI_PREVIEW_PYTHON_QT5: ${{ steps.qt5.outputs.python-path }}
         run: |
-          python -m unittest -v             tests.test_native_preview.Qt5BundlePreview             tests.test_native_preview.ShimBindingCompatibility
+          ${{ steps.studio.outputs.python-path }} -m unittest -v tests.test_native_preview.Qt5BundlePreview tests.test_native_preview.ShimBindingCompatibility
 
       # The test skips itself when it cannot find an interpreter, and a job
       # that silently passes by skipping is the thing this workflow exists to
@@ -238,7 +299,7 @@ jobs:
           HMI_PREVIEW_PLATFORM: offscreen
           HMI_PREVIEW_PYTHON_QT5: ${{ steps.qt5.outputs.python-path }}
         run: |
-          python -m unittest tests.test_native_preview.Qt5BundlePreview 2>&1             | tee qt5.log
+          ${{ steps.studio.outputs.python-path }} -m unittest tests.test_native_preview.Qt5BundlePreview 2>&1 | tee qt5.log
           if grep -qi "skipped" qt5.log; then
             echo "::error::the Qt5 preview test skipped; PySide2 was not usable"
             exit 1

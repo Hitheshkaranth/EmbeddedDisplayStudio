@@ -191,7 +191,7 @@ def preview_argv(interpreter: str) -> list:
 # assume the Qt version. Both bindings are probed and whichever is present is
 # used.
 _SHIM = r'''
-import json, os, select, socket, struct, sys, runpy
+import importlib, json, os, select, socket, struct, sys, runpy
 
 _PORT = int(os.environ["HMI_PREVIEW_PORT"])
 _W = int(os.environ["HMI_PREVIEW_WIDTH"])
@@ -208,18 +208,47 @@ _SITE = os.environ.get("HMI_PREVIEW_SITE", "")
 if _SITE and os.path.isdir(_SITE):
     sys.path.insert(0, _SITE)
 
-try:
-    from PySide6.QtWidgets import QApplication, QWidget
-    from PySide6.QtCore import (
-        Qt, QTimer, QBuffer, QByteArray, QIODevice, QEvent, QPoint, QPointF
+# The binding is the manifest's decision, not a guess at what is installed.
+#
+# Trying PySide6 first and falling back was wrong wherever both bindings are
+# importable in one interpreter. A Qt5 bundle was then hosted under PySide6:
+# everything below patched PySide6's QApplication and QWidget while the
+# application built PySide2 ones, so the frame timer was installed on classes
+# the application never touched. The child connected, stayed alive and sent
+# nothing at all -- no window on the bezel, no traceback, no exit -- until the
+# caller gave up waiting. Being told which binding to use turns that into an
+# honest ImportError naming the interpreter.
+_BINDING = os.environ.get("HMI_PREVIEW_BINDING", "").lower()
+_CANDIDATES = {
+    "pyside2": ("PySide2",),
+    "pyside6": ("PySide6",),
+}.get(_BINDING, ("PySide6", "PySide2"))
+
+_QT = ""
+for _candidate in _CANDIDATES:
+    try:
+        importlib.import_module(_candidate + ".QtWidgets")
+    except ImportError:
+        continue
+    _QT = _candidate
+    break
+if not _QT:
+    raise ImportError(
+        "the preview needs " + " or ".join(_CANDIDATES) + " in " + sys.executable
     )
-    from PySide6.QtGui import QImage, QPainter, QMouseEvent, QKeyEvent, QWheelEvent
-except ImportError:
-    from PySide2.QtWidgets import QApplication, QWidget
-    from PySide2.QtCore import (
-        Qt, QTimer, QBuffer, QByteArray, QIODevice, QEvent, QPoint, QPointF
-    )
-    from PySide2.QtGui import QImage, QPainter, QMouseEvent, QKeyEvent, QWheelEvent
+
+_QtWidgets = importlib.import_module(_QT + ".QtWidgets")
+_QtCore = importlib.import_module(_QT + ".QtCore")
+_QtGui = importlib.import_module(_QT + ".QtGui")
+
+QApplication, QWidget = _QtWidgets.QApplication, _QtWidgets.QWidget
+Qt, QTimer, QBuffer = _QtCore.Qt, _QtCore.QTimer, _QtCore.QBuffer
+QByteArray, QIODevice = _QtCore.QByteArray, _QtCore.QIODevice
+QEvent, QPoint, QPointF = _QtCore.QEvent, _QtCore.QPoint, _QtCore.QPointF
+QImage, QPainter = _QtGui.QImage, _QtGui.QPainter
+QMouseEvent, QKeyEvent, QWheelEvent = (
+    _QtGui.QMouseEvent, _QtGui.QKeyEvent, _QtGui.QWheelEvent
+)
 
 # Keep every top-level window off the screen without leaving the windowing
 # system.
@@ -618,9 +647,25 @@ def find_interpreter(binding: str) -> str:
     if binding != "pyside2":
         return sys.executable
 
+    def hosts_pyside2(path: str) -> bool:
+        """True when `path` is an interpreter that can import PySide2."""
+        try:
+            probe = subprocess.run(
+                [path, "-c", "import PySide2"],
+                capture_output=True, timeout=20,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return probe.returncode == 0
+
     explicit = os.environ.get("HMI_PREVIEW_PYTHON_QT5", "")
-    if explicit and os.path.isfile(explicit):
-        return explicit
+    if explicit:
+        # Probed like every other candidate rather than trusted for existing.
+        # Taking the variable at its word meant an interpreter without PySide2
+        # was reported as a working Qt5 host: the preview then started, and the
+        # caller learned otherwise only by waiting for frames that never
+        # arrived. Returning "" instead says so before anything is launched.
+        return explicit if os.path.isfile(explicit) and hosts_pyside2(explicit) else ""
 
     candidates = [
         shutil.which(candidate)
@@ -637,14 +682,7 @@ def find_interpreter(binding: str) -> str:
         if identity in seen or identity == os.path.normcase(os.path.abspath(sys.executable)):
             continue
         seen.add(identity)
-        try:
-            probe = subprocess.run(
-                [path, "-c", "import PySide2"],
-                capture_output=True, timeout=20,
-            )
-        except (OSError, subprocess.SubprocessError):
-            continue
-        if probe.returncode == 0:
+        if hosts_pyside2(path):
             return path
     return ""
 
@@ -759,6 +797,11 @@ class NativePreview(QObject):
         # The shim puts this on sys.path itself; PYTHONPATH would not survive a
         # PyInstaller bootloader, which is the case that needs it most.
         env["HMI_PREVIEW_SITE"] = preview_site_dir()
+
+        # Which Qt the child must host. Without this the shim picks whichever
+        # binding imports first, which silently hosts a Qt5 bundle under Qt6
+        # in any interpreter carrying both.
+        env["HMI_PREVIEW_BINDING"] = binding
 
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
