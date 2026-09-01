@@ -414,6 +414,16 @@ class DesignerView(QGraphicsView):
         self.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
         self.setDragMode(QGraphicsView.RubberBandDrag)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        # Repaint the union of what changed rather than each item's own claim.
+        #
+        # The default, MinimalViewportUpdate, repaints exactly the rectangles
+        # the items report -- so any item that paints a pixel outside its
+        # boundingRect smears that pixel across the canvas as it moves. The
+        # handles were one such case and are fixed, but a design surface is not
+        # a scene that needs the last drop of paint performance, and a stale
+        # pixel here reads as a corrupted design. This makes correct rendering
+        # the default rather than something every future item has to get right.
+        self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasFormat(MIME_TYPE):
