@@ -30,11 +30,13 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 
 <div align="center">
 
-<img src="docs/assets/screenshot-studio.png" alt="The Studio window, connected to a panel" width="900" />
+<img src="docs/assets/screenshot-designer.png" alt="The Designer workspace: widget palette and object tree, the canvas inside the panel bezel, and the property, binding and chat inspectors" width="900" />
 
-<em>A customer's Qt5 application running inside a live preview of the panel,
-beside the target it deploys to — connected here to a 10.1", 1024 x 768 panel,
-which is the geometry the bezel composes it at.</em>
+<em>Drawing a panel screen in the Studio's own designer — palette and object
+tree to the left, the canvas inside a bezel of the real glass, inspectors for
+properties and tag bindings to the right. The canvas is 1024 × 768 because that
+is what the panel at the top of the window reported; the same toolbar previews,
+generates and deploys it.</em>
 
 </div>
 
@@ -527,6 +529,14 @@ installer's own steps as the panel reaches them.</em>
 
 <br /><br />
 
+<img src="docs/assets/screenshot-studio.png" alt="A Qt5 application running in the live preview beside the panel it deploys to" width="880" />
+
+<em><strong>Live preview.</strong> A customer's Qt5 application running inside
+the preview of the panel, beside the target it deploys to — connected here to a
+10.1", 1024 × 768 panel, which is the geometry the bezel composes it at.</em>
+
+<br /><br />
+
 <img src="docs/assets/screenshot-taglab.png" alt="Tag Lab injecting waveforms" width="880" />
 
 <em><strong>Tag Lab.</strong> Drive the application with signals instead of
@@ -746,20 +756,12 @@ overlay, however your BSP applies them. `daemon/README.md` walks through it.
 
 ## Visual Designer
 
-<div align="center">
-
-<img src="docs/assets/screenshot-designer.png" alt="The Designer workspace: widget palette and object tree, the canvas inside the panel bezel, and the property, binding and chat inspectors" width="900" />
-
-<em><strong>The editor is in the Studio, not beside it.</strong> The palette and
-object tree on the left, the canvas drawn inside the same bezel the preview
-uses — labelled with the geometry it is designing for — and the property, tag
-binding and Design Chat inspectors on the right. The same window then previews,
-generates and deploys what you drew: no export step, no second tool, and no
-hand-off where the design and the bundle can disagree.</em>
-
-</div>
-
-<br />
+**The editor is in the Studio, not beside it** — it is the window at the top of
+this page. Palette and object tree on the left, the canvas drawn inside the same
+bezel the preview uses and labelled with the geometry it is designing for, and
+the property, tag binding and Design Chat inspectors on the right. The same
+window then previews, generates and deploys what you drew: no export step, no
+second tool, and no hand-off where the design and the bundle can disagree.
 
 EmbeddedDisplay Studio includes a native visual authoring workspace alongside
 the existing raw-QML and Python application workflow. Open an application
