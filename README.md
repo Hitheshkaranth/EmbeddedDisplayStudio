@@ -43,7 +43,9 @@ which is the geometry the bezel composes it at.</em>
 ## The idea
 
 A machine builder ships one panel image. Their customers — or their own app team —
-write a Qt/QML application and push it to the panel with a single command. The
+write a Qt/QML application, or draw one in the Studio's own
+[visual designer](#visual-designer), and push it to the panel with a single
+command. The
 app never touches a GPIO line, an ADC node or a serial port: it binds to **tags**
 that arrive over a loopback socket, and the platform does the rest.
 
@@ -194,20 +196,26 @@ is restored. Then, in the window:
    application starts rendering in the bezel at the target's resolution. The
    preview is live, not a picture: click it, drag it, type into it, and the
    events reach the widget under your cursor in the real application.
-2. **Target IP** and **Port** in the command strip, with `root` and the private
+2. **Designer** — or draw the screen here instead of writing QML: drag controls
+   from the palette onto a canvas the size of the panel's real glass, set their
+   properties, bind them to tags, and let the Studio generate the QML. The
+   design is saved as `project.edsui` beside the bundle it belongs to, and
+   **Preview**, **Generate** and **Deploy** on that same toolbar run the same
+   pipeline an imported application does. See [Visual Designer](#visual-designer).
+3. **Target IP** and **Port** in the command strip, with `root` and the private
    key that reaches the panel under **Target Details** on the Display Console
    tab. `ssh-copy-id root@<panel-ip>` once, if you have not.
-3. **Connect** — proves the link, reports the panel's real display size and
+4. **Connect** — proves the link, reports the panel's real display size and
    which release is live on it. The badge beside it carries the link state, and
    the bezel re-composes itself at the resolution the panel reported.
-4. **Deploy to Target** — everything in [the pipeline below](#from-a-python-app-to-the-panel).
+5. **Deploy to Target** — everything in [the pipeline below](#from-a-python-app-to-the-panel).
    The bar names the stage it is in, and the console carries the panel's own
    words.
-5. **Rollback** returns to the previous release. **Installed Releases** reaches
+6. **Rollback** returns to the previous release. **Installed Releases** reaches
    any of the others the board still holds: activating one re-points the panel
    at it and makes the outgoing release the new rollback target, so it is
    undoable in turn. **Restart GUI** restarts what is running.
-6. **Tag Lab** drives the application with signals instead of hardware — sine,
+7. **Tag Lab** drives the application with signals instead of hardware — sine,
    square, ramp, noise or a constant, per tag — so panel behaviour can be
    exercised before the I/O it binds to exists. **Panel Logs** follows the
    journal from `hmi-gui` and `hmi-hwd`, which is where a fault that appears an
@@ -447,6 +455,11 @@ isn't fitted still renders.
 The desktop tool. Import a bundle, watch it run inside a photo-real mock-up of
 the panel, then push it.
 
+One window, five workspaces across the top — **Designer**, **Display Console**,
+**Tag Lab**, **Panel Logs**, **System Profile** — over a header that holds the
+panel's address, port and **Connect**. Everything below is about the panel that
+header points at.
+
 * **True WYSIWYG** — the bezel contains a live QML engine rendering *your actual
   app* at target resolution with the same tag engine the device runs. Not a
   screenshot, not an approximation.
@@ -499,6 +512,20 @@ the panel, then push it.
   reported as an unreachable panel, not as whatever the step was trying to do.
 
 <div align="center">
+
+<img src="docs/assets/screenshot-deploy.png" alt="The Display Console: target details, bundle verdict, deploy, rollback and installed releases" width="880" />
+
+<em><strong>Display Console.</strong> The deployment view. The target's user and
+key, and the display geometry last read off the panel; the bundle's verdict
+before anything is sent — <code>Bundle Valid: test_one_d v0.1.0 [QML]</code> —
+and the one button that sends it. Beside it the two things you need when a
+deploy was wrong: <strong>Rollback</strong> to the release that worked, and
+<strong>Restart GUI</strong> without a reboot. Installed releases are listed
+from the panel itself, so activating an older one is a choice from what is
+really there rather than a guess. The bar and the console below report the
+installer's own steps as the panel reaches them.</em>
+
+<br /><br />
 
 <img src="docs/assets/screenshot-taglab.png" alt="Tag Lab injecting waveforms" width="880" />
 
@@ -718,6 +745,21 @@ overlay, however your BSP applies them. `daemon/README.md` walks through it.
 ---
 
 ## Visual Designer
+
+<div align="center">
+
+<img src="docs/assets/screenshot-designer.png" alt="The Designer workspace: widget palette and object tree, the canvas inside the panel bezel, and the property, binding and chat inspectors" width="900" />
+
+<em><strong>The editor is in the Studio, not beside it.</strong> The palette and
+object tree on the left, the canvas drawn inside the same bezel the preview
+uses — labelled with the geometry it is designing for — and the property, tag
+binding and Design Chat inspectors on the right. The same window then previews,
+generates and deploys what you drew: no export step, no second tool, and no
+hand-off where the design and the bundle can disagree.</em>
+
+</div>
+
+<br />
 
 EmbeddedDisplay Studio includes a native visual authoring workspace alongside
 the existing raw-QML and Python application workflow. Open an application
