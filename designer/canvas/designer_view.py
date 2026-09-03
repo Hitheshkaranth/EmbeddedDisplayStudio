@@ -26,6 +26,8 @@ class DesignerItem(QGraphicsRectItem):
         self._designer_scene = scene
         self._resizing = False
         self._before = None
+        self._press_pos = QPointF(widget.geometry["x"], widget.geometry["y"])
+        self._press_size = self.rect().size()
         self.setPos(widget.geometry["x"], widget.geometry["y"])
         self.setZValue(widget.z)
         self.setFlags(
@@ -179,6 +181,8 @@ class DesignerItem(QGraphicsRectItem):
 
     def mousePressEvent(self, event):
         self._before = dict(self.widget_model.geometry)
+        self._press_pos = self.pos()
+        self._press_size = self.rect().size()
         self._resizing = self.isSelected() and self._handles()[-1].contains(event.pos())
         if self._resizing:
             event.accept()
@@ -198,10 +202,18 @@ class DesignerItem(QGraphicsRectItem):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if self._resizing:
-            self._resizing = False
-        else:
+        resizing, self._resizing = self._resizing, False
+        if not resizing:
             super().mouseReleaseEvent(event)
+        # A click that only selects a widget must not edit it. Qt delivers
+        # move events for a jitter of a pixel or two that never moved the
+        # item, so ask the item where it ended up rather than whether a move
+        # event arrived. Everything below ran on every release: a plain click
+        # snapped an off-grid widget to the grid, and one on a label that
+        # happens to lie over a Card silently made it a child of that Card.
+        if self.pos() == self._press_pos and self.rect().size() == self._press_size:
+            self._before = None
+            return
         step = self._designer_scene.grid_size if self._designer_scene.snap_enabled else 1
         if not self.widget_model.locked and not self.positioned:
             self.setPos(round(self.pos().x() / step) * step, round(self.pos().y() / step) * step)
@@ -213,7 +225,7 @@ class DesignerItem(QGraphicsRectItem):
         # model kept it a page-level sibling and the generated QML emitted it
         # outside the container. Dragging one out again was equally inert.
         target = None
-        if not self.widget_model.locked and not self._resizing:
+        if not self.widget_model.locked and not resizing:
             target = self._designer_scene.container_at(
                 self.mapToScene(self.rect().center()), ignore=self)
         target_id = target.widget_model.id if target is not None else ""
@@ -252,10 +264,24 @@ class DesignerScene(QGraphicsScene):
         self._bezel_logo = bezel_logo()
         self.theme = "dark"
         self.project_dir = ""
+        # Strong references to every item on the canvas, by widget id.
+        #
+        # Qt owns an item once it is in the scene -- until anything asks a
+        # top-level item for the parent it does not have. PySide reads
+        # parentItem() returning None as "this item has no C++ owner" and
+        # hands ownership back to Python, so the item is destroyed at the next
+        # collection with nothing holding it here. Selecting a widget walks
+        # exactly that chain, which made a clicked widget vanish from the
+        # canvas -- together with anything nested inside it -- while the model,
+        # the object tree and the generated QML still had it.
+        self._items = {}
         self.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
         self.selectionChanged.connect(self._emit_selection)
 
     def load_page(self, project, page):
+        # Drop our references before Qt deletes the items, so the map never
+        # hands out a wrapper for an item that no longer exists.
+        self._items.clear()
         self.clear()
         self.project, self.page = project, page
         self.update_screen_rect()
@@ -279,6 +305,7 @@ class DesignerScene(QGraphicsScene):
         item = DesignerItem(widget, definition, self, parent_item)
         if parent_item is None:
             self.addItem(item)
+        self._items[widget.id] = item
         for child in widget.children:
             self.add_model(child, item)
         if widget.type in POSITIONERS:
@@ -356,8 +383,7 @@ class DesignerScene(QGraphicsScene):
             event.accept()
 
     def item_for_id(self, widget_id):
-        return next((item for item in self.items() if isinstance(item, DesignerItem)
-                     and item.widget_model.id == widget_id), None)
+        return self._items.get(widget_id)
 
     def selected_models(self):
         return [item.widget_model for item in self.selectedItems() if isinstance(item, DesignerItem)]

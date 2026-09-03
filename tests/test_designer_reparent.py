@@ -61,6 +61,18 @@ class ReparentTests(unittest.TestCase):
         release.setPos(QPointF(4, 4))
         item.mouseReleaseEvent(release)
 
+    def click(self, workspace, widget_id):
+        """A press and release on the item, with nothing moved in between."""
+        item = workspace.scene.item_for_id(widget_id)
+        for kind in (QGraphicsSceneMouseEvent.GraphicsSceneMousePress,
+                     QGraphicsSceneMouseEvent.GraphicsSceneMouseRelease):
+            press = kind == QGraphicsSceneMouseEvent.GraphicsSceneMousePress
+            event = QGraphicsSceneMouseEvent(kind)
+            event.setButton(Qt.LeftButton)
+            event.setButtons(Qt.LeftButton if press else Qt.NoButton)
+            event.setPos(QPointF(item.rect().width() / 2, item.rect().height() / 2))
+            (item.mousePressEvent if press else item.mouseReleaseEvent)(event)
+
     def _card_centre(self, workspace, card):
         item = workspace.scene.item_for_id(card.id)
         return item.mapToScene(item.boundingRect().center())
@@ -158,6 +170,47 @@ class ReparentTests(unittest.TestCase):
         self.drop(workspace, "Text", centre.x(), centre.y())
 
         self.assertEqual(len(inner.children), 1)
+        self.assertEqual(len(workspace.current_page.widgets), 1)
+
+    def test_clicking_a_widget_over_a_container_does_not_reparent_it(self):
+        """Selecting is not dropping.
+
+        The release handler ran its drop-target search on every release, so
+        merely clicking a label that overlaps a Card moved the label into the
+        Card -- a structural edit the author never asked for.
+        """
+        workspace, card, text = self._card_and_loose_text()
+        centre = self._card_centre(workspace, card)
+        text.geometry["x"], text.geometry["y"] = centre.x(), centre.y()
+        workspace._load_page()
+        edits = workspace.undo_stack.count()
+
+        self.click(workspace, text.id)
+
+        self.assertEqual(len(card.children), 0)
+        self.assertEqual(workspace.undo_stack.count(), edits,
+                         "selecting a widget pushed an edit onto the undo stack")
+
+    def test_clicking_a_widget_leaves_its_off_grid_position_alone(self):
+        workspace, card, text = self._card_and_loose_text()
+        text.geometry["x"], text.geometry["y"] = 137, 249
+        workspace._load_page()
+
+        self.click(workspace, text.id)
+
+        self.assertEqual(text.geometry["x"], 137)
+        self.assertEqual(text.geometry["y"], 249)
+
+    def test_clicking_a_child_leaves_it_in_its_container(self):
+        workspace = self.workspace()
+        self.drop(workspace, "ShCard", 60, 60)
+        card = workspace.current_page.widgets[0]
+        self.drop(workspace, "Text", 120, 120)
+        child = card.children[0]
+
+        self.click(workspace, child.id)
+
+        self.assertEqual([c.id for c in card.children], [child.id])
         self.assertEqual(len(workspace.current_page.widgets), 1)
 
 
