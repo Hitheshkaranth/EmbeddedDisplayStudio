@@ -22,6 +22,7 @@ Ship the panel once. Let anyone drop their own Qt app onto it in seconds — ove
 [![Platform](https://img.shields.io/badge/Platform-ARM64%20Linux%20%C2%B7%20Windows-555555?style=flat-square&logo=linux&logoColor=white)](#the-hardware-it-runs-on)
 [![CI](https://img.shields.io/github/actions/workflow/status/Hitheshkaranth/EmbeddedDisplayStudio/ci.yml?branch=main&style=flat-square&label=CI)](../../actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-006FEE?style=flat-square)](LICENSE)
+[![Bundled Qt](https://img.shields.io/badge/Bundled%20Qt-LGPL--3.0-41CD52?style=flat-square&logo=qt&logoColor=white)](LICENSE)
 
 </div>
 
@@ -782,6 +783,8 @@ library, and the editor uses the project's existing PySide6 dependency.
 
 <div align="center">
 
-**MIT licensed.** Tabler Icons are MIT — see `ui/icons/LICENSE.tabler`.
+**MIT licensed** — see [`LICENSE`](LICENSE). Tabler Icons are MIT; their notice
+is in `ui/icons/LICENSE.tabler`. The packaged Studio executable also carries
+PySide6 and Qt, redistributed unmodified under the LGPL-3.0.
 
 </div>

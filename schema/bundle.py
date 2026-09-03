@@ -25,7 +25,6 @@ Outputs: a deterministic .tar.gz plus its .sha256 sidecar.
 """
 
 import datetime
-import fnmatch
 import hashlib
 import json
 import os
@@ -33,79 +32,15 @@ import sys
 import tarfile
 from typing import Any, Dict, List, Tuple
 
-# Patterns never worth sending to a panel. These are build outputs, caches and
-# VCS metadata: every one of them is regenerated or irrelevant on the target,
-# and a real application folder is full of them. Without this the tool packages
-# whatever happens to be sitting in the directory, which for an app that has
-# ever been built locally means shipping tens or hundreds of megabytes of
-# nothing over a field link.
-DEFAULT_EXCLUDES = (
-    ".git", ".svn", ".hg",
-    "__pycache__", "*.pyc", "*.pyo", "*.pyd",
-    ".venv", "venv", "env",
-    "node_modules",
-    "build", "dist", "*.egg-info",
-    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox",
-    ".DS_Store", "Thumbs.db",
-    ".hmiignore",
-)
-
 # Hard ceiling on what may be sent, matching MAX_BUNDLE_SIZE in
 # target/bin/hmi-install. Checking it here as well means an oversized bundle is
 # refused in a second on the laptop, naming the files responsible, instead of
 # after a long upload the target then rejects.
 MAX_BUNDLE_BYTES = 524288000  # 500 MB
 
-# Name of the per-bundle exclude file. One glob per line, '#' starts a comment.
-# This is how an application says "these files are mine but they are not part
-# of what runs on the panel" -- source archives, datasheets, capture logs.
-HMIIGNORE = ".hmiignore"
-
 
 class BundleTooLargeError(Exception):
     """Raised when a bundle exceeds what the target will accept."""
-
-
-def load_excludes(bundle_dir: str) -> List[str]:
-    """
-    Returns the exclude patterns in force for a bundle.
-
-    Args:
-        bundle_dir: the bundle root.
-
-    Returns:
-        DEFAULT_EXCLUDES plus any patterns from the bundle's .hmiignore.
-    """
-    patterns = list(DEFAULT_EXCLUDES)
-    ignore_path = os.path.join(bundle_dir, HMIIGNORE)
-    if os.path.isfile(ignore_path):
-        with open(ignore_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    patterns.append(line.rstrip("/"))
-    return patterns
-
-
-def _excluded(rel_path: str, name: str, patterns: List[str]) -> bool:
-    """
-    Tests one path against the exclude patterns.
-
-    Args:
-        rel_path: path relative to the bundle root, with forward slashes.
-        name: the final path component.
-        patterns: glob patterns.
-
-    Returns:
-        True if the path should be left out of the bundle.
-
-    A pattern matches either the bare name (so "__pycache__" catches it at any
-    depth) or the full relative path (so "docs/big.zip" can be targeted).
-    """
-    for pattern in patterns:
-        if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(rel_path, pattern):
-            return True
-    return False
 
 
 def plan_bundle(bundle_dir: str) -> Tuple[List[Tuple[str, str]], int]:
@@ -173,8 +108,18 @@ def _describe_largest(entries: List[Tuple[str, str]], count: int = 5) -> str:
 # required 'qt', 'screen' and 'tags_required' that the other two ignored -- so
 # the manifest in the README was rejected here -- while never checking
 # 'version', which both of the others required.
+#
+# DEFAULT_EXCLUDES, HMIIGNORE and the two functions that read them come back
+# the same way. They belong to packing, but the validator needs them to answer
+# "would this bundle ship a Qt binding?", and it is the file that reaches the
+# panel on its own -- so it holds them and this module borrows them, rather
+# than the other way round, which no installer's sys.path could resolve.
 from schema.manifest import (  # noqa: E402  (import placed with its explanation)
+    DEFAULT_EXCLUDES,
+    HMIIGNORE,
+    _excluded,
     detect_qt_binding,
+    load_excludes,
     screen_of,
     validate_bundle,
 )

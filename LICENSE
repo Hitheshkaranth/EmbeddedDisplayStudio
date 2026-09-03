@@ -31,3 +31,12 @@ derived from Tabler Icons. Its notice is reproduced in ui/icons/LICENSE.tabler.
 The component kit in ui/qml/Shadcn/ is an independent Qt/QML reimplementation
 of the design language of shadcn/ui (https://github.com/shadcn-ui/ui), which is
 MIT licensed. No shadcn/ui source code is included or redistributed.
+
+Qt for Python / PySide6 (https://www.qt.io/qt-for-python) - LGPL-3.0.
+The single-file Studio executable built from
+packaging/EmbeddedDisplayStudio.spec bundles the PySide6 runtime and the Qt
+libraries it links against. They are redistributed unmodified and used as
+shared libraries under the LGPL-3.0; their own licence texts ship inside the
+PySide6 distribution. No Qt source code is included in this repository, and
+running from a checkout redistributes nothing -- it links against whichever
+PySide6 the environment already provides.

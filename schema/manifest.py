@@ -48,6 +48,7 @@ Outputs: (ok, messages) from validate_bundle(), or an exit status and
          human-readable lines when run as a script.
 """
 
+import fnmatch
 import json
 import os
 import re
@@ -82,6 +83,31 @@ QT_BINDINGS = ("pyside6", "pyside2")
 # installs one Qt per runtime -- PySide6 for Qt6 bundles, PySide2 under
 # /opt/hmi-python-qt5 for Qt5 ones -- and shiboken comes with them.
 QT_PACKAGE_NAMES = ("PySide2", "PySide6", "PyQt5", "PyQt6", "shiboken2", "shiboken6")
+
+# What packaging never ships, and the file an application uses to add to that.
+#
+# These live here rather than in schema/bundle.py, which owns packing, because
+# the validator has to answer "would this bundle ship a Qt binding?" and it is
+# the only one of the two that reaches the panel: provisioning installs this
+# file alone as /usr/lib/hmi/manifest.py. Reaching across to schema.bundle from
+# here failed with ModuleNotFoundError everywhere the file is run as a script
+# -- the installer on the panel, deploy_to_hmi.sh, and CI -- so every bundle
+# was refused at validate-manifest, whatever it contained.
+DEFAULT_EXCLUDES = (
+    ".git", ".svn", ".hg",
+    "__pycache__", "*.pyc", "*.pyo", "*.pyd",
+    ".venv", "venv", "env",
+    "node_modules",
+    "build", "dist", "*.egg-info",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox",
+    ".DS_Store", "Thumbs.db",
+    ".hmiignore",
+)
+
+# Name of the per-bundle exclude file. One glob per line, '#' starts a comment.
+# This is how an application says "these files are mine but they are not part
+# of what runs on the panel" -- source archives, datasheets, capture logs.
+HMIIGNORE = ".hmiignore"
 
 # Default screen geometry when the manifest does not state one, in pixels.
 # 1280x800 is the most common panel in the supported range.
@@ -190,6 +216,46 @@ def detect_qt_binding(bundle_dir, entry):
     return "pyside2" if counts["PySide2"] > counts["PySide6"] else "pyside6"
 
 
+def load_excludes(bundle_dir):
+    """The exclude patterns in force for a bundle.
+
+    Args:
+        bundle_dir: the bundle root.
+
+    Returns:
+        DEFAULT_EXCLUDES plus any patterns from the bundle's .hmiignore.
+    """
+    patterns = list(DEFAULT_EXCLUDES)
+    ignore_path = os.path.join(bundle_dir, HMIIGNORE)
+    if os.path.isfile(ignore_path):
+        with open(ignore_path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    patterns.append(line.rstrip("/"))
+    return patterns
+
+
+def _excluded(rel_path, name, patterns):
+    """Test one path against the exclude patterns.
+
+    Args:
+        rel_path: path relative to the bundle root, with forward slashes.
+        name: the final path component.
+        patterns: glob patterns.
+
+    Returns:
+        True if the path should be left out of the bundle.
+
+    A pattern matches either the bare name (so "__pycache__" catches it at any
+    depth) or the full relative path (so "docs/big.zip" can be targeted).
+    """
+    for pattern in patterns:
+        if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(rel_path, pattern):
+            return True
+    return False
+
+
 def _vendored_qt_bindings(bundle_dir):
     """Qt binding packages this bundle would ship, shadowing the panel's own.
 
@@ -212,10 +278,6 @@ def _vendored_qt_bindings(bundle_dir):
     from the archive itself -- so the same call sees a vendored package as
     shipped, which by then it is.
     """
-    # Imported here rather than at module scope: schema.bundle imports this
-    # module for the validators it reuses, so the dependency only runs one way.
-    from schema.bundle import load_excludes, _excluded
-
     patterns = load_excludes(bundle_dir)
     found = set()
     for name in QT_PACKAGE_NAMES:
