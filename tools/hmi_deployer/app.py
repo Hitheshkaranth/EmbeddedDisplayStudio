@@ -178,7 +178,14 @@ def main():
         bundle_abs = os.path.abspath(args.bundle)
         if os.path.isdir(bundle_abs):
             window.load_bundle(bundle_abs)
-        
+
+    # The grab below takes device_panel, which the Designer tab -- the one the
+    # Studio opens on -- hides and keeps unloaded. Ask for a tab that runs the
+    # preview, or the capture is of an empty bezel and the smoke check reports
+    # an application that never rendered.
+    if args.capture_bezel:
+        window.show_preview_tab()
+
     def grab():
         if args.capture_bezel:
             window.device_panel.grab().save(args.capture_bezel)

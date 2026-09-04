@@ -1456,6 +1456,20 @@ class MainWindow(QMainWindow):
         if self._right_tabs.currentWidget() is self._profile_page and not self.memory_profile:
             self.refresh_memory_profile()
 
+    def show_preview_tab(self) -> None:
+        """Select a workspace where the bezel preview actually runs.
+
+        The Studio opens on the Designer, which hides the runtime preview and
+        suspends its renderers -- so anything that needs a live preview has to
+        ask for a tab that shows one. The bezel capture is the case that
+        matters: `device_panel.grab()` on the Designer tab returns an empty
+        panel, which reads in CI as the application having failed to render.
+        """
+        for index in range(self._right_tabs.count()):
+            if self._right_tabs.widget(index) is not self.designer_workspace:
+                self._right_tabs.setCurrentIndex(index)
+                return
+
     def _set_refresh_busy(self, busy: bool) -> None:
         """Show, and hold, the engaged state on the Refresh profile button.
 
