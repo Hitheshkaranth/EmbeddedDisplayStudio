@@ -123,6 +123,15 @@ class ToolbarLayoutTests(unittest.TestCase):
             with self.subTest(upper=upper.objectName(), lower=lower.objectName()):
                 self.assertLessEqual(upper.y() + upper.height(), lower.y())
 
+    def test_delete_is_explicit_not_a_repeating_global_shortcut(self):
+        workspace = self.workspace(STUDIO_PANE_WIDTHS[0])
+        delete = next(
+            action for bar in workspace.findChildren(QToolBar)
+            for action in bar.actions() if action.text() == "Delete"
+        )
+
+        self.assertTrue(delete.shortcut().isEmpty())
+
 
 if __name__ == "__main__":
     unittest.main()

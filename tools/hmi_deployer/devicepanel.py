@@ -141,8 +141,13 @@ class DevicePanel(QWidget):
         # LED state: 0 = idle/disconnected, 1 = link up, 2 = deploying, 3 = fault
         self._led_state = 0
         
-        # Setup QQuickWidget for the screen
-        self.quick_widget = QQuickWidget(self)
+        # The QML surface is captured into qml_view, so it does not need to
+        # share the Studio window's backing store. Keep it in a separate,
+        # offscreen tool window to isolate Qt Quick's RHI renderer from the
+        # QWidget designer canvas on Windows.
+        self.quick_widget = QQuickWidget()
+        self.quick_widget.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint)
+        self.quick_widget.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self.quick_widget.setResizeMode(QQuickWidget.SizeRootObjectToView)
         # The device framebuffer itself is a dark grey; the area *around* the
         # bezel stays transparent so it inherits the Studio canvas.
@@ -588,6 +593,13 @@ class DevicePanel(QWidget):
         """
         self.native_preview.stop()
         self._qml_capture_timer.stop()
+
+    def suspend_preview(self) -> None:
+        """Unload all preview renderers while the Designer tab is active."""
+        self.stop_preview()
+        self.quick_widget.hide()
+        self.quick_widget.setSource(QUrl())
+        self.quick_widget.engine().clearComponentCache()
 
     def _on_preview_stopped(self) -> None:
         """The application exited; keep the last frame rather than blanking.

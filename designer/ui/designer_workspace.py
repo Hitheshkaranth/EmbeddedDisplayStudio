@@ -338,7 +338,10 @@ class DesignerWorkspace(QWidget):
         action(primary, "Cut", self.cut, "x", "Ctrl+X")
         action(primary, "Copy", self.copy, "clipboard-text", "Ctrl+C")
         action(primary, "Paste", self.paste, "clipboard-text", "Ctrl+V")
-        action(primary, "Delete", self.delete_selected, "trash", "Delete")
+        # Keep deletion explicit. A global Delete QAction shortcut can repeat
+        # while focus moves through the object tree, removing each newly
+        # selected row in turn. The toolbar button and context menu remain.
+        action(primary, "Delete", self.delete_selected, "trash")
         action(primary, "Duplicate", self.duplicate, "plus", "Ctrl+D")
 
         # -- row 2: pages, the screen being designed for, and the view -------

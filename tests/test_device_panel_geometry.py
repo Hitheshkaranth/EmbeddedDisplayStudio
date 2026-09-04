@@ -56,6 +56,20 @@ class TestBezelFill(unittest.TestCase):
             (MIN_PANEL_WIDTH, MIN_PANEL_HEIGHT),
         )
 
+    def test_quick_renderer_is_not_in_the_studio_backing_store(self):
+        panel = self._panel()
+        self.assertIsNone(panel.quick_widget.parentWidget())
+        self.assertTrue(panel.quick_widget.isWindow())
+
+    def test_designer_suspension_unloads_quick(self):
+        panel = self._panel()
+        panel._qml_capture_timer.start()
+        panel.quick_widget.show()
+        panel.suspend_preview()
+        self.assertFalse(panel._qml_capture_timer.isActive())
+        self.assertTrue(panel.quick_widget.isHidden())
+        self.assertTrue(panel.quick_widget.source().isEmpty())
+
     def test_display_scaling_lowers_the_floor(self):
         """Scaling shrinks the desktop in the units Qt lays out in.
 

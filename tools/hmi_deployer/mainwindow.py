@@ -1445,6 +1445,14 @@ class MainWindow(QMainWindow):
         # workspace; every operational tab retains the established preview.
         in_designer = self._right_tabs.currentWidget() is self.designer_workspace
         self._preview_panel_wrap.setVisible(not in_designer)
+        if in_designer:
+            self.device_panel.suspend_preview()
+        elif self.bundle_dir and self.device_panel.manifest is None:
+            is_valid, _messages = validate_bundle(self.bundle_dir)
+            if is_valid:
+                with open(os.path.join(self.bundle_dir, "manifest.json"),
+                          "r", encoding="utf-8") as handle:
+                    self.device_panel.load_bundle(self.bundle_dir, json.load(handle))
         if self._right_tabs.currentWidget() is self._profile_page and not self.memory_profile:
             self.refresh_memory_profile()
 
@@ -1624,7 +1632,14 @@ class MainWindow(QMainWindow):
             self.val_label.setStyleSheet("color: #22c55e;")  # success
             self.btn_deploy.setEnabled(True)
 
-            self.device_panel.load_bundle(dir_path, manifest)
+            if self._right_tabs.currentWidget() is self.designer_workspace:
+                # Loading the last bundle happens after the initial tab-change
+                # hook. Do not accidentally restart its hidden Quick renderer.
+                self.device_panel.manifest = None
+                self.device_panel.bundle_dir = dir_path
+                self.device_panel.suspend_preview()
+            else:
+                self.device_panel.load_bundle(dir_path, manifest)
             tags = manifest.get("tags_required", [])
             self.start_simulator(tags)
 
