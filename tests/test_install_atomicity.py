@@ -137,15 +137,20 @@ class InstallerAtomicity(unittest.TestCase):
             capture_output=True, text=True, env=env,
         )
 
-    def _install_for_real(self, tgz, renders=True, enable_ok=True):
+    def _install_for_real(self, tgz, renders=True, enable_ok=True, enable_takes=True):
         """Install with the GUI wait and rollback path actually enabled.
 
         Args:
-            tgz:       the bundle to install.
-            renders:   whether the restart stub creates the readiness sentinel,
-                       which is the only thing that distinguishes an
-                       application that came up from one that did not.
-            enable_ok: whether making the release the boot default succeeds.
+            tgz:          the bundle to install.
+            renders:      whether the restart stub creates the readiness
+                          sentinel, which is the only thing that distinguishes
+                          an application that came up from one that did not.
+            enable_ok:    whether the enable command reports success.
+            enable_takes: whether the unit is actually enabled afterwards.
+                          Separate from enable_ok on purpose: a stand-in
+                          systemctl that answers 0 to everything is the classic
+                          way this step looks done while doing nothing, and the
+                          installer is expected to catch the disagreement.
 
         Every other test here sets HMI_SKIP_GUI_WAIT=1, which returns early
         from restart_gui -- and with it skips the readiness wait, the automatic
@@ -162,6 +167,11 @@ class InstallerAtomicity(unittest.TestCase):
             HMI_ROOT=str(self.root),
             HMI_RESTART_CMD=restart,
             HMI_ENABLE_CMD=enable,
+            # Stands in for `systemctl is-enabled`: the marker the enable stub
+            # writes is what "the unit is enabled" means in this fixture.
+            HMI_ENABLE_CHECK_CMD=(
+                f"test -f {self.enable_marker}" if enable_takes else "false"
+            ),
             # The real deadline is 25s. The rollback case has to wait it out,
             # and the guarantee is worth proving in seconds.
             HMI_GUI_READY_TIMEOUT="2",
@@ -289,18 +299,136 @@ class InstallerAtomicity(unittest.TestCase):
                 "current points at a release that no longer exists",
             )
 
-    def test_the_boot_default_failing_does_not_fail_the_deploy(self):
+    def test_the_boot_default_failing_does_not_roll_back_the_release(self):
         """The application is running; it simply will not survive a reboot.
 
-        Reporting that as a failed deploy would roll back a release that came
-        up perfectly well, which is a worse outcome than a warning.
+        Rolling that back would replace a release that came up perfectly well
+        with an older one, over a problem that only appears at the next power
+        cycle. So the release stays live and stays current.
+        """
+        good = self._install_for_real(
+            self._upload(self._bundle(name="renders"), "good.tar.gz")
+        )
+        self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+
+        result = self._install_for_real(
+            self._upload(self._bundle(name="second"), "second.tar.gz"),
+            enable_ok=False,
+        )
+
+        self.assertIn("enable-boot fail", result.stdout)
+        self.assertNotIn("auto-rollback-start", result.stdout)
+        self.assertIn(
+            "second", os.path.basename(self._current_target()),
+            "a release that came up fine was rolled back over autostart",
+        )
+
+    def test_the_boot_default_failing_is_not_reported_as_a_clean_deploy(self):
+        """Exit 0 here is how a panel comes up blank with nothing explaining it.
+
+        The STEP line alone was not enough: an unattended caller -- CI, or
+        anything wrapping deploy_to_hmi.sh -- saw a zero between two success
+        lines and had no reason to look further. The status has to carry it.
         """
         result = self._install_for_real(
             self._upload(self._bundle(name="renders"), "good.tar.gz"),
             enable_ok=False,
         )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            result.returncode, 4,
+            "a deploy that will not survive a reboot reported itself clean:\n"
+            + result.stdout + result.stderr,
+        )
+
+    def test_the_partial_outcome_is_distinct_from_a_failed_deploy(self):
+        """4 and 1 have to differ, or the distinction buys nothing.
+
+        A caller seeing 1 should consider the deploy not done; a caller seeing
+        4 has a running application and one command to run on the panel.
+        """
+        partial = self._install_for_real(
+            self._upload(self._bundle(name="renders"), "good.tar.gz"),
+            enable_ok=False,
+        )
+        failed = self._install_for_real(
+            self._upload(self._bundle(name="never-renders"), "bad.tar.gz"),
+            renders=False,
+        )
+        self.assertEqual(partial.returncode, 4)
+        self.assertEqual(failed.returncode, 1)
+
+    def test_a_partial_install_still_prunes_and_reports_completion(self):
+        """The steps after enable_boot are not skipped by the new exit path.
+
+        `enable_boot || true` used to swallow the status precisely so that
+        `set -e` could not cut the run short here. Returning 4 instead has to
+        keep that property: the terminal STEP line and the cleanup both run.
+        """
+        result = self._install_for_real(
+            self._upload(self._bundle(name="renders"), "good.tar.gz"),
+            enable_ok=False,
+        )
+        self.assertIn(
+            "STEP install-complete", result.stdout,
+            "the installer exited without a terminal STEP line",
+        )
+        self.assertIn("autostart NOT configured", result.stdout)
+        self.assertEqual(
+            list(self.upload.iterdir()), [],
+            "the upload directory was left behind by the partial path",
+        )
+
+    def test_an_enable_command_that_lies_is_not_taken_at_its_word(self):
+        """A stub systemctl answering 0 to everything is the usual false pass.
+
+        HMI_ENABLE_CMD is documented as overridable, so its exit status says
+        only that something ran. The panel that comes up blank is the one where
+        the command succeeded and the unit was never linked, which is exactly
+        the case a return code alone cannot see.
+        """
+        result = self._install_for_real(
+            self._upload(self._bundle(name="renders"), "good.tar.gz"),
+            enable_ok=True,
+            enable_takes=False,
+        )
+        self.assertEqual(
+            result.returncode, 4,
+            "an unconfirmed autostart reported a clean deploy:\n"
+            + result.stdout + result.stderr,
+        )
         self.assertIn("enable-boot fail", result.stdout)
+        self.assertIn("still not enabled", result.stdout)
+
+    def test_a_confirmed_enable_says_so(self):
+        """The success line distinguishes 'ran' from 'verified'.
+
+        Without the word, the ok line reads identically whether or not anything
+        checked -- which is what the failure above was hiding behind.
+        """
+        result = self._install_for_real(
+            self._upload(self._bundle(name="renders"), "good.tar.gz")
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("enable-boot ok", result.stdout)
+        self.assertIn("confirmed", result.stdout)
+
+    def test_a_lying_enable_still_leaves_the_release_live(self):
+        """Same verdict as a plain enable failure: report it, do not undo it."""
+        good = self._install_for_real(
+            self._upload(self._bundle(name="renders"), "good.tar.gz")
+        )
+        self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+
+        result = self._install_for_real(
+            self._upload(self._bundle(name="second"), "second.tar.gz"),
+            enable_ok=True,
+            enable_takes=False,
+        )
+        self.assertNotIn("auto-rollback-start", result.stdout)
+        self.assertIn(
+            "second", os.path.basename(self._current_target()),
+            "a release that came up fine was rolled back over autostart",
+        )
 
     def test_activate_reaches_a_release_rollback_cannot(self):
         """Rollback goes one release back; the board keeps more than one.

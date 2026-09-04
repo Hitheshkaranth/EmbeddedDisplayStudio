@@ -571,40 +571,7 @@ application and free space, and the RAM left over.</em>
 follows the operator, and the preview inside the bezel follows the theme with
 it.</em>
 
-<br /><br />
-
-<img src="docs/assets/screenshot-hmi.png" alt="The panel UI" width="720" />
-
-<em>The panel screen, bound to live tags.</em>
-
 </div>
-
----
-
-## The tag protocol
-
-JSON over UDP on loopback. Deliberately boring, so anything can speak it.
-
-```jsonc
-// daemon → clients, every 100 ms
-{ "t": "tags", "seq": 4711, "ts": 1755600000.123,
-  "tags": { "ai.pot": 1.842, "di.estop": false, "do.relay1": true } }
-
-// client → daemon
-{ "id": "c-17", "cmd": "set", "tag": "do.relay1", "value": 1 }
-{ "t": "ack", "id": "c-17", "ok": true }
-```
-
-| Prefix | Meaning | Writable |
-|---|---|---|
-| `ai.` | analog input (IIO ADC), float | — |
-| `di.` | digital input (GPIO), bool | — |
-| `do.` | digital output (GPIO), bool | **yes** |
-| `uart.` | serial link | `uart.tx` |
-| `sys.` | daemon health | — |
-
-A tag whose hardware read failed is published as `null`, never omitted — so a QML
-binding always resolves. The full specification is [`docs/CONTRACT.md`](docs/CONTRACT.md).
 
 ---
 

@@ -22,6 +22,9 @@
 #   1  -- general / validation error
 #   2  -- usage error
 #   3  -- locked (another install is running)
+#   4  -- installed and running, but NOT made the boot default (see
+#         enable_boot).  The release is live and was deliberately not rolled
+#         back; the panel comes up without it after a power cycle.
 #
 # MACHINE-READABLE OUTPUT
 #   Every step prints a line:  STEP <tag> <ok|fail> [detail]
@@ -34,6 +37,8 @@
 #                        (for off-target testing without systemd)
 #   HMI_ENABLE_CMD    -- override for `systemctl enable hmi-gui.service`,
 #                        the step that makes the app the boot default
+#   HMI_ENABLE_CHECK_CMD -- override for `systemctl is-enabled hmi-gui.service`,
+#                        which confirms HMI_ENABLE_CMD actually took effect
 #   HMI_SKIP_GUI_WAIT -- if set to "1", skip waiting for gui-ready and
 #                        skip enabling autostart (for off-target testing)
 #   HMI_GUI_READY_TIMEOUT -- seconds to wait for gui-ready (default 25);
@@ -113,6 +118,16 @@ HMI_RESTART_CMD="${HMI_RESTART_CMD:-systemctl restart hmi-gui.service}"
 # idempotent, so running it on every install costs nothing and removes the
 # assumption that somebody enabled the unit by hand once.
 HMI_ENABLE_CMD="${HMI_ENABLE_CMD:-systemctl enable hmi-gui.service}"
+
+# How the result of HMI_ENABLE_CMD is confirmed.  The enable command's exit
+# status is not evidence on its own: it is documented as overridable, and any
+# stand-in that returns 0 without linking the unit -- a pass-through systemctl
+# stub is the usual one -- makes autostart look configured on a panel that will
+# come up blank.  Asking the system what it actually believes closes that gap,
+# and costs one cheap call on a path that already runs systemctl twice.
+# `systemctl is-enabled` exits 0 only for an enabled unit; disabled, masked and
+# static all exit non-zero, which is the answer we want in each of those cases.
+HMI_ENABLE_CHECK_CMD="${HMI_ENABLE_CHECK_CMD:-systemctl is-enabled hmi-gui.service}"
 
 # When set to "1", skip waiting for the gui-ready file and skip
 # restarting the GUI.  Used only in off-target testing.
@@ -821,15 +836,26 @@ restart_gui() {
 # weston.service at boot through the unit's Requires=, so the whole display
 # chain follows from this one call.
 #
-# Failure here is reported but does NOT fail the install.  The new release is
-# at that point installed, running and verified; tearing it down because the
-# panel could not be made to autostart would replace a working UI with an old
-# one, which is worse than the problem.  The step line is how the host tools
-# surface it.
+# The enable command is run and then verified, because its exit status alone is
+# not evidence that anything was linked -- see HMI_ENABLE_CHECK_CMD.  A command
+# that succeeds while the unit stays disabled is treated exactly like one that
+# failed outright: it is the same panel, blank, at the next power cycle.
+#
+# Failure here does NOT roll back.  The new release is at that point installed,
+# running and verified; tearing it down because the panel could not be made to
+# autostart would replace a working UI with an old one, which is worse than the
+# problem.
+#
+# It does, however, change the install's exit status to 4.  The step line alone
+# was not enough: an unattended caller -- CI, or anything wrapping
+# deploy_to_hmi.sh -- saw exit 0 between two success lines and learned nothing,
+# and the panel came up blank at the next power cycle with no record of why.
+# 4 is distinct from 1 precisely so a caller can tell "deployed, not persistent"
+# from "not deployed" and choose whether to stop the line.
 #
 # Args:   none
 # Returns: 0 if the unit was enabled (or the step was skipped), 1 otherwise
-# Exits:   never
+# Exits:   never (the caller decides what a 1 means for the run's exit status)
 # Side effects: runs HMI_ENABLE_CMD
 ##
 enable_boot() {
@@ -840,13 +866,24 @@ enable_boot() {
 
     log "INFO" "enabling GUI at boot via: ${HMI_ENABLE_CMD}"
     # 9>&- for the same reason as restart_gui: never leak the install lock.
-    if eval "$HMI_ENABLE_CMD" 9>&- >/dev/null 2>&1; then
-        step "enable-boot" "ok" "hmi-gui.service will start at boot"
+    if ! eval "$HMI_ENABLE_CMD" 9>&- >/dev/null 2>&1; then
+        step "enable-boot" "fail" "could not enable hmi-gui.service; the app runs now but will NOT start after a reboot"
+        log "WARN" "autostart could not be configured -- run '${HMI_ENABLE_CMD}' on the panel"
+        return 1
+    fi
+
+    # The command said it worked.  Ask the system whether it agrees, because
+    # the two answers can differ and only this one is checked at power-on.
+    log "INFO" "confirming autostart via: ${HMI_ENABLE_CHECK_CMD}"
+    if eval "$HMI_ENABLE_CHECK_CMD" 9>&- >/dev/null 2>&1; then
+        step "enable-boot" "ok" "hmi-gui.service will start at boot (confirmed)"
         return 0
     fi
 
-    step "enable-boot" "fail" "could not enable hmi-gui.service; the app runs now but will NOT start after a reboot"
-    log "WARN" "autostart could not be configured -- run '${HMI_ENABLE_CMD}' on the panel"
+    # The worst of the three cases, and the reason the check exists: the deploy
+    # would otherwise report a clean success on a panel that comes up blank.
+    step "enable-boot" "fail" "enable reported success but hmi-gui.service is still not enabled; the app runs now but will NOT start after a reboot"
+    log "WARN" "autostart is unconfirmed -- check '${HMI_ENABLE_CHECK_CMD}' on the panel"
     return 1
 }
 
@@ -1046,13 +1083,29 @@ cmd_install() {
     # -- Make this the application the panel boots into ---
     # Deliberately after the readiness check: only a release that has been
     # proven to render is worth making the boot default.
-    enable_boot || true
+    #
+    # Tested rather than called plainly for two reasons: `set -e` would kill
+    # the script on a non-zero return, skipping the prune, the cleanup and the
+    # terminal STEP line; and the result is needed below. `|| true` did avoid
+    # the first, but it also discarded the second.
+    _boot_rc=0
+    enable_boot || _boot_rc=$?
 
     # -- Prune old releases ---
     prune_releases
 
     # -- Clean up upload directory ---
     cleanup_upload_dir
+
+    # The install itself succeeded either way -- the release is unpacked,
+    # current, and rendering -- so the terminal step stays "ok" and the
+    # documented STEP grammar keeps its two states. What changes is the exit
+    # status and the detail text, which is what an unattended caller reads.
+    if [ "$_boot_rc" -ne 0 ]; then
+        step "install-complete" "ok"             "deployed and running, autostart NOT configured: $(readlink "$CURRENT_LINK")"
+        log "WARN" "exiting 4: deployed but not the boot default"
+        return 4
+    fi
 
     step "install-complete" "ok" "deployment successful: $(readlink "$CURRENT_LINK")"
 }
@@ -1249,19 +1302,23 @@ ENVIRONMENT
   HMI_ROOT           Path prefix for all filesystem paths (testing only)
   HMI_RESTART_CMD    Override the systemctl restart command (testing)
   HMI_ENABLE_CMD     Override the systemctl enable command (testing)
+  HMI_ENABLE_CHECK_CMD  Override the command confirming the unit is enabled
   HMI_SKIP_GUI_WAIT  Set to "1" to skip GUI restart/wait and autostart (testing)
   HMI_GUI_READY_TIMEOUT  Seconds to wait for gui-ready (default 25)
 
 NOTES
   A successful `install` also enables hmi-gui.service, so the release becomes
   the application the panel starts at boot.  If that step reports "fail" the
-  app is running but will not survive a power cycle.
+  app is running but will not survive a power cycle, and `install` exits 4
+  rather than 0.  Exit 4 is not a failed deploy: the release is live and is
+  deliberately not rolled back.  Enable the unit by hand to clear it.
 
 EXIT CODES
   0  Success
   1  Validation or runtime error
   2  Usage error
   3  Lock contention (another install is running)
+  4  Installed and running, but not made the boot default
 EOF
 }
 

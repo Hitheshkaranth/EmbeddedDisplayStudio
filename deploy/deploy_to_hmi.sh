@@ -39,6 +39,13 @@ readonly REMOTE_UPLOAD_DIR="/tmp/hmi_upload"
 # Remote path of the target-side installer binary (CONTRACT section 6).
 readonly REMOTE_INSTALLER="/usr/bin/hmi-install"
 
+# hmi-install's exit status for "installed, running and verified, but the unit
+# could not be enabled" -- the release is live and was deliberately not rolled
+# back, but the panel will not come up with it after a power cycle.  We
+# propagate it unchanged so a caller of this script sees the same distinction
+# the installer drew; it is neither a success nor a failed deploy.
+readonly EXIT_NOT_BOOT_DEFAULT=4
+
 # Journald units whose logs are retrieved by the "logs" action.
 readonly LOG_UNITS=("hmi-gui" "hmi-hwd")
 
@@ -322,6 +329,14 @@ GENERAL FLAGS
       --dry-run         Print every command that would be run; do not execute.
   -v, --verbose         Enable debug output; pass raw target stdout through.
   -h, --help            Show this help text and exit.
+
+EXIT CODES
+  0  Success.
+  1  Local validation, packaging or usage error.
+  4  Deployed and running, but not made the boot default.  The release was
+     verified and deliberately left live; it will not start after a reboot
+     until `systemctl enable hmi-gui.service` is run on the panel.
+  *  Any other code is passed through from hmi-install on the target.
 
 EXAMPLES
   # First deployment
@@ -807,21 +822,41 @@ render_installer_output() {
     # Purpose: read the installer's stdout line by line, rendering STEP tags
     #          as visual progress banners while always passing through every
     #          raw line in --verbose mode.  Non-STEP lines are printed as-is.
-    #          STEP tag format (CONTRACT section 6): "STEP <n>/<total> <desc>"
-    # Args:    stdin — the remote installer's stdout stream.
+    #          STEP tag format (target/README.md section 2, as emitted by
+    #          hmi-install's step()): "STEP <tag> <ok|fail> [detail]".
+    #
+    #          This used to match "STEP <n>/<total> <desc>", a numbered form
+    #          the installer has never emitted.  Every STEP line therefore fell
+    #          through to the raw branch: nothing was ever rendered as a
+    #          banner, and a failing step scrolled past uncoloured, reading
+    #          exactly like the successes around it.  The step that made that
+    #          matter is enable-boot, whose failure leaves an application that
+    #          runs now and is gone after the next power cycle.
+    # Args:    stdin - the remote installer's stdout stream.
     # Returns: 0 (line-processing; exit status comes from the calling context).
     # Side effects: writes formatted progress to stdout.
 
-    local line step_n step_total step_desc
+    local line step_tag step_status step_detail status_colour
 
     while IFS= read -r line; do
-        if [[ "${line}" =~ ^STEP[[:space:]]+([0-9]+)/([0-9]+)[[:space:]]+(.*) ]]; then
-            step_n="${BASH_REMATCH[1]}"
-            step_total="${BASH_REMATCH[2]}"
-            step_desc="${BASH_REMATCH[3]}"
-            printf '%s[%s/%s]%s %s\n' \
-                "${C_CYAN}${C_BOLD}" "${step_n}" "${step_total}" \
-                "${C_RESET}" "${step_desc}"
+        if [[ "${line}" =~ ^STEP[[:space:]]+([^[:space:]]+)[[:space:]]+([^[:space:]]+)[[:space:]]*(.*) ]]; then
+            step_tag="${BASH_REMATCH[1]}"
+            step_status="${BASH_REMATCH[2]}"
+            step_detail="${BASH_REMATCH[3]}"
+
+            # A failing step is the one line in this stream the operator must
+            # not miss, so it is the one line that gets red.
+            if [[ "${step_status}" == "fail" ]]; then
+                status_colour="${C_RED}"
+            else
+                status_colour="${C_GREEN}"
+            fi
+
+            printf '%s[%s]%s %s%s%s%s\n' \
+                "${C_CYAN}${C_BOLD}" "${step_tag}" "${C_RESET}" \
+                "${status_colour}" "${step_status}" "${C_RESET}" \
+                "${step_detail:+ ${step_detail}}"
+
             # Always also pass the raw STEP line through in verbose mode.
             if [[ "${OPT_VERBOSE}" -eq 1 ]]; then
                 printf '%s[RAW]%s %s\n' "${C_CYAN}" "${C_RESET}" "${line}"
@@ -861,9 +896,16 @@ Run '$SCRIPT_NAME --help' for usage."
 
     local bundle_dir=""
 
+    # Both helpers below call die on failure, and die's exit only ends the
+    # command substitution's subshell -- the parent shell reads an empty result
+    # and carries on. That is how a bundle that failed to pack still opened the
+    # SSH connection, scp'd "" to the panel, and ran the remote installer with
+    # an empty argument: the error was printed, then contradicted by four steps
+    # of apparent progress. Every substitution here has to re-raise it.
     if [[ "${OPT_BUNDLE}" == *.tar.gz || "${OPT_BUNDLE}" == *.tgz ]]; then
         log_step "Validating bundle archive: ${OPT_BUNDLE}"
-        bundle_dir="$(validate_bundle_archive "${OPT_BUNDLE}")"
+        bundle_dir="$(validate_bundle_archive "${OPT_BUNDLE}")" \
+            || die 1 "Could not unpack or validate ${OPT_BUNDLE}."
     elif [[ -d "${OPT_BUNDLE}" ]]; then
         log_step "Validating bundle directory: ${OPT_BUNDLE}"
         validate_bundle_dir "${OPT_BUNDLE}"
@@ -875,7 +917,9 @@ Run '$SCRIPT_NAME --help' for usage."
     # ----- Packaging -----
 
     local tarball
-    tarball="$(package_bundle "${bundle_dir}")"
+    tarball="$(package_bundle "${bundle_dir}")" \
+        || die 1 "Could not package ${bundle_dir}."
+    [[ -n "${tarball}" ]] || die 1 "Packaging produced no tarball for ${bundle_dir}."
     local sidecar="${tarball}.sha256"
 
     # ----- Transport -----
@@ -1147,6 +1191,14 @@ print_summary() {
     if [[ "${exit_code}" -eq 0 ]]; then
         result_str="SUCCESS"
         result_colour="${C_GREEN}"
+    elif [[ "${exit_code}" -eq "${EXIT_NOT_BOOT_DEFAULT}" ]]; then
+        # hmi-install's exit 4: the release is installed, running and verified,
+        # and was deliberately not rolled back.  Calling that FAILED would push
+        # an operator toward undoing a deploy that is working; calling it
+        # SUCCESS is how the panel came up blank the next morning with nothing
+        # in the log to explain it.  It is its own outcome and reads as one.
+        result_str="PARTIAL (exit ${exit_code}: running, not the boot default)"
+        result_colour="${C_YELLOW}"
     else
         result_str="FAILED (exit ${exit_code})"
         result_colour="${C_RED}"
@@ -1201,6 +1253,15 @@ main() {
         deploy)
             action_deploy   || exit_code=$?
             release_id="${OPT_NAME_OVERRIDE:-${MANIFEST_NAME}}-${MANIFEST_VERSION}"
+            # The one outcome an operator can act on immediately and would
+            # otherwise only discover at the next power cycle.  Says what to
+            # run, on which host, rather than only that something went wrong.
+            if [[ "${exit_code}" -eq "${EXIT_NOT_BOOT_DEFAULT}" ]]; then
+                log_warn "The application is installed and running on ${OPT_HOST}, but it \
+was NOT made the boot default and will not start after a reboot."
+                log_warn "Run this on the panel to fix it: \
+systemctl enable hmi-gui.service"
+            fi
             ;;
         rollback)
             action_rollback || exit_code=$?

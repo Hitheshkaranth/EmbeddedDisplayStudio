@@ -99,6 +99,16 @@ def _describe_largest(entries: List[Tuple[str, str]], count: int = 5) -> str:
         f"    {size / (1024 * 1024):9.1f} MB  {rel}" for size, rel in sized[:count]
     )
 
+# Run as a script -- which is how deploy_to_hmi.sh invokes this file -- sys.path
+# starts at schema/, not the repository root, so the package-qualified import
+# below raises ModuleNotFoundError and every CLI deploy dies at the packaging
+# step. Importers (the desktop tool) already resolve it and take this branch
+# never: __package__ is only empty when Python was handed the file directly.
+if not __package__:
+    sys.path.insert(
+        0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
+
 # CONTRACT section 4 validation lives in schema/manifest.py, which the host
 # CLI and the target installer also call. Re-exported here so existing callers
 # (and tests) keep importing deployer.validate_bundle, while there is only one

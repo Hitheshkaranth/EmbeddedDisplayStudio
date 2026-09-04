@@ -52,9 +52,9 @@ Host deployment tools (`deploy_to_hmi.sh` and `HMI App Studio`) parse these line
 | `restart-gui` | `ok` / `fail` | Removes `/run/hmi/gui-ready`, executes `HMI_RESTART_CMD`, and polls for the readiness sentinel up to 25 seconds (`GUI_READY_TIMEOUT`). |
 | `auto-rollback-start` | `ok` | Emitted when `restart-gui` fails or times out, immediately prior to restoring the previous release. |
 | `rollback` | `ok` / `fail` | Restores `/opt/hmi_apps/current` to point at the target of `/opt/hmi_apps/previous` and restarts the GUI service. |
-| `enable-boot` | `ok` / `fail` | Runs `HMI_ENABLE_CMD` (`systemctl enable hmi-gui.service`) so the installed release is the application the panel starts at boot. Emitted only after readiness has been verified. A `fail` does **not** fail the install or trigger rollback: the release is installed and running, but will not come back after a power cycle until the unit is enabled by hand. |
+| `enable-boot` | `ok` / `fail` | Runs `HMI_ENABLE_CMD` (`systemctl enable hmi-gui.service`) so the installed release is the application the panel starts at boot, then confirms the result with `HMI_ENABLE_CHECK_CMD` (`systemctl is-enabled hmi-gui.service`) -- a command that reports success without linking the unit is treated as a failure, and the `ok` detail says `(confirmed)`. Emitted only after readiness has been verified. A `fail` does **not** trigger rollback: the release is installed and running, but will not come back after a power cycle until the unit is enabled by hand. It does set the install's exit status to `4` (see 3.2), so an unattended caller can tell the case apart without parsing this line. |
 | `prune` | `ok` | Removes older releases from `/opt/hmi_apps/releases/`, retaining the 3 newest releases plus `current` and `previous`. Detail contains count of pruned releases. |
-| `install-complete` | `ok` / `fail` | Terminal step of deployment. Success reports the active release path; failure indicates deployment failed and rolled back. |
+| `install-complete` | `ok` / `fail` | Terminal step of deployment. Success reports the active release path; failure indicates deployment failed and rolled back. Stays `ok` when only `enable-boot` failed -- the install itself succeeded -- but the detail then reads `deployed and running, autostart NOT configured: <path>` and the exit status is `4`. |
 | `rollback-start` | `ok` | Emitted at the start of manual `cmd_rollback`. |
 | `rollback-complete` | `ok` / `fail` | Emitted at the conclusion of manual `cmd_rollback`. |
 | `list` | `ok` | Emitted at the conclusion of `cmd_list`. |
@@ -84,6 +84,7 @@ Host deployment tools (`deploy_to_hmi.sh` and `HMI App Studio`) parse these line
 * `1`: General validation or runtime failure (e.g. SHA-256 mismatch, invalid manifest, GUI timeout).
 * `2`: Command-line usage or syntax error.
 * `3`: Lock contention (`flock` failed because another installation is in progress).
+* `4`: Installed, running and verified, but **not** made the boot default — `HMI_ENABLE_CMD` failed. This is not a failed deployment: the release is live and was deliberately *not* rolled back, because replacing a working UI with an older one is worse than the problem. It will not come back after a power cycle until `systemctl enable hmi-gui.service` is run on the panel. Callers that treat any non-zero status as "roll back and page someone" must special-case this one.
 
 ### 3.3 Environment Overrides
 
@@ -94,6 +95,7 @@ Host deployment tools (`deploy_to_hmi.sh` and `HMI App Studio`) parse these line
 | `HMI_ROOT` | *(empty)* | Filesystem path prefix prepended to all paths (`${HMI_ROOT}/opt/hmi_apps`, `${HMI_ROOT}/run/hmi`, etc.). Enables running the installer inside a temporary directory on a dev host. |
 | `HMI_RESTART_CMD` | `systemctl restart hmi-gui.service` | Shell command executed to restart the user interface. Can be overridden with a mock command (e.g. `true` or a test script) when systemd is unavailable. |
 | `HMI_ENABLE_CMD` | `systemctl enable hmi-gui.service` | Command run after a verified install to make the release the panel's boot default. See the `enable-boot` step. |
+| `HMI_ENABLE_CHECK_CMD` | `systemctl is-enabled hmi-gui.service` | Command that confirms `HMI_ENABLE_CMD` took effect. Exit 0 means enabled; anything else is treated as not enabled, whatever the enable command reported. |
 | `HMI_SKIP_GUI_WAIT` | `0` | When set to `"1"`, skips executing `HMI_RESTART_CMD`, skips waiting for `/run/hmi/gui-ready`, and skips `HMI_ENABLE_CMD`. |
 | `HMI_PYTHON` | *(auto)* | Python interpreter used by both scripts. See below. |
 
