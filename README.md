@@ -480,6 +480,17 @@ header points at.
   the designer canvas. A design opened afterwards is retargeted to the glass
   that is plugged in, so nobody lays out widgets against a screen that is not
   there and finds out after a deploy.
+* **A cockpit-ready avionics palette** — attitude, airspeed/altitude tape,
+  heading compass, VSI, flight director, turn coordinator, engine gauge,
+  engine bar, dual-tank fuel quantity, annunciator and compact data-field
+  widgets are available directly in the Designer. Their operational values
+  are bindable to live tags, and their EFIS colours remain stable across the
+  Studio's light and dark modes.
+* **Designer controls that behave like editing controls** — toolbar icons are
+  re-rendered for both themes, compact geometry fields reserve their arrow
+  button area instead of drawing over the value, and Delete removes the
+  selected canvas object without auto-repeating through the object tree or
+  intercepting editing inside a text field.
 * **An operable bezel, not a photograph** — clicks, drags, wheel and keys are
   mapped from panel pixels into the application's own window and delivered as
   real Qt events, so the preview is something you use rather than watch.
@@ -611,7 +622,10 @@ icons vendored offline. Same tokens, same variant names, same geometry.
 
 `ShButton` · `ShInput` · `ShCard` · `ShBadge` · `ShSwitch` · `ShProgress` ·
 `ShSeparator` · `ShAlert` · `ShTabs` · `ShLabel` · `ShSkeleton` · `ShDialog`
-— plus HMI additions `ShGauge`, `ShStatDot`, `ShValueTile`.
+— plus HMI additions `ShGauge`, `ShStatDot`, `ShValueTile`, and the avionics
+set `ShDataField`, `ShAttitude`, `ShTape`, `ShCompass`, `ShVSI`,
+`ShEngineGauge`, `ShAnnunciator`, `ShFlightDirector`, `ShTurnCoordinator`,
+`ShEngineBar`, `ShFuelQuantity`.
 
 ```bash
 python ui/gallery.py --theme dark      # every component, every state
@@ -735,7 +749,11 @@ the existing raw-QML and Python application workflow. Open an application
 bundle, select **Designer** in the workspace navigation, then drag controls from
 the palette onto the canvas. Selection, rubber-band multi-selection, movement,
 resize handles, copy/paste, keyboard nudging, z-order, grid snapping and common
-alignment commands are available directly on the canvas.
+alignment commands are available directly on the canvas. The Delete key removes
+the current selection, while focus-aware handling leaves text and numeric
+editors alone. Three compact command rows keep file/edit actions, page and
+target geometry, arrangement, preview, generation and deployment visible at
+common laptop widths without hiding the end of the workflow behind overflow.
 
 The property inspector is generated from the central widget registry. It edits
 geometry and control-specific values immediately, while the binding inspector
@@ -750,6 +768,16 @@ The **Design Chat** panel provides offline text commands such as
 Its command adapter is deliberately separate from the model, leaving a clean
 integration point for a future conversational model without making network
 access part of the designer runtime.
+
+Avionics controls use the same data path as every other live HMI value. Bind,
+for example, `ShFuelQuantity.leftValue` to `fuel.left.quantity` and
+`rightValue` to `fuel.right.quantity`; generated QML reads them through
+`Bus.value(tag, fallback)`. The underlying program can publish those dotted
+tags through the hardware daemon's UDP telemetry protocol, or Tag Lab can drive
+them with constant, ramp, sine, square or noise signals before hardware is
+available. Pitch, roll, heading, vertical speed, engine values, flight-director
+commands, turn rate, slip, annunciator state and both fuel tanks are exposed as
+bindable properties in the same way.
 
 The editable source is `project.edsui`, a human-readable JSON document. It is
 not generated QML. A designed bundle has this shape:

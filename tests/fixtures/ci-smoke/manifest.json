@@ -1,11 +1,15 @@
 {
   "schema": 1,
-  "name": "ci-smoke",
+  "name": "ci-test_1smoke",
   "version": "1.0.0",
-  "entry": "main.py",
-  "runtime": "python",
+  "entry": "generated/Main.qml",
+  "runtime": "qml",
   "qt_binding": "pyside6",
-  "screen": { "width": 1280, "height": 800 },
+  "screen": {
+    "width": 1024,
+    "height": 768
+  },
   "tags_required": [],
-  "qt": ">=6.5"
+  "qt": ">=6.5",
+  "theme": "dark"
 }

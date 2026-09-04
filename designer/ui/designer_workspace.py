@@ -11,7 +11,7 @@ import shiboken6
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (
-    QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+    QApplication, QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSpinBox,
     QFrame, QPlainTextEdit, QScrollArea, QSizePolicy, QSplitter, QToolBar,
     QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
@@ -264,7 +264,10 @@ class DesignerWorkspace(QWidget):
 
     def _build_ui(self):
         self.setObjectName("designerWorkspace")
-        layout = QVBoxLayout(self); layout.setContentsMargins(8, 8, 8, 8); layout.setSpacing(6)
+        # This workspace already lives inside the Studio page's padded content
+        # area. A second inset made the three command rows look detached and
+        # needlessly reduced the working canvas.
+        layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(4)
         primary = QToolBar("Designer file and edit actions")
         canvas_bar = QToolBar("Designer page, screen and view actions")
         arrange_bar = QToolBar("Designer arrange actions")
@@ -273,11 +276,13 @@ class DesignerWorkspace(QWidget):
         arrange_bar.setObjectName("designerArrangeToolbar")
         for bar in (primary, canvas_bar, arrange_bar):
             bar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-            bar.setFixedHeight(46)
+            bar.setFixedHeight(44)
             # Toolbars pack their children edge to edge by default, which ran
             # one group of controls straight into the next.
-            bar.layout().setSpacing(6)
-            bar.layout().setContentsMargins(6, 2, 6, 2)
+            bar.layout().setSpacing(4)
+            # The stylesheet owns toolbar padding. A layout inset here adds a
+            # second, platform-dependent gutter around every row.
+            bar.layout().setContentsMargins(0, 0, 0, 0)
 
         def action(bar, text, slot, icon_name="adjustments", shortcut=None, checkable=False):
             item = bar.addAction(icon(icon_name), text); item.triggered.connect(slot); item.setCheckable(checkable)
@@ -298,7 +303,7 @@ class DesignerWorkspace(QWidget):
                 widget.setFixedWidth(width)
             # Match the buttons exactly: a field even a few pixels taller than
             # its bar spills into the next row.
-            widget.setFixedHeight(30)
+            widget.setFixedHeight(26)
             bar.addWidget(widget)
             return widget
 
@@ -388,6 +393,7 @@ class DesignerWorkspace(QWidget):
         self.align_button = QToolButton()
         self.align_button.setText("Align")
         self.align_button.setIcon(icon("adjustments"))
+        self._designer_toolbutton_icons = {self.align_button: "adjustments"}
         self.align_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.align_button.setPopupMode(QToolButton.InstantPopup)
         self.align_button.setMenu(self.align_menu)
@@ -477,6 +483,8 @@ class DesignerWorkspace(QWidget):
         """Re-render Designer icons and canvas chrome for the active theme."""
         for action, name in self._designer_icon_names.items():
             action.setIcon(icon(name))
+        for button, name in getattr(self, "_designer_toolbutton_icons", {}).items():
+            button.setIcon(icon(name))
         # The canvas previews read Shadcn's own tokens, which have a light and
         # a dark column. Point them at the same one the rest of the Studio is
         # showing, or a component previews in the palette it will not ship in.
@@ -490,7 +498,7 @@ class DesignerWorkspace(QWidget):
             QToolBar#designerPrimaryToolbar, QToolBar#designerCanvasToolbar,
             QToolBar#designerArrangeToolbar {{
                 background: {panel}; border: 1px solid {border}; border-radius: 8px;
-                spacing: 6px; padding: 2px 8px;
+                spacing: 4px; padding: 3px 6px;
             }}
             /* A visible rule between groups, with air on both sides: without
                it one cluster of controls ran straight into the next. */
@@ -524,7 +532,18 @@ class DesignerWorkspace(QWidget):
             QToolBar#designerCanvasToolbar QSpinBox {{
                 background: {muted}; color: {foreground};
                 border: 1px solid {border}; border-radius: 7px;
-                padding: 0 6px; min-height: 28px; max-height: 30px;
+                padding: 0 22px 0 6px; min-height: 24px; max-height: 26px;
+            }}
+            QToolBar#designerCanvasToolbar QSpinBox::up-button,
+            QToolBar#designerCanvasToolbar QSpinBox::down-button {{
+                subcontrol-origin: border; width: 18px;
+                background: {accent}; border-left: 1px solid {border};
+            }}
+            QToolBar#designerCanvasToolbar QSpinBox::up-button {{
+                subcontrol-position: top right; border-top-right-radius: 7px;
+            }}
+            QToolBar#designerCanvasToolbar QSpinBox::down-button {{
+                subcontrol-position: bottom right; border-bottom-right-radius: 7px;
             }}
             QToolBar#designerCanvasToolbar QComboBox::drop-down {{
                 border: none; width: 18px;
@@ -665,6 +684,18 @@ class DesignerWorkspace(QWidget):
                               ("Shift+Left", lambda: self.nudge(-10, 0)), ("Shift+Right", lambda: self.nudge(10, 0)),
                               ("Shift+Up", lambda: self.nudge(0, -10)), ("Shift+Down", lambda: self.nudge(0, 10))):
             QShortcut(QKeySequence(key), self, activated=callback)
+        self.delete_shortcut = QShortcut(QKeySequence(Qt.Key_Delete), self)
+        self.delete_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        self.delete_shortcut.setAutoRepeat(False)
+        self.delete_shortcut.activated.connect(self._delete_from_keyboard)
+
+    def _delete_from_keyboard(self):
+        """Delete the canvas selection without eating text in an editor."""
+        focus = QApplication.focusWidget()
+        if isinstance(focus, (QLineEdit, QPlainTextEdit, QSpinBox,
+                              QDoubleSpinBox, QComboBox)):
+            return
+        self.delete_selected()
 
     def set_bundle(self, bundle_dir, manifest=None):
         self.bundle_dir = os.path.abspath(bundle_dir) if bundle_dir else ""
@@ -875,6 +906,10 @@ class DesignerWorkspace(QWidget):
         self.current_page_index = min(self.current_page_index, len(self.project.pages)-1)
         self.pages.blockSignals(True); self.pages.clear(); self.pages.addItems([p.name for p in self.project.pages]); self.pages.setCurrentIndex(self.current_page_index); self.pages.blockSignals(False)
         self.scene.load_page(self.project, self.current_page); self._refresh_tree()
+        # Loading a page clears the selection without emitting a selection
+        # change, so the alignment buttons would stay enabled over an empty
+        # canvas -- offering an edit that silently does nothing.
+        self._sync_text_alignment()
         if self.view.isVisible():
             self.view.fit_canvas()
         self.screen_width.blockSignals(True); self.screen_height.blockSignals(True)

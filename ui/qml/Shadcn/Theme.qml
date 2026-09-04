@@ -70,6 +70,36 @@ QtObject {
     /** @property {color} infoForeground */
     readonly property color infoForeground: mode === "light" ? "#f8fafc" : "#f8fafc"
 
+    // -- Avionics instrument colours ------------------------------------
+    // These do NOT follow `mode`. An EFIS is read the same way in a dark
+    // cockpit and a sunlit one, and the conventions are the point: sky above
+    // an artificial horizon is blue, ground is brown, and the three alert
+    // levels are the ones a pilot is trained to. Swapping them for a theme
+    // would make the instrument wrong, not restyled.
+
+    /** @property {color} efisSky -- above the horizon on an attitude indicator */
+    readonly property color efisSky: "#2b6fb5"
+    /** @property {color} efisGround -- below it */
+    readonly property color efisGround: "#7a5230"
+    /** @property {color} efisPanel -- instrument background */
+    readonly property color efisPanel: "#05070a"
+    /** @property {color} efisLine -- ladders, scales, tick marks */
+    readonly property color efisLine: "#ffffff"
+    /** @property {color} efisText -- readouts */
+    readonly property color efisText: "#ffffff"
+    /** @property {color} efisAircraft -- the fixed aircraft symbol */
+    readonly property color efisAircraft: "#ffd400"
+    /** @property {color} efisNormal -- in-range band / advisory */
+    readonly property color efisNormal: "#12b32a"
+    /** @property {color} efisCaution -- caution band, amber by convention */
+    readonly property color efisCaution: "#ffb000"
+    /** @property {color} efisWarning -- warning band, red by convention */
+    readonly property color efisWarning: "#e01b24"
+    /** @property {color} efisNav -- GPS/NAV course needles */
+    readonly property color efisNav: "#ff31d3"
+    /** @property {color} efisBug -- selected-value bugs and targets */
+    readonly property color efisBug: "#00d4ff"
+
     /** @property {real} radiusSm */
     readonly property real radiusSm: 4
     /** @property {real} radiusMd */

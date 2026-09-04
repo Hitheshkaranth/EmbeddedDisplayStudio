@@ -102,6 +102,76 @@ def default_registry() -> WidgetRegistry:
         {"title": str, "description": str, "variant": str, **common},
         {"title": "Alarm", "description": "", "variant": "destructive", **common_defaults},
         ("visible",), False, {"variant": ("default", "destructive")})
+    # -- Avionics -------------------------------------------------------
+    # Instrument colours do not follow the light/dark theme; they are the
+    # conventions a crew is trained to read, so none of these expose colour
+    # properties. What they expose is the reading, which is what gets bound
+    # to a tag.
+    add("ShDataField", "Data Field", "Avionics", "ShDataField", 150, 46,
+        {"label": str, "value": str, "units": str, "severity": str,
+         "stacked": bool, **common},
+        {"label": "GROUND SPEED", "value": "130", "units": "KTS",
+         "severity": "advisory", "stacked": True, **common_defaults},
+        ("value", "severity"), False,
+        {"severity": ("advisory", "caution", "warning")})
+    add("ShAttitude", "Attitude Indicator", "Avionics", "ShAttitude", 220, 220,
+        {"pitch": float, "roll": float, "pixelsPerDegree": float, **common},
+        {"pitch": 0.0, "roll": 0.0, "pixelsPerDegree": 4.0, **common_defaults},
+        ("pitch", "roll"))
+    add("ShTape", "Airspeed / Altitude Tape", "Avionics", "ShTape", 80, 260,
+        {"value": float, "minimumValue": float, "maximumValue": float,
+         "step": float, "span": float, "label": str, "units": str,
+         "side": str, **common},
+        {"value": 127.0, "minimumValue": 0.0, "maximumValue": 250.0,
+         "step": 10.0, "span": 60.0, "label": "IAS", "units": "KTS",
+         "side": "left", **common_defaults},
+        ("value",), False, {"side": ("left", "right")})
+    add("ShCompass", "Heading Compass", "Avionics", "ShCompass", 220, 220,
+        {"heading": float, "headingBug": float, "course": float, **common},
+        {"heading": 359.0, "headingBug": 45.0, "course": -1.0, **common_defaults},
+        ("heading", "headingBug"))
+    add("ShVSI", "Vertical Speed", "Avionics", "ShVSI", 72, 220,
+        {"value": float, "range": float, "units": str, **common},
+        {"value": 0.0, "range": 2000.0, "units": "FPM", **common_defaults},
+        ("value",))
+    add("ShEngineGauge", "Engine Gauge", "Avionics", "ShEngineGauge", 140, 140,
+        {"value": float, "minimumValue": float, "maximumValue": float,
+         "greenLow": float, "greenHigh": float, "cautionHigh": float,
+         "label": str, "units": str, **common},
+        {"value": 55.0, "minimumValue": 0.0, "maximumValue": 100.0,
+         "greenLow": 20.0, "greenHigh": 70.0, "cautionHigh": 85.0,
+         "label": "OIL PRESS", "units": "PSI", **common_defaults},
+        ("value",))
+    add("ShAnnunciator", "Annunciator", "Avionics", "ShAnnunciator", 140, 38,
+        {"text": str, "severity": str, "lit": bool, **common},
+        {"text": "LOW FUEL", "severity": "caution", "lit": True, **common_defaults},
+        ("lit", "severity"), False,
+        {"severity": ("advisory", "caution", "warning")})
+    add("ShFlightDirector", "Flight Director", "Avionics", "ShFlightDirector", 180, 120,
+        {"pitchCommand": float, "rollCommand": float, "pitchLimit": float,
+         "rollLimit": float, "active": bool, "mode": str, **common},
+        {"pitchCommand": 3.0, "rollCommand": -5.0, "pitchLimit": 15.0,
+         "rollLimit": 30.0, "active": True, "mode": "FD", **common_defaults},
+        ("pitchCommand", "rollCommand", "active", "mode"))
+    add("ShTurnCoordinator", "Turn Coordinator", "Avionics", "ShTurnCoordinator", 180, 110,
+        {"turnRate": float, "slip": float, "standardRate": float,
+         "slipLimit": float, **common},
+        {"turnRate": 0.0, "slip": 0.0, "standardRate": 3.0,
+         "slipLimit": 1.0, **common_defaults}, ("turnRate", "slip"))
+    add("ShEngineBar", "Engine Bar", "Avionics", "ShEngineBar", 76, 190,
+        {"value": float, "minimumValue": float, "maximumValue": float,
+         "cautionValue": float, "warningValue": float, "label": str,
+         "units": str, **common},
+        {"value": 68.0, "minimumValue": 0.0, "maximumValue": 100.0,
+         "cautionValue": 80.0, "warningValue": 90.0, "label": "N1",
+         "units": "%", **common_defaults}, ("value",))
+    add("ShFuelQuantity", "Fuel Quantity", "Avionics", "ShFuelQuantity", 190, 130,
+        {"leftValue": float, "rightValue": float, "capacity": float,
+         "lowLevel": float, "units": str, **common},
+        {"leftValue": 64.0, "rightValue": 61.0, "capacity": 100.0,
+         "lowLevel": 15.0, "units": "KG", **common_defaults},
+        ("leftValue", "rightValue"))
+
     add("ShCard", "Card", "Containers", "ShCard", 260, 180,
         {"color": str, "borderColor": str, "borderWidth": int, "radius": int, **common},
         {"color": "#18181b", "borderColor": "#27272a", "borderWidth": 1,

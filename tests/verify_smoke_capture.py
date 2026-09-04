@@ -14,7 +14,7 @@ library import while every test passed.
 
     python tests/verify_smoke_capture.py <capture.png>
 
-Exits 0 when the fixture's colour is present in the grab, 1 otherwise.
+Exits 0 when both halves of the fixture's EFIS horizon are present, 1 otherwise.
 """
 import sys
 from pathlib import Path
@@ -24,10 +24,11 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from PySide6.QtGui import QImage, QColor  # noqa: E402
 
-# Kept in step with tests/fixtures/ci-smoke/main.py by hand: the fixture must
-# not import from the repository, because it is executed by a frozen runtime
-# that has never heard of it.
-SMOKE_COLOUR = "#ff00d4"
+# The QML fixture deliberately fills the panel with an attitude indicator.
+# Requiring both convention colours proves that the Shadcn import resolved and
+# the custom Canvas/Rectangle hierarchy rendered; a shell fallback contains
+# neither colour.
+SMOKE_COLOURS = ("#2b6fb5", "#7a5230")
 
 # How many pixels of the fixture's colour count as "the application rendered".
 # A handful could be an artefact of scaling; a panel filled by the fixture is
@@ -54,21 +55,25 @@ def main(argv):
         sys.stderr.write(f"FAIL: {path} is not a readable image.\n")
         return 1
 
-    wanted = QColor(SMOKE_COLOUR).rgb()
-    matching = 0
+    counts = {colour: 0 for colour in SMOKE_COLOURS}
+    wanted = {QColor(colour).rgb(): colour for colour in SMOKE_COLOURS}
     for y in range(image.height()):
         for x in range(image.width()):
-            if image.pixel(x, y) == wanted:
-                matching += 1
+            colour = wanted.get(image.pixel(x, y))
+            if colour is not None:
+                counts[colour] += 1
 
-    print(f"capture {image.width()}x{image.height()}, "
-          f"{matching} px of {SMOKE_COLOUR}")
+    print(f"capture {image.width()}x{image.height()}, " +
+          ", ".join(f"{count} px of {colour}" for colour, count in counts.items()))
 
-    if matching < MIN_MATCHING_PIXELS:
+    insufficient = {colour: count for colour, count in counts.items()
+                    if count < MIN_MATCHING_PIXELS}
+    if insufficient:
         sys.stderr.write(
-            f"FAIL: the bundle's colour appears {matching} times, under the "
-            f"{MIN_MATCHING_PIXELS} expected. The window opened but the "
-            f"application was not rendered inside the bezel.\n"
+            "FAIL: the avionics horizon is incomplete: " +
+            ", ".join(f"{colour}={count}" for colour, count in insufficient.items()) +
+            f" (minimum {MIN_MATCHING_PIXELS} each). The window opened but the "
+            "application was not rendered inside the bezel.\n"
         )
         return 1
 

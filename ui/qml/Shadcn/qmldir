@@ -20,3 +20,14 @@ ShGauge 1.0 ShGauge.qml
 ShStatDot 1.0 ShStatDot.qml
 ShValueTile 1.0 ShValueTile.qml
 ShIcon 1.0 ShIcon.qml
+ShDataField 1.0 ShDataField.qml
+ShAttitude 1.0 ShAttitude.qml
+ShTape 1.0 ShTape.qml
+ShCompass 1.0 ShCompass.qml
+ShVSI 1.0 ShVSI.qml
+ShEngineGauge 1.0 ShEngineGauge.qml
+ShAnnunciator 1.0 ShAnnunciator.qml
+ShFlightDirector 1.0 ShFlightDirector.qml
+ShTurnCoordinator 1.0 ShTurnCoordinator.qml
+ShEngineBar 1.0 ShEngineBar.qml
+ShFuelQuantity 1.0 ShFuelQuantity.qml

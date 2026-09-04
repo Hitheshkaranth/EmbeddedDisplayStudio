@@ -84,6 +84,20 @@ class ToolbarLayoutTests(unittest.TestCase):
                 self.assertGreaterEqual(field.y(), 0)
                 self.assertLessEqual(field.y() + field.height(), bar.height())
 
+    def test_header_fields_use_the_compact_control_height(self):
+        workspace = self.workspace(STUDIO_PANE_WIDTHS[0])
+        fields = (workspace.project_name, workspace.pages, workspace.screen_width,
+                  workspace.screen_height, workspace.screen_theme)
+        for field in fields:
+            with self.subTest(field=field.objectName() or type(field).__name__):
+                self.assertEqual(field.height(), 26)
+
+    def test_dimension_fields_reserve_room_for_step_buttons(self):
+        workspace = self.workspace(STUDIO_PANE_WIDTHS[0])
+        for field in (workspace.screen_width, workspace.screen_height):
+            with self.subTest(field=field):
+                self.assertGreaterEqual(field.width(), 78)
+
     def test_labels_are_centred_on_their_fields(self):
         """A label riding above its own field is what the collision looked like."""
         workspace = self.workspace(STUDIO_PANE_WIDTHS[0])
@@ -123,7 +137,58 @@ class ToolbarLayoutTests(unittest.TestCase):
             with self.subTest(upper=upper.objectName(), lower=lower.objectName()):
                 self.assertLessEqual(upper.y() + upper.height(), lower.y())
 
-    def test_delete_is_explicit_not_a_repeating_global_shortcut(self):
+    def test_header_rows_do_not_add_a_second_workspace_inset(self):
+        """The Studio page owns its padding; nested padding looked accidental."""
+        workspace = self.workspace(STUDIO_PANE_WIDTHS[0])
+        margins = workspace.layout().contentsMargins()
+        self.assertEqual((margins.left(), margins.top(), margins.right(), margins.bottom()),
+                         (0, 0, 0, 0))
+        for bar in workspace.findChildren(QToolBar):
+            with self.subTest(bar=bar.objectName()):
+                margins = bar.layout().contentsMargins()
+                self.assertEqual((margins.left(), margins.top(), margins.right(), margins.bottom()),
+                                 (0, 0, 0, 0))
+
+    def test_text_alignment_is_disabled_until_something_can_use_it(self):
+        """An enabled control that does nothing is worse than a greyed one.
+
+        Loading a page clears the selection without emitting a selection
+        change, so the buttons kept whatever state the previous page left --
+        on a fresh workspace, enabled over an empty canvas.
+        """
+        workspace = self.workspace(STUDIO_PANE_WIDTHS[0])
+
+        for value, action in workspace._text_align_actions.items():
+            with self.subTest(alignment=value):
+                self.assertFalse(action.isEnabled())
+
+    def test_text_alignment_follows_the_selected_widget(self):
+        """The checked button is how an author reads the current alignment."""
+        from designer.model import DesignerWidget
+
+        workspace = self.workspace(STUDIO_PANE_WIDTHS[0])
+        page = workspace.current_page
+        page.widgets.clear()
+        definition = workspace.registry.get("Text")
+        properties = dict(definition.defaults)
+        properties["horizontalAlignment"] = "Text.AlignRight"
+        page.widgets.append(DesignerWidget(
+            id="caption", type="Text",
+            geometry={"x": 0, "y": 0, "width": 140, "height": 32},
+            properties=properties,
+        ))
+        workspace._load_page()
+        item = workspace.scene.item_for_id("caption")
+        self.assertIsNotNone(item)
+        item.setSelected(True)
+        self.settle()
+
+        actions = workspace._text_align_actions
+        self.assertTrue(actions["Text.AlignRight"].isChecked())
+        self.assertFalse(actions["Text.AlignLeft"].isChecked())
+        self.assertTrue(all(a.isEnabled() for a in actions.values()))
+
+    def test_delete_key_is_scoped_and_does_not_auto_repeat(self):
         workspace = self.workspace(STUDIO_PANE_WIDTHS[0])
         delete = next(
             action for bar in workspace.findChildren(QToolBar)
@@ -131,6 +196,8 @@ class ToolbarLayoutTests(unittest.TestCase):
         )
 
         self.assertTrue(delete.shortcut().isEmpty())
+        self.assertEqual(workspace.delete_shortcut.context(), Qt.WidgetWithChildrenShortcut)
+        self.assertFalse(workspace.delete_shortcut.autoRepeat())
 
 
 if __name__ == "__main__":

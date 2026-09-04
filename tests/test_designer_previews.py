@@ -208,5 +208,98 @@ class WidgetPreviews(unittest.TestCase):
                       "the alignment was quoted or dropped on the way to QML")
 
 
+@unittest.skipUnless(HAVE_QT, "PySide6 is required for canvas previews")
+class AvionicsPreviews(WidgetPreviews):
+    """The avionics set, whose colours are conventions rather than styling."""
+
+    def test_instrument_colours_do_not_follow_the_studio_theme(self):
+        """A blue sky and an amber caution mean the same thing in any cockpit.
+
+        Theming them would make the instrument wrong, not restyled, so the
+        EFIS palette is deliberately outside the light/dark token sets.
+        """
+        widget_previews.set_theme_mode("light")
+        light = self._ink(self.render("ShAnnunciator",
+                                      {"text": "LOW FUEL", "severity": "warning",
+                                       "lit": True}, size=(140, 38)))
+        widget_previews.set_theme_mode("dark")
+        dark = self._ink(self.render("ShAnnunciator",
+                                     {"text": "LOW FUEL", "severity": "warning",
+                                      "lit": True}, size=(140, 38)))
+
+        warning = widget_previews.efis("warning").rgb() & 0xFFFFFF
+        self.assertIn(warning, {c & 0xFFFFFF for c in light})
+        self.assertIn(warning, {c & 0xFFFFFF for c in dark})
+
+    def test_the_horizon_puts_sky_above_ground(self):
+        """Wings level, the top half is sky and the bottom half is ground."""
+        image = self.render("ShAttitude", {"pitch": 0.0, "roll": 0.0,
+                                           "pixelsPerDegree": 4.0}, size=(200, 200))
+        # Sampled well off the centreline: the pitch ladder rungs are drawn
+        # about the middle, and x=100 lands straight on the 15-degree rung.
+        sky = image.pixelColor(20, 40).rgb() & 0xFFFFFF
+        ground = image.pixelColor(20, 160).rgb() & 0xFFFFFF
+
+        self.assertEqual(sky, widget_previews.efis("sky").rgb() & 0xFFFFFF)
+        self.assertEqual(ground, widget_previews.efis("ground").rgb() & 0xFFFFFF)
+
+    def test_rolling_the_horizon_changes_the_drawing(self):
+        """Roll rotates the horizon; the aircraft symbol stays put."""
+        level = self.render("ShAttitude", {"pitch": 0.0, "roll": 0.0}, size=(200, 200))
+        banked = self.render("ShAttitude", {"pitch": 0.0, "roll": 30.0}, size=(200, 200))
+
+        self.assertNotEqual(bytes(level.constBits()), bytes(banked.constBits()))
+        # The symbol is case-fixed, so its colour is present either way.
+        aircraft = widget_previews.efis("aircraft").rgb() & 0xFFFFFF
+        for name, image in (("level", level), ("banked", banked)):
+            with self.subTest(attitude=name):
+                self.assertIn(aircraft, {c & 0xFFFFFF for c in self._ink(image)})
+
+    def test_a_data_field_colours_only_the_value(self):
+        """Severity marks the reading. A caption that changed colour with the
+        value would make the label look like part of the alarm."""
+        warning = self.render("ShDataField",
+                              {"label": "FUEL", "value": "LOW", "units": "",
+                               "severity": "warning", "stacked": True},
+                              size=(170, 46))
+        colours = {c & 0xFFFFFF for c in self._ink(warning)}
+
+        self.assertIn(widget_previews.efis("warning").rgb() & 0xFFFFFF, colours)
+        self.assertIn(widget_previews.token("mutedForeground").rgb() & 0xFFFFFF,
+                      colours)
+
+    def test_an_engine_gauge_always_shows_its_bands(self):
+        """Where the limits are is information even at a nominal reading."""
+        nominal = {c & 0xFFFFFF for c in self._ink(
+            self.render("ShEngineGauge",
+                        {"value": 40.0, "minimumValue": 0.0, "maximumValue": 100.0,
+                         "greenLow": 20.0, "greenHigh": 70.0, "cautionHigh": 85.0},
+                        size=(150, 150)))}
+
+        for band in ("normal", "caution", "warning"):
+            with self.subTest(band=band):
+                self.assertIn(widget_previews.efis(band).rgb() & 0xFFFFFF, nominal)
+
+    def test_a_tape_moves_with_its_value(self):
+        """The scale slides past a fixed value box."""
+        low = self.render("ShTape", {"value": 100.0, "minimumValue": 0.0,
+                                     "maximumValue": 250.0, "step": 10.0,
+                                     "span": 60.0, "label": "IAS", "units": "KTS"},
+                          size=(80, 240))
+        high = self.render("ShTape", {"value": 200.0, "minimumValue": 0.0,
+                                      "maximumValue": 250.0, "step": 10.0,
+                                      "span": 60.0, "label": "IAS", "units": "KTS"},
+                           size=(80, 240))
+
+        self.assertNotEqual(bytes(low.constBits()), bytes(high.constBits()))
+
+    def test_an_unlit_annunciator_still_shows_its_caption(self):
+        """A panel of empty squares says nothing about what could go wrong."""
+        unlit = self._ink(self.render("ShAnnunciator",
+                                      {"text": "PITOT HEAT", "severity": "caution",
+                                       "lit": False}, size=(140, 38)))
+        self.assertTrue(unlit, "the unlit lamp drew nothing at all")
+
+
 if __name__ == "__main__":
     unittest.main()

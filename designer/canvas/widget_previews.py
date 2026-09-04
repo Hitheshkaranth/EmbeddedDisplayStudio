@@ -19,6 +19,8 @@ the wrong palette is worse than no preview.
 When a component changes in ui/qml/Shadcn, the painter here is what has to
 follow it. tests/test_designer_previews.py holds the pairs that matter.
 """
+import math
+
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen
 
@@ -51,6 +53,25 @@ LIGHT = {
     "success": "#22c55e", "successForeground": "#f8fafc",
     "warning": "#f59e0b", "warningForeground": "#f8fafc",
 }
+
+# Avionics instrument colours -- Theme.qml's efis* block. Deliberately not
+# part of DARK/LIGHT: an EFIS is read the same way in any cockpit, and the
+# conventions (blue sky, brown ground, amber caution, red warning) are the
+# information. Theming them would make the instrument wrong, not restyled.
+EFIS = {
+    "sky": "#2b6fb5", "ground": "#7a5230", "panel": "#05070a",
+    "line": "#ffffff", "text": "#ffffff", "aircraft": "#ffd400",
+    "normal": "#12b32a", "caution": "#ffb000", "warning": "#e01b24",
+    "nav": "#ff31d3", "bug": "#00d4ff",
+}
+
+
+def efis(name: str) -> QColor:
+    """An instrument colour. Unknown names are loud rather than silently black."""
+    if name not in EFIS:
+        raise KeyError(f"no EFIS colour named {name!r}")
+    return QColor(EFIS[name])
+
 
 # Theme.radius* and Theme.fontSize*
 RADIUS = {"sm": 4, "md": 12, "lg": 16, "xl": 20, "full": 9999}
@@ -431,6 +452,402 @@ def _paint_container(painter, rect, props, ctx, label):
               flags=Qt.AlignLeft | Qt.AlignVCenter)
 
 
+# ---------------------------------------------------------------------------
+# Avionics painters -- mirroring the Sh* instruments
+# ---------------------------------------------------------------------------
+
+def _severity_color(severity):
+    """The three alert levels, in the colours a crew is trained to read."""
+    return efis({"warning": "warning", "caution": "caution"}.get(severity, "text"))
+
+
+def paint_data_field(painter, rect, props, ctx):
+    """ShDataField: caption, reading, unit -- what an EFIS strip is made of."""
+    label = str(_prop(props, "label", "LABEL"))
+    value = str(_prop(props, "value", "---"))
+    units = str(_prop(props, "units", ""))
+    colour = _severity_color(_prop(props, "severity", "advisory"))
+
+    if _prop(props, "stacked", True):
+        caption = QRectF(rect.left(), rect.top(), rect.width(), FONT["xs"] + 4)
+        _text(painter, caption, label, size=FONT["xs"],
+              color=token("mutedForeground"), weight=WEIGHT_MEDIUM)
+        reading = QRectF(rect.left(), caption.bottom() + 2, rect.width(),
+                         max(0.0, rect.bottom() - caption.bottom() - 2))
+    else:
+        half = rect.width() * 0.45
+        _text(painter, QRectF(rect.left(), rect.top(), half, rect.height()), label,
+              size=FONT["xs"], color=token("mutedForeground"), weight=WEIGHT_MEDIUM)
+        reading = QRectF(rect.left() + half + SPACING[8], rect.top(),
+                         max(0.0, rect.width() - half - SPACING[8]), rect.height())
+
+    size = FONT["xl"] if _prop(props, "stacked", True) else FONT["base"]
+    font = painter.font()
+    font.setPixelSize(size)
+    font.setWeight(WEIGHT_SEMIBOLD)
+    painter.setFont(font)
+    value_width = painter.fontMetrics().horizontalAdvance(value)
+    _text(painter, reading, value, size=size, color=colour, weight=WEIGHT_SEMIBOLD,
+          flags=Qt.AlignLeft | Qt.AlignVCenter, elide=False)
+    if units:
+        unit_rect = QRectF(reading.left() + value_width + SPACING[4], reading.top(),
+                           max(0.0, reading.width() - value_width - SPACING[4]),
+                           reading.height())
+        _text(painter, unit_rect, units, size=FONT["xs"],
+              color=token("mutedForeground"), flags=Qt.AlignLeft | Qt.AlignVCenter)
+
+
+def paint_attitude(painter, rect, props, ctx):
+    """ShAttitude: sky over ground, rolled and pitched, aircraft symbol fixed."""
+    pitch = _number(props, "pitch", 0.0)
+    roll = _number(props, "roll", 0.0)
+    per_degree = _number(props, "pixelsPerDegree", 4.0)
+
+    painter.save()
+    path = QPainterPath()
+    path.addRect(rect)
+    painter.setClipPath(path)
+    painter.fillRect(rect, efis("panel"))
+
+    centre = rect.center()
+    painter.translate(centre)
+    painter.rotate(-roll)
+    painter.translate(0, pitch * per_degree)
+
+    # Oversized so a rolled horizon still covers the corners.
+    reach = max(rect.width(), rect.height()) * 1.6
+    painter.fillRect(QRectF(-reach, -reach, reach * 2, reach), efis("sky"))
+    painter.fillRect(QRectF(-reach, 0, reach * 2, reach), efis("ground"))
+    painter.setPen(QPen(efis("line"), 2))
+    painter.drawLine(QPointF(-reach, 0), QPointF(reach, 0))
+
+    for degrees in (-20, -15, -10, -5, 5, 10, 15, 20):
+        major = degrees % 10 == 0
+        y = -degrees * per_degree
+        half = 35 if major else 18
+        painter.setPen(QPen(efis("line"), 2))
+        painter.drawLine(QPointF(-half, y), QPointF(half, y))
+        if major:
+            _text(painter, QRectF(-half - 34, y - 8, 28, 16), abs(degrees),
+                  size=FONT["xs"], color=efis("text"),
+                  flags=Qt.AlignRight | Qt.AlignVCenter, elide=False)
+    painter.restore()
+
+    # Case-fixed marks: bank scale and the aircraft symbol.
+    painter.save()
+    painter.setClipPath(path)
+    radius = min(rect.width(), rect.height()) * 0.44
+    painter.setPen(QPen(efis("line"), 2))
+    for mark in (-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60):
+        angle = math.radians(mark - 90)
+        inner = radius - (12 if mark % 30 == 0 else 7)
+        painter.drawLine(
+            QPointF(centre.x() + math.cos(angle) * radius,
+                    centre.y() + math.sin(angle) * radius),
+            QPointF(centre.x() + math.cos(angle) * inner,
+                    centre.y() + math.sin(angle) * inner))
+    wing = min(46.0, rect.width() * 0.22)
+    painter.setPen(QPen(efis("aircraft"), 3))
+    painter.drawLine(QPointF(centre.x() - wing, centre.y()),
+                     QPointF(centre.x() - wing / 3, centre.y()))
+    painter.drawLine(QPointF(centre.x() + wing / 3, centre.y()),
+                     QPointF(centre.x() + wing, centre.y()))
+    painter.setBrush(QBrush(efis("aircraft")))
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(centre, 3.0, 3.0)
+    painter.restore()
+
+
+def paint_tape(painter, rect, props, ctx):
+    """ShTape: a moving scale with the current value boxed at the centre."""
+    minimum = _number(props, "minimumValue", 0.0)
+    maximum = _number(props, "maximumValue", 200.0)
+    value = max(minimum, min(maximum, _number(props, "value", 0.0)))
+    step = max(1.0, _number(props, "step", 10.0))
+    span = max(1.0, _number(props, "span", 60.0))
+    left_side = _prop(props, "side", "left") == "left"
+
+    caption = " ".join(part for part in (str(_prop(props, "label", "")),
+                                         str(_prop(props, "units", ""))) if part)
+    # The caption sits under the scale, not over it. Drawn on top of the ticks
+    # it landed on whichever label happened to be lowest, which reads as a
+    # corrupted number rather than as two overlapping strings.
+    caption_band = 16.0 if caption else 0.0
+    scale = QRectF(rect.left(), rect.top(), rect.width(),
+                   max(1.0, rect.height() - caption_band))
+
+    painter.save()
+    path = QPainterPath()
+    path.addRect(rect)
+    painter.setClipPath(path)
+    ground = efis("panel")
+    ground.setAlphaF(0.85)
+    painter.fillRect(rect, ground)
+
+    per_unit = scale.height() / span
+    first = (round(value / step) - int(span / step / 2) - 1) * step
+    tick = first
+    while tick <= first + span + step * 2:
+        if minimum <= tick <= maximum:
+            y = scale.center().y() - (tick - value) * per_unit
+            if y < scale.top() or y > scale.bottom():
+                tick += step
+                continue
+            painter.setPen(QPen(efis("line"), 2))
+            if left_side:
+                painter.drawLine(QPointF(rect.right() - 10, y), QPointF(rect.right(), y))
+                label = QRectF(rect.left(), y - 8, rect.width() - 14, 16)
+                flags = Qt.AlignRight | Qt.AlignVCenter
+            else:
+                painter.drawLine(QPointF(rect.left(), y), QPointF(rect.left() + 10, y))
+                label = QRectF(rect.left() + 14, y - 8, rect.width() - 14, 16)
+                flags = Qt.AlignLeft | Qt.AlignVCenter
+            _text(painter, label, f"{tick:g}", size=FONT["xs"], color=efis("text"),
+                  flags=flags, elide=False)
+        tick += step
+
+    box = QRectF(rect.left(), scale.center().y() - 13, rect.width(), 26)
+    painter.setBrush(QBrush(efis("panel")))
+    painter.setPen(QPen(efis("line"), 1))
+    painter.drawRect(box)
+    _text(painter, box, f"{value:.0f}", size=FONT["lg"], color=efis("text"),
+          weight=WEIGHT_SEMIBOLD, flags=Qt.AlignCenter, elide=False)
+
+    if caption:
+        _text(painter, QRectF(rect.left(), scale.bottom(), rect.width(), caption_band),
+              caption, size=FONT["xs"], color=token("mutedForeground"),
+              flags=Qt.AlignCenter)
+    painter.restore()
+
+
+def paint_compass(painter, rect, props, ctx):
+    """ShCompass: a rotating card under a fixed lubber line."""
+    heading = _number(props, "heading", 0.0)
+    bug = _number(props, "headingBug", -1.0)
+    course = _number(props, "course", -1.0)
+
+    diameter = min(rect.width(), rect.height())
+    face = QRectF(0, 0, diameter, diameter)
+    face.moveCenter(rect.center())
+    painter.setBrush(QBrush(efis("panel")))
+    painter.setPen(QPen(token("secondary"), 1))
+    painter.drawEllipse(face)
+
+    centre = face.center()
+    radius = diameter / 2 - 4
+
+    painter.save()
+    painter.translate(centre)
+    painter.rotate(-heading)
+    for degrees in range(0, 360, 5):
+        major = degrees % 30 == 0
+        angle = math.radians(degrees - 90)
+        inner = radius - (14 if major else 7)
+        painter.setPen(QPen(efis("line"), 2 if major else 1))
+        painter.drawLine(
+            QPointF(math.cos(angle) * radius, math.sin(angle) * radius),
+            QPointF(math.cos(angle) * inner, math.sin(angle) * inner))
+        if major and radius > 40:
+            caption = {0: "N", 90: "E", 180: "S", 270: "W"}.get(degrees, degrees // 10)
+            painter.save()
+            painter.translate(math.cos(angle) * (radius - 26),
+                              math.sin(angle) * (radius - 26))
+            painter.rotate(degrees)
+            _text(painter, QRectF(-14, -9, 28, 18), caption, size=FONT["xs"],
+                  color=efis("text"), flags=Qt.AlignCenter, elide=False)
+            painter.restore()
+    if course >= 0:
+        painter.save()
+        painter.rotate(course)
+        painter.setPen(QPen(efis("nav"), 3))
+        painter.drawLine(QPointF(0, -radius * 0.72), QPointF(0, radius * 0.72))
+        painter.restore()
+    if bug >= 0:
+        painter.save()
+        painter.rotate(bug)
+        painter.setBrush(QBrush(efis("bug")))
+        painter.setPen(Qt.NoPen)
+        painter.drawRect(QRectF(-7, -radius, 14, 10))
+        painter.restore()
+    painter.restore()
+
+    painter.setPen(QPen(efis("aircraft"), 2))
+    painter.drawLine(QPointF(centre.x(), face.top()),
+                     QPointF(centre.x(), face.top() + 14))
+    painter.drawLine(QPointF(centre.x() - 15, centre.y()),
+                     QPointF(centre.x() + 15, centre.y()))
+
+
+def paint_vsi(painter, rect, props, ctx):
+    """ShVSI: a bar from the zero line out to the current rate."""
+    full = max(1.0, _number(props, "range", 2000.0))
+    value = max(-full, min(full, _number(props, "value", 0.0)))
+
+    _rounded(painter, rect, efis("panel"), RADIUS["sm"], token("secondary"), 1)
+    # Same reservation as ShTape: the units caption owns the bottom strip.
+    scale = QRectF(rect.left(), rect.top(), rect.width(),
+                   max(1.0, rect.height() - 16.0))
+    reach = scale.height() / 2 - 12
+    for index in range(5):
+        tick = full - index * (full / 2)
+        y = scale.center().y() - (tick / full) * reach
+        painter.setPen(QPen(efis("line"), 2 if tick == 0 else 1))
+        length = 14 if abs(tick) == full or tick == 0 else 8
+        painter.drawLine(QPointF(rect.left() + 4, y),
+                         QPointF(rect.left() + 4 + length, y))
+        if abs(tick) >= 1000:
+            _text(painter, QRectF(rect.left() + 20, y - 8, 24, 16),
+                  f"{abs(tick) / 1000:.0f}", size=FONT["xs"], color=efis("text"),
+                  flags=Qt.AlignLeft | Qt.AlignVCenter, elide=False)
+
+    y = scale.center().y() - (value / full) * reach
+    painter.setBrush(QBrush(efis("caution") if abs(value) >= full else efis("normal")))
+    painter.setPen(Qt.NoPen)
+    painter.drawRect(QRectF(rect.left() + 22, y - 1.5,
+                            max(0.0, rect.width() - 26), 3))
+    _text(painter, QRectF(rect.left(), scale.bottom(), rect.width(), 16),
+          str(_prop(props, "units", "FPM")), size=FONT["xs"],
+          color=token("mutedForeground"), flags=Qt.AlignCenter)
+
+
+def paint_engine_gauge(painter, rect, props, ctx):
+    """ShEngineGauge: banded arc and a needle. The bands are always visible --
+    where the limits are is information even when the needle is nowhere near."""
+    minimum = _number(props, "minimumValue", 0.0)
+    maximum = _number(props, "maximumValue", 100.0)
+    span = max(0.0001, maximum - minimum)
+    value = max(minimum, min(maximum, _number(props, "value", 0.0)))
+
+    dimension = min(rect.width(), rect.height())
+    stroke = max(4.0, dimension * 0.11)
+    square = QRectF(0, 0, dimension - stroke * 2.2, dimension - stroke * 2.2)
+    square.moveCenter(rect.center())
+
+    # QML sweeps 240 degrees clockwise from 150; Qt measures counter-clockwise
+    # from 3 o'clock in 1/16th degrees.
+    start, sweep = 150.0, 240.0
+
+    def band(low, high, colour):
+        a0 = (max(minimum, low) - minimum) / span
+        a1 = (min(maximum, high) - minimum) / span
+        if a1 <= a0:
+            return
+        painter.setPen(QPen(colour, stroke, Qt.SolidLine, Qt.FlatCap))
+        painter.drawArc(square, int(-(start + sweep * a0) * 16),
+                        int(-(sweep * (a1 - a0)) * 16))
+
+    painter.setBrush(Qt.NoBrush)
+    green_low = _number(props, "greenLow", 20.0)
+    green_high = _number(props, "greenHigh", 70.0)
+    caution_high = _number(props, "cautionHigh", 85.0)
+    band(minimum, green_low, efis("caution"))
+    band(green_low, green_high, efis("normal"))
+    band(green_high, caution_high, efis("caution"))
+    band(caution_high, maximum, efis("warning"))
+
+    angle = math.radians(start + sweep * ((value - minimum) / span))
+    centre = square.center()
+    tip = QPointF(centre.x() + math.cos(angle) * (square.width() / 2 - stroke * 0.3),
+                  centre.y() + math.sin(angle) * (square.height() / 2 - stroke * 0.3))
+    painter.setPen(QPen(efis("line"), max(2.0, dimension * 0.025)))
+    painter.drawLine(centre, tip)
+    painter.setBrush(QBrush(efis("line")))
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(centre, max(2.0, dimension * 0.03), max(2.0, dimension * 0.03))
+
+    units = str(_prop(props, "units", ""))
+    reading = f"{value:.0f}{' ' + units if units else ''}"
+    _text(painter, QRectF(rect.left(), rect.bottom() - 32, rect.width(), 16), reading,
+          size=FONT["sm"], color=efis("text"), weight=WEIGHT_SEMIBOLD,
+          flags=Qt.AlignCenter)
+    label = str(_prop(props, "label", ""))
+    if label:
+        _text(painter, QRectF(rect.left(), rect.bottom() - 16, rect.width(), 14),
+              label, size=FONT["xs"], color=token("mutedForeground"),
+              flags=Qt.AlignCenter)
+
+
+def paint_annunciator(painter, rect, props, ctx):
+    """ShAnnunciator: a caption lamp, dimmed rather than blank when unlit."""
+    colour = _severity_color(_prop(props, "severity", "caution"))
+    if _prop(props, "severity", "caution") == "advisory":
+        colour = efis("normal")
+    lit = bool(_prop(props, "lit", True))
+
+    painter.save()
+    painter.setOpacity(1.0 if lit else 0.35)
+    _rounded(painter, rect, colour if lit else efis("panel"), RADIUS["sm"], colour, 1)
+    painter.restore()
+
+
+def paint_flight_director(painter, rect, props, ctx):
+    painter.fillRect(rect, efis("panel"))
+    active = bool(_prop(props, "active", True))
+    _text(painter, QRectF(rect.left(), rect.top(), rect.width(), 18),
+          _prop(props, "mode", "FD") if active else "FD OFF", size=FONT["xs"],
+          color=efis("normal") if active else token("mutedForeground"),
+          weight=WEIGHT_SEMIBOLD, flags=Qt.AlignCenter)
+    if not active:
+        return
+    pitch_limit = max(.001, abs(_number(props, "pitchLimit", 15)))
+    roll_limit = max(.001, abs(_number(props, "rollLimit", 30)))
+    pitch = max(-pitch_limit, min(pitch_limit, _number(props, "pitchCommand", 0)))
+    roll = max(-roll_limit, min(roll_limit, _number(props, "rollCommand", 0)))
+    cx = rect.center().x() + roll / roll_limit * rect.width() * .32
+    cy = rect.center().y() + pitch / pitch_limit * rect.height() * .32
+    painter.setPen(QPen(efis("nav"), max(3.0, rect.height() * .035)))
+    painter.drawLine(QPointF(rect.center().x()-rect.width()*.24, cy),
+                     QPointF(rect.center().x()+rect.width()*.24, cy))
+    painter.drawLine(QPointF(cx, rect.center().y()-rect.height()*.29),
+                     QPointF(cx, rect.center().y()+rect.height()*.29))
+
+
+def paint_turn_coordinator(painter, rect, props, ctx):
+    _rounded(painter, rect, efis("panel"), RADIUS["sm"])
+    cx, cy = rect.center().x(), rect.top()+rect.height()*.43
+    radius = min(rect.width()*.38, rect.height()*.38)
+    painter.setPen(QPen(efis("line"), 2)); painter.setBrush(Qt.NoBrush)
+    painter.drawArc(QRectF(cx-radius, cy-radius, radius*2, radius*2), 0, 180*16)
+    rate = _number(props, "turnRate", 0); standard = max(.001, abs(_number(props, "standardRate", 3)))
+    painter.save(); painter.translate(cx, cy); painter.rotate(max(-2,min(2,rate/standard))*20)
+    painter.setPen(QPen(efis("aircraft"), 3)); painter.drawLine(QPointF(-rect.width()*.21,0), QPointF(rect.width()*.21,0)); painter.drawLine(QPointF(0,-8),QPointF(0,8)); painter.restore()
+    tube = QRectF(rect.left()+rect.width()*.22, rect.bottom()-24, rect.width()*.56, 16)
+    _rounded(painter, tube, None, 8, efis("line"), 1)
+    limit=max(.001,abs(_number(props,"slipLimit",1))); slip=max(-1,min(1,_number(props,"slip",0)/limit))
+    ball_x=tube.center().x()+slip*(tube.width()-12)*.42
+    painter.setBrush(QBrush(efis("line"))); painter.setPen(Qt.NoPen); painter.drawEllipse(QPointF(ball_x,tube.center().y()),6,6)
+
+
+def paint_engine_bar(painter, rect, props, ctx):
+    _rounded(painter, rect, efis("panel"), RADIUS["sm"])
+    minimum=_number(props,"minimumValue",0); maximum=_number(props,"maximumValue",100); span=max(.001,maximum-minimum)
+    value=max(minimum,min(maximum,_number(props,"value",0))); caution=_number(props,"cautionValue",80); warning=_number(props,"warningValue",90)
+    colour=efis("warning" if value>=warning else "caution" if value>=caution else "normal")
+    _text(painter,QRectF(rect.left(),rect.top(),rect.width(),22),_prop(props,"label","N1"),size=FONT["sm"],color=efis("text"),weight=WEIGHT_SEMIBOLD,flags=Qt.AlignCenter)
+    well=QRectF(rect.center().x()-9,rect.top()+25,18,max(10,rect.height()-50))
+    painter.setPen(QPen(efis("line"),1)); painter.setBrush(Qt.NoBrush); painter.drawRect(well)
+    fraction=(value-minimum)/span; painter.fillRect(QRectF(well.left()+2,well.bottom()-2-(well.height()-4)*fraction,well.width()-4,(well.height()-4)*fraction),colour)
+    reading=f"{value:.0f}{_prop(props,'units','')}"; _text(painter,QRectF(rect.left(),rect.bottom()-22,rect.width(),20),reading,size=FONT["xs"],color=colour,weight=WEIGHT_SEMIBOLD,flags=Qt.AlignCenter)
+
+
+def paint_fuel_quantity(painter, rect, props, ctx):
+    _rounded(painter, rect, efis("panel"), RADIUS["sm"])
+    capacity=max(.001,_number(props,"capacity",100)); low=_number(props,"lowLevel",15)
+    _text(painter,QRectF(rect.left(),rect.top(),rect.width(),20),"FUEL QTY",size=FONT["sm"],color=efis("text"),weight=WEIGHT_SEMIBOLD,flags=Qt.AlignCenter)
+    for x,name,key in ((rect.center().x()-34,"L","leftValue"),(rect.center().x()+34,"R","rightValue")):
+        value=max(0,min(capacity,_number(props,key,0))); colour=efis("caution") if value<=low else efis("normal")
+        _text(painter,QRectF(x-22,rect.top()+20,44,14),name,size=FONT["xs"],color=token("mutedForeground"),flags=Qt.AlignCenter)
+        well=QRectF(x-22,rect.top()+35,44,max(20,rect.height()-60)); painter.setPen(QPen(efis("line"),1)); painter.setBrush(Qt.NoBrush); painter.drawRect(well)
+        painter.fillRect(QRectF(well.left()+2,well.bottom()-2-(well.height()-4)*value/capacity,well.width()-4,(well.height()-4)*value/capacity),colour)
+        _text(painter,QRectF(x-30,rect.bottom()-22,60,18),f"{value:.0f} {_prop(props,'units','KG')}",size=FONT["xs"],color=colour,flags=Qt.AlignCenter)
+    painter.save()
+    painter.setOpacity(1.0 if lit else 0.75)
+    _text(painter, rect, _prop(props, "text", "CAPTION"), size=FONT["sm"],
+          color=efis("panel") if lit else colour, weight=WEIGHT_SEMIBOLD,
+          flags=Qt.AlignCenter)
+    painter.restore()
+
+
 _PAINTERS = {
     "Text": paint_text,
     "ShButton": paint_button,
@@ -447,6 +864,17 @@ _PAINTERS = {
     "Column": lambda p, r, props, c: _paint_container(p, r, props, c, "Column"),
     "Grid": lambda p, r, props, c: _paint_container(p, r, props, c, "Grid"),
     "Item": lambda p, r, props, c: _paint_container(p, r, props, c, "Page"),
+    "ShDataField": paint_data_field,
+    "ShAttitude": paint_attitude,
+    "ShTape": paint_tape,
+    "ShCompass": paint_compass,
+    "ShVSI": paint_vsi,
+    "ShEngineGauge": paint_engine_gauge,
+    "ShAnnunciator": paint_annunciator,
+    "ShFlightDirector": paint_flight_director,
+    "ShTurnCoordinator": paint_turn_coordinator,
+    "ShEngineBar": paint_engine_bar,
+    "ShFuelQuantity": paint_fuel_quantity,
 }
 
 
