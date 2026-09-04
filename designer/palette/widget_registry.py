@@ -48,10 +48,16 @@ def default_registry() -> WidgetRegistry:
     common_defaults = {"opacity": 1.0, "visible": True}
     add("Text", "Text", "Basic", "Text", 140, 32,
         {"text": str, "fontSize": int, "bold": bool, "color": str,
+         "horizontalAlignment": str, "verticalAlignment": str,
          "wrapMode": str, **common},
         {"text": "Text", "fontSize": 18, "bold": False, "color": "#f4f4f5",
+         "horizontalAlignment": "Text.AlignLeft", "verticalAlignment": "Text.AlignTop",
          "wrapMode": "Text.NoWrap", **common_defaults}, ("text",), False,
-        {"wrapMode": ("Text.NoWrap", "Text.WordWrap", "Text.WrapAnywhere", "Text.Wrap")},
+        {"wrapMode": ("Text.NoWrap", "Text.WordWrap", "Text.WrapAnywhere", "Text.Wrap"),
+         "horizontalAlignment": ("Text.AlignLeft", "Text.AlignHCenter",
+                                 "Text.AlignRight", "Text.AlignJustify"),
+         "verticalAlignment": ("Text.AlignTop", "Text.AlignVCenter",
+                               "Text.AlignBottom")},
         ("color",))
     add("ShButton", "Button", "Basic", "ShButton", 120, 40,
         {"text": str, "variant": str, "size": str, "enabled": bool,

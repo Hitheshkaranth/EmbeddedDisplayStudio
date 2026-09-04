@@ -6,6 +6,7 @@ from PySide6.QtCore import QByteArray, QDataStream, QIODevice, QPointF, QRectF, 
 from PySide6.QtGui import QBrush, QColor, QDrag, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView
 
+from designer.canvas import widget_previews
 from tools.hmi_deployer.bezel import bezel_logo, paint_device_bezel, screen_bezel_geometry
 
 MIME_TYPE = "application/x-embedded-display-widget"
@@ -68,6 +69,20 @@ class DesignerItem(QGraphicsRectItem):
 
     def paint(self, painter, option, widget=None):
         selected = self.isSelected()
+
+        # What the component actually looks like, drawn by the painter that
+        # mirrors its QML. Every type that has one renders here and returns;
+        # the generic box below is now only the fallback for a type without a
+        # preview -- which is Image, and anything added to the registry before
+        # a painter is written for it.
+        preview = widget_previews.painter_for(self.widget_model.type)
+        if preview is not None:
+            painter.save()
+            preview(painter, self.rect(), self.widget_model.properties, self)
+            painter.restore()
+            self._paint_chrome(painter, selected)
+            return
+
         color = self.fill_color()
         painter.setBrush(QBrush(color))
         border = QColor(self.widget_model.properties.get("borderColor") or "#52525b")
@@ -116,11 +131,24 @@ class DesignerItem(QGraphicsRectItem):
             else:
                 painter.drawText(self.rect().adjusted(7, 5, -7, -5),
                                  Qt.AlignCenter | Qt.TextWordWrap, self.label_text())
+        self._paint_chrome(painter, selected)
+
+    def _paint_chrome(self, painter, selected):
+        """Editing affordances drawn over the component, never by it.
+
+        Selection, resize handles and the hidden marker belong to the canvas,
+        not to what the panel will render, so they are kept out of the preview
+        painters and applied identically whichever drew the widget.
+        """
         if self.widget_model.properties.get("visible") is False:
+            painter.setBrush(Qt.NoBrush)
             painter.setPen(QPen(QColor("#ef4444"), 1, Qt.DashLine))
             painter.drawLine(self.rect().topLeft(), self.rect().bottomRight())
             painter.drawLine(self.rect().topRight(), self.rect().bottomLeft())
         if selected:
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor("#3b82f6"), self.SELECTION_PEN))
+            painter.drawRect(self.rect())
             painter.setBrush(QColor("#fafafa"))
             painter.setPen(QPen(QColor("#2563eb"), 1))
             for rect in self._handles():

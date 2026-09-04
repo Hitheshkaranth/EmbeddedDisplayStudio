@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
+from designer.canvas import widget_previews
 from designer.canvas.designer_view import POSITIONERS, DesignerScene, DesignerView
 from designer.commands import CallbackCommand
 from designer.generators import QmlGenerationError, QmlGenerator
@@ -393,6 +394,25 @@ class DesignerWorkspace(QWidget):
         self.align_button.setToolTip("Align, match size or distribute the selection")
         arrange_bar.addWidget(self.align_button)
         arrange_bar.addSeparator()
+        # Text alignment, one click each. It is also a property in the
+        # inspector, but setting how a caption sits in its box is a formatting
+        # decision made while looking at the canvas, not while reading a list
+        # of property names.
+        self._text_align_actions = {}
+        for label, value, icon_name in (
+            ("Align Left", "Text.AlignLeft", "align-left"),
+            ("Centre Text", "Text.AlignHCenter", "align-center"),
+            ("Align Right", "Text.AlignRight", "align-right"),
+        ):
+            item = action(arrange_bar, label,
+                          lambda _checked=False, v=value: self.set_text_alignment(v),
+                          icon_name)
+            item.setCheckable(True)
+            button = arrange_bar.widgetForAction(item)
+            if button is not None:
+                button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            self._text_align_actions[value] = item
+        arrange_bar.addSeparator()
         action(arrange_bar, "Front", lambda: self.z_order("front"), "upload")
         action(arrange_bar, "Back", lambda: self.z_order("back"), "download")
         arrange_bar.addSeparator()
@@ -457,6 +477,10 @@ class DesignerWorkspace(QWidget):
         """Re-render Designer icons and canvas chrome for the active theme."""
         for action, name in self._designer_icon_names.items():
             action.setIcon(icon(name))
+        # The canvas previews read Shadcn's own tokens, which have a light and
+        # a dark column. Point them at the same one the rest of the Studio is
+        # showing, or a component previews in the palette it will not ship in.
+        widget_previews.set_theme_mode(theme)
         self.scene.set_theme(theme)
         panel = color("card", theme); border = color("border", theme)
         muted = color("muted", theme); foreground = color("foreground", theme)
@@ -880,6 +904,7 @@ class DesignerWorkspace(QWidget):
         parent = self._find(self.parent_id_of(model)) if model else None
         self.properties.set_widget(model, positioned=bool(parent and parent.type in POSITIONERS))
         self.bindings.set_widget(model)
+        self._sync_text_alignment()
         self.tree.blockSignals(True); self.tree.clearSelection()
         if ids:
             iterator = self.tree.findItems(ids[0], Qt.MatchExactly | Qt.MatchRecursive)
@@ -988,6 +1013,36 @@ class DesignerWorkspace(QWidget):
             "Use 1-64 lowercase letters, numbers, dots, underscores, or hyphens."
         )
         self.project_name.setText(self.project.name)
+    def set_text_alignment(self, value):
+        """Set horizontalAlignment on every selected widget that has one.
+
+        Routed through the same command the inspector uses, so a toolbar click
+        and a combo box change produce one undo entry of the same shape rather
+        than two paths that can drift.
+        """
+        for model in self.scene.selected_models():
+            definition = self.registry.get(model.type)
+            if definition and "horizontalAlignment" in definition.properties:
+                self._property_command("horizontalAlignment", value)
+                break
+        self._sync_text_alignment()
+
+    def _sync_text_alignment(self):
+        """Check the button matching the selection, and disable all three
+        when nothing selected can carry an alignment."""
+        models = self.scene.selected_models()
+        applicable = [
+            model for model in models
+            if (self.registry.get(model.type)
+                and "horizontalAlignment" in self.registry.get(model.type).properties)
+        ]
+        current = ""
+        if applicable:
+            current = applicable[0].properties.get("horizontalAlignment", "Text.AlignLeft")
+        for value, item in self._text_align_actions.items():
+            item.setEnabled(bool(applicable))
+            item.setChecked(bool(applicable) and value == current)
+
     def align(self, mode):
         """Align, size-match or distribute the selection, undoably.
 

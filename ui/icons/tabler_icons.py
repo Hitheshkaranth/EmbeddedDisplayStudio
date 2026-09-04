@@ -3,6 +3,9 @@ Generated Tabler Icons Registry.
 """
 
 TABLER_ICONS = {
+    'align-left': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/>  <path d="M4 6l16 0" />  <path d="M4 12l10 0" />  <path d="M4 18l14 0" />',
+    'align-center': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/>  <path d="M4 6l16 0" />  <path d="M8 12l8 0" />  <path d="M6 18l12 0" />',
+    'align-right': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/>  <path d="M4 6l16 0" />  <path d="M10 12l10 0" />  <path d="M6 18l14 0" />',
     'upload': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/>  <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2" />  <path d="M7 9l5 -5l5 5" />  <path d="M12 4l0 12" />',
     'download': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/>  <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2" />  <path d="M7 11l5 5l5 -5" />  <path d="M12 4l0 12" />',
     'plug': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/>  <path d="M9.785 6l8.215 8.215l-2.054 2.054a5.81 5.81 0 1 1 -8.215 -8.215l2.054 -2.054z" />  <path d="M4 20l3.5 -3.5" />  <path d="M15 4l-3.5 3.5" />  <path d="M20 9l-3.5 3.5" />',
