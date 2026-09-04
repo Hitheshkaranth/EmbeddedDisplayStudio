@@ -14,6 +14,11 @@ Built for industrial, vehicle, marine, avionics, instrumentation and kiosk HMIs 
 [![CI](https://img.shields.io/github/actions/workflow/status/Hitheshkaranth/EmbeddedDisplayStudio/ci.yml?branch=main&style=flat-square&label=CI)](../../actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-006FEE?style=flat-square)](LICENSE)
 
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![PySide6](https://img.shields.io/badge/PySide6-6.8.1-41CD52?style=flat-square&logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
+[![QML](https://img.shields.io/badge/QML-Qt%20Quick-41CD52?style=flat-square&logo=qt&logoColor=white)](ui/qml/)
+[![Yocto](https://img.shields.io/badge/Yocto-Embedded%20Linux-1A5FB4?style=flat-square&logo=yocto&logoColor=white)](yocto/)
+
 </div>
 
 ---
