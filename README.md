@@ -9,22 +9,10 @@ Built for industrial, vehicle, marine, avionics, instrumentation and kiosk HMIs 
 
 <br />
 
-[![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-[![Studio](https://img.shields.io/badge/Studio-0.0.5-006FEE?style=flat-square)](../../releases/tag/v0.0.5)
-[![PySide6](https://img.shields.io/badge/PySide6-6.8.1-41CD52?style=flat-square&logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
-[![PySide2](https://img.shields.io/badge/PySide2-5.15.2-41CD52?style=flat-square&logo=qt&logoColor=white)](#qt5-and-qt6-applications-on-the-same-panel)
-[![QML](https://img.shields.io/badge/QML-Qt%20Quick-41CD52?style=flat-square&logo=qt&logoColor=white)](ui/qml/)
-[![Yocto](https://img.shields.io/badge/Yocto-meta--hmi-1A5FB4?style=flat-square&logo=yocto&logoColor=white)](yocto/)
-[![systemd](https://img.shields.io/badge/systemd-units-30D475?style=flat-square&logo=systemd&logoColor=white)](target/systemd/)
-[![Wayland](https://img.shields.io/badge/Wayland-Weston-FFB300?style=flat-square)](https://wayland.freedesktop.org/)
-[![libgpiod](https://img.shields.io/badge/libgpiod-v1%20%2B%20v2-F59E0B?style=flat-square)](https://libgpiod.readthedocs.io/)
-[![OpenSSH](https://img.shields.io/badge/OpenSSH-deploy-4D4D4D?style=flat-square&logo=openssh&logoColor=white)](#from-a-python-app-to-the-panel)
-[![PyInstaller](https://img.shields.io/badge/PyInstaller-single%20exe-306998?style=flat-square)](packaging/)
-[![Tabler Icons](https://img.shields.io/badge/Tabler%20Icons-MIT-206BC4?style=flat-square&logo=tabler&logoColor=white)](ui/icons/)
-[![Platform](https://img.shields.io/badge/Platform-ARM64%20Linux%20%C2%B7%20Windows-555555?style=flat-square&logo=linux&logoColor=white)](#the-hardware-it-runs-on)
+[![Release](https://img.shields.io/github/v/release/Hitheshkaranth/EmbeddedDisplayStudio?style=flat-square&label=Release)](../../releases/latest)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%C2%B7%20Windows-555555?style=flat-square&logo=linux&logoColor=white)](#the-hardware-it-runs-on)
 [![CI](https://img.shields.io/github/actions/workflow/status/Hitheshkaranth/EmbeddedDisplayStudio/ci.yml?branch=main&style=flat-square&label=CI)](../../actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-006FEE?style=flat-square)](LICENSE)
-[![Bundled Qt](https://img.shields.io/badge/Bundled%20Qt-LGPL--3.0-41CD52?style=flat-square&logo=qt&logoColor=white)](LICENSE)
 
 </div>
 
