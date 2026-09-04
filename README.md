@@ -4,7 +4,7 @@
 
 ### Bring Your Own App — HMI platform for embedded Linux panels
 
-**EmbeddedDisplay Studio 0.0.5** lets teams visually design or import Qt 5/6 apps, preview them live, and deploy safely to embedded Linux panels over SSH.
+**EmbeddedDisplay Studio** lets teams visually design or import Qt 5/6 apps, preview them live, and deploy safely to embedded Linux panels over SSH.
 Built for industrial, vehicle, marine, avionics, instrumentation and kiosk HMIs — with tag-driven data, no image reflash, and no hardware code in the app.
 
 <br />
