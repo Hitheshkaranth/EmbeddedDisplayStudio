@@ -4,22 +4,8 @@
 
 ### Bring Your Own App — HMI platform for embedded Linux panels
 
-**EmbeddedDisplay Studio 0.0.5** is the desktop authoring, preview and deployment
-tool for the platform. Ship the panel image once, then let application teams
-open an existing Qt/QML bundle or draw a screen visually and deploy it over SSH
-in seconds — with no panel rebuild, image reflash, or hardware-access code in
-the application.
-
-It offers a live, target-resolution preview; a drag-and-drop designer with HMI,
-industrial and avionics widgets; tag bindings and signal simulation; QML
-generation; dependency validation; one-click deployment; panel logs and system
-profiling; and atomic activation with health checks and automatic rollback.
-
-It is suited to machine controls, vehicle and marine displays, avionics
-prototypes, test equipment, instrumentation, kiosks, and other fixed-function
-Qt interfaces running on 64-bit embedded Linux panels. Existing PySide2/Qt 5
-and PySide6/Qt 6 applications can use the same deployment contract, while new
-screens can be authored entirely in the Studio.
+**EmbeddedDisplay Studio 0.0.5** lets teams visually design or import Qt 5/6 apps, preview them live, and deploy safely to embedded Linux panels over SSH.
+Built for industrial, vehicle, marine, avionics, instrumentation and kiosk HMIs — with tag-driven data, no image reflash, and no hardware code in the app.
 
 <br />
 
