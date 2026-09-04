@@ -4,11 +4,27 @@
 
 ### Bring Your Own App — HMI platform for embedded Linux panels
 
-Ship the panel once. Let anyone drop their own Qt app onto it in seconds — over SSH, with no rebuild, no image reflash, and no hardware code in the app.
+**EmbeddedDisplay Studio 0.0.5** is the desktop authoring, preview and deployment
+tool for the platform. Ship the panel image once, then let application teams
+open an existing Qt/QML bundle or draw a screen visually and deploy it over SSH
+in seconds — with no panel rebuild, image reflash, or hardware-access code in
+the application.
+
+It offers a live, target-resolution preview; a drag-and-drop designer with HMI,
+industrial and avionics widgets; tag bindings and signal simulation; QML
+generation; dependency validation; one-click deployment; panel logs and system
+profiling; and atomic activation with health checks and automatic rollback.
+
+It is suited to machine controls, vehicle and marine displays, avionics
+prototypes, test equipment, instrumentation, kiosks, and other fixed-function
+Qt interfaces running on 64-bit embedded Linux panels. Existing PySide2/Qt 5
+and PySide6/Qt 6 applications can use the same deployment contract, while new
+screens can be authored entirely in the Studio.
 
 <br />
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Studio](https://img.shields.io/badge/Studio-0.0.5-006FEE?style=flat-square)](../../releases/tag/v0.0.5)
 [![PySide6](https://img.shields.io/badge/PySide6-6.8.1-41CD52?style=flat-square&logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
 [![PySide2](https://img.shields.io/badge/PySide2-5.15.2-41CD52?style=flat-square&logo=qt&logoColor=white)](#qt5-and-qt6-applications-on-the-same-panel)
 [![QML](https://img.shields.io/badge/QML-Qt%20Quick-41CD52?style=flat-square&logo=qt&logoColor=white)](ui/qml/)
@@ -69,9 +85,12 @@ Three layers, deliberately decoupled:
 
 ### To run the Studio
 
-The packaged **`EmbeddedDisplayStudio.exe`** needs nothing installed: it carries
-its own Python, PySide6 and the standard library. Download it from the
-[latest release](../../releases/latest) and run it.
+The packaged Windows **`EmbeddedDisplayStudio.exe`** and Linux x86-64 release
+need no Python installation: each carries its own Python, PySide6 and standard
+library. Download the build for your workstation from the
+[latest release](../../releases/latest). The Studio deploys applications to
+64-bit ARM panels over SSH; the Linux x86-64 build is the desktop authoring and
+deployment tool, not the panel runtime itself.
 
 From a checkout:
 
