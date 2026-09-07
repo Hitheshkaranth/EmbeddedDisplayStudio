@@ -22,8 +22,8 @@
             "height": 770
           },
           "properties": {
-            "pitch": 0.0,
-            "roll": 0.0,
+            "pitch": "sim.pitch",
+            "roll": "sim.roll",
             "pixelsPerDegree": 4.0,
             "opacity": 1.0,
             "visible": true
@@ -44,7 +44,7 @@
           },
           "properties": {
             "label": "GROUND SPEED",
-            "value": "130",
+            "value": "sim.ground_speed",
             "units": "KTS",
             "severity": "advisory",
             "stacked": true,
@@ -87,9 +87,9 @@
             "height": 46
           },
           "properties": {
-            "label": "GROUND SPEED",
-            "value": "130",
-            "units": "KTS",
+            "label": "ALTITUDE",
+            "value": "sim.altitude",
+            "units": "FT",
             "severity": "advisory",
             "stacked": true,
             "opacity": 1.0,
@@ -110,9 +110,9 @@
             "height": 46
           },
           "properties": {
-            "label": "GROUND SPEED",
-            "value": "130",
-            "units": "KTS",
+            "label": "HEADING",
+            "value": "sim.heading",
+            "units": "DEG",
             "severity": "advisory",
             "stacked": true,
             "opacity": 1.0,
@@ -154,7 +154,7 @@
             "height": 430
           },
           "properties": {
-            "value": 127.0,
+            "value": "sim.ias",
             "minimumValue": 0.0,
             "maximumValue": 250.0,
             "step": 10.0,
@@ -180,8 +180,8 @@
             "height": 180
           },
           "properties": {
-            "heading": 359.0,
-            "headingBug": 45.0,
+            "heading": "sim.heading",
+            "headingBug": "sim.heading_bug",
             "course": -1.0,
             "opacity": 1.0,
             "visible": true
@@ -201,7 +201,7 @@
             "height": 300
           },
           "properties": {
-            "value": 0.0,
+            "value": "sim.vsi",
             "range": 2000.0,
             "units": "FPM",
             "opacity": 1.0,
@@ -224,7 +224,7 @@
           "properties": {
             "text": "LOW FUEL",
             "severity": "caution",
-            "lit": true,
+            "lit": "sim.low_fuel",
             "opacity": 1.0,
             "visible": true
           },
@@ -243,8 +243,8 @@
             "height": 120
           },
           "properties": {
-            "pitchCommand": 3.0,
-            "rollCommand": -5.0,
+            "pitchCommand": "sim.fd_pitch",
+            "rollCommand": "sim.fd_roll",
             "pitchLimit": 15.0,
             "rollLimit": 30.0,
             "active": true,
@@ -267,8 +267,8 @@
             "height": 110
           },
           "properties": {
-            "turnRate": 0.0,
-            "slip": 0.0,
+            "turnRate": "sim.turn_rate",
+            "slip": "sim.slip",
             "standardRate": 3.0,
             "slipLimit": 1.0,
             "opacity": 1.0,
@@ -289,7 +289,7 @@
             "height": 190
           },
           "properties": {
-            "value": 68.0,
+            "value": "sim.n1_eng1",
             "minimumValue": 0.0,
             "maximumValue": 100.0,
             "cautionValue": 80.0,
@@ -314,8 +314,8 @@
             "height": 130
           },
           "properties": {
-            "leftValue": 64.0,
-            "rightValue": 61.0,
+            "leftValue": "sim.fuel_left",
+            "rightValue": "sim.fuel_right",
             "capacity": 100.0,
             "lowLevel": 15.0,
             "units": "KG",
@@ -337,9 +337,9 @@
             "height": 46
           },
           "properties": {
-            "label": "GROUND SPEED",
-            "value": "130",
-            "units": "KTS",
+            "label": "OAT",
+            "value": "sim.oat",
+            "units": "C",
             "severity": "advisory",
             "stacked": true,
             "opacity": 1.0,
@@ -360,8 +360,8 @@
             "height": 46
           },
           "properties": {
-            "label": "GROUND SPEED",
-            "value": "130",
+            "label": "WIND",
+            "value": "sim.wind_speed",
             "units": "KTS",
             "severity": "advisory",
             "stacked": true,
@@ -383,8 +383,8 @@
             "height": 130
           },
           "properties": {
-            "leftValue": 64.0,
-            "rightValue": 61.0,
+            "leftValue": "sim.fuel2_left",
+            "rightValue": "sim.fuel2_right",
             "capacity": 100.0,
             "lowLevel": 15.0,
             "units": "KG",
@@ -406,12 +406,12 @@
             "height": 190
           },
           "properties": {
-            "value": 68.0,
+            "value": "sim.n1_eng2",
             "minimumValue": 0.0,
             "maximumValue": 100.0,
             "cautionValue": 80.0,
             "warningValue": 90.0,
-            "label": "N1",
+            "label": "N2",
             "units": "%",
             "opacity": 1.0,
             "visible": true
@@ -431,9 +431,9 @@
             "height": 46
           },
           "properties": {
-            "label": "GROUND SPEED",
-            "value": "130",
-            "units": "KTS",
+            "label": "BARO",
+            "value": "sim.baro",
+            "units": "inHg",
             "severity": "advisory",
             "stacked": true,
             "opacity": 1.0,
@@ -473,7 +473,7 @@
                 "height": 110.0
               },
               "properties": {
-                "value": 55.0,
+                "value": "sim.oil_press_eng1",
                 "minimumValue": 0.0,
                 "maximumValue": 100.0,
                 "greenLow": 20.0,
@@ -499,14 +499,14 @@
                 "height": 110.0
               },
               "properties": {
-                "value": 55.0,
+                "value": "sim.oil_temp_eng1",
                 "minimumValue": 0.0,
                 "maximumValue": 100.0,
                 "greenLow": 20.0,
                 "greenHigh": 70.0,
                 "cautionHigh": 85.0,
-                "label": "OIL PRESS",
-                "units": "PSI",
+                "label": "OIL TEMP",
+                "units": "C",
                 "opacity": 1.0,
                 "visible": true
               },
@@ -525,14 +525,14 @@
                 "height": 110.0
               },
               "properties": {
-                "value": 55.0,
+                "value": "sim.oil_temp_eng2",
                 "minimumValue": 0.0,
                 "maximumValue": 100.0,
                 "greenLow": 20.0,
                 "greenHigh": 70.0,
                 "cautionHigh": 85.0,
-                "label": "OIL PRESS",
-                "units": "PSI",
+                "label": "OIL TEMP",
+                "units": "C",
                 "opacity": 1.0,
                 "visible": true
               },
@@ -551,7 +551,7 @@
                 "height": 110.0
               },
               "properties": {
-                "value": 55.0,
+                "value": "sim.oil_press_eng2",
                 "minimumValue": 0.0,
                 "maximumValue": 100.0,
                 "greenLow": 20.0,

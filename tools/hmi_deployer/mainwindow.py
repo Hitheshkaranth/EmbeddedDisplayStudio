@@ -466,6 +466,11 @@ class MainWindow(QMainWindow):
             available = screen.availableGeometry()
             width = min(width, max(640, available.width() - 40))
             height = min(height, max(480, available.height() - 60))
+            # Centre the window on the primary screen so it never lands
+            # off-screen on multi-monitor setups or scaled displays.
+            x = available.x() + (available.width()  - width)  // 2
+            y = available.y() + (available.height() - height) // 2
+            self.move(x, y)
         self.resize(width, height)
 
     def _scrollable(self, page):

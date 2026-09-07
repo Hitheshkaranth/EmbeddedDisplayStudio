@@ -22,37 +22,16 @@ follow it. tests/test_designer_previews.py holds the pairs that matter.
 import math
 
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen
+from PySide6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen, QPolygonF
+from ui.python.shadcn import load_tokens
 
 # ---------------------------------------------------------------------------
 # Theme tokens -- ui/qml/Shadcn/Theme.qml
 # ---------------------------------------------------------------------------
 
-DARK = {
-    "background": "#09090b", "foreground": "#ecedee",
-    "card": "#18181b", "cardForeground": "#ecedee",
-    "primary": "#006fee", "primaryForeground": "#ffffff",
-    "secondary": "#27272a", "secondaryForeground": "#ecedee",
-    "muted": "#27272a", "mutedForeground": "#a1a1aa",
-    "accent": "#3f3f46", "accentForeground": "#ffffff",
-    "destructive": "#f31260", "destructiveForeground": "#ffffff",
-    "border": "#00000000", "input": "#27272a", "ring": "#006fee",
-    "success": "#17c964", "successForeground": "#f8fafc",
-    "warning": "#f5a524", "warningForeground": "#f8fafc",
-}
-
-LIGHT = {
-    "background": "#ffffff", "foreground": "#020817",
-    "card": "#ffffff", "cardForeground": "#020817",
-    "primary": "#0f172a", "primaryForeground": "#f8fafc",
-    "secondary": "#f1f5f9", "secondaryForeground": "#0f172a",
-    "muted": "#f1f5f9", "mutedForeground": "#64748b",
-    "accent": "#f1f5f9", "accentForeground": "#0f172a",
-    "destructive": "#ef4444", "destructiveForeground": "#f8fafc",
-    "border": "#e2e8f0", "input": "#e2e8f0", "ring": "#020817",
-    "success": "#22c55e", "successForeground": "#f8fafc",
-    "warning": "#f59e0b", "warningForeground": "#f8fafc",
-}
+_PALETTES = load_tokens()["palettes"]
+DARK = dict(_PALETTES["dark"])
+LIGHT = dict(_PALETTES["light"])
 
 # Avionics instrument colours -- Theme.qml's efis* block. Deliberately not
 # part of DARK/LIGHT: an EFIS is read the same way in any cockpit, and the
@@ -84,12 +63,18 @@ WEIGHT_SEMIBOLD = QFont.DemiBold
 
 # The palette every painter reads. Swapped by set_theme_mode.
 _TOKENS = dict(DARK)
+_THEME_MODE = "dark"
 
 
 def set_theme_mode(mode: str) -> None:
     """Point the painters at the light or dark token set."""
-    global _TOKENS
-    _TOKENS = dict(LIGHT if mode == "light" else DARK)
+    global _TOKENS, _THEME_MODE
+    _THEME_MODE = "light" if mode == "light" else "dark"
+    _TOKENS = dict(LIGHT if _THEME_MODE == "light" else DARK)
+
+
+def theme_mode() -> str:
+    return _THEME_MODE
 
 
 def token(name: str) -> QColor:
@@ -778,6 +763,12 @@ def paint_annunciator(painter, rect, props, ctx):
     painter.setOpacity(1.0 if lit else 0.35)
     _rounded(painter, rect, colour if lit else efis("panel"), RADIUS["sm"], colour, 1)
     painter.restore()
+    painter.save()
+    painter.setOpacity(1.0 if lit else 0.75)
+    _text(painter, rect, _prop(props, "text", "CAPTION"), size=FONT["sm"],
+          color=efis("panel") if lit else colour, weight=WEIGHT_SEMIBOLD,
+          flags=Qt.AlignCenter)
+    painter.restore()
 
 
 def paint_flight_director(painter, rect, props, ctx):
@@ -840,12 +831,363 @@ def paint_fuel_quantity(painter, rect, props, ctx):
         well=QRectF(x-22,rect.top()+35,44,max(20,rect.height()-60)); painter.setPen(QPen(efis("line"),1)); painter.setBrush(Qt.NoBrush); painter.drawRect(well)
         painter.fillRect(QRectF(well.left()+2,well.bottom()-2-(well.height()-4)*value/capacity,well.width()-4,(well.height()-4)*value/capacity),colour)
         _text(painter,QRectF(x-30,rect.bottom()-22,60,18),f"{value:.0f} {_prop(props,'units','KG')}",size=FONT["xs"],color=colour,flags=Qt.AlignCenter)
+
+
+def paint_slider(painter, rect, props, ctx):
+    """ShSlider: a horizontal track with a filled portion, handle, and value text."""
+    value = _number(props, "value", 50.0)
+    min_val = _number(props, "minValue", 0.0)
+    max_val = _number(props, "maxValue", 100.0)
+    span = max(0.0001, max_val - min_val)
+    fraction = max(0.0, min(1.0, (value - min_val) / span))
+    label = str(_prop(props, "label", ""))
+    unit = str(_prop(props, "unit", ""))
+
+    # Track
+    track = QRectF(rect.left(), rect.top() + rect.height() * 0.35,
+                   rect.width(), rect.height() * 0.2)
+    _pill(painter, track, token("secondary"))
+
+    # Fill
+    fill = QRectF(track.left(), track.top(), track.width() * fraction, track.height())
+    _pill(painter, fill, token("primary"))
+
+    # Handle
+    handle_r = max(2, track.height() * 0.35)
+    handle_x = track.left() + (track.width() - handle_r * 2) * fraction
+    handle_y = track.top() + track.height() / 2 - handle_r
+    handle = QRectF(handle_x, handle_y, handle_r * 2, handle_r * 2)
+    painter.setBrush(QBrush(token("background")))
+    painter.setPen(QPen(token("primary"), 2))
+    painter.drawEllipse(handle)
+
+    # Value text
+    value_text = f"{value:g}{' ' + unit if unit else ''}"
+    _text(painter, QRectF(rect.left(), rect.top(), rect.width(),
+                          rect.height() * 0.35), value_text,
+          size=FONT["base"], color=token("foreground"),
+          weight=WEIGHT_SEMIBOLD, flags=Qt.AlignCenter)
+
+    if label:
+        _text(painter, QRectF(rect.left(), rect.bottom() - rect.height() * 0.35,
+                              rect.width(), rect.height() * 0.35),
+              label, size=FONT["xs"], color=token("mutedForeground"),
+              flags=Qt.AlignCenter)
+
+
+def paint_toggle(painter, rect, props, ctx):
+    """ShToggle: a switch with on/off label text."""
+    checked = bool(_prop(props, "checked", False))
+    label = str(_prop(props, "label", ""))
+
+    # Switch pill
+    sw_w, sw_h = 40.0, 22.0
+    sw_x = rect.left() + (rect.width() - sw_w) / 2
+    sw_y = rect.top() + (rect.height() - sw_h) / 2
+    sw_rect = QRectF(sw_x, sw_y, sw_w, sw_h)
+    _pill(painter, sw_rect, token("primary") if checked else token("secondary"))
+
+    # Thumb
+    thumb_r = sw_h / 2 - 2
+    thumb_x = sw_x + (not checked) * 2 + (sw_w - thumb_r * 2) * (1 if checked else 0)
+    thumb = QRectF(sw_x + 2 + thumb_r, sw_y + 2 + thumb_r, thumb_r * 2, thumb_r * 2)
+    if checked:
+        thumb = QRectF(sw_x + sw_w - thumb_r * 2 - 2, sw_y + 2, thumb_r * 2, thumb_r * 2)
+    painter.setBrush(QBrush(token("background")))
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(thumb)
+
+    if label:
+        _text(painter, QRectF(rect.left(), rect.top(), rect.width(),
+                              rect.height() * 0.5), label,
+              size=FONT["sm"], color=token("foreground"),
+              weight=WEIGHT_MEDIUM, flags=Qt.AlignCenter)
+
+
+def paint_checkbox(painter, rect, props, ctx):
+    """ShCheckbox: a checkmark box with label."""
+    checked = bool(_prop(props, "checked", False))
+    label = str(_prop(props, "label", ""))
+
+    box_w, box_h = 20.0, 20.0
+    box_x = rect.left() + (rect.width() - box_w - SPACING[8]) / 2
+    box_y = rect.top() + (rect.height() - box_h) / 2
+
+    _rounded(painter, QRectF(box_x, box_y, box_w, box_h),
+             token("primary") if checked else token("background"),
+             RADIUS["sm"],
+             token("primary") if checked else token("input"), 1)
+
+    if checked:
+        font = painter.font()
+        font.setPixelSize(14)
+        font.setWeight(Font.Bold)
+        painter.setFont(font)
+        painter.setPen(QPen(token("primaryForeground")))
+        painter.drawText(QRectF(box_x, box_y, box_w, box_h), Qt.AlignCenter, "\u2713")
+
+    if label:
+        label_rect = QRectF(box_x + box_w + SPACING[8], rect.top(),
+                            rect.width() - box_w - SPACING[8], rect.height())
+        _text(painter, label_rect, label, size=FONT["sm"],
+              color=token("foreground"), weight=WEIGHT_MEDIUM)
+
+
+def paint_select(painter, rect, props, ctx):
+    """ShSelect: a dropdown button with current selection and chevron."""
+    placeholder = str(_prop(props, "placeholder", "Select..."))
+    current_idx = int(_number(props, "currentIndex", 0))
+    label = str(_prop(props, "label", ""))
+
+    _rounded(painter, rect, QColor(Qt.transparent), RADIUS["md"],
+             token("input"), 1)
+
+    inner = rect.adjusted(SPACING[12], 0, -30, 0)
+    if current_idx > 0:
+        _text(painter, inner, placeholder, size=FONT["sm"],
+              color=token("foreground"), flags=Qt.AlignLeft | Qt.AlignVCenter)
+    else:
+        _text(painter, inner, placeholder, size=FONT["sm"],
+              color=token("mutedForeground"), flags=Qt.AlignLeft | Qt.AlignVCenter)
+
+    _text(painter, QRectF(inner.right(), rect.top(), 20, rect.height()),
+          "\u25BC", size=10, color=token("mutedForeground"), flags=Qt.AlignCenter)
+
+    if label:
+        _text(painter, QRectF(rect.left(), rect.top(), rect.width(), 14),
+              label, size=FONT["xs"], color=token("foreground"),
+              weight=WEIGHT_MEDIUM, flags=Qt.AlignCenter)
+
+
+def paint_num_input(painter, rect, props, ctx):
+    """ShNumInput: +/- buttons flanking a numeric value display."""
+    value = _number(props, "value", 0.0)
+    unit = str(_prop(props, "unit", ""))
+    label = str(_prop(props, "label", ""))
+
+    if label:
+        _text(painter, QRectF(rect.left(), rect.top(), rect.width(), 14),
+              label, size=FONT["xs"], color=token("foreground"),
+              weight=WEIGHT_MEDIUM, flags=Qt.AlignCenter)
+
+    y_start = rect.top() + 2 if label else rect.top()
+    y_end = rect.bottom()
+    row_h = y_end - y_start
+    btn_w = row_h * 0.9
+
+    # Decrement button
+    dec_rect = QRectF(rect.left() + 4, y_start + 1, btn_w, row_h - 2)
+    _rounded(painter, dec_rect, QColor(Qt.transparent), RADIUS["md"],
+             token("input"), 1)
+    _text(painter, dec_rect, "\u2212", size=FONT["base"],
+          color=token("foreground"), flags=Qt.AlignCenter)
+
+    # Value box
+    val_rect = QRectF(dec_rect.right() + 2, y_start + 1,
+                      (row_h * 2.5), row_h - 2)
+    _rounded(painter, val_rect, token("background"), RADIUS["md"],
+             token("input"), 1)
+    display_text = f"{value:g}" if unit == "" else f"{value:g} {unit}"
+    _text(painter, val_rect.adjusted(4, 0, -4, 0), display_text,
+          size=FONT["sm"], color=token("foreground"),
+          weight=WEIGHT_SEMIBOLD, flags=Qt.AlignCenter)
+
+    # Increment button
+    inc_rect = QRectF(val_rect.right() + 2, y_start + 1, btn_w, row_h - 2)
+    _rounded(painter, inc_rect, QColor(Qt.transparent), RADIUS["md"],
+             token("input"), 1)
+    _text(painter, inc_rect, "+", size=FONT["base"],
+          color=token("foreground"), flags=Qt.AlignCenter)
+
+
+def paint_num_display(painter, rect, props, ctx):
+    """ShNumDisplay: large numeric readout with unit and status bar."""
+    value = _number(props, "value", 0.0)
+    unit = str(_prop(props, "unit", ""))
+    label = str(_prop(props, "label", ""))
+    unit_text = f"{value:g}{' ' + unit if unit else ''}"
+
+    if label:
+        _text(painter, QRectF(rect.left(), rect.top(), rect.width(), 12),
+              label, size=FONT["xs"], color=token("mutedForeground"),
+              flags=Qt.AlignCenter)
+
+    _text(painter, QRectF(rect.left(), rect.top() + (12 if label else 0),
+                          rect.width(), rect.height() * 0.5),
+          unit_text, size=FONT["xxxl"], color=token("success"),
+          weight=WEIGHT_SEMIBOLD, flags=Qt.AlignCenter)
+
+    bar = QRectF(rect.left() + rect.width() * 0.3, rect.bottom() - 8,
+                 rect.width() * 0.4, 3)
+    _rounded(painter, bar, token("success"), 2)
+
+
+def paint_analog_display(painter, rect, props, ctx):
+    """ShAnalogDisplay: horizontal bar with value indicator and zone markers."""
+    value = _number(props, "value", 50.0)
+    min_val = _number(props, "minValue", 0.0)
+    max_val = _number(props, "maxValue", 100.0)
+    span = max(0.0001, max_val - min_val)
+    fraction = max(0.0, min(1.0, (value - min_val) / span))
+    norm_low = _number(props, "normLow", 20.0)
+    norm_high = _number(props, "normHigh", 80.0)
+    label = str(_prop(props, "label", ""))
+
+    # Track
+    track = QRectF(rect.left(), rect.top() + rect.height() * 0.25,
+                   rect.width(), rect.height() * 0.35)
+    _rounded(painter, track, token("secondary"), RADIUS["sm"])
+
+    # Fill
+    fill = QRectF(track.left(), track.top(),
+                  track.width() * fraction, track.height())
+    _rounded(painter, fill, token("success"), RADIUS["sm"])
+
+    # Value marker
+    marker_x = track.left() + track.width() * fraction - 1
+    marker = QRectF(marker_x, track.top() - 2, 2, track.height() + 4)
+    painter.setBrush(QBrush(token("foreground")))
+    painter.setPen(Qt.NoPen)
+    painter.drawRect(marker)
+
+    # Value text
+    _text(painter, QRectF(rect.left(), rect.bottom() - rect.height() * 0.2,
+                          rect.width(), rect.height() * 0.2),
+          f"{value:g}", size=FONT["sm"], color=token("foreground"),
+          weight=WEIGHT_SEMIBOLD, flags=Qt.AlignCenter)
+
+    if label:
+        _text(painter, QRectF(rect.left(), rect.top(), rect.width(), 12),
+              label, size=FONT["xs"], color=token("success"),
+              weight=WEIGHT_MEDIUM, flags=Qt.AlignCenter)
+
+
+def paint_trend_chart(painter, rect, props, ctx):
+    """ShTrendChart: a small line chart with area fill and grid lines."""
+    min_val = _number(props, "minValue", 0.0)
+    max_val = _number(props, "maxValue", 100.0)
+    warn_low = _number(props, "warningLow", 20.0)
+    warn_high = _number(props, "warningHigh", 80.0)
+    label = str(_prop(props, "label", ""))
+
+    chart_top = rect.top() + (12 if label else 0)
+    chart = QRectF(rect.left(), chart_top, rect.width(), rect.height() - (12 if label else 0))
+
+    # Background
+    _rounded(painter, chart, token("background"), RADIUS["sm"],
+             token("border"), 1)
+
+    # Warning zone
+    warn_y = chart.bottom() - (chart.height() * (1 - (warn_high - warn_low) / max(0.001, max_val - min_val)))
+    warn_h = chart.height() * (warn_high - warn_low) / max(0.001, max_val - min_val)
+    warn_zone = QRectF(chart.left(), chart.top() + chart.height() - warn_h - (chart.height() * (max_val - warn_high) / max(0.001, max_val - min_val)),
+                       chart.width(), warn_h)
+    warn_color = QColor(token("warning"))
+    warn_color.setAlphaF(0.08)
+    _rounded(painter, warn_zone, warn_color, 2)
+
+    # Grid lines
+    painter.setPen(QPen(token("border"), 1))
+    for i in range(1, 4):
+        gy = chart.top() + (chart.height() * i / 4)
+        painter.drawLine(chart.left(), gy, chart.right(), gy)
+
+    values = list(_prop(props, "data", []) or [])
+    if len(values) < 2:
+        _text(painter, chart, "No trend data", size=FONT["sm"],
+              color=token("mutedForeground"), flags=Qt.AlignCenter)
+        return
+    pts = []
+    for i, y_val in enumerate(values):
+        x = chart.left() + (chart.width() * i / max(1, len(values) - 1))
+        y = chart.bottom() - (chart.height() * (y_val - min_val) / max(0.001, max_val - min_val))
+        pts.append(QPointF(x, y))
+
+    # Fill area
     painter.save()
-    painter.setOpacity(1.0 if lit else 0.75)
-    _text(painter, rect, _prop(props, "text", "CAPTION"), size=FONT["sm"],
-          color=efis("panel") if lit else colour, weight=WEIGHT_SEMIBOLD,
-          flags=Qt.AlignCenter)
+    path = QPainterPath()
+    path.moveTo(pts[0].x(), chart.bottom())
+    for pt in pts:
+        path.lineTo(pt.x(), pt.y())
+    path.lineTo(pts[-1].x(), chart.bottom())
+    path.closeSubpath()
+    grad = painter.background()
+    grad = QBrush(QColor(token("primary").name()) if isinstance(token("primary"), QColor) else QColor("#006fee"))
+    grad.setColor(QColor(grad.color().red(), grad.color().green(), grad.color().blue(), 40))
+    painter.fillPath(path, grad)
     painter.restore()
+
+    # Line
+    painter.setPen(QPen(token("primary"), 2))
+    painter.setBrush(Qt.NoBrush)
+    painter.drawPolyline(QPolygonF(pts))
+
+    # Last point dot
+    if pts:
+        last = pts[-1]
+        painter.setBrush(QBrush(token("primary")))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(last.x() - 3, last.y() - 3, 6, 6)
+
+    if label:
+        _text(painter, QRectF(rect.left(), rect.top(), rect.width(), 12),
+              label, size=FONT["xs"], color=token("mutedForeground"),
+              flags=Qt.AlignLeft | Qt.AlignVCenter)
+
+
+def paint_alarm_table(painter, rect, props, ctx):
+    """ShAlarmTable: an alarm list with header and sample rows."""
+    title = str(_prop(props, "title", "Active Alarms"))
+    max_visible = int(_number(props, "maxVisible", 6))
+    row_h = max(16, min(30, (rect.height() - 36) / max(1, max_visible)))
+
+    # Header
+    header_h = min(26, rect.height() * 0.15)
+    header = QRectF(rect.left(), rect.top(), rect.width(), header_h)
+    _rounded(painter, header, token("secondary"), RADIUS["sm"])
+    _text(painter, header.adjusted(8, 0, -50, 0), title, size=FONT["sm"],
+          color=token("foreground"), weight=WEIGHT_SEMIBOLD,
+          flags=Qt.AlignLeft | Qt.AlignVCenter)
+
+    alarms = list(_prop(props, "alarms", []) or [])
+    # Badge with count
+    painter.setBrush(QBrush(token("secondary")))
+    painter.setPen(Qt.NoPen)
+    badge_rect = QRectF(header.right() - 42, header.top() + 4, 30, header_h - 8)
+    painter.drawRoundedRect(badge_rect, RADIUS["sm"], RADIUS["sm"])
+    _text(painter, badge_rect, str(len(alarms)), size=FONT["xs"], color=token("foreground"),
+          weight=WEIGHT_SEMIBOLD, flags=Qt.AlignCenter)
+
+    # Alarm rows
+    row_start = header.bottom()
+    if not alarms:
+        _text(painter, QRectF(rect.left(), row_start, rect.width(), rect.bottom() - row_start),
+              "No active alarms", size=FONT["sm"], color=token("mutedForeground"),
+              flags=Qt.AlignCenter)
+        return
+
+    for i, alarm in enumerate(alarms[:max_visible]):
+        severity = alarm.get("severity", "ok")
+        color = (token("destructive") if severity == "fault" else
+                 token("warning") if severity in ("warning", "caution") else
+                 token("mutedForeground"))
+        msg = alarm.get("message", "Alarm")
+        y = row_start + i * row_h
+        row = QRectF(rect.left(), y, rect.width(), row_h)
+        painter.setPen(QPen(token("border"), 1, Qt.DashLine))
+        painter.drawLine(rect.left(), y, rect.right(), y)
+        _rounded(painter, row, QColor(Qt.transparent), 0)
+
+        # Severity dot
+        dot = QRectF(rect.left() + 8, y + row_h * 0.3, 6, row_h * 0.4)
+        painter.setBrush(QBrush(color))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(dot)
+
+        # Message
+        _text(painter, QRectF(rect.left() + 20, y, rect.width() - 20, row_h),
+              msg, size=FONT["xs"], color=token("foreground"),
+              weight=WEIGHT_MEDIUM, flags=Qt.AlignLeft | Qt.AlignVCenter)
 
 
 _PAINTERS = {
@@ -875,6 +1217,16 @@ _PAINTERS = {
     "ShTurnCoordinator": paint_turn_coordinator,
     "ShEngineBar": paint_engine_bar,
     "ShFuelQuantity": paint_fuel_quantity,
+    # Industrial widgets
+    "ShSlider": paint_slider,
+    "ShToggle": paint_toggle,
+    "ShCheckbox": paint_checkbox,
+    "ShSelect": paint_select,
+    "ShNumInput": paint_num_input,
+    "ShNumDisplay": paint_num_display,
+    "ShAnalogDisplay": paint_analog_display,
+    "ShTrendChart": paint_trend_chart,
+    "ShAlarmTable": paint_alarm_table,
 }
 
 

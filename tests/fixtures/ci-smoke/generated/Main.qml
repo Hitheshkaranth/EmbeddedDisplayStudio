@@ -10,14 +10,37 @@ Rectangle {
     height: 768
     color: "#101418"
 
+    // ── Simulation clock injected by qml_generator (sim.* property values) ──
+    property real _t: 0.0
+    property real _ts: 0.0
+
+    Timer {
+        id: _simClock
+        interval: 50
+        repeat: true
+        running: true
+        onTriggered: { root._t += 0.05; root._ts += 0.01 }
+    }
+
+    // Fast sweep – attitude, speeds, heading, VSI, engines …
+    function osc(lo, hi, phase) {
+        return lo + (hi - lo) * (0.5 + 0.5 * Math.sin(root._t + phase))
+    }
+
+    // Slow sweep – altitude, fuel quantity, baro, OAT (5x slower period).
+    function osc_slow(lo, hi, phase) {
+        return lo + (hi - lo) * (0.5 + 0.5 * Math.sin(root._ts + phase))
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     ShAttitude {
         id: attitude
         x: 0
         y: 0
         width: 1030
         height: 770
-        pitch: 0.0
-        roll: 0.0
+        pitch: osc(-20.0, 20.0, 0.0)
+        roll: osc(-30.0, 30.0, 1.1)
         pixelsPerDegree: 4.0
         opacity: 1.0
         visible: true
@@ -30,7 +53,7 @@ Rectangle {
         width: 150
         height: 46
         label: "GROUND SPEED"
-        value: "130"
+        value: Math.round(osc(80.0, 180.0, 0.3))
         units: "KTS"
         severity: "advisory"
         stacked: true
@@ -57,9 +80,9 @@ Rectangle {
         y: 10
         width: 150
         height: 46
-        label: "GROUND SPEED"
-        value: "130"
-        units: "KTS"
+        label: "ALTITUDE"
+        value: Math.round(osc_slow(1000.0, 5000.0, 0.3))
+        units: "FT"
         severity: "advisory"
         stacked: true
         opacity: 1.0
@@ -72,9 +95,9 @@ Rectangle {
         y: 710
         width: 150
         height: 46
-        label: "GROUND SPEED"
-        value: "130"
-        units: "KTS"
+        label: "HEADING"
+        value: Math.round(osc_slow(0.0, 359.0, 0.6))
+        units: "DEG"
         severity: "advisory"
         stacked: true
         opacity: 1.0
@@ -100,7 +123,7 @@ Rectangle {
         y: 170
         width: 100
         height: 430
-        value: 127.0
+        value: osc(60.0, 200.0, 0.4)
         minimumValue: 0.0
         maximumValue: 250.0
         step: 10.0
@@ -118,8 +141,8 @@ Rectangle {
         y: 480
         width: 180
         height: 180
-        heading: 359.0
-        headingBug: 45.0
+        heading: Math.round(osc_slow(0.0, 359.0, 0.6))
+        headingBug: osc_slow(0.0, 359.0, 0.9)
         course: -1.0
         opacity: 1.0
         visible: true
@@ -131,7 +154,7 @@ Rectangle {
         y: 240
         width: 60
         height: 300
-        value: 0.0
+        value: osc(-1500.0, 1500.0, 1.2)
         range: 2000.0
         units: "FPM"
         opacity: 1.0
@@ -146,7 +169,7 @@ Rectangle {
         height: 38
         text: "LOW FUEL"
         severity: "caution"
-        lit: true
+        lit: (Math.sin(root._t + 2.5) > 0)
         opacity: 1.0
         visible: true
     }
@@ -157,8 +180,8 @@ Rectangle {
         y: 0
         width: 180
         height: 120
-        pitchCommand: 3.0
-        rollCommand: -5.0
+        pitchCommand: osc(-10.0, 10.0, 0.2)
+        rollCommand: osc(-15.0, 15.0, 0.8)
         pitchLimit: 15.0
         rollLimit: 30.0
         active: true
@@ -173,8 +196,8 @@ Rectangle {
         y: 300
         width: 180
         height: 110
-        turnRate: 0.0
-        slip: 0.0
+        turnRate: osc_slow(-3.0, 3.0, 0.3)
+        slip: osc(-1.0, 1.0, 1.7)
         standardRate: 3.0
         slipLimit: 1.0
         opacity: 1.0
@@ -187,7 +210,7 @@ Rectangle {
         y: 130
         width: 76
         height: 190
-        value: 68.0
+        value: osc(50.0, 95.0, 0.0)
         minimumValue: 0.0
         maximumValue: 100.0
         cautionValue: 80.0
@@ -204,8 +227,8 @@ Rectangle {
         y: 70
         width: 190
         height: 130
-        leftValue: 64.0
-        rightValue: 61.0
+        leftValue: osc_slow(10.0, 90.0, 0.0)
+        rightValue: osc_slow(10.0, 90.0, 0.4)
         capacity: 100.0
         lowLevel: 15.0
         units: "KG"
@@ -219,9 +242,9 @@ Rectangle {
         y: 490
         width: 150
         height: 46
-        label: "GROUND SPEED"
-        value: "130"
-        units: "KTS"
+        label: "OAT"
+        value: Math.round(osc_slow(-20.0, 40.0, 2.0))
+        units: "C"
         severity: "advisory"
         stacked: true
         opacity: 1.0
@@ -234,8 +257,8 @@ Rectangle {
         y: 230
         width: 150
         height: 46
-        label: "GROUND SPEED"
-        value: "130"
+        label: "WIND"
+        value: Math.round(osc(0.0, 50.0, 1.3))
         units: "KTS"
         severity: "advisory"
         stacked: true
@@ -249,8 +272,8 @@ Rectangle {
         y: 630
         width: 190
         height: 130
-        leftValue: 64.0
-        rightValue: 61.0
+        leftValue: osc_slow(5.0, 80.0, 1.0)
+        rightValue: osc_slow(5.0, 80.0, 1.6)
         capacity: 100.0
         lowLevel: 15.0
         units: "KG"
@@ -264,12 +287,12 @@ Rectangle {
         y: 130
         width: 76
         height: 190
-        value: 68.0
+        value: osc(50.0, 95.0, 0.7)
         minimumValue: 0.0
         maximumValue: 100.0
         cautionValue: 80.0
         warningValue: 90.0
-        label: "N1"
+        label: "N2"
         units: "%"
         opacity: 1.0
         visible: true
@@ -281,9 +304,9 @@ Rectangle {
         y: 10
         width: 150
         height: 46
-        label: "GROUND SPEED"
-        value: "130"
-        units: "KTS"
+        label: "BARO"
+        value: Math.round(osc_slow(29.5, 30.5, 0.9))
+        units: "inHg"
         severity: "advisory"
         stacked: true
         opacity: 1.0
@@ -309,7 +332,7 @@ Rectangle {
             y: 10
             width: 100
             height: 110
-            value: 55.0
+            value: osc(20.0, 80.0, 0.0)
             minimumValue: 0.0
             maximumValue: 100.0
             greenLow: 20.0
@@ -327,14 +350,14 @@ Rectangle {
             y: 130
             width: 100
             height: 110
-            value: 55.0
+            value: osc(30.0, 90.0, 0.5)
             minimumValue: 0.0
             maximumValue: 100.0
             greenLow: 20.0
             greenHigh: 70.0
             cautionHigh: 85.0
-            label: "OIL PRESS"
-            units: "PSI"
+            label: "OIL TEMP"
+            units: "C"
             opacity: 1.0
             visible: true
         }
@@ -345,14 +368,14 @@ Rectangle {
             y: 130
             width: 100
             height: 110
-            value: 55.0
+            value: osc(30.0, 90.0, 1.0)
             minimumValue: 0.0
             maximumValue: 100.0
             greenLow: 20.0
             greenHigh: 70.0
             cautionHigh: 85.0
-            label: "OIL PRESS"
-            units: "PSI"
+            label: "OIL TEMP"
+            units: "C"
             opacity: 1.0
             visible: true
         }
@@ -363,7 +386,7 @@ Rectangle {
             y: 10
             width: 100
             height: 110
-            value: 55.0
+            value: osc(20.0, 80.0, 1.5)
             minimumValue: 0.0
             maximumValue: 100.0
             greenLow: 20.0

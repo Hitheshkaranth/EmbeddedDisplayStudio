@@ -60,6 +60,26 @@ class DesignerGeneratorTests(unittest.TestCase):
         self.assertIn('label: "Input Voltage"', qml)
         self.assertIn('value: Bus.value("power.input_voltage", 0)', qml)
 
+    def test_select_options_and_legacy_toggle_labels_generate_valid_properties(self):
+        project = DesignerProject()
+        project.pages[0].widgets.extend([
+            DesignerWidget(
+                "ShSelect", "modeSelect",
+                {"x": 0, "y": 0, "width": 200, "height": 56},
+                {"options": "Auto, Manual, , Service", "currentIndex": 1},
+            ),
+            DesignerWidget(
+                "ShToggle", "modeToggle",
+                {"x": 0, "y": 64, "width": 160, "height": 40},
+                {"onLabel": "RUN", "offLabel": "STOP"},
+            ),
+        ])
+        qml = self.generator.generate(project)["Main.qml"]
+        self.assertIn('model:["Auto","Manual","Service"]', qml.replace(" ", ""))
+        self.assertIn('onText: "RUN"', qml)
+        self.assertIn('offText: "STOP"', qml)
+        self.assertNotIn("onLabel:", qml)
+
     def test_rejects_duplicate_ids_before_generation(self):
         project = DesignerProject()
         for kind in ("Text", "ShButton"):

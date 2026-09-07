@@ -48,7 +48,7 @@ QtObject {
     /** @property {color} destructiveForeground */
     readonly property color destructiveForeground: mode === "light" ? "#f8fafc" : "#ffffff"
     /** @property {color} border */
-    readonly property color border: mode === "light" ? "#e2e8f0" : "#00000000"
+    readonly property color border: mode === "light" ? "#e2e8f0" : "#303036"
     /** @property {color} input */
     readonly property color input: mode === "light" ? "#e2e8f0" : "#27272a"
     /** @property {color} ring */
@@ -126,8 +126,18 @@ QtObject {
     /** @property {real} spacing48 */
     readonly property real spacing48: 48
 
+    function resolveFontFamily() {
+        var available = Qt.fontFamilies()
+        var preferred = ["Inter", "Noto Sans", "DejaVu Sans", "Segoe UI", "Arial"]
+        for (var i = 0; i < preferred.length; ++i) {
+            if (available.indexOf(preferred[i]) !== -1)
+                return preferred[i]
+        }
+        return Qt.application.font.family
+    }
+
     /** @property {string} fontFamily */
-    readonly property string fontFamily: "Inter,Noto Sans,DejaVu Sans,sans-serif"
+    readonly property string fontFamily: resolveFontFamily()
     /** @property {int} fontSizeXs */
     readonly property int fontSizeXs: 12
     /** @property {int} fontSizeSm */

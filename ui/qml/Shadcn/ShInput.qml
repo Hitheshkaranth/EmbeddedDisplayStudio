@@ -46,6 +46,7 @@ Item {
 
     implicitWidth: 200
     implicitHeight: 36
+    activeFocusOnTab: true
     
     opacity: enabled ? 1.0 : 0.5
     
@@ -59,6 +60,8 @@ Item {
         
         Behavior on border.color { ColorAnimation { duration: Theme.colorTransition } }
     }
+
+    onActiveFocusChanged: if (activeFocus) textInput.forceActiveFocus()
     
     Rectangle {
         id: focusRing
@@ -76,10 +79,11 @@ Item {
         anchors.rightMargin: Theme.spacing12
         verticalAlignment: Text.AlignVCenter
         text: root.placeholderText
+        elide: Text.ElideRight
         color: Theme.mutedForeground
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontSizeSm
-        visible: textInput.text === "" && !textInput.activeFocus
+        visible: textInput.text === ""
     }
 
     TextInput {
@@ -94,8 +98,11 @@ Item {
         enabled: root.enabled
         readOnly: root.readOnly
         clip: true
+        activeFocusOnTab: true
+        selectByMouse: true
+        selectionColor: Theme.primary
+        selectedTextColor: Theme.primaryForeground
         
         onAccepted: root.accepted()
-        onTextChanged: root.textChanged()
     }
 }

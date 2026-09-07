@@ -31,3 +31,12 @@ ShFlightDirector 1.0 ShFlightDirector.qml
 ShTurnCoordinator 1.0 ShTurnCoordinator.qml
 ShEngineBar 1.0 ShEngineBar.qml
 ShFuelQuantity 1.0 ShFuelQuantity.qml
+ShSlider 1.0 ShSlider.qml
+ShToggle 1.0 ShToggle.qml
+ShCheckbox 1.0 ShCheckbox.qml
+ShSelect 1.0 ShSelect.qml
+ShNumInput 1.0 ShNumInput.qml
+ShNumDisplay 1.0 ShNumDisplay.qml
+ShAnalogDisplay 1.0 ShAnalogDisplay.qml
+ShTrendChart 1.0 ShTrendChart.qml
+ShAlarmTable 1.0 ShAlarmTable.qml

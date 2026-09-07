@@ -62,6 +62,7 @@ Item {
 
     implicitWidth: size === "icon" ? 36 : textElement.implicitWidth + (size === "sm" ? 24 : size === "lg" ? 48 : 32)
     implicitHeight: size === "sm" ? 32 : size === "lg" ? 40 : 36
+    activeFocusOnTab: true
     
     opacity: enabled ? 1.0 : 0.5
     
@@ -71,12 +72,15 @@ Item {
         radius: root.cornerRadius
         
         color: {
-            if (root.backgroundColor.a > 0) return root.backgroundColor
-            if (variant === "default") return root.hovered ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.9) : Theme.primary
-            if (variant === "secondary") return root.hovered ? Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, 0.8) : Theme.secondary
-            if (variant === "destructive") return root.hovered ? Qt.rgba(Theme.destructive.r, Theme.destructive.g, Theme.destructive.b, 0.9) : Theme.destructive
-            if (variant === "outline" || variant === "ghost") return root.hovered ? Theme.accent : "transparent"
-            return "transparent"
+            var result
+            if (root.backgroundColor.a > 0) result = root.backgroundColor
+            else if (variant === "default") result = root.hovered ? Qt.darker(Theme.primary, 1.08) : Theme.primary
+            else if (variant === "secondary") result = root.hovered ? Qt.darker(Theme.secondary, 1.08) : Theme.secondary
+            else if (variant === "destructive") result = root.hovered ? Qt.darker(Theme.destructive, 1.08) : Theme.destructive
+            else if (variant === "outline" || variant === "ghost") result = root.hovered ? Theme.accent : "transparent"
+            else result = "transparent"
+            return root.pressed && root.backgroundColor.a === 0 && result !== "transparent"
+                ? Qt.darker(result, 1.15) : result
         }
         
         border.color: root.borderColor.a > 0 ? root.borderColor : (variant === "outline" ? Theme.border : "transparent")
@@ -88,6 +92,9 @@ Item {
     Text {
         id: textElement
         anchors.centerIn: parent
+        width: Math.max(0, root.width - 24)
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
         text: root.text
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontSizeSm
@@ -129,6 +136,6 @@ Item {
         }
     }
     
-    Keys.onSpacePressed: if (root.enabled) root.clicked()
-    Keys.onReturnPressed: if (root.enabled) root.clicked()
+    Keys.onSpacePressed: if (root.enabled) { root.clicked(); event.accepted = true }
+    Keys.onReturnPressed: if (root.enabled) { root.clicked(); event.accepted = true }
 }

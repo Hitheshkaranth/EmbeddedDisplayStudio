@@ -207,6 +207,11 @@ def main():
         window.show()
         if splash is not None:
             splash.finish(window)
+        # On Windows the window may be created but not brought to the front,
+        # or placed off-screen on a multi-monitor setup.  Raise and activate
+        # after a short delay so the splash (if present) is already gone and
+        # the OS can place the window correctly.
+        QTimer.singleShot(50, lambda: (window.raise_(), window.activateWindow()))
         if args.capture_bezel and args.exit_after <= 0:
             # No deadline to race: grab shortly after the window is up.
             QTimer.singleShot(1000, grab)
