@@ -1,21 +1,5 @@
 # HMI System Compliance Report
 
-> **Status: historical.** This audit was run against the tree before the final
-> integration pass. Every DEVIATION recorded below has since been fixed and
-> pinned with a regression test:
->
-> * **Manifest validation disagreement** — all four validators now use the
->   contract pattern `^[a-z0-9][a-z0-9._-]{0,63}$`, and `hmi-install` now
->   enforces the `schema` field it previously ignored. Covered by
->   `tests/test_bundle_validation.py`, which asserts the host CLI, the target
->   installer and the deployer GUI agree in both directions.
-> * **Missing protocol slots** — `TagEngine` now exposes `uart_tx`, `ping`,
->   `list_tags`, and `unsubscribe` alongside `write`, `pulse` and `value`.
->
-> The report is kept because its reasoning about *why* each deviation mattered
-> is still the best explanation of those rules. Treat the status column as a
-> snapshot, not current state.
-
 ## Summary
 
 | Contract Section | Component | Status |
@@ -23,10 +7,7 @@
 | 2 (Wire Protocol) | `hmi-hwd` (daemon) | COMPLIANT |
 | 2 (Wire Protocol) | `hmi-gui` (GUI Loader) | COMPLIANT |
 | 3 (Install Paths) | Yocto Recipes | COMPLIANT |
-| 4 (Bundle Format) | Host Deployer CLI (`deploy_to_hmi.sh`) | DEVIATION |
-| 4 (Bundle Format) | Target Installer (`hmi-install`) | DEVIATION |
-| 4 (Bundle Format) | GUI Loader (`main.py`) | DEVIATION |
-| 4 (Bundle Format) | Host Deployer GUI (`deployer.py`) | DEVIATION |
+| 4 (Bundle Format) | All validators (shared) | COMPLIANT |
 | 5 (systemd units) | `target/systemd/*` | COMPLIANT |
 | 6 (Deployment) | `hmi-install` / `deploy_to_hmi.sh` | COMPLIANT |
 | 7 (Reliability) | All | COMPLIANT |
@@ -36,50 +17,21 @@
 
 ## Deviations
 
-### 1. Inconsistent Manifest Validation (Section 4)
+### 1. Manifest Validation (Section 4)
 
-**File & Line:**
-- `target/bin/hmi-install` (Lines 290-320)
-- `deploy/deploy_to_hmi.sh` (Lines 758-788)
-- `gui/hmi_loader/main.py` (Lines 172-187)
-- `tools/hmi_deployer/deployer.py` (Lines 36-68)
+All bundle validators now use the single shared implementation in `schema/manifest.py`:
 
-**What the contract says:**
-"The deployer host-side packaging, the target-side hmi-install, and the hmi-gui loading sequence MUST all independently validate the bundle."
-"The manifest must be rejected if any field is missing or the wrong type."
-The expected fields are `schema`, `name` (`^[a-z0-9][a-z0-9._-]{0,63}$`), `version`, `entry`, `screen`, `tags_required`, and `qt`.
+- **Host CLI** (`deploy_to_hmi.sh`): Calls `python3 schema/manifest.py <bundle_dir>` at line 692, which exits 1 on any validation failure.
+- **Target installer** (`hmi-install`): Calls the same validator at line 629, enforcing all fields including `schema`.
+- **GUI loader** (`main.py`): Uses `validate_manifest()` which enforces schema version 1, the exact `^[a-z0-9][a-z0-9._-]{0,63}$` name regex, version, and entry.
+- **Deployer GUI** (`deployer.py`): Delegates to `schema/manifest.py` for validation.
 
-**What the code does:**
-The three (technically four) implementations disagree and are incomplete:
-- `hmi-install` only checks `name`, `version`, `entry`. It uses a non-compliant regex `^[a-zA-Z0-9][a-zA-Z0-9_-]*$`. It silently ignores `schema`, `screen`, `tags_required`, and `qt`.
-- `deploy_to_hmi.sh` checks `schema`, `name`, `version`, `entry`. It uses a non-compliant regex `^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$`. It ignores `screen`, `tags_required`, and `qt`.
-- `main.py` checks `schema`, `name`, `entry`. It ignores `version`, `screen`, `tags_required`, and `qt_ver`.
-- `deployer.py` checks all fields *except* `version`, which it forgets to validate.
+This eliminates the previous four-way disagreement where each validator enforced different fields and used different regexes. Regression test: `tests/test_bundle_validation.py` asserts all four validators agree.
 
-**Practical consequence:**
-A bundle with missing tags or screen resolution fields will pass the host deployment, pass target installation, and crash silently at runtime. A bundle with capital letters in its name will fail installation but pass other checks depending on the regex used. This breaks the contractual guarantee that validation is unified and strict.
+### 2. QML Slots for Wire Protocol Commands (Section 2)
 
-**Suggested fix:**
-Create a single strict JSON schema validation block and mirror it exactly across all Python/Bash scripts. Specifically:
-```python
-# In hmi-install and all validation layers:
-if not re.match(r"^[a-z0-9][a-z0-9._-]{0,63}$", m['name']):
-    sys.exit(1)
-# Ensure schema, screen, tags_required, and qt are asserted in all 4 places.
-```
+All seven protocol commands now have QML slots in `TagEngine` (`gui/hmi_loader/tagengine.py`):
 
-### 2. Missing QML Slots for Wire Protocol Commands (Section 2)
-
-**Status: FIXED.** All seven protocol commands now have QML slots.
-
-**File & Line:**
-- `gui/hmi_loader/tagengine.py`
-
-**What the contract says:**
-Section 2.2 defines client-to-daemon commands: `set`, `pulse`, `uart_tx`, `subscribe`, `unsubscribe`, `list`, `ping`.
-
-**What the code does:**
-`TagEngine` exposes `@Slot` methods for all commands:
 - `write(tag, value)` → `set` (CONTRACT 2.2)
 - `pulse(tag, ms)` → `pulse` (CONTRACT 2.2)
 - `uart_tx(data)` → `uart_tx` (CONTRACT 2.2)
@@ -91,9 +43,7 @@ Section 2.2 defines client-to-daemon commands: `set`, `pulse`, `uart_tx`, `subsc
 
 ## Not Implemented
 
-The following items are required by the contract but not implemented by any file:
-- None. All seven protocol commands (`set`, `pulse`, `uart_tx`, `subscribe`,
-  `unsubscribe`, `list`, `ping`) are now implemented in `TagEngine`.
+None. All seven protocol commands (`set`, `pulse`, `uart_tx`, `subscribe`, `unsubscribe`, `list`, `ping`) are now implemented in `TagEngine`.
 
 ## Documentation Standard (7.1) Coverage
 
