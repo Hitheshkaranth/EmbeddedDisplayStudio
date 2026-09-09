@@ -29,6 +29,7 @@ from .ssh import (
 )
 from .scaffold import create_bundle
 from .taglab import TagLabSender
+from .readiness_core import audit_readiness
 
 try:
     from ui.python.shadcn import apply, icon, qml_import_path
@@ -320,6 +321,10 @@ class MainWindow(QMainWindow):
         self._deploy_generation = getattr(self, "_deploy_generation", 0) + 1
         # Last line any SSH/SCP step printed, so a failure can name its cause.
         self._last_transport_line = ""
+        # Whether the currently loaded bundle passed validate_bundle.
+        self._bundle_is_valid = False
+        # Link state for readiness auditing: idle, connecting, connected, fault.
+        self._link_state = "idle"
 
         self.setup_ui()
         self.apply_theme()
@@ -376,6 +381,8 @@ class MainWindow(QMainWindow):
         self.btn_test.setProperty("linkState", state)
         self.btn_test.style().unpolish(self.btn_test)
         self.btn_test.style().polish(self.btn_test)
+        self._link_state = state
+        self._refresh_readiness()
 
     def _themed_icon(self, widget, name: str) -> None:
         """
@@ -791,6 +798,38 @@ class MainWindow(QMainWindow):
         conn_layout.addWidget(conn_body)
 
         right_layout.addWidget(conn_box)
+
+        # Readiness – observational summary of bundle, target, display, tags.
+        readiness_box = QGroupBox()
+        readiness_box.setProperty("class", "consoleSectionPanel")
+        readiness_layout = QVBoxLayout(readiness_box)
+        readiness_layout.setContentsMargins(14, 14, 14, 14)
+        readiness_layout.setSpacing(8)
+        readiness_layout.addLayout(self._section_heading("Readiness", "shield-check"))
+        readiness_body = QFrame()
+        readiness_body.setProperty("class", "consoleSectionBody")
+        readiness_body_layout = QVBoxLayout(readiness_body)
+        readiness_body_layout.setContentsMargins(14, 12, 14, 12)
+        readiness_body_layout.setSpacing(6)
+
+        self._readiness_labels = {}
+        for row_name in ("Bundle", "Target", "Display", "Tags"):
+            lbl = QLabel("—")
+            lbl.setObjectName("readinessRow")
+            lbl.setWordWrap(True)
+            self._readiness_labels[row_name] = lbl
+            readiness_body_layout.addWidget(lbl)
+
+        self._readiness_summary = QLabel("")
+        self._readiness_summary.setObjectName("readinessSummary")
+        self._readiness_summary.setWordWrap(True)
+        self._readiness_summary.setStyleSheet("color: #a1a1aa;")
+        readiness_body_layout.addWidget(self._readiness_summary)
+        self._refresh_readiness()
+        readiness_body_layout.addStretch()
+        readiness_layout.addWidget(readiness_body)
+
+        right_layout.addWidget(readiness_box)
 
         # Deployment Actions
         deploy_box = QGroupBox()
@@ -1272,6 +1311,59 @@ class MainWindow(QMainWindow):
         self._apply_detected_resolution(width, height, live=True)
         self.log(f"Connected SOM display detected: {width} x {height} px")
 
+    def _refresh_readiness(self) -> None:
+        """Observational refresh of the Readiness section.
+
+        Calls ``audit_readiness`` with the current state and updates the
+        four row labels and the overall summary.  This method never changes
+        deployment behaviour: it does not touch ``btn_deploy`` or any
+        deployment control.
+        """
+        connected = getattr(self, "_link_state", "unknown") == "connected"
+        items = audit_readiness(
+            bundle_valid=getattr(self, "_bundle_is_valid", False),
+            manifest=getattr(self, "current_manifest", None),
+            connected=connected,
+            detected_resolution=self.detected_resolution,
+        )
+        severity_colors = {
+            "ready": "#22c55e",
+            "warning": "#f59e0b",
+            "error": "#ef4444",
+            "info": "#a1a1aa",
+        }
+        labels = getattr(self, "_readiness_labels", None)
+        if labels is None:
+            return
+        for item in items:
+            lbl = labels.get(item.name)
+            if lbl is not None:
+                color = severity_colors.get(item.severity, "#a1a1aa")
+                lbl.setText(f"{item.name}: {item.detail}")
+                lbl.setStyleSheet(f"color: {color};")
+            else:
+                lbl = self._readiness_labels.get(item.name, QLabel(item.detail))
+                self._readiness_labels[item.name] = lbl
+
+        # Overall summary: count severities.
+        counts = {"ready": 0, "warning": 0, "error": 0, "info": 0}
+        for item in items:
+            counts[item.severity] = counts.get(item.severity, 0) + 1
+        if counts["error"] > 0:
+            summary_text = "Deployment blocked: fix errors before deploying."
+            summary_color = "#ef4444"
+        elif counts["warning"] > 0:
+            summary_text = "Deployment possible but not all checks passed."
+            summary_color = "#f59e0b"
+        elif counts["ready"] == 4:
+            summary_text = "All checks passed."
+            summary_color = "#22c55e"
+        else:
+            summary_text = "Readiness: informational items present."
+            summary_color = "#a1a1aa"
+        self._readiness_summary.setText(summary_text)
+        self._readiness_summary.setStyleSheet(f"color: {summary_color};")
+
     def _apply_detected_resolution(self, width, height, live):
         """Point the readout, the picker, the preview and the canvas at a panel.
 
@@ -1301,6 +1393,7 @@ class MainWindow(QMainWindow):
         # follows the detected geometry rather than the manifest's guess.
         if hasattr(self, "designer_workspace"):
             self.designer_workspace.apply_target_resolution(width, height)
+        self._refresh_readiness()
 
     def _restore_detected_resolution(self):
         """Open on the geometry of the panel this Studio last spoke to."""
@@ -1572,6 +1665,8 @@ class MainWindow(QMainWindow):
                 )
                 self.val_label.setStyleSheet("color: #ef4444;")
                 self.btn_deploy.setEnabled(False)
+                self._bundle_is_valid = False
+                self._refresh_readiness()
                 return
             kind = "Qt Quick (QML)" if proposed["runtime"] == "qml" else "Python (Qt Widgets)"
             answer = QMessageBox.question(
@@ -1590,6 +1685,8 @@ class MainWindow(QMainWindow):
                 self.val_label.setText("Import cancelled: no manifest.json.")
                 self.val_label.setStyleSheet("color: #ef4444;")
                 self.btn_deploy.setEnabled(False)
+                self._bundle_is_valid = False
+                self._refresh_readiness()
                 return
             try:
                 written = write_manifest(dir_path, proposed)
@@ -1670,11 +1767,15 @@ class MainWindow(QMainWindow):
             # manifest's screen is only a default for an unknown display.
             if self.detected_resolution:
                 self.designer_workspace.apply_target_resolution(*self.detected_resolution)
+            self._bundle_is_valid = True
+            self._refresh_readiness()
         else:
             err_text = "\n".join(msgs)
             self.val_label.setText(f"Validation Failed:\n{err_text}")
             self.val_label.setStyleSheet("color: #ef4444;")  # destructive
             self.btn_deploy.setEnabled(False)
+            self._bundle_is_valid = False
+            self._refresh_readiness()
 
     def _preview_designed_bundle(self, bundle_dir: str) -> None:
         """Reload generated QML through the established in-process preview."""

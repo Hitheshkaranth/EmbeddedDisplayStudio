@@ -37,6 +37,7 @@ desktop.ini
 /.tmp/
 build/
 dist/
+dist-linux/
 
 # --- Yocto ------------------------------------------------------------------
 # Recipe files/ directories are populated from this repository by the commands

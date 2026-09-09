@@ -35,6 +35,8 @@ class ConnectButtonStates(unittest.TestCase):
         """A MainWindow with only the parts _set_link_state touches."""
         studio = MainWindow.__new__(MainWindow)
         studio.btn_test = QPushButton("Connect")
+        studio.detected_resolution = None
+        studio.current_manifest = None
         # The real one renders a themed pixmap; the icon is not what is asserted.
         studio._themed_icon = lambda *_a, **_k: None
         return studio
