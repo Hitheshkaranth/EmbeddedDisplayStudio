@@ -9,8 +9,8 @@
 >   enforces the `schema` field it previously ignored. Covered by
 >   `tests/test_bundle_validation.py`, which asserts the host CLI, the target
 >   installer and the deployer GUI agree in both directions.
-> * **Missing protocol slots** — `TagEngine` now exposes `uart_tx` and `ping`
->   alongside `write`, `pulse` and `value`.
+> * **Missing protocol slots** — `TagEngine` now exposes `uart_tx`, `ping`,
+>   `list_tags`, and `unsubscribe` alongside `write`, `pulse` and `value`.
 >
 > The report is kept because its reasoning about *why* each deviation mattered
 > is still the best explanation of those rules. Treat the status column as a
@@ -21,7 +21,7 @@
 | Contract Section | Component | Status |
 | --- | --- | --- |
 | 2 (Wire Protocol) | `hmi-hwd` (daemon) | COMPLIANT |
-| 2 (Wire Protocol) | `hmi-gui` (GUI Loader) | DEVIATION |
+| 2 (Wire Protocol) | `hmi-gui` (GUI Loader) | COMPLIANT |
 | 3 (Install Paths) | Yocto Recipes | COMPLIANT |
 | 4 (Bundle Format) | Host Deployer CLI (`deploy_to_hmi.sh`) | DEVIATION |
 | 4 (Bundle Format) | Target Installer (`hmi-install`) | DEVIATION |
@@ -70,31 +70,30 @@ if not re.match(r"^[a-z0-9][a-z0-9._-]{0,63}$", m['name']):
 
 ### 2. Missing QML Slots for Wire Protocol Commands (Section 2)
 
+**Status: FIXED.** All seven protocol commands now have QML slots.
+
 **File & Line:**
-- `gui/hmi_loader/tagengine.py` (Lines 110-180)
+- `gui/hmi_loader/tagengine.py`
 
 **What the contract says:**
 Section 2.2 defines client-to-daemon commands: `set`, `pulse`, `uart_tx`, `subscribe`, `unsubscribe`, `list`, `ping`.
 
 **What the code does:**
-`TagEngine` exposes `@Slot` methods for `write` (set), `pulse`, and `value`. However, it completely lacks QML slots for `uart_tx`, `ping`, or `list`.
-
-**Practical consequence:**
-QML applications cannot transmit serial data because there is no `Bus.uart_tx()` method to call, rendering the `uart_tx` protocol feature useless for the end-user.
-
-**Suggested fix:**
-Add the missing slots to `TagEngine`:
-```python
-@Slot(str)
-def uart_tx(self, data: str) -> None:
-    self._send_command("uart_tx", {"data": data})
-```
+`TagEngine` exposes `@Slot` methods for all commands:
+- `write(tag, value)` → `set` (CONTRACT 2.2)
+- `pulse(tag, ms)` → `pulse` (CONTRACT 2.2)
+- `uart_tx(data)` → `uart_tx` (CONTRACT 2.2)
+- `ping()` → `ping` (CONTRACT 2.2)
+- `list_tags()` → `list` (CONTRACT 2.2, returns `QVariantList` of tag names)
+- `unsubscribe()` → `unsubscribe` (CONTRACT 2.2)
+- `subscribe` is internal (automatically maintained by subscription timer)
+- `value(name, fallback)` reads from the tag map (not a protocol command, but provides safe tag lookup)
 
 ## Not Implemented
 
 The following items are required by the contract but not implemented by any file:
-- `TagEngine` (`gui/hmi_loader/tagengine.py`) lacks the `uart_tx` slot (Section 2.2).
-- `TagEngine` lacks the `ping` and `list` command slots (Section 2.2).
+- None. All seven protocol commands (`set`, `pulse`, `uart_tx`, `subscribe`,
+  `unsubscribe`, `list`, `ping`) are now implemented in `TagEngine`.
 
 ## Documentation Standard (7.1) Coverage
 

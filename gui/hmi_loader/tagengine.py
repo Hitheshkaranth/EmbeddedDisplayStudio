@@ -39,9 +39,9 @@ QML therefore sees two context properties:
 
 import json
 import logging
-from typing import Any
+from typing import Any, Optional
 
-from PySide6.QtCore import QByteArray, QObject, Property, QTimer, Signal, Slot
+from PySide6.QtCore import QEventLoop, QByteArray, QObject, Property, QTimer, Signal, Slot
 from PySide6.QtNetwork import QHostAddress, QUdpSocket
 from PySide6.QtQml import QQmlPropertyMap
 
@@ -86,6 +86,12 @@ class TagEngine(QObject):
     # Emitted when a datagram is rejected, so a diagnostics screen can bind to
     # rxErrors and see it move.
     rxErrorsChanged = Signal()
+
+    # Emitted when `list_tags()` receives the daemon's catalogue.
+    listReceived = Signal(object)
+
+    # Emitted when `unsubscribe()` receives an ack.
+    unsubscribed = Signal()
 
     def __init__(
         self,
@@ -199,6 +205,10 @@ class TagEngine(QObject):
         self._sub_timer.start()
 
         self._subscribe_to_daemon()
+
+    # Maps pending correlation ids to (emit_fn, result_holder) tuples.
+    # Populated by slot calls and cleared by ackReceived.
+    _pending_acks: dict[str, Any] = {}
 
     # ---------------------------------------------------------------- exposure
 
@@ -326,16 +336,24 @@ class TagEngine(QObject):
 
     def _handle_ack(self, msg: dict) -> None:
         """
-        Re-emits a command acknowledgement as a Qt signal.
+        Re-emits a command acknowledgement as a Qt signal and dispatches
+        any pending correlation handlers.
 
         Args:
             msg: parsed ack frame (CONTRACT 2.3).
         """
-        self.ackReceived.emit(
-            str(msg.get("id", "")),
-            bool(msg.get("ok", False)),
-            str(msg.get("err", "")),
-        )
+        cid = str(msg.get("id", ""))
+        ok = bool(msg.get("ok", False))
+        err = str(msg.get("err", ""))
+        tags_list = msg.get("tags", [])
+
+        # Fire pending correlation handlers before the general signal,
+        # so a blocking slot can grab the result and return.
+        handler = self._pending_acks.pop(cid, None)
+        if handler is not None:
+            handler(cid, ok, err, tags_list)
+
+        self.ackReceived.emit(cid, ok, err)
 
     def _on_watchdog_timeout(self) -> None:
         """Declares the link lost after WATCHDOG_INTERVAL_MS without a frame."""
@@ -459,6 +477,66 @@ class TagEngine(QObject):
         if val is None:
             val = self._map.value(name.replace(".", "_"))
         return fallback if val is None else val
+
+    @Slot(result="QVariantList")
+    def list_tags(self) -> list:
+        """
+        Requests the daemon's full tag catalogue (CONTRACT 2.2 `list`).
+
+        Sends the command with a correlation id and blocks (briefly) on a
+        local event-loop until the ack arrives, so a QML caller can use the
+        returned list directly:
+
+            var names = Bus.list_tags()
+
+        Returns:
+            A ``QVariantList`` of tag-name strings, or an empty list if the
+            link is offline or the daemon does not respond within 2 s.
+        """
+        loop = QEventLoop()
+        result: list = []
+
+        def _handler(cid_: str, ok: bool, err: str, tags_list: list) -> None:
+            if ok:
+                result.extend(tags_list)
+            loop.quit()
+
+        cid = self._next_id()
+        self._pending_acks[cid] = _handler
+        self._send_command({"cmd": "list", "id": cid})
+
+        QTimer.singleShot(2000, loop.quit)
+        loop.exec()
+
+        self._pending_acks.pop(cid, None)
+        self.listReceived.emit(result)
+        return result
+
+    @Slot()
+    def unsubscribe(self) -> None:
+        """
+        Removes this client from the daemon's telemetry sink list
+        (CONTRACT 2.2 `unsubscribe`).
+
+        The daemon stops streaming to this client after the ack arrives.
+        A screen that no longer needs telemetry (e.g. about-to-close) should
+        call this so the daemon's subscriber table does not leak addresses.
+        """
+        loop = QEventLoop()
+
+        def _handler(cid_: str, ok: bool, err: str, tags_list: list) -> None:
+            if ok:
+                self.unsubscribed.emit()
+            loop.quit()
+
+        cid = self._next_id()
+        self._pending_acks[cid] = _handler
+        self._send_command({"cmd": "unsubscribe", "id": cid})
+
+        QTimer.singleShot(2000, loop.quit)
+        loop.exec()
+
+        self._pending_acks.pop(cid, None)
 
     def _to_wire_name(self, name: str) -> str:
         """

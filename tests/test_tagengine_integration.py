@@ -27,6 +27,7 @@ from hmi_loader.tagengine import TagEngine
 class TestTagEngineIntegration(unittest.TestCase):
     """
     Integration tests for TagEngine and QML binding (CONTRACT 2).
+    Tests qml_binding, malformed_datagram, list_tags, and unsubscribe.
     """
     _port_counter = 5150
 
@@ -160,6 +161,49 @@ Item {
         
         # Since it's still alive (test didn't crash) and we can query rxErrors, we are good.
         self.assertGreaterEqual(self.tag_engine.rxErrors, 1, "rxErrors should have incremented")
+
+    def test_list_tags_returns_daemon_catalogue(self):
+        """
+        - Bus.list_tags() reaches the daemon and returns the tag catalogue
+        - The returned list contains the expected tags from the config
+        """
+        # Wait for online so the daemon is fully started
+        self.assertTrue(self._wait_for(lambda: self.tag_engine.online), "Link never came online")
+
+        # Call list_tags()
+        tags = self.tag_engine.list_tags()
+
+        # The daemon should return all configured tags
+        self.assertIsInstance(tags, list)
+        self.assertGreater(len(tags), 0, "list_tags returned empty list")
+
+        # Check that known tags are present
+        tag_names = [str(t) for t in tags]
+        self.assertIn("di.estop", tag_names)
+        self.assertIn("do.relay1", tag_names)
+
+    def test_unsubscribe_emits_signal(self):
+        """
+        - Bus.unsubscribe() sends the command and receives an ack
+        - The unsubscribed signal fires on success
+        """
+        # Wait for online so the daemon is fully started
+        self.assertTrue(self._wait_for(lambda: self.tag_engine.online), "Link never came online")
+
+        # Connect to the unsubscribed signal
+        signal_fired = {"fired": False}
+
+        def _on_unsub():
+            signal_fired["fired"] = True
+
+        self.tag_engine.unsubscribed.connect(_on_unsub)
+
+        # Call unsubscribe
+        self.tag_engine.unsubscribe()
+
+        # Verify the signal fired
+        self.assertTrue(signal_fired["fired"], "unsubscribed signal did not fire")
+
 
 if __name__ == "__main__":
     unittest.main()
