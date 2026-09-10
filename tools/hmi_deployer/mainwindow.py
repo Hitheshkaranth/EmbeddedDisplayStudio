@@ -758,6 +758,18 @@ class MainWindow(QMainWindow):
         self.designer_workspace.deployRequested.connect(self._deploy_designed_bundle)
         self._right_tabs.addTab(self.designer_workspace, "Designer")
 
+        # ── AI Design tab ────────────────────────────────────────────────
+        from tools.hmi_deployer.ai_tab import AIDesignTab
+        from tools.hmi_deployer.ai_design import ODConnector, ProviderConfig
+        from tools.hmi_deployer.ai_generator import AIDesignAgent
+        from designer.palette.widget_registry import default_registry
+
+        self._od_connector = ODConnector()
+        self._ai_agent = AIDesignAgent(self._od_connector, default_registry())
+        self._ai_tab = AIDesignTab(self._od_connector, self._ai_agent.generator)
+        self._ai_tab.statusMessage.connect(self.log)
+        self._right_tabs.addTab(self._ai_tab, "AI Design")
+
         # ── Deploy tab ────────────────────────────────────────────────────
         deploy_page = QWidget()
         deploy_page.setObjectName("deployConsolePage")
@@ -1158,7 +1170,7 @@ class MainWindow(QMainWindow):
         # Selecting the tab is the request for the measurement.
         self._right_tabs.currentChanged.connect(self._on_tab_changed)
 
-        tab_icons = ("device-imac", "device-desktop", "activity", "terminal-2", "cpu")
+        tab_icons = ("device-imac", "device-desktop", "sparkles", "activity", "terminal-2", "cpu")
         for index in range(self._right_tabs.count()):
             self.primary_nav.addTab(self._right_tabs.tabText(index))
             self._themed_tab_icon(self.primary_nav, index, tab_icons[index])

@@ -25,7 +25,7 @@ LOGO_PATH = os.path.join(os.path.dirname(__file__), "resources", "logo.png")
 # several seconds of nothing on screen after a double-click reads as a launch
 # that failed.
 SPLASH_PATH = os.path.join(os.path.dirname(__file__), "resources", "splash.png")
-SPLASH_HOLD_MS = 5_000
+SPLASH_HOLD_MS = 100
 
 # Where the Studio keeps its own record.
 #
