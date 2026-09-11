@@ -123,6 +123,49 @@ If you are not connected to a panel, the deployer will automatically run an offl
 
 ---
 
+## AI Design
+
+The **AI Design** tab turns a written brief into widgets on the Designer
+canvas.  It is modelled on [OpenDesign](https://github.com/nexu-io/open-design):
+the same provider presets (BYOK), the same run log, and the same rule that a
+number is only shown when it is known.
+
+### Picking a model
+
+1. Choose a **Provider** -- Ollama (local), OpenAI, vLLM (Tailscale),
+   Anthropic or Google.  Expand **Endpoint** to change the base URL or paste
+   an API key; both are remembered per provider.
+2. The tab probes the endpoint straight away and shows
+   `Connected · <provider> · <latency> · <n> models` or
+   `Not connected · <reason>`.  Models the endpoint actually serves are merged
+   into the **Model** list; the field is editable for anything not listed.
+   The refresh button re-probes.
+
+### Reading the run log
+
+Every brief produces an *execution shell* -- a foldable record that stays open
+while the run is live and folds once the conclusion lands:
+
+| Row | What it shows |
+| --- | --- |
+| head | spinner / ✓ / ✗, status word (`Sending request… → Connecting… → Thinking… → Writing… → Parsing design… → Done`), elapsed |
+| request | `POST <url>`, model, brief length |
+| Thinking | the model's reasoning as it streams (`reasoning_content`, `<think>` tags, Anthropic/Gemini thought blocks); token count on the right |
+| Response | the streamed answer; token count on the right |
+| Parsed design | widget count and types the parser recovered |
+| Canvas changes | `+added −removed ~changed` versus the canvas, with the ids listed inside |
+| usage | `in · out · total · tok/s · TTFT · elapsed` |
+
+Counts prefixed with `~` are estimated from characters; they are replaced by
+the provider's own usage figures when those arrive (OpenAI-compatible servers
+send them with `stream_options.include_usage`, Ollama also reports the
+measured tokens-per-second).  The strip under the composer keeps session
+totals.
+
+**Auto-apply to canvas** (default on) loads the generated design into the
+Designer as one undoable step; **Apply to canvas** on a turn re-applies that
+turn's design later.  **Stop** cancels a run at the next token.
+
 ## Tag Lab
 
 Tag Lab is the signal injection tool built into the deployer.  It lets you drive

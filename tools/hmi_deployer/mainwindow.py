@@ -40,7 +40,7 @@ except ImportError:
     def qml_import_path(): return ""
 
 # Product version, shown hard right in the footer. Single source of truth.
-APP_VERSION = "0.0.5"
+APP_VERSION = "0.0.6"
 
 # Exact, machine-readable marker emitted by DISPLAY_PROBE_COMMAND over SSH.
 DISPLAY_RESOLUTION_RE = re.compile(r"^HMI_DISPLAY=(\d{1,5})x(\d{1,5})$")
@@ -556,6 +556,8 @@ class MainWindow(QMainWindow):
         self._restyle_icons()
         if hasattr(self, "designer_workspace"):
             self.designer_workspace.apply_theme(self.theme)
+        if hasattr(self, "_ai_tab"):
+            self._ai_tab.apply_theme(self.theme)
         logging.getLogger("EmbeddedDisplay Studio").info(
             "theme=%s stylesheet=%d chars", self.theme, len(app.styleSheet() or "")
         )
@@ -769,6 +771,10 @@ class MainWindow(QMainWindow):
         self._ai_agent = AIDesignAgent(self._od_connector, default_registry())
         self._ai_tab = AIDesignTab(self._od_connector, self._ai_agent.generator)
         self._ai_tab.statusMessage.connect(self.log)
+        # The tab diffs against, and applies onto, the live Designer project.
+        self._ai_tab.set_workspace(self.designer_workspace)
+        self._ai_tab.canvasFocusRequested.connect(
+            lambda: self._right_tabs.setCurrentWidget(self.designer_workspace))
         self._right_tabs.addTab(self._ai_tab, "AI Design")
         self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(self._ai_tab), "bolt")
 

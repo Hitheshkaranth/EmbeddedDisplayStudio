@@ -10,7 +10,7 @@ import logging
 from typing import Optional
 
 from PySide6.QtCore import Signal, QObject
-from designer.model import DesignerProject, DesignerPage, DesignerWidget
+from designer.model import DesignerBinding, DesignerProject, DesignerPage, DesignerWidget
 from designer.palette.widget_registry import WidgetDefinition, WidgetRegistry
 
 logger = logging.getLogger(__name__)
@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 QML_BLOCK_RE = re.compile(r"```(?:qml|QML)?\s*\n(.*?)```", re.DOTALL)
 # Regex to extract JSON design payloads.
 JSON_DESIGN_RE = re.compile(r"\{[\s\S]*\"pages\"[\s\S]*\}")
+# A legal QML id: lowercase start, then word characters.
+_QML_ID_RE = re.compile(r"[a-z_][A-Za-z0-9_]*")
+# Fenced ```json block -- what build_system_prompt() asks the model for.
+JSON_BLOCK_RE = re.compile(r"```(?:json|JSON)\s*\n(.*?)```", re.DOTALL)
 
 
 class GeneratorProgress(QObject):
@@ -77,6 +81,95 @@ _AI_TYPE_ALIASES = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Change reporting -- what a generation did to the canvas
+# ---------------------------------------------------------------------------
+
+def _widget_index(project) -> dict:
+    """Flatten a project to ``{widget_id: widget}`` (all pages, all depths)."""
+    if project is None:
+        return {}
+    return {w.id: w for w in project.all_widgets()}
+
+
+def _widget_signature(widget) -> tuple:
+    """Everything the canvas draws for a widget, in a comparable shape."""
+    geometry = tuple(sorted((k, float(v)) for k, v in (widget.geometry or {}).items()))
+    properties = json.dumps(widget.properties or {}, sort_keys=True, default=str)
+    bindings = json.dumps(
+        {k: getattr(v, "tag", v) for k, v in (widget.bindings or {}).items()},
+        sort_keys=True, default=str,
+    )
+    return (widget.type, geometry, properties, bindings)
+
+
+def diff_projects(old, new) -> dict:
+    """Compare two DesignerProjects the way OpenDesign reports a file diff.
+
+    Returns ``{"added": [...], "removed": [...], "changed": [...]}`` where each
+    entry is ``{"id", "type"}``; a widget counts as changed when its type,
+    geometry, properties or bindings differ.  Either side may be ``None``
+    (first generation / nothing parsed).
+    """
+    before, after = _widget_index(old), _widget_index(new)
+    added = [{"id": wid, "type": w.type} for wid, w in after.items() if wid not in before]
+    removed = [{"id": wid, "type": w.type} for wid, w in before.items() if wid not in after]
+    changed = [
+        {"id": wid, "type": w.type}
+        for wid, w in after.items()
+        if wid in before and _widget_signature(before[wid]) != _widget_signature(w)
+    ]
+    return {"added": added, "removed": removed, "changed": changed}
+
+
+def summarize_widgets(project) -> str:
+    """``7 widgets: ShGauge x2, ShButton x3, Text x2`` -- for the turn conclusion."""
+    if project is None:
+        return "no widgets"
+    counts: dict[str, int] = {}
+    for widget in project.all_widgets():
+        counts[widget.type] = counts.get(widget.type, 0) + 1
+    total = sum(counts.values())
+    if not total:
+        return "no widgets"
+    parts = [f"{t} x{n}" if n > 1 else t
+             for t, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return f"{total} widget{'s' if total != 1 else ''}: " + ", ".join(parts)
+
+
+def build_system_prompt(registry: Optional[WidgetRegistry] = None,
+                        screen_width: int = 1280, screen_height: int = 800) -> str:
+    """System prompt that steers the model at the JSON payload we parse best.
+
+    Lists the registry's real widget types so the model does not invent
+    component names, and pins the screen size so geometry lands on glass.
+    """
+    types: list[str] = []
+    if registry is not None:
+        try:
+            types = sorted(d.type for d in registry.definitions())
+        except Exception:
+            types = []
+    if not types:
+        types = sorted(set(_AI_TYPE_ALIASES.values()))
+    return (
+        "You are an expert HMI designer for embedded Qt/QML panels built with the "
+        "EmbeddedDisplay Studio widget set (Shadcn-styled). "
+        f"The target screen is {screen_width}x{screen_height} px; place every widget "
+        "inside it with absolute geometry.\n\n"
+        "Reply with ONE fenced ```json block containing a design payload of the form:\n"
+        '{"name": "<short name>", "pages": [{"id": "main", "name": "Main", "widgets": ['
+        '{"type": "<WidgetType>", "id": "<camelCaseId>", '
+        '"geometry": {"x": 0, "y": 0, "width": 200, "height": 60}, '
+        '"properties": {"text": "..."}, '
+        '"bindings": {"value": {"tag": "plc.tag.name"}}}]}]}\n\n'
+        "Allowed widget types: " + ", ".join(types) + ".\n"
+        "Use bindings for any live value that should come from a PLC/telemetry tag. "
+        "Keep ids unique. Before the JSON block, write at most two sentences "
+        "describing the layout; after it, nothing."
+    )
+
+
 class AIDesignGenerator:
     """Parse AI output (QML code or JSON design spec) into DesignerProject."""
 
@@ -96,14 +189,16 @@ class AIDesignGenerator:
         """
         self.progress.progress.emit("Parsing AI output...")
 
-        # Strategy 1: JSON design payload
-        try:
-            json_match = JSON_DESIGN_RE.search(ai_output)
-            if json_match:
-                design = json.loads(json_match.group())
+        # Strategy 1: JSON design payload -- a fenced ```json block first (that
+        # is what the system prompt asks for), then any bare {"pages": …}.
+        for candidate in self._json_candidates(ai_output):
+            try:
+                design = json.loads(candidate)
+            except (json.JSONDecodeError, ValueError) as exc:
+                logger.debug("JSON parsing failed: %s", exc)
+                continue
+            if isinstance(design, dict) and ("pages" in design or "widgets" in design):
                 return self._from_json_design(design, screen_width, screen_height)
-        except (json.JSONDecodeError, KeyError, ValueError) as exc:
-            logger.debug("JSON parsing failed: %s", exc)
 
         # Strategy 2: QML code blocks
         qml_block_match = QML_BLOCK_RE.search(ai_output)
@@ -129,6 +224,15 @@ class AIDesignGenerator:
         self.progress.error.emit("Unable to parse AI output. Try rephrasing the prompt.")
         return None
 
+    @staticmethod
+    def _json_candidates(ai_output: str) -> list:
+        """Substrings of the output that might be a design payload, best first."""
+        candidates = [m.group(1).strip() for m in JSON_BLOCK_RE.finditer(ai_output)]
+        bare = JSON_DESIGN_RE.search(ai_output)
+        if bare:
+            candidates.append(bare.group())
+        return candidates
+
     def _from_json_design(self, design: dict, width: int, height: int) -> DesignerProject:
         """Convert a JSON design payload (pages, widgets) to DesignerProject."""
         widgets = []
@@ -145,6 +249,7 @@ class AIDesignGenerator:
     def _convert_widgets(self, widget_list: list) -> list:
         """Convert a list of widget dicts to DesignerWidget objects."""
         result = []
+        seen_ids: set = set()
         for i, wdata in enumerate(widget_list):
             widget_type = wdata.get("type", "Rectangle")
             # Resolve aliases (e.g. "Button" -> "ShButton")
@@ -161,7 +266,16 @@ class AIDesignGenerator:
             w = geometry.get("width", 140)
             h = geometry.get("height", 40)
             properties = wdata.get("properties", {})
-            bindings = {k: {"tag": v.get("tag", "")} for k, v in wdata.get("bindings", {}).items()}
+            # Bindings are what the prompt asks for ("value" -> plc tag); keep
+            # every one that has a tag, in the model's own DesignerBinding type.
+            bindings = {}
+            for prop, value in (wdata.get("bindings") or {}).items():
+                try:
+                    binding = DesignerBinding.from_data(value)
+                except (ValueError, TypeError):
+                    continue
+                if binding.tag:
+                    bindings[str(prop)] = binding
 
             children = []
             for child_data in wdata.get("children", []):
@@ -169,11 +283,22 @@ class AIDesignGenerator:
                 if child:
                     children.append(child)
 
+            # Keep the model's own id when it is a legal QML id: stable ids
+            # are what make "changed" (vs added/removed) meaningful between
+            # two generations of the same screen.
+            wid = str(wdata.get("id") or "")
+            if not _QML_ID_RE.fullmatch(wid):
+                wid = self._make_widget_id(aliased, i)
+            base, n = wid, 2
+            while wid in seen_ids:
+                wid, n = f"{base}{n}", n + 1
+            seen_ids.add(wid)
             result.append(DesignerWidget(
                 type=aliased,
-                id=self._make_widget_id(aliased, i),
+                id=wid,
                 geometry={"x": x, "y": y, "width": w, "height": h},
                 properties=properties,
+                bindings=bindings,
                 children=children,
             ))
         return result

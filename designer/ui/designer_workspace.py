@@ -789,6 +789,24 @@ class DesignerWorkspace(QWidget):
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             QMessageBox.critical(self, "Could not open UI", str(exc))
 
+    def load_project(self, project, label="Apply AI design"):
+        """Swap in a generated DesignerProject as one undoable step.
+
+        The AI Design tab hands over a whole project; the current screen
+        geometry/theme and project name are kept unless the generated one
+        set its own, so a design keeps targeting the connected glass.
+        """
+        previous = self.project
+        if not project.name:
+            project.name = previous.name
+        project.screen.width = previous.screen.width
+        project.screen.height = previous.screen.height
+        project.screen.theme = previous.screen.theme
+        def apply(value):
+            self.project = value; self.current_page_index = 0; self._load_page()
+        self.undo_stack.push(CallbackCommand(label, lambda: apply(project), lambda: apply(previous)))
+        self.message.emit(f"{label}: {sum(1 for _ in project.all_widgets())} widgets on canvas")
+
     def save(self):
         if not self.file_path:
             path, _ = QFileDialog.getSaveFileName(self, "Save visual UI", self.bundle_dir, "Embedded Display UI (*.edsui)")

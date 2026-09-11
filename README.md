@@ -18,6 +18,7 @@ Built for industrial, vehicle, marine, avionics, instrumentation and kiosk HMIs 
 [![PySide6](https://img.shields.io/badge/PySide6-6.8.1-41CD52?style=flat-square&logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
 [![QML](https://img.shields.io/badge/QML-Qt%20Quick-41CD52?style=flat-square&logo=qt&logoColor=white)](ui/qml/)
 [![Yocto](https://img.shields.io/badge/Yocto-Embedded%20Linux-1A5FB4?style=flat-square&logo=yocto&logoColor=white)](yocto/)
+[![AI](https://img.shields.io/badge/AI-Ollama_%7C_OpenAI_%7C_Anthropic-FF6F00?style=flat-square)](#ai-design)
 
 </div>
 
@@ -455,10 +456,10 @@ isn't fitted still renders.
 The desktop tool. Import a bundle, watch it run inside a photo-real mock-up of
 the panel, then push it.
 
-One window, five workspaces across the top — **Designer**, **Display Console**,
-**Tag Lab**, **Panel Logs**, **System Profile** — over a header that holds the
-panel's address, port and **Connect**. Everything below is about the panel that
-header points at.
+One window, six workspaces across the top — **Designer**, **Display Console**,
+**Tag Lab**, **Panel Logs**, **System Profile**, **AI Design** — over a header
+that holds the panel's address, port and **Connect**. Everything below is about
+the panel that header points at.
 
 * **True WYSIWYG** — the bezel contains a live QML engine rendering *your actual
   app* at target resolution with the same tag engine the device runs. Not a
@@ -521,6 +522,13 @@ header points at.
   and throughput for the upload, then the installer's own steps as the panel
   reaches them. A step that fails names what failed: an unreachable panel is
   reported as an unreachable panel, not as whatever the step was trying to do.
+* **AI Design.** Write a brief — "add a voltage gauge and a start/stop button"
+  — and the Studio calls a local or cloud model (Ollama, OpenAI, Anthropic,
+  Google, or any OpenAI-compatible server via vLLM/Tailscale).  The generated
+  widgets land on the Designer canvas as one undoable step; every turn shows a
+  foldable execution shell with streaming reasoning, response, token usage and
+  canvas diff.  **Bring Your Own Key** mode needs no daemon — just paste an
+  API key and pick a model.
 
 <div align="center">
 
@@ -579,6 +587,16 @@ application and free space, and the RAM left over.</em>
 <em><strong>Light mode.</strong> The same window and the same panel; the theme
 follows the operator, and the preview inside the bezel follows the theme with
 it.</em>
+
+<br /><br />
+
+<img src="docs/assets/screenshot-hmi.png" alt="AI Design tab with model selection, brief composer and execution log" width="880" />
+
+<em><strong>AI Design.</strong> Type a brief and get widgets on the canvas.  The
+execution shell streams thinking, response and token counts; the canvas diff
+shows exactly what changed.  Supports Ollama (local), OpenAI, Anthropic, Google,
+and vLLM via Tailscale — or any OpenAI-compatible endpoint with a pasted API
+key.</em>
 
 </div>
 
@@ -647,7 +665,8 @@ apps/demo-app/        a worked example, and the pipeline's test fixture
 ui/                   design system: tokens, QML kit, QSS, icons, gallery
 target/               systemd units, atomic installer, Wayland launcher
 deploy/               deploy_to_hmi.sh — the CLI; provision_panel.py — onboard a stock image
-tools/hmi_deployer/   EmbeddedDisplay Studio
+tools/hmi_deployer/   EmbeddedDisplay Studio: deployer, designer, AI design (ai_design.py,
+                      ai_generator.py, ai_tab.py)
 yocto/meta-hmi/       bitbake layer that puts it all in the image
 tests/                protocol, integration and cross-validator suites
 ```
@@ -678,6 +697,7 @@ python tests/run_all.py          # 309 tests
 | Dependency scan | imports against stdlib, bundle-local and guarded ones; distribution names; the commands sent to the panel |
 | Deploy bookkeeping | a step that finishes late cannot delete the files of the deploy that replaced it |
 | SSH commands | every argv the Studio builds, including the display probe and the release list |
+| AI Design | OpenDesign connector, provider presets, streaming events, BYOK mode, QML/JSON parser, canvas diff |
 
 ### The release gate
 
@@ -815,6 +835,58 @@ The visual designer is implemented as part of EmbeddedDisplayStudio using
 ordinary PySide6 APIs and does not incorporate Qt Designer source code. It adds
 no third-party dependency; the model and generator use Python's standard
 library, and the editor uses the project's existing PySide6 dependency.
+
+---
+
+## AI Design
+
+**Turn a written brief into widgets.**  Switch to the **AI Design** tab, pick a
+model and provider, type what you want and the Studio streams the response while
+showing you everything the model does under the hood.
+
+### Providers
+
+| Provider | How | Needs |
+|---|---|---|
+| **Ollama** | Local model, zero configuration | `ollama serve` running |
+| **OpenAI** | `api.openai.com` | API key |
+| **Anthropic** | `api.anthropic.com` | API key |
+| **Google** | `generativelanguage.googleapis.com` | API key |
+| **vLLM (Tailscale)** | Tailscale-hosted endpoint | Tailscale network + key |
+| **BYOK** | Any OpenAI-compatible server | Base URL + key |
+
+The **Endpoint** section expands so you can change the base URL or paste an API
+key per provider — both are remembered.  The tab probes the endpoint on open and
+shows `Connected · <provider> · <latency> · <n> models` or `Not connected ·
+<reason>`.
+
+### Execution Shell
+
+Every turn produces a foldable execution record:
+
+| Row | Content |
+|---|---|
+| **Head** | spinner / ✓ / ✗, status word (`Sending request… → Connecting… → Thinking… → Writing… → Parsing design… → Done`), elapsed |
+| **Request** | `POST <url>`, model, brief length |
+| **Thinking** | Model's reasoning (streamed, foldable) — `reasoning_content`, `<think>` tags, Anthropic/Gemini thought blocks |
+| **Response** | The streamed answer — foldable, live-scrolling |
+| **Parsed design** | Widget count and types recovered from the output |
+| **Canvas changes** | `+added −removed ~changed` with ids listed inside |
+| **Usage** | `in · out · total · tok/s · TTFT · elapsed` |
+
+Counts prefixed with `~` are estimated from characters; they are replaced by
+provider-reported usage when those arrive.  The strip under the composer keeps
+session totals.
+
+### How it integrates
+
+1. **Brief → widgets** — the output is parsed into `DesignerProject` /
+   `DesignerWidget` objects and applied to the Designer canvas as one undoable
+   step (auto-apply is on by default).
+2. **Edit then deploy** — tweak the AI output in the Designer, then **Generate**
+   and **Deploy** follow the same pipeline as any hand-written design.
+3. **Multi-turn** — up to three prior turns ride along so follow-ups like "make
+   the gauge bigger" work reliably.  **Stop** cancels a run at the next token.
 
 ---
 
