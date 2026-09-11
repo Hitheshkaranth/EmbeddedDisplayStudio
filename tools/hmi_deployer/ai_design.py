@@ -72,6 +72,18 @@ BYOK_PRESETS = {
             "gpt-4o-mini",
             "gpt-4-turbo",
             "o3-mini",
+            "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        ],
+    },
+    "vllm": {
+        "label": "vLLM (Tailscale)",
+        "baseUrl": "http://spark-ba51:8000",
+        "apiVersion": "",
+        "requiresApiKey": False,
+        "apiKey": "",
+        "protocol": "openai",
+        "models": [
+            "nvidia/Qwen3.6-35B-A3B-NVFP4",
         ],
     },
     "anthropic": {
@@ -356,12 +368,12 @@ class ODConnector:
     # ------------------------------------------------------------------
 
     def _byok_chat(self, brief: str, model: Optional[str] = None) -> str:
-        """Call the upstream API directly via BYOK proxy wire."""
+        """Call the upstream API directly (no daemon proxy needed in BYOK mode)."""
         if not self.byok:
             return "[Error] No BYOK provider configured."
 
         prov = self.byok.provider
-        full_url = f"http://{self.host}:{self.port}/api/proxy/{prov}/stream"
+        model_name = model or self.byok.model
 
         system_prompt = (
             "You are an expert Qt/QML UI designer for embedded HMI panels. "
@@ -370,29 +382,57 @@ class ODConnector:
             "data binding to tag sources. Output ONLY QML code blocks."
         )
 
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": brief},
+        ]
+
         if prov == "ollama":
+            # Direct to Ollama /api/chat endpoint
+            url = f"{self.byok.baseUrl}/api/chat"
             payload = {
-                "model": model or self.byok.model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": brief},
-                ],
+                "model": model_name,
+                "messages": messages,
                 "stream": True,
             }
-            full_text = self._stream_ollama(full_url, payload)
-        elif prov in ("openai", "anthropic", "google"):
+            full_text = self._stream_to(url, payload)
+        elif prov in ("openai", "vllm"):
+            # Direct to OpenAI-compatible /v1/chat/completions endpoint
+            url = f"{self.byok.baseUrl}/v1/chat/completions"
+            headers = {"Content-Type": "application/json"}
+            if self.byok.apiKey:
+                headers["Authorization"] = f"Bearer {self.byok.apiKey}"
             payload = {
-                "model": model or self.byok.model,
-                "baseUrl": self.byok.baseUrl,
-                "apiKey": self.byok.apiKey,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": brief},
-                ],
+                "model": model_name,
+                "messages": messages,
                 "stream": True,
-                "maxTokens": 8192,
+                "max_tokens": 8192,
             }
-            full_text = self._stream_openai(full_url, payload)
+            full_text = self._stream_to(url, payload, headers)
+        elif prov == "anthropic":
+            url = f"{self.byok.baseUrl}/v1/messages"
+            headers = {
+                "Content-Type": "application/json",
+                "x-api-key": self.byok.apiKey,
+                "anthropic-version": self.byok.apiVersion or "2023-06-01",
+            }
+            payload = {
+                "model": model_name,
+                "messages": messages,
+                "stream": True,
+                "max_tokens": 8192,
+            }
+            full_text = self._stream_to(url, payload, headers)
+        elif prov == "google":
+            url = f"{self.byok.baseUrl}/v1beta/models/{model_name}:streamGenerateContent"
+            if self.byok.apiKey:
+                url += f"?key={self.byok.apiKey}"
+            google_payload = {
+                "contents": [{"parts": [{"text": m["content"]}] for m in messages}],
+                "generationConfig": {"maxOutputTokens": 8192},
+            }
+            headers = {"Content-Type": "application/json"}
+            full_text = self._stream_to(url, google_payload, headers, google_format=True)
         else:
             return f"[Error] Unsupported BYOK provider: {prov}"
 
@@ -525,6 +565,92 @@ class ODConnector:
                 return full
         except Exception as exc:
             return f"[Error] Anthropic stream failed: {exc}"
+
+    # ------------------------------------------------------------------
+    # Direct stream helper (BYOK mode)
+    # ------------------------------------------------------------------
+
+    def _stream_to(
+        self,
+        url: str,
+        payload: dict,
+        headers: Optional[dict] = None,
+        google_format: bool = False,
+    ) -> str:
+        """Stream to an arbitrary URL with SSE response.
+
+        Handles OpenAI-compatible (choices[].delta.content), Anthropic
+        (content_block_delta.partial_text), Google (candidates[].content.parts),
+        and Ollama (message.content) SSE formats.
+        """
+        if headers is None:
+            headers = {"Content-Type": "application/json"}
+
+        try:
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+            ctx = ssl.create_default_context()
+            with urllib.request.urlopen(req, timeout=300, context=ctx) as resp:
+                full = ""
+                buf = b""
+                while True:
+                    chunk = resp.read(4096)
+                    if not chunk:
+                        break
+                    buf += chunk
+                    while b"\n" in buf:
+                        line_b, buf = buf.split(b"\n", 1)
+                        line = line_b.decode("utf-8", errors="replace").strip()
+                        if not line:
+                            continue
+
+                        if google_format:
+                            # Google Vertex AI SSE: data: {...}
+                            if line.startswith("data: "):
+                                d = json.loads(line[6:])
+                                candidates = d.get("candidates", [])
+                                if candidates:
+                                    parts = candidates[0].get("content", {}).get("parts", [])
+                                    for p in parts:
+                                        if "text" in p:
+                                            full += p["text"]
+                        elif "message" in str(payload.get("model", "")) or "ollama" in str(headers):
+                            # Ollama NDJSON: {"message": {"content": "..."}}
+                            try:
+                                obj = json.loads(line)
+                                delta = obj.get("message", {}).get("content", "")
+                                if delta:
+                                    full += delta
+                            except json.JSONDecodeError:
+                                pass
+                        else:
+                            # OpenAI / Anthropic SSE: data: {...}
+                            if not line.startswith("data: "):
+                                continue
+                            d = line[6:]
+                            if d == "[DONE]":
+                                break
+                            try:
+                                obj = json.loads(d)
+
+                                # OpenAI format
+                                if "choices" in obj:
+                                    delta = obj.get("choices", [{}])[0].get("delta", {})
+                                    content = delta.get("content", "")
+                                    if content:
+                                        full += content
+
+                                # Anthropic format
+                                elif obj.get("type") == "content_block_delta":
+                                    text = obj.get("delta", {}).get("partial_text", "")
+                                    if text:
+                                        full += text
+                            except (json.JSONDecodeError, IndexError):
+                                pass
+                return full
+        except Exception as exc:
+            logger.error("stream_to %s failed: %s", url, exc)
+            return f"[Error] {exc}"
 
     # ------------------------------------------------------------------
     # Internal HTTP helpers
