@@ -20,7 +20,7 @@ class WidgetPalette(QTreeWidget):
         self.setDragEnabled(True)
         self.setRootIsDecorated(False)
         self.setIndentation(8)
-        self.setIconSize(QSize(52, 38))
+        self.setIconSize(QSize(46, 32))
         self.setSelectionMode(QAbstractItemView.SingleSelection)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setAccessibleName("Widget library")
@@ -36,9 +36,13 @@ class WidgetPalette(QTreeWidget):
         for category in registry.categories():
             category_item = QTreeWidgetItem([category])
             category_item.setFlags(category_item.flags() & ~Qt.ItemIsDragEnabled & ~Qt.ItemIsSelectable)
-            category_item.setSizeHint(0, QSize(0, 32))
+            category_item.setSizeHint(0, QSize(0, 26))
+            # Category rows are captions, not entries: small, letter-spaced
+            # and muted, the way OpenDesign heads each inspector section.
             heading_font = category_item.font(0)
             heading_font.setWeight(QFont.DemiBold)
+            heading_font.setPointSizeF(7.5)
+            heading_font.setLetterSpacing(QFont.AbsoluteSpacing, 1.0)
             category_item.setFont(0, heading_font)
             category_item.setData(0, Qt.UserRole + 1, category)
             self.addTopLevelItem(category_item)
@@ -47,7 +51,7 @@ class WidgetPalette(QTreeWidget):
                     continue
                 item = QTreeWidgetItem([definition.display_name])
                 item.setData(0, Qt.UserRole, definition.type)
-                item.setSizeHint(0, QSize(0, 54))
+                item.setSizeHint(0, QSize(0, 40))
                 bindings = ", ".join(definition.bindable_properties) or "None"
                 item.setToolTip(
                     0,
@@ -146,9 +150,14 @@ class WidgetPalette(QTreeWidget):
                     item = category_item.child(row)
                     definition = self.registry.get(item.data(0, Qt.UserRole))
                     pixmap = QPixmap(104, 76)
-                    pixmap.fill(QColor(color("background", theme)))
+                    pixmap.fill(Qt.transparent)
                     painter = QPainter(pixmap)
                     painter.setRenderHint(QPainter.Antialiasing)
+                    # A rounded thumbnail well one step below the panel, so each
+                    # preview reads as a tile rather than a square cut-out.
+                    painter.setPen(QColor(color("border", theme)))
+                    painter.setBrush(QColor(color("background", theme)))
+                    painter.drawRoundedRect(QRectF(0.5, 0.5, 103, 75), 8, 8)
                     painter.save()
                     preview = widget_previews.painter_for(definition.type)
                     if preview:

@@ -6,13 +6,14 @@ import json
 import os
 import re
 import shutil
+import tempfile
 
 import shiboken6
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSpinBox,
+    QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSpinBox,
     QFrame, QPlainTextEdit, QScrollArea, QSizePolicy, QSplitter, QToolBar,
     QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -74,6 +75,74 @@ class ComboBox(_WheelGuard, QComboBox):
     """A QComboBox whose selection cannot be changed by scrolling past it."""
 
 
+def _rgba(hex_color: str, alpha: float) -> str:
+    """``#rrggbb`` token + alpha -> ``rgba(r,g,b,a)`` for QSS tints."""
+    c = QColor(hex_color)
+    return f"rgba({c.red()},{c.green()},{c.blue()},{alpha:.2f})"
+
+
+def _icon_file(name: str, size: int, color_hex: str) -> str:
+    """Render a Tabler icon to a PNG on disk and return a QSS-safe path.
+
+    ``QComboBox::down-arrow`` and tree branch indicators only take
+    ``image: url(...)``, so the glyph has to exist as a file; one per
+    (name, size, colour) is cached in the temp dir. Forward slashes: QSS
+    chokes on Windows backslashes.
+    """
+    key = color_hex.lstrip("#").replace("(", "").replace(")", "").replace(",", "_").replace(".", "")
+    path = os.path.join(tempfile.gettempdir(), f"eds-designer-{name}-{size}-{key}.png")
+    if not os.path.exists(path):
+        icon(name, size, color_hex).pixmap(size, size).save(path, "PNG")
+    return path.replace("\\", "/")
+
+
+def _field_label(text: str) -> QLabel:
+    """The muted left-hand caption of an inspector row."""
+    label = QLabel(text)
+    label.setObjectName("propLabel")
+    return label
+
+
+def _mark(widget, name: str) -> None:
+    """Give an inspector editor the shared field skin."""
+    widget.setObjectName(name)
+    widget.setFixedHeight(30)
+
+
+class _EmptyState(QFrame):
+    """A quiet, centred hint for a panel with nothing to show yet.
+
+    Mirrors the AI Design tab's empty canvas state: an icon disc, a short
+    title and one line of body copy, rather than a bare sentence in a form.
+    """
+
+    def __init__(self, icon_name: str, title: str, body: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("emptyState")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 28, 16, 28)
+        layout.setSpacing(6)
+        layout.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+        self.icon = QLabel()
+        self.icon.setObjectName("emptyStateIcon")
+        self.icon.setFixedSize(40, 40)
+        self.icon.setAlignment(Qt.AlignCenter)
+        self.icon_name = icon_name
+        layout.addWidget(self.icon, 0, Qt.AlignHCenter)
+        heading = QLabel(title)
+        heading.setObjectName("emptyStateTitle")
+        heading.setAlignment(Qt.AlignHCenter)
+        layout.addWidget(heading)
+        text = QLabel(body)
+        text.setObjectName("emptyStateBody")
+        text.setAlignment(Qt.AlignHCenter)
+        text.setWordWrap(True)
+        layout.addWidget(text)
+
+    def retheme(self, theme: str) -> None:
+        self.icon.setPixmap(icon(self.icon_name, 18, color("primary", theme)).pixmap(18, 18))
+
+
 class PropertyEditor(QWidget):
     propertyEdited = Signal(str, object)
     geometryEdited = Signal(str, object)
@@ -81,9 +150,20 @@ class PropertyEditor(QWidget):
 
     def __init__(self, registry, parent=None):
         super().__init__(parent)
+        self.setObjectName("propertyEditor")
+        # The scroll area sizes this to its viewport; a form that insists on
+        # its own minimum width is clipped on the right instead of squeezed.
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.registry, self.widget_model = registry, None
+        self.theme = "dark"
         self.form = QFormLayout(self)
-        self.form.setContentsMargins(6, 6, 6, 6)
+        self.form.setContentsMargins(12, 10, 12, 12)
+        self.form.setHorizontalSpacing(12)
+        self.form.setVerticalSpacing(6)
+        self.form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.form.setFormAlignment(Qt.AlignTop)
+        self.form.setRowWrapPolicy(QFormLayout.DontWrapRows)
+        self.form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
 
     def set_widget(self, widget, positioned=False):
         self.widget_model = widget
@@ -91,35 +171,75 @@ class PropertyEditor(QWidget):
         while self.form.rowCount():
             self.form.removeRow(0)
         if widget is None:
-            self.form.addRow(QLabel("Select a widget to edit its properties."))
+            empty = _EmptyState("pointer", "Nothing selected",
+                                "Click a widget on the canvas, or pick one in Layers, to edit it here.")
+            empty.retheme(self.theme)
+            self.form.addRow(empty)
             self._sync_form_height()
             return
+        definition = self.registry.get(widget.type)
+        self.form.addRow(self._heading(definition.display_name if definition else widget.type, widget))
         identifier = QLineEdit(widget.id)
+        _mark(identifier, "propField")
         identifier.editingFinished.connect(lambda e=identifier: self.propertyEdited.emit("id", e.text()))
-        self.form.addRow("ID", identifier)
-        locked = QCheckBox()
+        self.form.addRow(_field_label("ID"), identifier)
+        locked = QCheckBox("Fixed on canvas")
+        locked.setObjectName("propSwitch")
         locked.setChecked(widget.locked)
         locked.toggled.connect(lambda value: self.propertyEdited.emit("locked", value))
-        self.form.addRow("Locked", locked)
-        for key in ("x", "y", "width", "height"):
-            editor = SpinBox()
-            editor.setRange(-100000 if key in ("x", "y") else 1, 100000)
-            editor.setValue(round(widget.geometry[key]))
-            if positioned and key in ("x", "y"):
-                editor.setEnabled(False)
-                editor.setToolTip("The parent Row, Column or Grid places this widget.")
-            else:
-                editor.valueChanged.connect(lambda value, name=key: self.geometryEdited.emit(name, value))
-            self.form.addRow(key.capitalize(), editor)
-        definition = self.registry.get(widget.type)
+        self.form.addRow(_field_label("Locked"), locked)
+        # Position and size read as two pairs, the way every design tool
+        # shows them, rather than four stacked rows fighting for height.
+        self.form.addRow(_field_label("Position"), self._pair(widget, ("x", "y"), positioned))
+        self.form.addRow(_field_label("Size"), self._pair(widget, ("width", "height"), False))
         if not definition:
             self._sync_form_height()
             return
+        if definition.properties:
+            self.form.addRow(self._divider(definition.display_name))
         for name, value_type in definition.properties.items():
             value = widget.properties.get(name, definition.defaults.get(name))
             editor = self._editor(definition, name, value_type, value)
-            self.form.addRow(name, editor)
+            self.form.addRow(_field_label(name), editor)
         self._sync_form_height()
+
+    def _heading(self, title, widget):
+        head = QWidget()
+        head.setObjectName("inspectorHeading")
+        row = QHBoxLayout(head); row.setContentsMargins(0, 0, 0, 4); row.setSpacing(8)
+        name = QLabel(title); name.setObjectName("inspectorTitle")
+        row.addWidget(name)
+        if widget.type != title:
+            kind = QLabel(widget.type); kind.setObjectName("chip")
+            row.addWidget(kind, 0, Qt.AlignVCenter)
+        row.addStretch()
+        return head
+
+    def _divider(self, text):
+        label = QLabel(text.upper())
+        label.setObjectName("inspectorSection")
+        return label
+
+    def _pair(self, widget, keys, positioned):
+        pair = QWidget()
+        row = QHBoxLayout(pair); row.setContentsMargins(0, 0, 0, 0); row.setSpacing(6)
+        for key in keys:
+            cell = QFrame(); cell.setObjectName("pairField"); cell.setFixedHeight(30)
+            inner = QHBoxLayout(cell); inner.setContentsMargins(8, 0, 4, 0); inner.setSpacing(4)
+            tag = QLabel(key[0].upper()); tag.setObjectName("pairTag")
+            editor = SpinBox(); editor.setObjectName("pairValue")
+            editor.setButtonSymbols(QSpinBox.NoButtons)
+            editor.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            editor.setRange(-100000 if key in ("x", "y") else 1, 100000)
+            editor.setValue(round(widget.geometry[key]))
+            if positioned and key in ("x", "y"):
+                cell.setEnabled(False)
+                cell.setToolTip("The parent Row, Column or Grid places this widget.")
+            else:
+                editor.valueChanged.connect(lambda value, name=key: self.geometryEdited.emit(name, value))
+            inner.addWidget(tag); inner.addWidget(editor, 1)
+            row.addWidget(cell, 1)
+        return pair
 
     def _sync_form_height(self):
         """Expose dynamic rows to the containing inspector scroll area."""
@@ -133,15 +253,23 @@ class PropertyEditor(QWidget):
     def _editor(self, definition, name, value_type, value):
         if name in definition.choices:
             editor = ComboBox()
+            _mark(editor, "propField")
             editor.addItems(definition.choices[name])
             editor.setCurrentText(str(value or ""))
             editor.currentTextChanged.connect(lambda v: self.propertyEdited.emit(name, v))
         elif name in definition.color_properties:
             editor = QWidget()
-            row = QHBoxLayout(editor); row.setContentsMargins(0, 0, 0, 0); row.setSpacing(4)
+            row = QHBoxLayout(editor); row.setContentsMargins(0, 0, 0, 0); row.setSpacing(6)
             text = QLineEdit(str(value or "")); text.setPlaceholderText("Theme default or #RRGGBB")
-            choose = QPushButton("Color"); choose.setToolTip(f"Choose {name}")
-            choose.setFixedHeight(36)
+            _mark(text, "propField")
+            swatch = QToolButton(); swatch.setObjectName("swatch"); swatch.setFixedSize(30, 30)
+            swatch.setCursor(Qt.PointingHandCursor); swatch.setToolTip(f"Choose {name}")
+            def paint_swatch():
+                chosen = QColor(text.text())
+                fill = chosen.name() if chosen.isValid() else "transparent"
+                swatch.setStyleSheet(f"QToolButton#swatch {{ background: {fill}; }}")
+            paint_swatch()
+            text.textChanged.connect(lambda _t: paint_swatch())
             text.editingFinished.connect(lambda e=text: self.propertyEdited.emit(name, e.text().strip()))
             def pick_color():
                 initial = QColor(text.text()) if QColor(text.text()).isValid() else QColor("#3b82f6")
@@ -149,22 +277,25 @@ class PropertyEditor(QWidget):
                 if selected.isValid():
                     text.setText(selected.name(QColor.HexArgb) if selected.alpha() < 255 else selected.name())
                     self.propertyEdited.emit(name, text.text())
-            choose.clicked.connect(pick_color)
-            row.addWidget(text, 1); row.addWidget(choose)
+            swatch.clicked.connect(pick_color)
+            row.addWidget(swatch); row.addWidget(text, 1)
         elif name in definition.asset_properties:
             editor = QWidget()
-            row = QHBoxLayout(editor); row.setContentsMargins(0, 0, 0, 0); row.setSpacing(4)
+            row = QHBoxLayout(editor); row.setContentsMargins(0, 0, 0, 0); row.setSpacing(6)
             text = QLineEdit(str(value or "")); text.setPlaceholderText("assets/image.png")
-            browse = QPushButton("Browse"); browse.setToolTip("Select and copy an image into project assets")
-            browse.setFixedHeight(36)
+            _mark(text, "propField")
+            browse = QPushButton("Browse"); browse.setObjectName("secondaryAction")
+            browse.setToolTip("Select and copy an image into project assets")
+            browse.setFixedHeight(30); browse.setCursor(Qt.PointingHandCursor)
             text.editingFinished.connect(lambda e=text: self.propertyEdited.emit(name, e.text().strip()))
             browse.clicked.connect(lambda: self.assetRequested.emit(name))
             row.addWidget(text, 1); row.addWidget(browse)
         elif value_type is bool:
-            editor = QCheckBox(); editor.setChecked(bool(value))
+            editor = QCheckBox(); editor.setObjectName("propSwitch"); editor.setChecked(bool(value))
             editor.toggled.connect(lambda v: self.propertyEdited.emit(name, v))
         elif value_type is int:
-            editor = SpinBox(); editor.setRange(-100000, 100000); editor.setValue(int(value or 0))
+            editor = SpinBox(); _mark(editor, "propField"); editor.setButtonSymbols(QSpinBox.NoButtons)
+            editor.setRange(-100000, 100000); editor.setValue(int(value or 0))
             editor.valueChanged.connect(lambda v: self.propertyEdited.emit(name, v))
         elif value_type is float:
             try:
@@ -174,9 +305,12 @@ class PropertyEditor(QWidget):
                 editor.editingFinished.connect(lambda e=editor: self.propertyEdited.emit(name, e.text()))
                 editor.setPlaceholderText("Numeric value or binding expression")
             else:
+                editor.setButtonSymbols(QDoubleSpinBox.NoButtons)
                 editor.valueChanged.connect(lambda v: self.propertyEdited.emit(name, v))
+            _mark(editor, "propField")
         else:
             editor = QLineEdit(str(value or ""))
+            _mark(editor, "propField")
             editor.editingFinished.connect(lambda e=editor: self.propertyEdited.emit(name, e.text()))
             if name in ("color", "background"):
                 editor.setPlaceholderText("#RRGGBB")
@@ -188,20 +322,39 @@ class BindingEditor(QWidget):
 
     def __init__(self, registry, parent=None):
         super().__init__(parent)
+        self.setObjectName("bindingEditor")
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.registry, self.widget_model, self.tags = registry, None, []
         form = QFormLayout(self)
+        form.setContentsMargins(12, 10, 12, 12)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(6)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        form.setRowWrapPolicy(QFormLayout.DontWrapRows)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.property = ComboBox(); self.tag = ComboBox(); self.tag.setEditable(True)
         self.search = QLineEdit(); self.search.setPlaceholderText("Search tags")
-        self.format = QLineEdit(); self.multiplier = DoubleSpinBox(); self.offset = DoubleSpinBox()
+        self.search.setClearButtonEnabled(True)
+        self.format = QLineEdit(); self.format.setPlaceholderText("e.g. {:.1f}")
+        self.multiplier = DoubleSpinBox(); self.offset = DoubleSpinBox()
         self.multiplier.setRange(-1e9, 1e9); self.multiplier.setValue(1.0)
         self.offset.setRange(-1e9, 1e9)
         self.unit = QLineEdit(); self.warning = QLineEdit(); self.critical = QLineEdit()
+        self.unit.setPlaceholderText("V, °C, rpm"); self.warning.setPlaceholderText("threshold")
+        self.critical.setPlaceholderText("threshold")
         for label, editor in (("Property", self.property), ("Search", self.search), ("Tag", self.tag),
                               ("Format", self.format), ("Multiplier", self.multiplier), ("Offset", self.offset),
                               ("Unit", self.unit), ("Warning", self.warning), ("Critical", self.critical)):
-            form.addRow(label, editor)
-        actions = QHBoxLayout(); bind = QPushButton("Apply binding"); remove = QPushButton("Remove")
-        actions.addWidget(bind); actions.addWidget(remove); form.addRow(actions)
+            _mark(editor, "propField")
+            if isinstance(editor, QDoubleSpinBox):
+                editor.setButtonSymbols(QDoubleSpinBox.NoButtons)
+            form.addRow(_field_label(label), editor)
+        actions = QHBoxLayout(); actions.setContentsMargins(0, 6, 0, 0); actions.setSpacing(6)
+        bind = QPushButton("Apply binding"); bind.setObjectName("primaryAction")
+        remove = QPushButton("Remove"); remove.setObjectName("secondaryAction")
+        for button in (bind, remove):
+            button.setFixedHeight(30); button.setCursor(Qt.PointingHandCursor)
+        actions.addWidget(bind, 1); actions.addWidget(remove); form.addRow(actions)
         self.search.textChanged.connect(self._filter)
         self.property.currentTextChanged.connect(self._load_binding)
         bind.clicked.connect(self._apply); remove.clicked.connect(self._remove)
@@ -236,8 +389,6 @@ class BindingEditor(QWidget):
 
     def _remove(self):
         if self.property.currentText(): self.bindingEdited.emit(self.property.currentText(), None)
-
-
 class DesignerWorkspace(QWidget):
     previewRequested = Signal(str)
     deployRequested = Signal(str)
@@ -271,40 +422,63 @@ class DesignerWorkspace(QWidget):
     def _build_ui(self):
         self.setObjectName("designerWorkspace")
         # This workspace already lives inside the Studio page's padded content
-        # area. A second inset made the three command rows look detached and
-        # needlessly reduced the working canvas.
-        layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(4)
+        # area. A second inset made the command rows look detached and
+        # needlessly reduced the working canvas. Rows and panes touch, and a
+        # hairline between them is the only chrome -- the same surface
+        # language as the AI Design tab.
+        layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
         primary = QToolBar("Designer file and edit actions")
-        canvas_bar = QToolBar("Designer page, screen and view actions")
-        arrange_bar = QToolBar("Designer arrange actions")
+        canvas_bar = QToolBar("Designer page, screen, view and arrange actions")
         primary.setObjectName("designerPrimaryToolbar")
         canvas_bar.setObjectName("designerCanvasToolbar")
-        arrange_bar.setObjectName("designerArrangeToolbar")
-        for bar in (primary, canvas_bar, arrange_bar):
+        for bar, height in ((primary, 46), (canvas_bar, 40)):
             bar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-            bar.setFixedHeight(44)
+            bar.setMovable(False)
+            bar.setFloatable(False)
+            bar.setIconSize(QSize(16, 16))
+            bar.setFixedHeight(height)
             # Toolbars pack their children edge to edge by default, which ran
             # one group of controls straight into the next.
-            bar.layout().setSpacing(4)
+            bar.layout().setSpacing(2)
             # The stylesheet owns toolbar padding. A layout inset here adds a
             # second, platform-dependent gutter around every row.
             bar.layout().setContentsMargins(0, 0, 0, 0)
+        self._designer_toolbutton_icons = {}
+        self._designer_empty_states = []
 
-        def action(bar, text, slot, icon_name="adjustments", shortcut=None, checkable=False):
+        def action(bar, text, slot, icon_name="adjustments", shortcut=None, checkable=False, compact=False):
             item = bar.addAction(icon(icon_name), text); item.triggered.connect(slot); item.setCheckable(checkable)
             self._designer_icon_names[item] = icon_name
-            item.setToolTip(text + (f" ({shortcut})" if shortcut else ""))
+            item.setToolTip(text + (f"  {shortcut}" if shortcut else ""))
             if shortcut: item.setShortcut(QKeySequence(shortcut))
+            button = bar.widgetForAction(item)
+            if button is not None:
+                button.setCursor(Qt.PointingHandCursor)
+                if compact:
+                    # Icon-only, square, the label lives in the tooltip. This
+                    # is how OpenDesign's viewer toolbar keeps a dozen tools
+                    # in one quiet row.
+                    button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+                    button.setProperty("compact", True)
+                    button.setFixedSize(28, 28)
             return item
 
-        def field(bar, text, widget, width=0, tooltip=""):
-            """A labelled input, spaced away from whatever precedes it."""
-            label = QLabel(text)
-            label.setContentsMargins(6, 0, 4, 0)
-            if tooltip:
-                label.setToolTip(tooltip); widget.setToolTip(tooltip)
+        def caption(bar, text, tooltip=""):
+            label = QLabel(text.upper())
+            label.setObjectName("barCaption")
+            label.setContentsMargins(8, 0, 6, 0)
             label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+            if tooltip:
+                label.setToolTip(tooltip)
             bar.addWidget(label)
+            return label
+
+        def field(bar, text, widget, width=0, tooltip=""):
+            """A captioned input, spaced away from whatever precedes it."""
+            caption(bar, text, tooltip)
+            if tooltip:
+                widget.setToolTip(tooltip)
+            widget.setObjectName("barField")
             if width:
                 widget.setFixedWidth(width)
             # Match the buttons exactly: a field even a few pixels taller than
@@ -313,19 +487,24 @@ class DesignerWorkspace(QWidget):
             bar.addWidget(widget)
             return widget
 
+        def spacer(bar):
+            gap = QWidget(); gap.setObjectName("barSpacer")
+            gap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            bar.addWidget(gap)
+
         # -- row 1: the project, then editing, then what leaves the Studio ----
-        action(primary, "New UI", self.new_ui, "file-code")
+        action(primary, "New", self.new_ui, "file-plus")
         action(primary, "Open", self.open_ui, "folder-open")
-        action(primary, "Save", self.save, "download", "Ctrl+S")
+        action(primary, "Save", self.save, "device-floppy", "Ctrl+S")
         primary.addSeparator()
         self.project_name = QLineEdit()
         self.project_name.setPlaceholderText("deployment-name")
         self.project_name.editingFinished.connect(self._project_name_edited)
-        field(primary, "Project", self.project_name, 120,
+        field(primary, "Project", self.project_name, 150,
               "Project name used for deployment and release files")
         primary.addSeparator()
-        undo = self.undo_stack.createUndoAction(self, "Undo"); undo.setIcon(icon("history")); self._designer_icon_names[undo] = "history"; primary.addAction(undo)
-        redo = self.undo_stack.createRedoAction(self, "Redo"); redo.setIcon(icon("rotate-clockwise")); self._designer_icon_names[redo] = "rotate-clockwise"; primary.addAction(redo)
+        undo = self.undo_stack.createUndoAction(self, "Undo"); undo.setIcon(icon("arrow-back-up")); self._designer_icon_names[undo] = "arrow-back-up"; primary.addAction(undo)
+        redo = self.undo_stack.createRedoAction(self, "Redo"); redo.setIcon(icon("arrow-forward-up")); self._designer_icon_names[redo] = "arrow-forward-up"; primary.addAction(redo)
         # createUndoAction keeps rewriting the label to "Undo <last command>",
         # so the row's width depended on the last edit -- "Undo Reparent Text"
         # is wide enough to push Deploy into the overflow menu, and the button
@@ -346,26 +525,44 @@ class DesignerWorkspace(QWidget):
             button = primary.widgetForAction(item)
             if button is not None:
                 button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+                button.setProperty("compact", True)
+                button.setFixedSize(28, 28)
+                button.setCursor(Qt.PointingHandCursor)
         primary.addSeparator()
-        action(primary, "Cut", self.cut, "x", "Ctrl+X")
-        action(primary, "Copy", self.copy, "clipboard-text", "Ctrl+C")
-        action(primary, "Paste", self.paste, "clipboard-text", "Ctrl+V")
+        action(primary, "Cut", self.cut, "scissors", "Ctrl+X", compact=True)
+        action(primary, "Copy", self.copy, "copy", "Ctrl+C", compact=True)
+        action(primary, "Paste", self.paste, "clipboard", "Ctrl+V", compact=True)
+        action(primary, "Duplicate", self.duplicate, "layout-grid", "Ctrl+D", compact=True)
         # Keep deletion explicit. A global Delete QAction shortcut can repeat
         # while focus moves through the object tree, removing each newly
         # selected row in turn. The toolbar button and context menu remain.
-        action(primary, "Delete", self.delete_selected, "trash")
-        action(primary, "Duplicate", self.duplicate, "plus", "Ctrl+D")
+        action(primary, "Delete", self.delete_selected, "trash", compact=True)
+        # Push the actions that leave the Studio to the right, where they read
+        # as the end of the workflow rather than one more editing button.
+        spacer(primary)
+        action(primary, "Preview", self.preview, "eye")
+        action(primary, "Generate", self.generate, "file-code")
+        self.deploy_button = QPushButton("Deploy")
+        self.deploy_button.setObjectName("primaryAction")
+        self.deploy_button.setCursor(Qt.PointingHandCursor)
+        self.deploy_button.setFixedHeight(30)
+        self.deploy_button.setToolTip("Generate, package and install this design on the connected panel")
+        self.deploy_button.clicked.connect(self.deploy)
+        self._designer_toolbutton_icons[self.deploy_button] = ("rocket", "primaryForeground")
+        primary.addWidget(self.deploy_button)
 
-        # -- row 2: pages, the screen being designed for, and the view -------
-        action(canvas_bar, "New Page", self.new_page, "folder-plus")
-        action(canvas_bar, "Duplicate Page", self.duplicate_page, "clipboard-text")
-        action(canvas_bar, "Delete Page", self.delete_page, "trash")
+        # -- row 2: pages, the screen being designed for, view and arrange ---
         self.pages = ComboBox(); self.pages.currentIndexChanged.connect(self.change_page)
-        field(canvas_bar, "Page", self.pages, 130, "The page being edited")
+        field(canvas_bar, "Page", self.pages, 140, "The page being edited")
+        action(canvas_bar, "New Page", self.new_page, "plus", compact=True)
+        action(canvas_bar, "Duplicate Page", self.duplicate_page, "copy", compact=True)
+        action(canvas_bar, "Delete Page", self.delete_page, "trash", compact=True)
         canvas_bar.addSeparator()
         self.screen_width = SpinBox(); self.screen_width.setRange(64, 16384); self.screen_width.setValue(1280)
+        self.screen_width.setButtonSymbols(QSpinBox.NoButtons)
         field(canvas_bar, "W", self.screen_width, 78, "Design width in pixels")
         self.screen_height = SpinBox(); self.screen_height.setRange(64, 16384); self.screen_height.setValue(800)
+        self.screen_height.setButtonSymbols(QSpinBox.NoButtons)
         field(canvas_bar, "H", self.screen_height, 78, "Design height in pixels")
         self.screen_theme = ComboBox(); self.screen_theme.addItems(["dark", "light"])
         field(canvas_bar, "Theme", self.screen_theme, 88,
@@ -374,10 +571,9 @@ class DesignerWorkspace(QWidget):
         self.screen_width.valueChanged.connect(self._screen_changed); self.screen_height.valueChanged.connect(self._screen_changed)
         self.screen_theme.currentTextChanged.connect(self._screen_changed)
         canvas_bar.addSeparator()
-        self.grid_action = action(canvas_bar, "Grid", self.toggle_grid, "adjustments", checkable=True); self.grid_action.setChecked(True)
-        self.snap_action = action(canvas_bar, "Snap", self.toggle_snap, "plug-connected", checkable=True); self.snap_action.setChecked(True)
-
-        # -- row 3: arranging the selection, and what leaves the Studio ------
+        self.grid_action = action(canvas_bar, "Grid", self.toggle_grid, "grid-dots", checkable=True, compact=True); self.grid_action.setChecked(True)
+        self.snap_action = action(canvas_bar, "Snap", self.toggle_snap, "magnet", checkable=True, compact=True); self.snap_action.setChecked(True)
+        canvas_bar.addSeparator()
         # Ten align actions as separate buttons is more than any row can hold
         # at the width this pane actually gets inside the Studio, and Qt hides
         # the overflow behind a chevron most people never find. One menu, and
@@ -398,14 +594,15 @@ class DesignerWorkspace(QWidget):
             item.triggered.connect(lambda _checked=False, m=mode: self.align(m))
         self.align_button = QToolButton()
         self.align_button.setText("Align")
-        self.align_button.setIcon(icon("adjustments"))
-        self._designer_toolbutton_icons = {self.align_button: "adjustments"}
+        self.align_button.setIcon(icon("layout-align-center"))
+        self._designer_toolbutton_icons[self.align_button] = ("layout-align-center", "foreground")
         self.align_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.align_button.setPopupMode(QToolButton.InstantPopup)
         self.align_button.setMenu(self.align_menu)
+        self.align_button.setCursor(Qt.PointingHandCursor)
+        self.align_button.setFixedHeight(28)
         self.align_button.setToolTip("Align, match size or distribute the selection")
-        arrange_bar.addWidget(self.align_button)
-        arrange_bar.addSeparator()
+        canvas_bar.addWidget(self.align_button)
         # Text alignment, one click each. It is also a property in the
         # inspector, but setting how a caption sits in its box is a formatting
         # decision made while looking at the canvas, not while reading a list
@@ -416,66 +613,66 @@ class DesignerWorkspace(QWidget):
             ("Centre Text", "Text.AlignHCenter", "align-center"),
             ("Align Right", "Text.AlignRight", "align-right"),
         ):
-            item = action(arrange_bar, label,
+            item = action(canvas_bar, label,
                           lambda _checked=False, v=value: self.set_text_alignment(v),
-                          icon_name)
+                          icon_name, compact=True)
             item.setCheckable(True)
-            button = arrange_bar.widgetForAction(item)
-            if button is not None:
-                button.setToolButtonStyle(Qt.ToolButtonIconOnly)
             self._text_align_actions[value] = item
-        arrange_bar.addSeparator()
-        action(arrange_bar, "Front", lambda: self.z_order("front"), "upload")
-        action(arrange_bar, "Back", lambda: self.z_order("back"), "download")
-        arrange_bar.addSeparator()
-        zoom_out = action(arrange_bar, "−", lambda: self.view.set_zoom(round(self.view.transform().m11()*100)-10), "x")
-        zoom_out.setToolTip("Zoom out")
+        canvas_bar.addSeparator()
+        action(canvas_bar, "Bring to Front", lambda: self.z_order("front"), "arrow-bar-to-up", compact=True)
+        action(canvas_bar, "Send to Back", lambda: self.z_order("back"), "arrow-bar-to-down", compact=True)
+        spacer(canvas_bar)
+        action(canvas_bar, "Zoom out", lambda: self.view.set_zoom(round(self.view.transform().m11()*100)-10), "zoom-out", compact=True)
         self.zoom_label = QLabel("100%")
-        self.zoom_label.setContentsMargins(4, 0, 4, 0)
-        self.zoom_label.setMinimumWidth(48)
+        self.zoom_label.setObjectName("zoomLabel")
+        self.zoom_label.setContentsMargins(2, 0, 2, 0)
+        self.zoom_label.setMinimumWidth(44)
         self.zoom_label.setAlignment(Qt.AlignCenter)
-        arrange_bar.addWidget(self.zoom_label)
-        zoom_in = action(arrange_bar, "+", lambda: self.view.set_zoom(round(self.view.transform().m11()*100)+10), "plus")
-        zoom_in.setToolTip("Zoom in")
-        for item in (zoom_out, zoom_in):
-            button = arrange_bar.widgetForAction(item)
-            if button is not None:
-                button.setToolButtonStyle(Qt.ToolButtonTextOnly)
-                button.setFixedWidth(34)
-        action(arrange_bar, "Fit", self.view_fit, "device-desktop")
-        # Push the actions that leave the Studio to the right, where they read
-        # as the end of the workflow rather than one more editing button.
-        spacer = QWidget(); spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        arrange_bar.addWidget(spacer)
-        action(arrange_bar, "Preview", self.preview, "player-play")
-        action(arrange_bar, "Generate", self.generate, "file-code")
-        action(arrange_bar, "Deploy", self.deploy, "upload")
+        canvas_bar.addWidget(self.zoom_label)
+        action(canvas_bar, "Zoom in", lambda: self.view.set_zoom(round(self.view.transform().m11()*100)+10), "zoom-in", compact=True)
+        action(canvas_bar, "Fit to view", self.view_fit, "maximize", compact=True)
 
-        layout.addWidget(primary); layout.addWidget(canvas_bar); layout.addWidget(arrange_bar)
-        split = QSplitter(Qt.Horizontal); split.setObjectName("designerMainSplitter"); split.setHandleWidth(4)
-        left = QSplitter(Qt.Vertical); left.setHandleWidth(4)
+        layout.addWidget(primary); layout.addWidget(canvas_bar)
+        split = QSplitter(Qt.Horizontal); split.setObjectName("designerMainSplitter"); split.setHandleWidth(1)
+        split.setChildrenCollapsible(False)
+
+        # -- left: the widget library over the layer tree ----------------------
+        sidebar = QFrame(); sidebar.setObjectName("designerSidebar")
+        sidebar_layout = QVBoxLayout(sidebar); sidebar_layout.setContentsMargins(0, 0, 0, 0); sidebar_layout.setSpacing(0)
+        left = QSplitter(Qt.Vertical); left.setObjectName("designerSideSplitter"); left.setHandleWidth(1)
+        left.setChildrenCollapsible(False)
+        sidebar_layout.addWidget(left)
         self.palette = WidgetPalette(self.registry); self.palette.setObjectName("designerPalette")
-        library = QWidget(); library_layout = QVBoxLayout(library)
-        library_layout.setContentsMargins(0, 0, 0, 0); library_layout.setSpacing(6)
-        guidance = QLabel("Enter adds the selected widget · Ctrl+F toggles favorite")
-        guidance.setWordWrap(True)
-        library_layout.addWidget(guidance)
+        library = QWidget(); library.setObjectName("panelBody"); library_layout = QVBoxLayout(library)
+        library_layout.setContentsMargins(0, 0, 0, 0); library_layout.setSpacing(0)
+        search_row = QWidget(); search_row.setObjectName("panelBody")
+        search_layout = QHBoxLayout(search_row); search_layout.setContentsMargins(10, 8, 10, 8); search_layout.setSpacing(6)
         self.palette_search = QLineEdit()
+        self.palette_search.setObjectName("panelSearch")
         self.palette_search.setPlaceholderText("Search widgets…")
         self.palette_search.setClearButtonEnabled(True)
+        self.palette_search.setFixedHeight(30)
         self.palette_search.setAccessibleName("Search widgets by name or category")
+        self.palette_search.setToolTip("Ctrl+L focuses search · Enter adds the selected widget · Ctrl+F toggles favorite")
         self.palette_search.textChanged.connect(self.palette.set_filter)
-        library_layout.addWidget(self.palette_search)
-        library_header = QHBoxLayout()
-        self.palette_count = QLabel(f"{len(self.registry.definitions())} widgets")
-        self.palette_favorites = QPushButton("Favorites")
+        self._palette_search_icon = self.palette_search.addAction(icon("search", 14), QLineEdit.LeadingPosition)
+        search_layout.addWidget(self.palette_search, 1)
+        self.palette_favorites = QToolButton()
+        self.palette_favorites.setObjectName("iconToggle")
         self.palette_favorites.setCheckable(True)
-        self.palette_favorites.setToolTip("Show favorites. Right-click a widget to favorite it.")
+        self.palette_favorites.setFixedSize(30, 30)
+        self.palette_favorites.setCursor(Qt.PointingHandCursor)
+        self.palette_favorites.setToolTip("Show favorites only. Right-click a widget or press Ctrl+F to favorite it.")
         self.palette_favorites.toggled.connect(self.palette.set_favorites_only)
-        library_header.addWidget(self.palette_count); library_header.addStretch()
-        library_header.addWidget(self.palette_favorites)
-        library_layout.addLayout(library_header)
+        self._designer_toolbutton_icons[self.palette_favorites] = ("star", "mutedForeground")
+        search_layout.addWidget(self.palette_favorites)
+        library_layout.addWidget(search_row)
+        self.palette_count = QLabel(f"{len(self.registry.definitions())} widgets")
+        self.palette_count.setObjectName("panelMeta")
         self.palette_empty = QLabel("No matching widgets.\nTry another search or turn off Favorites.")
+        self.palette_empty.setObjectName("panelHint")
+        self.palette_empty.setAlignment(Qt.AlignCenter)
+        self.palette_empty.setContentsMargins(12, 18, 12, 18)
         self.palette_empty.setWordWrap(True); self.palette_empty.hide()
         library_layout.addWidget(self.palette_empty)
         library_layout.addWidget(self.palette, 1)
@@ -488,17 +685,35 @@ class DesignerWorkspace(QWidget):
         self._palette_search_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         self._palette_search_shortcut.activated.connect(self.palette_search.setFocus)
         self.tree = QTreeWidget(); self.tree.setObjectName("designerObjectTree"); self.tree.setHeaderLabel("Pages / Objects")
-        left.addWidget(self._group("Widget Library", library)); left.addWidget(self._group("Object Tree", self.tree)); split.addWidget(left)
-        left.setSizes([360, 260])
-        self.scene = DesignerScene(self.registry); self.view = DesignerView(self.scene); self.view.setObjectName("designerCanvas"); split.addWidget(self.view)
-        right = QSplitter(Qt.Vertical); right.setHandleWidth(4)
+        self.tree.setHeaderHidden(True)
+        self.tree.setIndentation(14)
+        self.tree.setUniformRowHeights(True)
+        left.addWidget(self._panel("Widgets", "components", library, trailing=(self.palette_count,)))
+        left.addWidget(self._panel("Layers", "list-tree", self.tree))
+        split.addWidget(sidebar)
+        left.setSizes([420, 260])
+
+        # -- centre: the canvas ------------------------------------------------
+        self.scene = DesignerScene(self.registry); self.view = DesignerView(self.scene); self.view.setObjectName("designerCanvas")
+        self.view.setFrameShape(QFrame.NoFrame)
+        split.addWidget(self.view)
+
+        # -- right: inspector, bindings, chat ----------------------------------
+        inspector = QFrame(); inspector.setObjectName("designerInspector")
+        inspector_layout = QVBoxLayout(inspector); inspector_layout.setContentsMargins(0, 0, 0, 0); inspector_layout.setSpacing(0)
+        right = QSplitter(Qt.Vertical); right.setObjectName("designerSideSplitter"); right.setHandleWidth(1)
+        right.setChildrenCollapsible(False)
+        inspector_layout.addWidget(right)
         self.properties = PropertyEditor(self.registry); self.bindings = BindingEditor(self.registry)
-        right.addWidget(self._group("Properties", self._scroll_panel(self.properties)))
-        right.addWidget(self._group("Tag Binding", self._scroll_panel(self.bindings)))
-        right.addWidget(self._build_chat()); split.addWidget(right)
-        right.setSizes([330, 300, 220])
+        self.selection_chip = QLabel("None"); self.selection_chip.setObjectName("chip")
+        right.addWidget(self._panel("Properties", "sliders", self._scroll_panel(self.properties),
+                                    trailing=(self.selection_chip,)))
+        right.addWidget(self._panel("Tag binding", "link", self._scroll_panel(self.bindings)))
+        right.addWidget(self._build_chat()); split.addWidget(inspector)
+        right.setSizes([360, 300, 220])
         split.setStretchFactor(0, 0); split.setStretchFactor(1, 1); split.setStretchFactor(2, 0)
-        split.setSizes([240, 700, 280]); layout.addWidget(split, 1)
+        sidebar.setMinimumWidth(220); inspector.setMinimumWidth(260)
+        split.setSizes([250, 700, 300]); layout.addWidget(split, 1)
         self.scene.widgetDropped.connect(self.add_widget); self.scene.selectionIdsChanged.connect(self._selection_changed)
         self.scene.geometryEdited.connect(self._geometry_command); self.tree.itemSelectionChanged.connect(self._tree_selection)
         self.tree.itemChanged.connect(self._tree_renamed); self.properties.propertyEdited.connect(self._property_command)
@@ -510,138 +725,269 @@ class DesignerWorkspace(QWidget):
         self.scene.contextMenuRequested.connect(self._show_context_menu)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._tree_context_menu)
-        self.view.zoomChanged.connect(lambda value: self.zoom_label.setText(f"{value}%  "))
-        # Match the Studio's Connect control exactly. QSS height is content-box
-        # based for QPushButton on Windows, so a direct widget height avoids a
-        # two-pixel platform-style expansion.
-        for button in self.findChildren(QPushButton):
-            button.setFixedHeight(36)
+        self.view.zoomChanged.connect(lambda value: self.zoom_label.setText(f"{value}%"))
+        # Nothing is selected yet; say so, rather than leaving a blank panel
+        # whose purpose only becomes clear after the first click.
+        self.properties.set_widget(None)
+        self.bindings.set_widget(None)
 
     def apply_theme(self, theme: str) -> None:
-        """Re-render Designer icons and canvas chrome for the active theme."""
+        """Re-render Designer icons and chrome for the active theme.
+
+        The vocabulary is the AI Design tab's, which in turn mirrors
+        OpenDesign: one panel surface a step above the page, hairline borders
+        between regions instead of boxed groups, muted 28px icon tools that
+        light up on hover, uppercase captions, and the primary colour spent
+        only on the one action that leaves the Studio.
+        """
+        self.theme = theme
+        self.properties.theme = theme
         for action, name in self._designer_icon_names.items():
-            action.setIcon(icon(name))
-        for button, name in getattr(self, "_designer_toolbutton_icons", {}).items():
-            button.setIcon(icon(name))
+            action.setIcon(icon(name, 16, color("foreground", theme)))
+        for button, (name, token) in getattr(self, "_designer_toolbutton_icons", {}).items():
+            button.setIcon(icon(name, 16, color(token, theme)))
+            button.setIconSize(QSize(16, 16))
+        self._palette_search_icon.setIcon(icon("search", 14, color("mutedForeground", theme)))
+        for name, label in getattr(self, "_panel_icons", {}).items():
+            label.setPixmap(icon(name, 14, color("mutedForeground", theme)).pixmap(14, 14))
+        self._send_button.setIcon(icon("send", 14, color("primaryForeground", theme)))
+        for empty in self.findChildren(_EmptyState):
+            empty.retheme(theme)
         # The canvas previews read Shadcn's own tokens, which have a light and
         # a dark column. Point them at the same one the rest of the Studio is
         # showing, or a component previews in the palette it will not ship in.
         widget_previews.set_theme_mode(theme)
         self.palette.apply_theme(theme)
         self.scene.set_theme(theme)
-        panel = color("card", theme); border = color("border", theme)
-        muted = color("muted", theme); foreground = color("foreground", theme)
-        accent = color("accent", theme)
+        t = lambda name: color(name, theme)
+        bg, card, border = t("background"), t("card"), t("border")
+        fg, muted_fg = t("foreground"), t("mutedForeground")
+        primary, primary_fg, info = t("primary"), t("primaryForeground"), t("info")
+        tint = _rgba
+        dark = theme == "dark"
+        # Surfaces: panels sit one step above the page so the canvas well
+        # reads as the deepest layer; fields step up again inside them.
+        surface = card if dark else bg
+        raised = tint(fg, 0.035) if dark else tint(fg, 0.025)
+        hover = tint(fg, 0.06)
+        mono = '"Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace'
+        arrow = _icon_file("chevron-down", 12, muted_fg)
+        closed = _icon_file("chevron-right", 12, muted_fg)
+        opened = _icon_file("chevron-down", 12, muted_fg)
+        check = _icon_file("check", 11, primary_fg)
+        primary_grad = (f"qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {primary}, "
+                        f"stop:1 {tint(info, 0.95)})")
         self.setStyleSheet(f"""
-            QWidget#designerWorkspace {{ background: {color('background', theme)}; }}
-            QToolBar#designerPrimaryToolbar, QToolBar#designerCanvasToolbar,
-            QToolBar#designerArrangeToolbar {{
-                background: {panel}; border: 1px solid {border}; border-radius: 8px;
-                spacing: 4px; padding: 3px 6px;
+            QWidget#designerWorkspace {{ background: {bg}; }}
+            QWidget#designerWorkspace QWidget {{ font-size: 12px; }}
+            QSplitter#designerMainSplitter::handle,
+            QSplitter#designerSideSplitter::handle {{ background: {border}; }}
+            QFrame#designerSidebar, QFrame#designerInspector,
+            QFrame#designerPanel, QWidget#panelBody {{ background: {surface}; border: none; }}
+            QFrame#panelHead {{ background: {surface}; border-bottom: 1px solid {border}; }}
+            QLabel#panelIcon, QLabel#panelCaption, QLabel#panelMeta, QLabel#barCaption,
+            QLabel#zoomLabel, QLabel#panelHint, QLabel#inspectorTitle, QLabel#inspectorSection,
+            QLabel#propLabel, QLabel#pairTag, QLabel#emptyStateTitle, QLabel#emptyStateBody,
+            QWidget#inspectorHeading, QFrame#emptyState, QWidget#barSpacer {{ background: transparent; }}
+            QLabel#panelCaption {{ color: {muted_fg}; font-size: 10px; font-weight: 600; letter-spacing: 1px; }}
+            QLabel#panelMeta {{ color: {muted_fg}; font-size: 11px; font-family: {mono}; }}
+            QLabel#panelHint {{ color: {muted_fg}; font-size: 12px; }}
+
+            /* -- toolbars ---------------------------------------------------- */
+            QToolBar#designerPrimaryToolbar, QToolBar#designerCanvasToolbar {{
+                background: {surface}; border: none; border-bottom: 1px solid {border};
+                padding: 0 10px; spacing: 2px;
             }}
-            /* A visible rule between groups, with air on both sides: without
-               it one cluster of controls ran straight into the next. */
-            QToolBar#designerPrimaryToolbar::separator,
-            QToolBar#designerCanvasToolbar::separator,
-            QToolBar#designerArrangeToolbar::separator {{
-                background: {border}; width: 1px; margin: 6px 7px;
+            QToolBar#designerPrimaryToolbar::separator, QToolBar#designerCanvasToolbar::separator {{
+                background: {border}; width: 1px; margin: 9px 6px;
             }}
-            QToolBar#designerPrimaryToolbar QToolButton,
-            QToolBar#designerCanvasToolbar QToolButton,
-            QToolBar#designerArrangeToolbar QToolButton {{
-                background: transparent; color: {foreground}; border: 1px solid transparent;
-                border-radius: 8px; padding: 0 8px;
-                min-height: 34px; max-height: 34px;
+            QToolBar#designerCanvasToolbar::separator {{ margin: 7px 6px; }}
+            QToolBar QToolButton {{
+                background: transparent; color: {fg}; border: 1px solid transparent;
+                border-radius: 6px; padding: 0 8px; min-height: 28px; max-height: 28px;
             }}
-            QToolBar#designerPrimaryToolbar QToolButton:hover,
-            QToolBar#designerCanvasToolbar QToolButton:hover,
-            QToolBar#designerArrangeToolbar QToolButton:hover {{ background: {accent}; }}
-            QToolBar#designerPrimaryToolbar QToolButton:checked,
-            QToolBar#designerCanvasToolbar QToolButton:checked,
-            QToolBar#designerArrangeToolbar QToolButton:checked {{
-                background: {muted}; border-color: {border};
+            QToolBar QToolButton[compact="true"] {{ padding: 0; min-width: 28px; max-width: 28px; }}
+            QToolBar QToolButton:hover {{ background: {hover}; }}
+            QToolBar QToolButton:pressed {{ background: {tint(primary, 0.15)}; }}
+            QToolBar QToolButton:checked {{ background: {tint(primary, 0.14)}; border-color: {tint(primary, 0.35)}; }}
+            QToolBar QToolButton:disabled {{ color: {tint(fg, 0.35)}; }}
+            QToolBar QToolButton::menu-indicator {{ image: none; width: 0px; }}
+            QLabel#barCaption {{ color: {muted_fg}; font-size: 10px; font-weight: 600; letter-spacing: 1px; }}
+            QLabel#zoomLabel {{ color: {muted_fg}; font-size: 11px; font-family: {mono}; }}
+            QLineEdit#barField, QComboBox#barField, QSpinBox#barField {{
+                background: {raised}; color: {fg}; border: 1px solid {border}; border-radius: 6px;
+                padding: 0 8px; min-height: 24px; max-height: 26px; font-size: 12px;
             }}
-            QToolBar#designerPrimaryToolbar QLabel,
-            QToolBar#designerCanvasToolbar QLabel,
-            QToolBar#designerArrangeToolbar QLabel {{
-                color: {foreground}; background: transparent; font-size: 12px;
+            QSpinBox#barField {{ font-family: {mono}; padding-right: 6px; }}
+            QLineEdit#barField:hover, QComboBox#barField:hover, QSpinBox#barField:hover {{
+                border-color: {tint(primary, 0.55)}; }}
+            QLineEdit#barField:focus, QComboBox#barField:focus, QSpinBox#barField:focus,
+            QComboBox#barField:on {{ border: 1px solid {primary}; background: {tint(primary, 0.06)}; }}
+            QPushButton#primaryAction {{
+                background: {primary_grad}; color: {primary_fg}; border: none; border-radius: 7px;
+                padding: 0 14px; font-size: 12px; font-weight: 600;
+                min-height: 30px; max-height: 30px; height: 30px;
             }}
-            QToolBar#designerPrimaryToolbar QLineEdit,
-            QToolBar#designerCanvasToolbar QComboBox,
-            QToolBar#designerCanvasToolbar QSpinBox {{
-                background: {muted}; color: {foreground};
-                border: 1px solid {border}; border-radius: 7px;
-                padding: 0 22px 0 6px; min-height: 24px; max-height: 26px;
+            QPushButton#primaryAction:hover {{ background: {tint(primary, 0.85)}; }}
+            QPushButton#primaryAction:pressed {{ background: {tint(primary, 0.7)}; }}
+            QPushButton#primaryAction:disabled {{ background: {tint(fg, 0.12)}; color: {tint(fg, 0.4)}; }}
+            QPushButton#secondaryAction {{
+                background: transparent; color: {fg}; border: 1px solid {border};
+                border-radius: 7px; padding: 0 12px; font-size: 12px; font-weight: 500;
+                min-height: 28px; max-height: 30px; height: 30px;
             }}
-            QToolBar#designerCanvasToolbar QSpinBox::up-button,
-            QToolBar#designerCanvasToolbar QSpinBox::down-button {{
-                subcontrol-origin: border; width: 18px;
-                background: {accent}; border-left: 1px solid {border};
+            QPushButton#secondaryAction:hover {{ background: {hover}; border-color: {tint(primary, 0.55)}; }}
+            QPushButton#secondaryAction:pressed {{ background: {tint(primary, 0.15)}; }}
+            QPushButton#secondaryAction:disabled {{ color: {tint(fg, 0.35)}; border-color: {tint(fg, 0.08)}; }}
+
+            /* -- combos everywhere in the workspace --------------------------- */
+            QWidget#designerWorkspace QComboBox::drop-down {{
+                border: none; width: 22px; subcontrol-origin: padding; subcontrol-position: center right; }}
+            QWidget#designerWorkspace QComboBox::down-arrow {{ image: url("{arrow}"); width: 12px; height: 12px; }}
+            QWidget#designerWorkspace QComboBox QAbstractItemView {{
+                background: {card}; color: {fg}; border: 1px solid {border}; border-radius: 8px;
+                padding: 4px; outline: 0; selection-background-color: {tint(primary, 0.18)}; selection-color: {fg}; }}
+            QWidget#designerWorkspace QComboBox QLineEdit {{
+                background: transparent; border: none; padding: 0; color: {fg}; min-height: 0; }}
+
+            /* -- widget library / layers -------------------------------------- */
+            QLineEdit#panelSearch {{
+                background: {raised}; color: {fg}; border: 1px solid {border}; border-radius: 8px;
+                padding: 0 8px 0 4px; min-height: 30px; max-height: 30px; font-size: 12px;
             }}
-            QToolBar#designerCanvasToolbar QSpinBox::up-button {{
-                subcontrol-position: top right; border-top-right-radius: 7px;
-            }}
-            QToolBar#designerCanvasToolbar QSpinBox::down-button {{
-                subcontrol-position: bottom right; border-bottom-right-radius: 7px;
-            }}
-            QToolBar#designerCanvasToolbar QComboBox::drop-down {{
-                border: none; width: 18px;
-            }}
-            QToolBar#designerArrangeToolbar QToolButton::menu-indicator {{
-                image: none; width: 0px;
-            }}
-            QSplitter#designerMainSplitter::handle {{ background: {border}; }}
-            QGroupBox[designerPanel="true"] {{
-                background: {panel}; border: 1px solid {border}; border-radius: 9px;
-                margin-top: 16px; padding-top: 5px;
-            }}
-            QGroupBox[designerPanel="true"]::title {{
-                color: {foreground}; subcontrol-origin: margin; left: 8px;
-                padding: 0 5px; font-size: 12px; font-weight: 700;
-            }}
-            QGraphicsView#designerCanvas {{
-                border: 1px solid {border}; border-radius: 9px; background: {muted};
-            }}
-            QScrollArea#designerInspectorScroll,
-            QScrollArea#designerInspectorScroll > QWidget > QWidget {{
-                background: transparent; border: none;
-            }}
+            QLineEdit#panelSearch:hover {{ border-color: {tint(primary, 0.55)}; }}
+            QLineEdit#panelSearch:focus {{ border: 1px solid {primary}; background: {tint(primary, 0.06)}; }}
+            QToolButton#iconToggle {{ background: {raised}; border: 1px solid {border}; border-radius: 8px; padding: 0; }}
+            QToolButton#iconToggle:hover {{ background: {hover}; border-color: {tint(primary, 0.55)}; }}
+            QToolButton#iconToggle:checked {{ background: {tint(primary, 0.14)}; border-color: {tint(primary, 0.5)}; }}
             QTreeWidget#designerPalette, QTreeWidget#designerObjectTree {{
-                border: none; border-radius: 6px; background: {color('background', theme)};
+                background: {surface}; border: none; border-radius: 0; padding: 4px 6px;
+                outline: 0; show-decoration-selected: 0;
             }}
-            QWidget#designerWorkspace QLineEdit,
-            QWidget#designerWorkspace QComboBox,
-            QWidget#designerWorkspace QSpinBox,
-            QWidget#designerWorkspace QDoubleSpinBox {{
-                min-height: 34px; max-height: 34px;
-                border: 1px solid {color('input', theme)}; border-radius: 8px;
-                background: {color('background', theme)}; color: {foreground};
-                padding-top: 0; padding-bottom: 0;
+            QTreeWidget#designerPalette::item {{ padding: 2px 4px; border-radius: 6px; color: {fg}; }}
+            QTreeWidget#designerObjectTree::item {{ padding: 0 4px; min-height: 26px; border-radius: 6px; color: {fg}; }}
+            QTreeWidget#designerPalette::item:hover, QTreeWidget#designerObjectTree::item:hover {{ background: {hover}; }}
+            QTreeWidget#designerPalette::item:selected, QTreeWidget#designerObjectTree::item:selected {{
+                background: {tint(primary, 0.16)}; color: {fg}; }}
+            QTreeWidget#designerPalette::item:has-children {{ color: {muted_fg}; background: transparent; }}
+            QTreeWidget#designerPalette::branch {{ image: none; border-image: none; background: transparent; }}
+            /* Opaque, not transparent: the native style still paints its
+               connector lines and the row highlight into the branch gutter,
+               and only a solid fill covers them. */
+            QTreeWidget#designerObjectTree::branch,
+            QTreeWidget#designerObjectTree::branch:selected,
+            QTreeWidget#designerObjectTree::branch:hover,
+            QTreeWidget#designerObjectTree::branch:has-siblings:!adjoins-item,
+            QTreeWidget#designerObjectTree::branch:has-siblings:adjoins-item,
+            QTreeWidget#designerObjectTree::branch:!has-children:!has-siblings:adjoins-item {{
+                background: {surface}; border-image: none; image: none; }}
+            QTreeWidget#designerObjectTree::branch:has-children:!has-siblings:closed,
+            QTreeWidget#designerObjectTree::branch:closed:has-children:has-siblings {{
+                image: url("{closed}"); border-image: none; }}
+            QTreeWidget#designerObjectTree::branch:open:has-children:!has-siblings,
+            QTreeWidget#designerObjectTree::branch:open:has-children:has-siblings {{
+                image: url("{opened}"); border-image: none; }}
+
+            /* -- inspector ----------------------------------------------------- */
+            QScrollArea#designerInspectorScroll,
+            QScrollArea#designerInspectorScroll > QWidget > QWidget,
+            QWidget#propertyEditor, QWidget#bindingEditor {{ background: {surface}; border: none; }}
+            QLabel#inspectorTitle {{ color: {fg}; font-size: 13px; font-weight: 600; }}
+            QLabel#inspectorSection {{ color: {muted_fg}; font-size: 10px; font-weight: 600; letter-spacing: 1px;
+                                       padding-top: 8px; padding-bottom: 2px; }}
+            QLabel#propLabel {{ color: {muted_fg}; font-size: 12px; font-weight: 500; }}
+            QLabel#propLabel:disabled {{ color: {tint(fg, 0.3)}; }}
+            QLineEdit#propField, QComboBox#propField, QSpinBox#propField, QDoubleSpinBox#propField {{
+                background: {raised}; color: {fg}; border: 1px solid {border}; border-radius: 7px;
+                padding: 0 8px; min-height: 28px; max-height: 30px; font-size: 12px;
             }}
-            QWidget#designerWorkspace QPushButton {{
-                border-radius: 8px; padding-top: 0; padding-bottom: 0;
+            QSpinBox#propField, QDoubleSpinBox#propField {{ font-family: {mono}; }}
+            QLineEdit#propField:hover, QComboBox#propField:hover, QSpinBox#propField:hover,
+            QDoubleSpinBox#propField:hover {{ border-color: {tint(primary, 0.55)}; }}
+            QLineEdit#propField:focus, QComboBox#propField:focus, QComboBox#propField:on,
+            QSpinBox#propField:focus, QDoubleSpinBox#propField:focus {{
+                border: 1px solid {primary}; background: {tint(primary, 0.06)}; }}
+            QLineEdit#propField:disabled, QComboBox#propField:disabled, QSpinBox#propField:disabled,
+            QDoubleSpinBox#propField:disabled {{ color: {tint(fg, 0.4)}; }}
+            QFrame#pairField {{ background: {raised}; border: 1px solid {border}; border-radius: 7px; }}
+            QFrame#pairField:hover {{ border-color: {tint(primary, 0.55)}; }}
+            QFrame#pairField:disabled {{ border-color: {tint(fg, 0.08)}; }}
+            QLabel#pairTag {{ color: {muted_fg}; font-size: 10px; font-weight: 600; }}
+            QSpinBox#pairValue {{ background: transparent; border: none; color: {fg}; padding: 0;
+                                  font-family: {mono}; font-size: 12px; min-height: 0; }}
+            QSpinBox#pairValue:disabled {{ color: {tint(fg, 0.4)}; }}
+            QToolButton#swatch {{ border: 1px solid {border}; border-radius: 7px; }}
+            QToolButton#swatch:hover {{ border-color: {tint(primary, 0.7)}; }}
+            QCheckBox#propSwitch {{ color: {muted_fg}; font-size: 12px; spacing: 8px; background: transparent; }}
+            QCheckBox#propSwitch:hover {{ color: {fg}; }}
+            QCheckBox#propSwitch::indicator {{ width: 15px; height: 15px; border-radius: 5px;
+                                               border: 1px solid {border}; background: {raised}; }}
+            QCheckBox#propSwitch::indicator:hover {{ border-color: {tint(primary, 0.6)}; }}
+            QCheckBox#propSwitch::indicator:checked {{ background: {primary}; border-color: {primary};
+                                                       image: url("{check}"); }}
+            QLabel#chip {{ background: {raised}; color: {muted_fg}; border-radius: 10px; border: 1px solid {border};
+                           padding: 1px 8px; font-size: 10px; font-family: {mono}; min-height: 16px; }}
+            QLabel#emptyStateIcon {{ background: {tint(primary, 0.12)}; border: 1px solid {tint(primary, 0.35)};
+                                     border-radius: 20px; }}
+            QLabel#emptyStateTitle {{ color: {fg}; font-size: 13px; font-weight: 600; }}
+            QLabel#emptyStateBody {{ color: {muted_fg}; font-size: 12px; }}
+
+            /* -- design chat --------------------------------------------------- */
+            QPlainTextEdit#chatHistory {{
+                background: {surface}; color: {tint(fg, 0.88)}; border: none; border-radius: 0;
+                padding: 6px 8px; font-family: {mono}; font-size: 11px;
+                selection-background-color: {tint(primary, 0.35)};
             }}
-            QPlainTextEdit {{
-                background: {color('background', theme)}; color: {foreground};
-                border: 1px solid {border}; border-radius: 6px;
-            }}
+            QFrame#composerCard {{ background: {raised}; border: 1px solid {border}; border-radius: 14px; }}
+            QFrame#composerCard[focused="true"] {{ border: 1px solid {primary}; background: {tint(primary, 0.07)}; }}
+            QLineEdit#chatInput {{ background: transparent; border: none; color: {fg}; font-size: 12px;
+                                   padding: 0; min-height: 0; selection-background-color: {tint(primary, 0.35)}; }}
+            QToolButton#sendButton {{ background: {primary_grad}; border: none; border-radius: 14px; padding: 0; }}
+            QToolButton#sendButton:hover {{ background: {tint(primary, 0.85)}; }}
+            QToolButton#sendButton:pressed {{ background: {tint(primary, 0.7)}; }}
+            QLabel#kbdHint {{ color: {muted_fg}; font-size: 10px; font-family: {mono};
+                              border: 1px solid {border}; border-radius: 5px; padding: 1px 5px; background: transparent; }}
         """)
-        for button in self.findChildren(QPushButton):
-            button.setFixedHeight(36)
 
     def _build_chat(self):
-        panel = QWidget(); layout = QVBoxLayout(panel); layout.setContentsMargins(4, 8, 4, 4)
+        panel = QWidget(); panel.setObjectName("panelBody")
+        layout = QVBoxLayout(panel); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
         self.chat_history = QPlainTextEdit(); self.chat_history.setReadOnly(True)
+        self.chat_history.setObjectName("chatHistory")
+        self.chat_history.setFrameShape(QFrame.NoFrame)
         self.chat_history.setPlaceholderText(
             "Text commands: add Value Tile; remove inputVoltage; "
             "set inputVoltage title=Input Voltage; bind inputVoltage value=power.input_voltage"
         )
-        row = QHBoxLayout(); self.chat_input = QLineEdit(); self.chat_input.setPlaceholderText("Describe an edit…")
-        send = QPushButton("Apply"); row.addWidget(self.chat_input, 1); row.addWidget(send)
-        layout.addWidget(self.chat_history, 1); layout.addLayout(row)
-        send.clicked.connect(self._apply_chat); self.chat_input.returnPressed.connect(self._apply_chat)
-        return self._group("Design Chat", panel)
+        layout.addWidget(self.chat_history, 1)
+        # The composer is the AI Design tab's: a rounded card that lights its
+        # border while the field has focus, and a round send disc.
+        composer_wrap = QWidget(); composer_wrap.setObjectName("panelBody")
+        wrap = QVBoxLayout(composer_wrap); wrap.setContentsMargins(10, 6, 10, 10); wrap.setSpacing(0)
+        self.composer_card = QFrame(); self.composer_card.setObjectName("composerCard")
+        self.composer_card.setProperty("focused", False)
+        row = QHBoxLayout(self.composer_card); row.setContentsMargins(12, 5, 5, 5); row.setSpacing(8)
+        self.chat_input = QLineEdit(); self.chat_input.setObjectName("chatInput")
+        self.chat_input.setPlaceholderText("Describe an edit…")
+        self.chat_input.installEventFilter(self)
+        hint = QLabel("Enter"); hint.setObjectName("kbdHint")
+        self._send_button = QToolButton(); self._send_button.setObjectName("sendButton")
+        self._send_button.setFixedSize(28, 28); self._send_button.setCursor(Qt.PointingHandCursor)
+        self._send_button.setToolTip("Apply this edit")
+        row.addWidget(self.chat_input, 1); row.addWidget(hint); row.addWidget(self._send_button)
+        wrap.addWidget(self.composer_card)
+        layout.addWidget(composer_wrap)
+        self._send_button.clicked.connect(self._apply_chat); self.chat_input.returnPressed.connect(self._apply_chat)
+        return self._panel("Design chat", "message", panel)
 
+    def eventFilter(self, watched, event):
+        # The composer card, not the borderless line edit inside it, is what
+        # shows focus; QSS has no :focus-within, so relay it by hand.
+        if watched is getattr(self, "chat_input", None) and event.type() in (QEvent.FocusIn, QEvent.FocusOut):
+            self.composer_card.setProperty("focused", event.type() == QEvent.FocusIn)
+            self.composer_card.style().unpolish(self.composer_card)
+            self.composer_card.style().polish(self.composer_card)
+        return super().eventFilter(watched, event)
     def _apply_chat(self):
         """Apply a small, deterministic text-edit vocabulary.
 
@@ -702,9 +1048,26 @@ class DesignerWorkspace(QWidget):
             return f"Bound {model.id}.{prop} to {tag}."
         raise ValueError("use add, remove, set, or bind")
 
-    def _group(self, title, child):
-        box = QGroupBox(title); box.setProperty("designerPanel", True)
-        lay = QVBoxLayout(box); lay.setContentsMargins(6, 10, 6, 6); lay.setSpacing(4); lay.addWidget(child); return box
+    def _panel(self, title, icon_name, child, trailing=()):
+        """A flat side panel: an uppercase caption row over its content.
+
+        Boxed group titles floating on a border read as a settings dialog;
+        OpenDesign's inspector separates sections with a hairline and a small
+        letter-spaced caption, which is what the AI Design tab does too.
+        """
+        panel = QFrame(); panel.setObjectName("designerPanel")
+        layout = QVBoxLayout(panel); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
+        head = QFrame(); head.setObjectName("panelHead"); head.setFixedHeight(34)
+        row = QHBoxLayout(head); row.setContentsMargins(12, 0, 10, 0); row.setSpacing(7)
+        glyph = QLabel(); glyph.setObjectName("panelIcon"); glyph.setFixedSize(14, 14)
+        self._panel_icons = getattr(self, "_panel_icons", {})
+        self._panel_icons[icon_name] = glyph
+        caption = QLabel(title.upper()); caption.setObjectName("panelCaption")
+        row.addWidget(glyph); row.addWidget(caption); row.addStretch()
+        for widget in trailing:
+            row.addWidget(widget, 0, Qt.AlignVCenter)
+        layout.addWidget(head); layout.addWidget(child, 1)
+        return panel
 
     def _scroll_panel(self, child):
         area = QScrollArea()
@@ -996,6 +1359,7 @@ class DesignerWorkspace(QWidget):
         parent = self._find(self.parent_id_of(model)) if model else None
         self.properties.set_widget(model, positioned=bool(parent and parent.type in POSITIONERS))
         self.bindings.set_widget(model)
+        self.selection_chip.setText(model.id if model else (f"{len(ids)} selected" if ids else "None"))
         self._sync_text_alignment()
         self.tree.blockSignals(True); self.tree.clearSelection()
         if ids:
@@ -1222,7 +1586,7 @@ class DesignerWorkspace(QWidget):
                          "screen": {"width": self.project.screen.width, "height": self.project.screen.height},
                          "theme": self.project.screen.theme,
                          "tags_required": self.project.required_tags()})
-        with open(path, "w", encoding="utf-8", newline="\n") as handle: json.dump(manifest, handle, indent=2); handle.write("\n")
+        with open(path, "w", encoding="utf-8", newline="\n") as handle: json.dump(manifest, handle, indent=2); handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
 
     def _bundle_project_name(self, manifest=None):
         """Return the deployable name for this designer project."""
