@@ -295,5 +295,83 @@ class TestReviewFixes(unittest.TestCase):
         self.assertNotIn("bad", widgets[0].bindings)
 
 
+class TestPartialWidgetExtraction(unittest.TestCase):
+    """Tests for salvage of widgets from truncated AI output."""
+
+    def test_extract_partial_from_reasoning(self):
+        from tools.hmi_deployer.ai_generator import AIDesignGenerator
+        gen = AIDesignGenerator()
+        # Model mentions widget types in reasoning before JSON gets cut off
+        text = ('I\'ll create a ShGauge for voltage and a ShButton for start/stop. '
+                'The layout will place them horizontally.\n\n```json\n{"pages": [{"widgets": [\n'
+                '  {"type": "ShGauge", "id": "voltageGauge", "geometry": {"x": 10, "y": 10}}]}\n'
+                '```\n')
+        project = gen._extract_partial_widgets(text, 1280, 800)
+        self.assertIsNotNone(project)
+        widgets = list(project.all_widgets())
+        self.assertGreaterEqual(len(widgets), 2)
+        types = {w.type for w in widgets}
+        self.assertIn("ShGauge", types)
+        self.assertIn("ShButton", types)
+        self.assertTrue(getattr(project, "_truncated", False))
+
+    def test_extract_partial_from_partial_json(self):
+        from tools.hmi_deployer.ai_generator import AIDesignGenerator
+        gen = AIDesignGenerator()
+        # JSON block is incomplete but widget type names appear
+        text = ('```json\n{"pages": [{"widgets": [\n'
+                '  {"type": "ShCard", "id": "mainCard", "properties": {"title": "Engine"}},\n'
+                '  {"type": "ShGauge", "id": "rpm", "geometry": {"x": 0, "y": 0"}}]}\n'
+                '```\n')
+        project = gen._extract_partial_widgets(text, 1280, 800)
+        self.assertIsNotNone(project)
+        widgets = list(project.all_widgets())
+        types = {w.type for w in widgets}
+        self.assertIn("ShCard", types)
+        self.assertIn("ShGauge", types)
+
+    def test_extract_partial_no_match(self):
+        from tools.hmi_deployer.ai_generator import AIDesignGenerator
+        gen = AIDesignGenerator()
+        text = "The model just said hello world with no widgets mentioned."
+        project = gen._extract_partial_widgets(text, 1280, 800)
+        self.assertIsNone(project)
+
+    def test_extract_partial_realistic_truncation(self):
+        """Simulate a model with long reasoning that gets cut off mid-JSON."""
+        from tools.hmi_deployer.ai_generator import AIDesignGenerator
+        gen = AIDesignGenerator()
+        # Build the truncated JSON manually to avoid parser confusion with brackets
+        json_lines = [
+            '{"name": "Control Panel", "pages": [{"id": "main", "name": "Main", "widgets": [',
+            '  {"type": "ShGauge", "id": "voltageGauge", "geometry": {"x": 20, "y": 20, "width": 200, "height": 150},',
+            '   "properties": {"title": "Bus Voltage", "unit": "V"}},',
+            '  {"type": "ShButton", "id": "startBtn", "geometry": {"x": 20, "y": 200, "width": 100, "height": 40},',
+            '   "properties": {"text": "Start"}},',
+            '  {"type": "ShButton", "id": "stopBtn", "geometry": {"x": 140, "y": 200, "width": 100, "height": 40},',
+            '  ]}',
+        ]
+        json_block = '```json\n' + '\n'.join(json_lines) + '\n```\n'
+        text = 'Let me think carefully. I should include:\n' + \
+               '1. A ShGauge for voltage monitoring\n' + \
+               '2. ShButton for controls\n' + \
+               '3. A ShStatDot for fault indicators\n' + \
+               '4. ShTrendChart for values\n\n' + \
+               'Here is the design:\n\n' + \
+               json_block + \
+               'The above was cut off because '
+        project = gen._extract_partial_widgets(text, 1280, 800)
+        self.assertIsNotNone(project)
+        widgets = list(project.all_widgets())
+        types = {w.type for w in widgets}
+        # ShGauge from JSON "type" field, ShButton from both JSON and prose,
+        # ShStatDot and ShTrendChart from prose mentions.
+        self.assertIn("ShGauge", types)
+        self.assertIn("ShButton", types)
+        self.assertIn("ShStatDot", types)
+        self.assertIn("ShTrendChart", types)
+        self.assertTrue(getattr(project, "_truncated", False))
+
+
 if __name__ == "__main__":
     unittest.main()

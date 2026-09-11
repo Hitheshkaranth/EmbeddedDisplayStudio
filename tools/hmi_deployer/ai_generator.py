@@ -221,6 +221,17 @@ class AIDesignGenerator:
         if widgets:
             return self._build_project(widgets, "AI Design", screen_width, screen_height)
 
+        # Strategy 5: Salvage partial widgets from truncated output.
+        # When the model hits the token limit the JSON block is incomplete,
+        # but every widget type mentioned in the text (in the reasoning block,
+        # or in the partial JSON) tells us what the model was trying to build.
+        try:
+            partial = self._extract_partial_widgets(ai_output, width, height)
+            if partial:
+                return partial
+        except Exception:
+            pass
+
         self.progress.error.emit("Unable to parse AI output. Try rephrasing the prompt.")
         return None
 
@@ -416,6 +427,65 @@ class AIDesignGenerator:
             ))
 
         return widgets
+
+    def _extract_partial_widgets(self, text: str, width: int, height: int) -> Optional[DesignerProject]:
+        """Salvage widgets from truncated AI output.
+
+        When the model hits the token limit the JSON block is incomplete but the
+        model has often listed or described the widgets it intended to create
+        in the reasoning block or in the partial JSON.  This scans for widget
+        type names (from the registry / aliases) and builds a minimal project
+        so the user can see *what* the model was trying to add.
+
+        Two extraction strategies, tried in order:
+        1. ``"type": "Value"`` inside partial JSON fragments
+        2. Whole-word matching of known widget types in the full text
+        """
+        widget_types: dict[str, int] = {}  # type -> position
+
+        # Strategy 1: Parse "type": "Value" from partial JSON fragments.
+        # Handles both quoted and unquoted values since truncation can split quotes.
+        for m in re.finditer(r'(?:\"type\"|type)\s*:\s*\"?([A-Za-z_]\w*)\"?', text):
+            raw_type = m.group(1)
+            aliased = _AI_TYPE_ALIASES.get(raw_type, raw_type)
+            if aliased not in widget_types:
+                widget_types[aliased] = m.start()
+
+        # Strategy 2: Also scan full text for any known widget type name
+        # (the model often names widgets in prose/reasoning even if JSON is incomplete).
+        known_types: set = set(_AI_TYPE_ALIASES.keys()) | set(_AI_TYPE_ALIASES.values())
+        try:
+            known_types |= {d.type for d in self.registry.definitions()}
+        except Exception:
+            pass
+
+        for t in known_types:
+            for m in re.finditer(rf"\b{re.escape(t)}\b", text):
+                aliased = _AI_TYPE_ALIASES.get(t, t)
+                if aliased not in widget_types:
+                    widget_types[aliased] = m.start()
+
+        if not widget_types:
+            return None
+
+        widgets: list[DesignerWidget] = []
+        idx = 0
+        for widget_type, _pos in sorted(widget_types.items(), key=lambda kv: kv[1]):
+            wid = f"partial_{widget_type.lower()}{idx}"
+            widgets.append(DesignerWidget(
+                type=widget_type,
+                id=wid,
+                geometry={"x": 20 + idx * 160, "y": 20 + (idx // 4) * 120, "width": 140, "height": 60},
+                properties={},
+            ))
+            idx += 1
+
+        if not widgets:
+            return None
+
+        project = self._build_project(widgets, "AI Design (partial)", width, height)
+        project._truncated = True  # flag used by the UI to show extra context
+        return project
 
     def _build_project(self, widgets: list, name: str, width: int, height: int) -> DesignerProject:
         """Wrap widgets into a DesignerProject."""

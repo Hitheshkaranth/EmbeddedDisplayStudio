@@ -1799,11 +1799,21 @@ class AIDesignTab(QWidget):
                     else:
                         chips.append(("Applied to canvas", "ok"))
                         chips.append(("Open a bundle to preview on the panel", "warn"))
+                if getattr(project, "_truncated", False):
+                    types_in_order = []
+                    seen: set[str] = set()
+                    for w in project.all_widgets():
+                        if w.type not in seen:
+                            types_in_order.append(w.type)
+                            seen.add(w.type)
+                    chips.append((f"Detected {len(types_in_order)} widget{'s' if len(types_in_order) != 1 else ''}: "
+                                    + ", ".join(types_in_order) + " (partial — output was truncated)", "warn"))
+                    shell.note_error("Output hit the token limit before the JSON finished — salvaged widgets above.")
             else:
                 chips.append(("No design parsed", "fail"))
                 if shell.truncated:
-                    turn.show_error("The reply was cut off at the token limit before the design JSON finished.",
-                                    "Ask for a smaller screen, or pick a model that reasons less.")
+                    turn.show_error("Output hit the model's token limit before the design JSON completed.",
+                                    "Try one of: pick a model with a larger max-tokens budget, shorten the model's thinking (e.g. 'think briefly' in the brief), or split the brief into smaller steps.")
                 elif full_text.strip():
                     turn.show_error("The model answered, but no design payload could be parsed from it.",
                                     "Open the Response fold above to see what came back; try rephrasing the brief.")
