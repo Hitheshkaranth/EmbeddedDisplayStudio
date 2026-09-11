@@ -1,0 +1,2 @@
+2026-09-05 20:55:43,869 [INFO] EmbeddedDisplay Studio: Studio 0.0.5 starting; log at C:\Users\hithe\AppData\Local\EmbeddedDisplayStudio\logs\studio.log
+2026-09-05 20:55:45,958 [INFO] EmbeddedDisplay Studio: theme=dark stylesheet=19296 chars
