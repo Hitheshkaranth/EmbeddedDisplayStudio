@@ -289,6 +289,8 @@ class AIDesignTab(QWidget):
         models = self.connector.discover_models()
         for model in models:
             self.model_combo.addItem(model.label, model.id)
+        if models and self.model_combo.count() > 0:
+            self.model_combo.setCurrentIndex(0)
 
     def add_message(self, role: str, content: str):
         """Add a chat message."""
