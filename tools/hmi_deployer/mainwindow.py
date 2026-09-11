@@ -757,6 +757,7 @@ class MainWindow(QMainWindow):
         self.designer_workspace.previewRequested.connect(self._preview_designed_bundle)
         self.designer_workspace.deployRequested.connect(self._deploy_designed_bundle)
         self._right_tabs.addTab(self.designer_workspace, "Designer")
+        self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(self.designer_workspace), "file-code")
 
         # ── AI Design tab ────────────────────────────────────────────────
         from tools.hmi_deployer.ai_tab import AIDesignTab
@@ -769,6 +770,7 @@ class MainWindow(QMainWindow):
         self._ai_tab = AIDesignTab(self._od_connector, self._ai_agent.generator)
         self._ai_tab.statusMessage.connect(self.log)
         self._right_tabs.addTab(self._ai_tab, "AI Design")
+        self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(self._ai_tab), "bolt")
 
         # ── Deploy tab ────────────────────────────────────────────────────
         deploy_page = QWidget()
@@ -999,7 +1001,9 @@ class MainWindow(QMainWindow):
         console_layout.addWidget(console_body, 1)
         right_layout.addWidget(console_box, 1)
 
-        self._right_tabs.addTab(self._scrollable(deploy_page), "Display Console")
+        deploy_scroll = self._scrollable(deploy_page)
+        self._right_tabs.addTab(deploy_scroll, "Display Console")
+        self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(deploy_scroll), "server")
 
         # ── Tag Lab tab ────────────────────────────────────────────────────
         # Imported here (deferred) so the tab is only instantiated after
@@ -1009,7 +1013,9 @@ class MainWindow(QMainWindow):
         self._themed_page_icon(self.taglab_panel.title_icon, "activity")
         self.taglab_panel.sendingStarted.connect(self._on_taglab_start)
         self.taglab_panel.sendingStopped.connect(self._on_taglab_stop)
-        self._right_tabs.addTab(self._scrollable(self.taglab_panel), "Tag Lab")
+        taglab_scroll = self._scrollable(self.taglab_panel)
+        self._right_tabs.addTab(taglab_scroll, "Tag Lab")
+        self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(taglab_scroll), "gauge")
 
         # ── Panel Logs tab ────────────────────────────────────────────────
         # The deploy console shows what this tool did. It says nothing about
@@ -1075,7 +1081,9 @@ class MainWindow(QMainWindow):
         logs_body_layout.addWidget(self.logs_view, 1)
         logs_outer.addWidget(logs_body, 1)
         logs_layout.addWidget(logs_box, 1)
-        self._right_tabs.addTab(self._scrollable(logs_page), "Panel Logs")
+        logs_scroll = self._scrollable(logs_page)
+        self._right_tabs.addTab(logs_scroll, "Panel Logs")
+        self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(logs_scroll), "terminal-2")
 
         # The profile uses the same cards, labels, and outline button treatment
         # as Deploy so target diagnostics feel like part of one application.
@@ -1170,7 +1178,7 @@ class MainWindow(QMainWindow):
         # Selecting the tab is the request for the measurement.
         self._right_tabs.currentChanged.connect(self._on_tab_changed)
 
-        tab_icons = ("device-imac", "device-desktop", "sparkles", "activity", "terminal-2", "cpu")
+        tab_icons = ("device-imac", "device-desktop", "bolt", "activity", "terminal-2", "cpu")
         for index in range(self._right_tabs.count()):
             self.primary_nav.addTab(self._right_tabs.tabText(index))
             self._themed_tab_icon(self.primary_nav, index, tab_icons[index])

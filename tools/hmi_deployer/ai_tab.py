@@ -280,7 +280,8 @@ class AIDesignTab(QWidget):
         # Update connector mode and config
         self.connector.mode = "byok"
         from tools.hmi_deployer.ai_design import BYOK_PRESETS, ProviderConfig
-        preset = BYOK_PRESETS.get(key, {})
+        preset = dict(BYOK_PRESETS.get(key, {}))
+        preset["provider"] = key
         self.connector.byok = ProviderConfig.from_dict(preset)
 
         # Update model list
