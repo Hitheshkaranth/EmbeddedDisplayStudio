@@ -2,9 +2,9 @@
 
 <img src="docs/assets/banner.jpg" alt="EmbeddedDisplay Studio" width="900" />
 
-### Bring Your Own App — HMI platform for embedded Linux panels
+### Describe it, draw it, or bring your own — HMI platform for embedded Linux panels
 
-**EmbeddedDisplay Studio** lets teams visually design or import Qt 5/6 apps, preview them live, and deploy safely to embedded Linux panels over SSH.
+**EmbeddedDisplay Studio** turns a written brief, a drawing on a canvas, or an existing Qt 5/6 application into a screen running on an embedded Linux panel — previewed live at the panel's real geometry, validated, and deployed atomically over SSH with automatic rollback.
 Built for industrial, vehicle, marine, avionics, instrumentation and kiosk HMIs — with tag-driven data, no image reflash, and no hardware code in the app.
 
 <br />
@@ -18,7 +18,7 @@ Built for industrial, vehicle, marine, avionics, instrumentation and kiosk HMIs 
 [![PySide6](https://img.shields.io/badge/PySide6-6.8.1-41CD52?style=flat-square&logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
 [![QML](https://img.shields.io/badge/QML-Qt%20Quick-41CD52?style=flat-square&logo=qt&logoColor=white)](ui/qml/)
 [![Yocto](https://img.shields.io/badge/Yocto-Embedded%20Linux-1A5FB4?style=flat-square&logo=yocto&logoColor=white)](yocto/)
-[![AI](https://img.shields.io/badge/AI-Ollama_%7C_OpenAI_%7C_Anthropic-FF6F00?style=flat-square)](#ai-design)
+[![AI](https://img.shields.io/badge/AI%20Design-Ollama_%7C_OpenAI_%7C_Anthropic_%7C_Gemini_%7C_vLLM-FF6F00?style=flat-square)](#ai-design)
 
 </div>
 
@@ -26,13 +26,23 @@ Built for industrial, vehicle, marine, avionics, instrumentation and kiosk HMIs 
 
 <div align="center">
 
-<img src="docs/assets/screenshot-designer.png" alt="The Designer workspace: widget palette and object tree, the canvas inside the panel bezel, and the property, binding and chat inspectors" width="900" />
+<img src="docs/assets/screenshot-ai-design.png" alt="AI Design: the run log on the left with three sectioned turns, and the panel canvas on the right showing an engine data summary with three gauges, fuel quantity bars, start/stop buttons and a status bar" width="900" />
 
-<em>Drawing a panel screen in the Studio's own designer — palette and object
-tree to the left, the canvas inside a bezel of the real glass, inspectors for
+<em>An engine dashboard, described in a sentence and built in three sections by
+a model running on the local network. Each section landed on the panel canvas
+as it arrived; the live preview reloaded behind it; the chips on every turn say
+exactly what changed. The same widgets go on to <strong>Preview</strong> and
+<strong>Deploy</strong> through the pipeline below — no bundle had to be opened
+first.</em>
+
+<br /><br />
+
+<img src="docs/assets/screenshot-designer.png" alt="The Designer workspace: widget library and layer tree, the canvas inside the panel bezel, and the property, binding and chat inspectors" width="900" />
+
+<em>The same screen, hand-edited in the Studio's own Designer — library and
+layers to the left, the canvas inside a bezel of the real glass, inspectors for
 properties and tag bindings to the right. The canvas is 1024 × 768 because that
-is what the panel at the top of the window reported; the same toolbar previews,
-generates and deploys it.</em>
+is what the panel at the top of the window reported.</em>
 
 </div>
 
@@ -40,12 +50,11 @@ generates and deploys it.</em>
 
 ## The idea
 
-A machine builder ships one panel image. Their customers — or their own app team —
-write a Qt/QML application, or draw one in the Studio's own
-[visual designer](#visual-designer), and push it to the panel with a single
-command. The
-app never touches a GPIO line, an ADC node or a serial port: it binds to **tags**
-that arrive over a loopback socket, and the platform does the rest.
+A machine builder ships one panel image. Their customers — or their own app
+team — put a screen on it in whichever of three ways suits the job, and push
+it to the panel with one button or one command. The app never touches a GPIO
+line, an ADC node or a serial port: it binds to **tags** that arrive over a
+loopback socket, and the platform does the rest.
 
 <img src="docs/assets/architecture.svg" alt="Studio and CLI deploy over SSH to hmi-gui on the panel; hmi-hwd feeds it tags over a loopback socket" width="900" />
 
@@ -58,6 +67,26 @@ Three layers, deliberately decoupled:
 | **1** | `hmi-hwd` — hardware abstraction daemon | GPIO, ADC, UART, safe states | pixels |
 | **2** | `hmi-gui` — app loader + tag engine | QML, bindings, the customer bundle | hardware |
 | **3** | deployment | atomic install, health check, rollback | either of the above |
+
+---
+
+## Three ways to a screen
+
+Every path ends in the same place: a **bundle** — a directory with a
+`manifest.json` and an entry point — that the Studio previews in a bezel of the
+real panel, validates, packages and installs atomically. What differs is how
+the bundle comes to exist.
+
+| | Start from | What the Studio does | Then |
+|---|---|---|---|
+| **Describe it** — [AI Design](#ai-design) | A sentence: *"engine data summary with RPM, coolant and oil gauges, fuel quantity and start/stop"* | Sends the brief to a local or cloud model with a system prompt built from the widget library, streams the answer, parses it into widgets in sections, and puts them on the canvas with the live preview refreshed | Tune in the Designer, bind to tags, **Deploy** |
+| **Draw it** — [Visual Designer](#visual-designer) | An empty canvas the size of the panel's glass | Library, layers, inspector, tag bindings, undo; generates the QML and the manifest for you | **Preview**, **Deploy** |
+| **Bring your own** — [Writing an app](#writing-an-app) | An existing Qt Quick or Qt Widgets application, Qt5 or Qt6 | Detects the entry point and Qt binding, proposes the manifest, previews the real app live, checks its imports against the panel | **Deploy** |
+
+The three are not silos. A described screen is a Designer project the moment
+it lands; a drawn screen is an ordinary bundle the moment it is generated; an
+imported application can sit beside a designed one on the same panel and be
+rolled back to.
 
 ---
 
@@ -91,6 +120,20 @@ installed, because the two bindings cannot share a process. It is found on PATH
 or named explicitly with `HMI_PREVIEW_PYTHON_QT5`. This is the one thing the
 packaged executable cannot supply for itself; PySide6 bundles preview with no
 Python on the machine at all.
+
+### To use AI Design
+
+A model, reachable over HTTP. Nothing else is installed and nothing runs in the
+background:
+
+| | |
+|---|---|
+| **Local, private** | [Ollama](https://ollama.com) — `ollama serve` and pull a model; the Studio finds it at `127.0.0.1:11434` with no configuration |
+| **Your own server** | A **vLLM** (or any OpenAI-compatible) endpoint, on the LAN or over Tailscale — the screenshot above was generated by one |
+| **Hosted** | OpenAI, Anthropic or Google — paste an API key once, it is remembered per provider |
+
+The Designer, preview and deploy do not depend on any of this. A Studio with no
+model configured is the same Studio, minus one tab's worth of typing.
 
 ### To reach a panel
 
@@ -182,6 +225,32 @@ python gui/hmi_loader/main.py --apps-dir apps/demo-app --windowed
 python main.py
 ```
 
+### From a sentence to a deployed screen
+
+The shortest path through the Studio, and the one the screenshot at the top of
+this page shows:
+
+1. **AI Design** — pick a provider and a model (the status line confirms
+   `Connected · <provider> · <latency> · <n> models`), type what the screen
+   should show, `Ctrl+Enter`. The model answers in sections of up to eight
+   widgets; each section is parsed, merged, put on the canvas and previewed
+   as it arrives, and the next one is requested automatically until the
+   design says it is complete.
+2. **Designer** — the result is already here as an ordinary project. Move
+   things, rename, restyle, and bind each gauge to the dotted tag that will
+   feed it. **Preview** regenerates the QML and reloads the live panel. There
+   is no bundle to open first: the Designer creates one under
+   `Documents/EmbeddedDisplay Studio/projects/<name>/` the first time Preview
+   or Deploy needs it, and the Studio adopts it as the current bundle.
+3. **Tag Lab** — drive those tags with a sine, a ramp or a constant and watch
+   the gauges move before any hardware exists.
+4. **Connect** — target IP in the header, `ssh-copy-id root@<panel-ip>` once
+   beforehand. The Studio reads the panel's real display geometry and
+   retargets both the bezel and the canvas to it.
+5. **Deploy** — from the Designer toolbar or the Display Console. The bar
+   names each stage; the panel must render the screen within 25 s or rolls
+   itself back.
+
 ### Running EmbeddedDisplay Studio
 
 ```bash
@@ -190,38 +259,37 @@ python main.py                             # from the repository root
 ```
 
 `--bundle <dir>` opens an application on start; with no argument the last one
-is restored. Then, in the window:
+is restored. The window is one header — target address, port, **Connect**,
+**Open Bundle…**, **New App…**, theme — over six workspaces:
 
-1. **Open Bundle…** — point it at your application's directory. The manifest is
-   validated, or proposed and written for you if there is none, and the
-   application starts rendering in the bezel at the target's resolution. The
-   preview is live, not a picture: click it, drag it, type into it, and the
-   events reach the widget under your cursor in the real application.
-2. **Designer** — or draw the screen here instead of writing QML: drag controls
-   from the palette onto a canvas the size of the panel's real glass, set their
-   properties, bind them to tags, and let the Studio generate the QML. The
-   design is saved as `project.edsui` beside the bundle it belongs to, and
-   **Preview**, **Generate** and **Deploy** on that same toolbar run the same
-   pipeline an imported application does. See [Visual Designer](#visual-designer).
-3. **Target IP** and **Port** in the command strip, with `root` and the private
-   key that reaches the panel under **Target Details** on the Display Console
-   tab. `ssh-copy-id root@<panel-ip>` once, if you have not.
-4. **Connect** — proves the link, reports the panel's real display size and
-   which release is live on it. The badge beside it carries the link state, and
-   the bezel re-composes itself at the resolution the panel reported.
-5. **Deploy to Target** — everything in [the pipeline below](#from-a-python-app-to-the-panel).
+| Tab | What it is for |
+|---|---|
+| **Designer** | Draw or edit the screen on a canvas the size of the panel's glass; bind widgets to tags; Preview, Generate, Deploy |
+| **AI Design** | Describe the screen; the model builds it in sections onto the same canvas, with the run log and panel canvas side by side |
+| **Display Console** | Target details, the bundle's verdict, **Deploy to Target**, **Rollback**, **Restart GUI**, and the releases the panel still holds |
+| **Tag Lab** | Inject signals into any tag the app declares — sine, square, ramp, noise, constant — before the I/O exists |
+| **Panel Logs** | Follow the journal from `hmi-gui` and `hmi-hwd` live, which is where a fault an hour after a good deploy shows up |
+| **System Profile** | What the live release costs the board: package, footprint, filesystem split, free RAM |
+
+Then, for an application you already have:
+
+1. **Open Bundle…** — point it at the directory. The manifest is validated, or
+   proposed and written for you if there is none, and the application starts
+   rendering in the bezel at the target's resolution. The preview is live, not
+   a picture: click it, drag it, type into it, and the events reach the widget
+   under your cursor in the real application.
+2. **Target IP** and **Port** in the header, with `root` and the private key
+   that reaches the panel under **Target Details** on the Display Console.
+3. **Connect** — proves the link, reports the panel's real display size and
+   which release is live on it. The badge beside it carries the link state,
+   and the bezel re-composes itself at the resolution the panel reported.
+4. **Deploy to Target** — everything in [the pipeline below](#from-a-python-app-to-the-panel).
    The bar names the stage it is in, and the console carries the panel's own
    words.
-6. **Rollback** returns to the previous release. **Installed Releases** reaches
+5. **Rollback** returns to the previous release. **Installed Releases** reaches
    any of the others the board still holds: activating one re-points the panel
    at it and makes the outgoing release the new rollback target, so it is
    undoable in turn. **Restart GUI** restarts what is running.
-7. **Tag Lab** drives the application with signals instead of hardware — sine,
-   square, ramp, noise or a constant, per tag — so panel behaviour can be
-   exercised before the I/O it binds to exists. **Panel Logs** follows the
-   journal from `hmi-gui` and `hmi-hwd`, which is where a fault that appears an
-   hour after a successful deploy shows up. **System Profile** reports what the
-   live release costs the board.
 
 **From the command line**, for CI or a headless machine:
 
@@ -453,82 +521,107 @@ isn't fitted still renders.
 
 ## EmbeddedDisplay Studio
 
-The desktop tool. Import a bundle, watch it run inside a photo-real mock-up of
-the panel, then push it.
+The desktop tool. Describe, draw or import a screen, watch it run inside a
+photo-real mock-up of the panel, then push it.
 
-One window, six workspaces across the top — **Designer**, **Display Console**,
-**Tag Lab**, **Panel Logs**, **System Profile**, **AI Design** — over a header
-that holds the panel's address, port and **Connect**. Everything below is about
-the panel that header points at.
+One window, six workspaces across the top — **Designer**, **AI Design**,
+**Display Console**, **Tag Lab**, **Panel Logs**, **System Profile** — over a
+header that holds the panel's address, port and **Connect**. Everything below
+is about the panel that header points at.
 
-* **True WYSIWYG** — the bezel contains a live QML engine rendering *your actual
-  app* at target resolution with the same tag engine the device runs. Not a
-  screenshot, not an approximation.
-* **Live or simulated data** — connected, telemetry is relayed from the real
-  daemon over SSH; offline, a built-in simulator drives plausible values.
-* **Validation before upload** — every manifest rule is checked host-side, with
-  the offending field named.
-* **Scaffold** — "New App…" writes a valid starter bundle, already importing the
-  design kit.
-* **Panel picker** — preview against 5.0" 800×480, 7" 1024×600, 7"/10.1"/12.1"
-  1280×800 or 15.6" 1920×1080, with the live resolution reported under the
-  bezel. The preview never shrinks below a readable size and always holds the
-  panel's aspect ratio.
-* **The connected panel outranks the picker** — on Connect the Studio reads the
-  SOM's DRM connector and adopts its real pixel geometry, for the bezel *and*
-  the designer canvas. A design opened afterwards is retargeted to the glass
-  that is plugged in, so nobody lays out widgets against a screen that is not
-  there and finds out after a deploy.
+**Authoring**
+
+* **AI Design** — write a brief and a local or cloud model builds the screen
+  onto the Designer canvas, in sections, with the live preview refreshed as
+  each lands. Every turn is a foldable execution shell — request, streamed
+  reasoning, streamed response, parsed design, canvas diff, token usage — so
+  nothing the model did is hidden. Ollama, OpenAI, Anthropic, Google, vLLM
+  over Tailscale, or any OpenAI-compatible server with a pasted key. Details
+  in [AI Design](#ai-design).
+* **A Designer that is in the window, not beside it** — searchable widget
+  library with favorites, a layer tree, an inspector with paired X/Y and
+  W/H cells and live colour swatches, a tag-binding inspector with format,
+  scale, unit and threshold expressions, and an offline Design Chat for
+  text commands. The same toolbar previews, generates and deploys. Details
+  in [Visual Designer](#visual-designer).
+* **No bundle required to start** — an empty Studio, a brief or a blank
+  canvas is enough. The first Preview or Deploy provisions a bundle under
+  `Documents/EmbeddedDisplay Studio/projects/<name>/`, never on top of an
+  existing design, and the Studio adopts it as the current bundle.
 * **A cockpit-ready avionics palette** — attitude, airspeed/altitude tape,
   heading compass, VSI, flight director, turn coordinator, engine gauge,
   engine bar, dual-tank fuel quantity, annunciator and compact data-field
-  widgets are available directly in the Designer. Their operational values
-  are bindable to live tags, and their EFIS colours remain stable across the
-  Studio's light and dark modes.
-* **Designer controls that behave like editing controls** — toolbar icons are
-  re-rendered for both themes, compact geometry fields reserve their arrow
-  button area instead of drawing over the value, and Delete removes the
-  selected canvas object without auto-repeating through the object tree or
-  intercepting editing inside a text field.
+  widgets, all bindable to live tags, with EFIS colours that hold across
+  light and dark modes.
+* **Scaffold** — "New App…" writes a valid starter bundle, already importing
+  the design kit.
+* **Adopts apps that were never written for this platform** — point it at an
+  existing Qt project with no `manifest.json` and it detects the entry point
+  *and the binding*, proposes a manifest and writes it for you.
+
+**Preview**
+
+* **True WYSIWYG** — the bezel contains a live QML engine rendering *your
+  actual app* at target resolution with the same tag engine the device runs.
+  Not a screenshot, not an approximation.
 * **An operable bezel, not a photograph** — clicks, drags, wheel and keys are
   mapped from panel pixels into the application's own window and delivered as
   real Qt events, so the preview is something you use rather than watch.
+* **Live or simulated data** — connected, telemetry is relayed from the real
+  daemon over SSH; offline, a built-in simulator drives plausible values.
+* **Panel picker** — preview against 5.0" 800×480, 7" 1024×600,
+  7"/10.1"/12.1" 1280×800 or 15.6" 1920×1080, with the live resolution
+  reported under the bezel. The preview never shrinks below a readable size
+  and always holds the panel's aspect ratio.
+* **The connected panel outranks the picker** — on Connect the Studio reads
+  the SOM's DRM connector and adopts its real pixel geometry, for the bezel
+  *and* the designer canvas. A design opened afterwards is retargeted to the
+  glass that is plugged in, so nobody lays out widgets against a screen that
+  is not there and finds out after a deploy.
+* **Qt Widgets apps preview live too.** A `runtime: python` bundle owns its
+  own window, so it cannot be composited into the QML scene. It is run
+  unmodified in a child process instead, forced to the target resolution, and
+  its frames are streamed into the bezel — real application, real fonts,
+  before you deploy it. Nothing appears on your desktop: the window is kept
+  unmapped with `WA_DontShowOnScreen`.
 * **Qt5 applications too** — a PySide2 bundle is previewed by a second
-  interpreter, because the two bindings cannot share a process. The binding is
-  read from the bundle's sources and the child is told which Qt to host.
-* **Ships as one file** — `EmbeddedDisplayStudio.exe` carries its own Python,
-  PySide6 and the whole standard library, so it previews a customer application
-  on a machine with no Python installed at all.
-* **Adopts apps that were never written for this platform** — point it at an
-  existing Qt project with no `manifest.json` and it detects the entry point,
-  proposes a manifest and writes it for you.
-* **Qt Widgets apps preview live too.** A `runtime: python` bundle owns its own
-  window, so it cannot be composited into the QML scene. It is run unmodified
-  in a child process instead, forced to the target resolution, and its frames
-  are streamed into the bezel — so you see the real application, with real
-  fonts, before you deploy it. Nothing appears on your desktop: the window is
-  kept unmapped with `WA_DontShowOnScreen`. A PySide2 bundle needs a PySide2
-  interpreter on your machine; point `HMI_PREVIEW_PYTHON_QT5` at one, or skip
-  it — the bundle still deploys and runs on the panel's own Qt5 runtime.
+  interpreter, because the two bindings cannot share a process. The binding
+  is read from the bundle's sources and the child is told which Qt to host.
+  Point `HMI_PREVIEW_PYTHON_QT5` at a PySide2 interpreter, or skip it — the
+  bundle still deploys and runs on the panel's own Qt5 runtime.
+
+**Deploy**
+
+* **Validation before upload** — every manifest rule is checked host-side,
+  with the offending field named.
 * **It checks the panel can run the app before sending it.** The bundle's
   third-party imports are read off its source, the panel is asked whether it
-  can import each one under the interpreter that bundle will use, and anything
-  missing is named and offered for installation. A missing package does not
-  degrade an application, it kills it on its first import and leaves the panel
-  restart-looping on the release before it.
+  can import each one under the interpreter that bundle will use, and
+  anything missing is named and offered for installation. A missing package
+  does not degrade an application, it kills it on its first import and leaves
+  the panel restart-looping on the release before it.
 * **Nothing blocks the window.** Packaging, upload, install, rollback,
-  restart and journal tail all run on worker threads, and the bar reports
-  the stage it is in — a sweeping bar while the bundle is packed, then bytes
-  and throughput for the upload, then the installer's own steps as the panel
+  restart and journal tail all run on worker threads, and the bar reports the
+  stage it is in — a sweeping bar while the bundle is packed, then bytes and
+  throughput for the upload, then the installer's own steps as the panel
   reaches them. A step that fails names what failed: an unreachable panel is
-  reported as an unreachable panel, not as whatever the step was trying to do.
-* **AI Design.** Write a brief — "add a voltage gauge and a start/stop button"
-  — and the Studio calls a local or cloud model (Ollama, OpenAI, Anthropic,
-  Google, or any OpenAI-compatible server via vLLM/Tailscale).  The generated
-  widgets land on the Designer canvas as one undoable step; every turn shows a
-  foldable execution shell with streaming reasoning, response, token usage and
-  canvas diff.  **Bring Your Own Key** mode needs no daemon — just paste an
-  API key and pick a model.
+  reported as an unreachable panel, not as whatever the step was trying to
+  do.
+* **Rollback, releases, restart** — the previous release is one button away;
+  every release the panel still holds is listed from the panel itself and can
+  be activated; the GUI can be restarted without a reboot.
+
+**Diagnose**
+
+* **Tag Lab** — drive any declared tag with a deterministic waveform, pin a
+  sensor, flip an interlock; the bound tags of the open bundle are wired up
+  automatically.
+* **Panel Logs** — the journal from `hmi-gui` and `hmi-hwd`, followed live.
+* **System Profile** — the active release, its footprint on flash, the
+  filesystem split and the RAM left over, read back over SSH.
+* **Ships as one file** — `EmbeddedDisplayStudio.exe` carries its own Python,
+  PySide6 and the whole standard library, so it previews a customer
+  application on a machine with no Python installed at all.
 
 <div align="center">
 
@@ -592,12 +685,11 @@ it.</em>
 
 <img src="docs/assets/screenshot-hmi.png" alt="AI Design tab with model selection, brief composer and execution log" width="880" />
 
-<em><strong>AI Design.</strong> Type a brief and get widgets on the canvas.  The
-execution shell streams thinking, response and token counts; the canvas diff
-shows exactly what changed.  Supports Ollama (local), OpenAI, Anthropic, Google,
-and vLLM via Tailscale — or any OpenAI-compatible endpoint with a pasted API
-key.  See <a href="#ai-design">AI Design</a> below for how a brief becomes a
-deployable screen.</em>
+<em><strong>AI Design, first release.</strong> The execution shell streams
+thinking, response and token counts; the canvas diff shows exactly what
+changed. The current tab — sectioned generation, the panel canvas beside the
+log, no bundle needed — is the screenshot at the top of this page and is
+described in <a href="#ai-design">AI Design</a>.</em>
 
 </div>
 
@@ -664,10 +756,12 @@ daemon/               Layer 1  hardware daemon + tag map
 gui/                  Layer 2  loader, tag engine, shell, fallback screen
 apps/demo-app/        a worked example, and the pipeline's test fixture
 ui/                   design system: tokens, QML kit, QSS, icons, gallery
+designer/             the visual designer: model, canvas, widget registry, QML generator
 target/               systemd units, atomic installer, Wayland launcher
 deploy/               deploy_to_hmi.sh — the CLI; provision_panel.py — onboard a stock image
-tools/hmi_deployer/   EmbeddedDisplay Studio: deployer, designer, AI design (ai_design.py,
-                      ai_generator.py, ai_tab.py)
+tools/hmi_deployer/   EmbeddedDisplay Studio: main window, deployer, device panel, Tag Lab,
+                      AI design (ai_design.py — providers and streaming; ai_generator.py —
+                      parser, diff and section merge; ai_tab.py — the tab)
 yocto/meta-hmi/       bitbake layer that puts it all in the image
 tests/                protocol, integration and cross-validator suites
 ```
@@ -677,7 +771,7 @@ tests/                protocol, integration and cross-validator suites
 ## Verification
 
 ```bash
-python tests/run_all.py          # 309 tests
+python tests/run_all.py          # 492 tests, 46 of them Linux-only
 ```
 
 | Area | Coverage |
@@ -694,11 +788,12 @@ python tests/run_all.py          # 309 tests
 | Qt binding | the binding is read from the sources, and a manifest that disagrees is refused |
 | Connected display | the detected panel geometry reaches the preview *and* the designer, and survives opening a design drawn for another screen |
 | Theme contract | the designed colour mode reaches the manifest, the loader and the panel |
-| Designer | model, reparenting, containers, arrange, assets, toolbars, generator and deploy |
+| Designer | model, reparenting, containers, arrange, assets, toolbars, generator, deploy, and Preview provisioning a bundle when none is open |
 | Dependency scan | imports against stdlib, bundle-local and guarded ones; distribution names; the commands sent to the panel |
 | Deploy bookkeeping | a step that finishes late cannot delete the files of the deploy that replaced it |
 | SSH commands | every argv the Studio builds, including the display probe and the release list |
-| AI Design | OpenDesign connector, provider presets, streaming events, BYOK mode, QML/JSON parser, canvas diff |
+| AI Design | streaming events for every provider protocol (`reasoning_content`, `<think>`, Anthropic/Gemini thought blocks, NDJSON usage), BYOK config round-trip, secrets kept out of URLs, multi-turn history, canvas diff, section metadata and merge, truncation salvage, the registry-driven system prompt |
+| Capture | the Studio switches to a tab where the preview is live before a bezel capture |
 
 ### The release gate
 
@@ -756,37 +851,50 @@ overlay, however your BSP applies them. `daemon/README.md` walks through it.
 
 ## Visual Designer
 
-**The editor is in the Studio, not beside it** — it is the window at the top of
-this page. Palette and object tree on the left, the canvas drawn inside the same
-bezel the preview uses and labelled with the geometry it is designing for, and
-the property, tag binding and Design Chat inspectors on the right. The same
-window then previews, generates and deploys what you drew: no export step, no
-second tool, and no hand-off where the design and the bundle can disagree.
+**The editor is in the Studio, not beside it** — it is the second window at the
+top of this page. A widget library and layer tree on the left, the canvas drawn
+inside the same bezel the preview uses and labelled with the geometry it is
+designing for, and the property, tag-binding and Design Chat inspectors on the
+right. The same window then previews, generates and deploys what you drew: no
+export step, no second tool, and no hand-off where the design and the bundle
+can disagree.
 
-EmbeddedDisplay Studio includes a native visual authoring workspace alongside
-the existing raw-QML and Python application workflow. Open an application
-bundle, select **Designer** in the workspace navigation, then drag controls from
-the palette onto the canvas. Selection, rubber-band multi-selection, movement,
-resize handles, copy/paste, keyboard nudging, z-order, grid snapping and common
-alignment commands are available directly on the canvas. The Delete key removes
-the current selection, while focus-aware handling leaves text and numeric
-editors alone. Three compact command rows keep file/edit actions, page and
-target geometry, arrangement, preview, generation and deployment visible at
-common laptop widths without hiding the end of the workflow behind overflow.
+**Starting.** Select **Designer** and draw. If a bundle is open the design is
+saved beside it as `project.edsui`; if none is, the first **Preview** or
+**Deploy** provisions one under `Documents/EmbeddedDisplay Studio/projects/<name>/`
+— named after the project, with a numeric suffix rather than overwriting an
+existing folder — and the Studio adopts it as the current bundle. A design
+handed over from [AI Design](#ai-design) arrives here the same way.
 
-The property inspector is generated from the central widget registry. It edits
-geometry and control-specific values immediately, while the binding inspector
-connects bindable properties to the same dotted tag names used by Tag Lab and
-the deployed `TagEngine`. Binding metadata can include a format, multiplier,
-offset, unit, warning expression and critical expression. **Preview** generates
-QML and reloads it through Studio's existing live preview; **Deploy** generates,
-validates, and hands the same bundle to the existing deployment pipeline.
-The **Design Chat** panel provides offline text commands such as
-`add Value Tile named inputVoltage`, `set inputVoltage title=Input Voltage`,
-`bind inputVoltage value=power.input_voltage`, and `remove inputVoltage`.
-Its command adapter is deliberately separate from the model, leaving a clean
-integration point for a future conversational model without making network
-access part of the designer runtime.
+**The canvas.** Selection, rubber-band multi-selection, movement, resize
+handles, copy/paste, duplicate, keyboard nudging, z-order, grid snapping and
+alignment are on the canvas itself. Double-click a caption to edit its text,
+double-click an image widget to choose its file, right-click for the context
+menu. Delete removes the selection but never text inside an editor. Two
+compact command rows — file/edit and page/geometry above, arrange, Preview,
+Generate and Deploy on the canvas bar — keep the whole workflow visible at
+laptop widths.
+
+**The library and layers.** The widget library is searchable and has a
+favorites filter (right-click or `Ctrl+F` on an entry); favorites persist. The
+layer tree mirrors the page's containment and selection both ways.
+
+**The inspector.** Generated from the central widget registry, so every widget
+edits its own properties: paired X/Y and W/H cells, live colour swatches, and
+an empty state when nothing is selected. The binding inspector connects
+bindable properties to the same dotted tag names Tag Lab and the deployed
+`TagEngine` use, with an optional format, multiplier, offset, unit, warning
+expression and critical expression per binding. **Design Chat** takes offline
+text commands — `add Value Tile named inputVoltage`,
+`set inputVoltage title=Input Voltage`, `bind inputVoltage value=power.input_voltage`,
+`remove inputVoltage` — through an adapter kept separate from the model, so the
+designer runtime never needs the network.
+
+**Preview and Deploy.** **Preview** saves the project, generates QML into
+`generated/`, updates `manifest.json` and reloads the result through the
+Studio's live preview. **Deploy** confirms the deployment name, does the same,
+validates, and hands the bundle to the same pipeline an imported application
+uses.
 
 Avionics controls use the same data path as every other live HMI value. Bind,
 for example, `ShFuelQuantity.leftValue` to `fuel.left.quantity` and
@@ -811,7 +919,7 @@ manifest.json
 ```
 
 `manifest.json` remains the runtime/deployment contract. Generation updates its
-screen resolution, colour mode, QML entry, and `tags_required`, so Tag Lab
+name, screen resolution, colour mode, QML entry and `tags_required`, so Tag Lab
 simulation, preview and target deployment all use the established runtime — the
 mode the design was drawn in is the mode the panel boots in, rather than a
 default the loader picks on its own.
@@ -822,8 +930,8 @@ size, and keeps it: a design saved for another screen is retargeted on open
 rather than quietly moving the canvas back to whatever that file was drawn for.
 Widget coordinates are never touched by this; the surface moves, the design does
 not. Disconnected, the saved screen stands, because then the file is the only
-authority on its own geometry. Images are kept
-as project-relative `assets/...` paths; absolute machine paths are rejected.
+authority on its own geometry. Images are copied into the project's `assets/`
+and kept as project-relative paths; absolute machine paths are rejected.
 
 Version 1 intentionally supports only `.edsui` → QML generation. Arbitrary QML
 is left untouched and is not imported or round-tripped. Container hierarchy is
@@ -848,18 +956,12 @@ them on the panel canvas and refreshes the live preview — all without leaving
 the window.  The same widgets then generate, preview and deploy through exactly
 the pipeline a hand-drawn design uses.
 
-<div align="center">
-
-<img src="docs/assets/screenshot-ai-design.png" alt="AI Design: the run log on the left with three sectioned turns, and the panel canvas on the right showing an engine data summary with three gauges, fuel quantity bars, start/stop buttons and a status bar" width="900" />
-
-<em><strong>An engine dashboard in three sections.</strong> The brief asked for
-an engine data summary; the model returned it as Section 1 (gauges), Section 2
+The screenshot at the top of this page is this tab: the brief asked for an
+engine data summary; the model returned it as Section 1 (gauges), Section 2
 (temperature gauges and fuel) and Section 3 (bottom summary), each applied to
 the canvas as it arrived.  The chips on every turn say what happened —
-<code>14 widgets</code>, <code>+7 −0 ~0</code>, <code>Applied · panel preview
-refreshed</code>, <code>8.2k tok · 76.1 tok/s · 1m 26s</code>.</em>
-
-</div>
+`14 widgets`, `+7 −0 ~0`, `Applied · panel preview refreshed`,
+`8.2k tok · 76.1 tok/s · 1m 26s`.
 
 ### The layout
 
@@ -964,6 +1066,29 @@ and rollback if the app fails to come up — is the same code path a hand-drawn
 design uses.  Tune the result in the Designer (bind the gauges to real tags,
 resize, restyle), then **Deploy**.  Tag Lab can drive the bound tags before the
 panel is even connected.
+
+## What changed recently
+
+**0.0.7**
+
+* AI Design → Designer → Preview no longer requires an open bundle; the
+  Designer provisions one and the Studio adopts it.
+* AI project titles are coerced to valid manifest names, so a generated
+  design always validates.
+* Sectioned generation: designs are requested in ≤ 8-widget sections, merged
+  by widget id, and continued automatically until complete.
+* The AI tab hides the runtime preview like the Designer does; bezel capture
+  picks a tab where the preview is live.
+
+**0.0.6**
+
+* AI Design tab: Ollama, OpenAI, Anthropic, Google, vLLM and BYOK; streaming
+  reasoning, response and usage; canvas diff and multi-turn context.
+* The Designer restyled in the same vocabulary: flat panels, icon-only tools,
+  searchable library with favorites, layer tree, paired inspector cells.
+* `TagEngine` gained `list_tags` and `unsubscribe` QML slots.
+
+---
 
 ---
 
