@@ -107,6 +107,43 @@ class DesignerDeployTests(unittest.TestCase):
             with open(os.path.join(bundle, "manifest.json"), encoding="utf-8") as handle:
                 self.assertEqual(json.load(handle)["name"], "confirmed-new-name")
 
+    def test_preview_provisions_bundle_for_ai_design_without_open_bundle(self):
+        """AI Design -> Designer -> Preview must not demand an opened bundle."""
+        from designer.model import DesignerPage, DesignerProject, DesignerWidget
+        with tempfile.TemporaryDirectory() as root:
+            workspace = DesignerWorkspace()
+            self.addCleanup(workspace.close)
+            workspace.projects_root = os.path.join(root, "projects")
+            self.assertEqual(workspace.bundle_dir, "")
+            handed_over = DesignerProject(
+                name="AI Design (partial)",
+                pages=[DesignerPage(id="main", name="Main", widgets=[
+                    DesignerWidget("ShButton", "button1",
+                                   {"x": 10, "y": 10, "width": 120, "height": 40},
+                                   {"text": "Start"})])])
+            workspace.load_project(handed_over)
+            self.assertEqual(workspace.project.name, "ai-design-partial")
+
+            requested = []
+            workspace.previewRequested.connect(requested.append)
+            self.assertTrue(workspace.preview())
+
+            bundle = os.path.join(workspace.projects_root, "ai-design-partial")
+            self.assertEqual(requested, [os.path.abspath(bundle)])
+            self.assertTrue(os.path.isfile(os.path.join(bundle, "project.edsui")))
+            valid, issues = validate_bundle(bundle)
+            self.assertTrue(valid, issues)
+            with open(os.path.join(bundle, "manifest.json"), encoding="utf-8") as handle:
+                self.assertEqual(json.load(handle)["name"], "ai-design-partial")
+
+            # A second, unrelated design must not land on top of the first.
+            other = DesignerWorkspace()
+            self.addCleanup(other.close)
+            other.projects_root = workspace.projects_root
+            other.load_project(DesignerProject(name="AI Design (partial)"))
+            self.assertTrue(other.ensure_bundle())
+            self.assertEqual(os.path.basename(other.bundle_dir), "ai-design-partial-2")
+
     def test_studio_handler_loads_then_starts_existing_deploy_pipeline(self):
         calls = []
 

@@ -40,7 +40,7 @@ except ImportError:
     def qml_import_path(): return ""
 
 # Product version, shown hard right in the footer. Single source of truth.
-APP_VERSION = "0.0.6"
+APP_VERSION = "0.0.7"
 
 # Exact, machine-readable marker emitted by DISPLAY_PROBE_COMMAND over SSH.
 DISPLAY_RESOLUTION_RE = re.compile(r"^HMI_DISPLAY=(\d{1,5})x(\d{1,5})$")
@@ -1568,8 +1568,9 @@ class MainWindow(QMainWindow):
         # the separate runtime preview there so the editor gets the full
         # workspace; every operational tab retains the established preview.
         in_designer = self._right_tabs.currentWidget() is self.designer_workspace
-        self._preview_panel_wrap.setVisible(not in_designer)
-        if in_designer:
+        in_ai = self._right_tabs.currentWidget() is self._ai_tab
+        self._preview_panel_wrap.setVisible(not in_designer and not in_ai)
+        if in_designer or in_ai:
             self.device_panel.suspend_preview()
         elif self.bundle_dir and self.device_panel.manifest is None:
             is_valid, _messages = validate_bundle(self.bundle_dir)
@@ -1589,8 +1590,9 @@ class MainWindow(QMainWindow):
         matters: `device_panel.grab()` on the Designer tab returns an empty
         panel, which reads in CI as the application having failed to render.
         """
+        hidden_preview = (self.designer_workspace, self._ai_tab)
         for index in range(self._right_tabs.count()):
-            if self._right_tabs.widget(index) is not self.designer_workspace:
+            if self._right_tabs.widget(index) not in hidden_preview:
                 self._right_tabs.setCurrentIndex(index)
                 return
 
@@ -1774,12 +1776,16 @@ class MainWindow(QMainWindow):
             self.val_label.setStyleSheet("color: #22c55e;")  # success
             self.btn_deploy.setEnabled(True)
 
-            if self._right_tabs.currentWidget() is self.designer_workspace:
+            if self._right_tabs.currentWidget() in (self.designer_workspace, self._ai_tab):
                 # Loading the last bundle happens after the initial tab-change
                 # hook. Do not accidentally restart its hidden Quick renderer.
                 self.device_panel.manifest = None
                 self.device_panel.bundle_dir = dir_path
                 self.device_panel.suspend_preview()
+            elif self.device_panel.bundle_dir == dir_path:
+                # Bundle already loaded — only refresh if manifest differs.
+                self.device_panel.manifest = manifest
+                self.device_panel.update_geometry()
             else:
                 self.device_panel.load_bundle(dir_path, manifest)
             tags = manifest.get("tags_required", [])

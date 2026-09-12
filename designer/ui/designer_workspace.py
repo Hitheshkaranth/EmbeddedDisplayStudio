@@ -9,7 +9,7 @@ import shutil
 import tempfile
 
 import shiboken6
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QSize, QStandardPaths, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
@@ -25,7 +25,7 @@ from designer.generators import QmlGenerationError, QmlGenerator
 from designer.model import DesignerBinding, DesignerPage, DesignerProject, DesignerWidget
 from designer.palette.widget_palette import WidgetPalette
 from designer.palette.widget_registry import default_registry
-from schema.manifest import NAME_RE, theme_of
+from schema.manifest import NAME_RE, deployable_name, theme_of
 
 try:
     from ui.python.shadcn import color, icon
@@ -409,6 +409,9 @@ class DesignerWorkspace(QWidget):
         self.target_resolution = None
         self.bundle_dir = ""
         self.file_path = ""
+        # Where a design that was never given a bundle (AI Design hand-over,
+        # a fresh Studio) is provisioned when Preview/Deploy first needs one.
+        self.projects_root = ""
         self.current_page_index = 0
         self.undo_stack = QUndoStack(self)
         self.clipboard = []
@@ -1160,8 +1163,10 @@ class DesignerWorkspace(QWidget):
         set its own, so a design keeps targeting the connected glass.
         """
         previous = self.project
-        if not project.name:
-            project.name = previous.name
+        # AI titles ("AI Design (partial)") are not manifest names; coerce
+        # them here so Preview/Deploy never trip over the contract later.
+        project.name = deployable_name(
+            project.name, previous.name or self._bundle_project_name())
         project.screen.width = previous.screen.width
         project.screen.height = previous.screen.height
         project.screen.theme = previous.screen.theme
@@ -1596,9 +1601,48 @@ class DesignerWorkspace(QWidget):
         folder_name = os.path.basename(os.path.normpath(self.bundle_dir)) if self.bundle_dir else ""
         return folder_name or "designed-ui"
 
+    def default_projects_root(self):
+        """Folder that receives auto-provisioned design bundles."""
+        if self.projects_root:
+            return self.projects_root
+        documents = (QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)
+                     or os.path.expanduser("~"))
+        return os.path.join(documents, "EmbeddedDisplay Studio", "projects")
+
+    def ensure_bundle(self):
+        """Give the design a bundle on disk if it has none yet.
+
+        The AI Design tab drops a project straight onto the canvas; the
+        Studio may have no bundle open at all. Rather than refuse Preview
+        with "open a bundle first", provision one under the projects root
+        named after the design, so the same generate -> manifest -> preview
+        -> deploy chain runs unchanged. Returns True once a bundle exists.
+        """
+        if self.bundle_dir:
+            return True
+        name = deployable_name(self.project.name)
+        root = self.default_projects_root()
+        bundle = os.path.join(root, name)
+        # A folder that already holds another design must not be overwritten.
+        counter = 2
+        while os.path.isdir(bundle) and os.listdir(bundle):
+            bundle = os.path.join(root, f"{name}-{counter}"); counter += 1
+        try:
+            os.makedirs(bundle, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.critical(self, "Could not create project",
+                                 f"Could not create a project folder at:\n{bundle}\n\n{exc}")
+            return False
+        self.project.name = name
+        self.project_name.setText(name)
+        self.bundle_dir = os.path.abspath(bundle)
+        self.scene.project_dir = self.bundle_dir
+        self.file_path = os.path.join(self.bundle_dir, "project.edsui")
+        self.message.emit(f"Created project bundle at {self.bundle_dir}")
+        return True
+
     def generate(self):
-        if not self.bundle_dir:
-            QMessageBox.warning(self, "No project", "Open an application bundle before generating."); return []
+        if not self.ensure_bundle(): return []
         if not self.save(): return []
         try:
             output_dir = os.path.join(self.bundle_dir, "generated")
@@ -1608,7 +1652,9 @@ class DesignerWorkspace(QWidget):
         except (OSError, QmlGenerationError, ValueError) as exc:
             QMessageBox.critical(self, "Generation failed", str(exc)); return []
     def preview(self):
-        if self.generate(): self.previewRequested.emit(self.bundle_dir)
+        """Generate and ask the Studio to reload; False when nothing was generated."""
+        if not self.generate(): return False
+        self.previewRequested.emit(self.bundle_dir); return True
     def deploy(self):
         if self.isVisible():
             name, accepted = QInputDialog.getText(
@@ -1636,16 +1682,7 @@ class DesignerWorkspace(QWidget):
 
     def _ensure_project_location(self):
         """Assets are copied beside the project, so it needs a home on disk first."""
-        if self.bundle_dir:
-            return True
-        answer = QMessageBox.question(
-            self, "Save the project first",
-            "Images are copied into the project's assets folder, so this UI needs a "
-            "location on disk before an image can be added.\n\nSave it now?",
-            QMessageBox.Save | QMessageBox.Cancel, QMessageBox.Save)
-        if answer != QMessageBox.Save:
-            return False
-        return bool(self.save() and self.bundle_dir)
+        return self.ensure_bundle()
 
     def _asset_requested(self, widget_id, property_name):
         """Double-clicking the widget itself is the shortest way to its image."""

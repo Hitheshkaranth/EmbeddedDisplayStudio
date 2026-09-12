@@ -63,6 +63,18 @@ SUPPORTED_SCHEMA = 1
 # distinct apps collide.
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
+
+def deployable_name(raw, fallback="designed-ui"):
+    """Coerce free text ("AI Design (partial)", a folder name) to a NAME_RE name.
+
+    Designers and the AI tab produce human titles; the manifest needs the
+    contract's character set. Lowercase, swap everything else for a dash,
+    trim leading/trailing punctuation, cap at 64. Empty results fall back.
+    """
+    name = re.sub(r"[^a-z0-9._-]", "-", str(raw or "").lower())
+    name = re.sub(r"-{2,}", "-", name).strip("-.")[:64].rstrip("-.")
+    return name if NAME_RE.match(name) else fallback
+
 # Version pattern: semantic-ish. Deliberately permissive -- "1.0", "1.2.3",
 # "2.0.0-rc1" and "1.0.0+build7" are all things real projects ship -- but not
 # arbitrary text, because the value is used to name artefacts.

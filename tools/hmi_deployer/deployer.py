@@ -42,6 +42,7 @@ from schema.bundle import (  # noqa: E402  (import placed with its explanation)
 # manifest printed in the README was rejected here -- while never checking
 # 'version', which both of the others required.
 from schema.manifest import (  # noqa: E402
+    deployable_name,
     detect_qt_binding,
     screen_of,
     validate_bundle,
@@ -221,13 +222,9 @@ def detect_bundle(bundle_dir: str) -> dict:
         could be found (in which case the caller should tell the user what is
         missing rather than guessing).
     """
-    import re
-
     # Name comes from the folder, lowercased and stripped to the contract's
     # character set, since that is what both installers enforce.
-    raw = os.path.basename(os.path.normpath(bundle_dir))
-    name = re.sub(r"[^a-z0-9._-]", "-", raw.lower()).strip("-.") or "imported-app"
-    name = name[:64]
+    name = deployable_name(os.path.basename(os.path.normpath(bundle_dir)), "imported-app")
 
     entry = None
     runtime = None

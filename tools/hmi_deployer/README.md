@@ -163,8 +163,18 @@ measured tokens-per-second).  The strip under the composer keeps session
 totals.
 
 **Auto-apply to canvas** (default on) loads the generated design into the
-Designer as one undoable step; **Apply to canvas** on a turn re-applies that
-turn's design later.  **Stop** cancels a run at the next token.
+Designer as one undoable step and runs the Designer's Preview so the live
+panel shows it; **Apply to canvas** on a turn re-applies that turn's design
+later.  **Stop** cancels a run at the next token.
+
+Large screens are requested in sections of at most eight widgets; the tab
+queues `Continue · Section n` automatically, merging each section into the
+running design, for up to eight sections before pausing for review.
+
+No bundle needs to be open first.  If none is, the Designer provisions one
+under `Documents/EmbeddedDisplay Studio/projects/<name>/` when Preview or
+Deploy first needs it, and the Studio adopts it as the current bundle.  The
+AI title is coerced to a valid manifest name (`AI Design` → `ai-design`).
 
 ## Tag Lab
 

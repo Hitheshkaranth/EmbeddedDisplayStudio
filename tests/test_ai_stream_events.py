@@ -220,6 +220,34 @@ class TestProjectDiff(unittest.TestCase):
         self.assertIn("1024x600", prompt)
         self.assertIn("ShGauge", prompt)
         self.assertIn("```json", prompt)
+        self.assertIn("at most 8 widgets", prompt)
+        self.assertIn("section.complete=true", prompt)
+
+    def test_section_metadata_and_merge(self):
+        from tools.hmi_deployer.ai_generator import AIDesignGenerator, merge_project_section
+        gen = AIDesignGenerator()
+        first = gen.generate('```json\n' + json.dumps({
+            "name": "Panel",
+            "section": {"index": 1, "complete": False, "label": "Header", "next": "Gauges"},
+            "pages": [{"id": "main", "widgets": [
+                {"type": "Text", "id": "title", "properties": {"text": "Engine"}}
+            ]}],
+        }) + '\n```')
+        second = gen.generate('```json\n' + json.dumps({
+            "name": "Panel",
+            "section": {"index": 2, "complete": True, "label": "Gauges", "next": ""},
+            "pages": [{"id": "main", "widgets": [
+                {"type": "Gauge", "id": "rpm"},
+                {"type": "Text", "id": "title", "properties": {"text": "Powertrain"}},
+            ]}],
+        }) + '\n```')
+        merged = merge_project_section(first, second)
+        widgets = list(merged.all_widgets())
+        self.assertEqual([widget.id for widget in widgets], ["title", "rpm"])
+        self.assertEqual(widgets[0].properties["text"], "Powertrain")
+        self.assertFalse(first._section_complete)
+        self.assertEqual(first._next_section, "Gauges")
+        self.assertTrue(second._section_complete)
 
 
 class TestConsoleFormatting(unittest.TestCase):
@@ -336,6 +364,14 @@ class TestPartialWidgetExtraction(unittest.TestCase):
         text = "The model just said hello world with no widgets mentioned."
         project = gen._extract_partial_widgets(text, 1280, 800)
         self.assertIsNone(project)
+
+    def test_generate_uses_partial_fallback_with_requested_screen_size(self):
+        from tools.hmi_deployer.ai_generator import AIDesignGenerator
+        project = AIDesignGenerator().generate(
+            '```json\n{"pages":[{"widgets":[{"type":"ShGauge"', 1024, 600)
+        self.assertIsNotNone(project)
+        self.assertEqual((project.screen.width, project.screen.height), (1024, 600))
+        self.assertTrue(getattr(project, "_truncated", False))
 
     def test_extract_partial_realistic_truncation(self):
         """Simulate a model with long reasoning that gets cut off mid-JSON."""

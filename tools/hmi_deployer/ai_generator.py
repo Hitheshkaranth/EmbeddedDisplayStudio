@@ -7,6 +7,7 @@ DesignerProject/DesignerWidget objects that integrate with the existing canvas.
 import re
 import json
 import logging
+import copy
 from typing import Optional
 
 from PySide6.QtCore import Signal, QObject
@@ -122,6 +123,40 @@ def diff_projects(old, new) -> dict:
     return {"added": added, "removed": removed, "changed": changed}
 
 
+def merge_project_section(base, section):
+    """Merge one staged AI response into the live design by stable widget id.
+
+    Sections are page-level slices. A repeated id replaces the earlier widget,
+    which lets a later section deliberately correct an item without creating a
+    duplicate. New pages and widgets retain the order the model emitted.
+    """
+    if base is None:
+        return copy.deepcopy(section)
+    if section is None:
+        return copy.deepcopy(base)
+    merged = copy.deepcopy(base)
+    if section.name:
+        merged.name = section.name
+    pages = {page.id: page for page in merged.pages}
+    for incoming_page in section.pages:
+        target = pages.get(incoming_page.id)
+        if target is None:
+            target = copy.deepcopy(incoming_page)
+            merged.pages.append(target)
+            pages[target.id] = target
+            continue
+        existing = {widget.id: index for index, widget in enumerate(target.widgets)}
+        for widget in incoming_page.widgets:
+            incoming = copy.deepcopy(widget)
+            index = existing.get(incoming.id)
+            if index is None:
+                existing[incoming.id] = len(target.widgets)
+                target.widgets.append(incoming)
+            else:
+                target.widgets[index] = incoming
+    return merged
+
+
 def summarize_widgets(project) -> str:
     """``7 widgets: ShGauge x2, ShButton x3, Text x2`` -- for the turn conclusion."""
     if project is None:
@@ -157,16 +192,23 @@ def build_system_prompt(registry: Optional[WidgetRegistry] = None,
         "EmbeddedDisplay Studio widget set (Shadcn-styled). "
         f"The target screen is {screen_width}x{screen_height} px; place every widget "
         "inside it with absolute geometry.\n\n"
-        "Reply with ONE fenced ```json block containing a design payload of the form:\n"
-        '{"name": "<short name>", "pages": [{"id": "main", "name": "Main", "widgets": ['
+        "Build large designs in small, independently valid sections of at most 8 widgets. "
+        "Return exactly one section per response; never start another section in the same response. "
+        "A container and all of its children count as one section and must stay together.\n\n"
+        "Reply with ONE fenced ```json block containing a design section of the form:\n"
+        '{"name": "<short name>", "section": {"index": 1, "complete": false, '
+        '"label": "Header and status", "next": "Primary instruments"}, '
+        '"pages": [{"id": "main", "name": "Main", "widgets": ['
         '{"type": "<WidgetType>", "id": "<camelCaseId>", '
         '"geometry": {"x": 0, "y": 0, "width": 200, "height": 60}, '
         '"properties": {"text": "..."}, '
         '"bindings": {"value": {"tag": "plc.tag.name"}}}]}]}\n\n'
         "Allowed widget types: " + ", ".join(types) + ".\n"
         "Use bindings for any live value that should come from a PLC/telemetry tag. "
-        "Keep ids unique. Before the JSON block, write at most two sentences "
-        "describing the layout; after it, nothing."
+        "Keep ids unique across every section. Set section.complete=true and section.next=\"\" "
+        "when the requested design is finished. Before the JSON block, write at most one sentence; "
+        "after it, nothing. If asked to continue, return only the next section and do not repeat "
+        "widgets already emitted."
     )
 
 
@@ -226,7 +268,7 @@ class AIDesignGenerator:
         # but every widget type mentioned in the text (in the reasoning block,
         # or in the partial JSON) tells us what the model was trying to build.
         try:
-            partial = self._extract_partial_widgets(ai_output, width, height)
+            partial = self._extract_partial_widgets(ai_output, screen_width, screen_height)
             if partial:
                 return partial
         except Exception:
@@ -255,7 +297,20 @@ class AIDesignGenerator:
         else:
             widgets = self._convert_widgets(design.get("widgets", []))
 
-        return self._build_project(widgets, design.get("name", "AI Design"), width, height)
+        project = self._build_project(widgets, design.get("name", "AI Design"), width, height)
+        section = design.get("section") or {}
+        if isinstance(section, dict):
+            try:
+                project._section_index = max(1, int(section.get("index", 1) or 1))
+            except (TypeError, ValueError):
+                project._section_index = 1
+            complete = section.get("complete", True)
+            if isinstance(complete, str):
+                complete = complete.strip().lower() not in ("false", "no", "0", "pending")
+            project._section_complete = bool(complete)
+            project._section_label = str(section.get("label", "")).strip()
+            project._next_section = str(section.get("next", section.get("nextSection", ""))).strip()
+        return project
 
     def _convert_widgets(self, widget_list: list) -> list:
         """Convert a list of widget dicts to DesignerWidget objects."""

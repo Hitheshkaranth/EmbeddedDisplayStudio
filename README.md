@@ -596,7 +596,8 @@ it.</em>
 execution shell streams thinking, response and token counts; the canvas diff
 shows exactly what changed.  Supports Ollama (local), OpenAI, Anthropic, Google,
 and vLLM via Tailscale — or any OpenAI-compatible endpoint with a pasted API
-key.</em>
+key.  See <a href="#ai-design">AI Design</a> below for how a brief becomes a
+deployable screen.</em>
 
 </div>
 
@@ -840,9 +841,35 @@ library, and the editor uses the project's existing PySide6 dependency.
 
 ## AI Design
 
-**Turn a written brief into widgets.**  Switch to the **AI Design** tab, pick a
-model and provider, type what you want and the Studio streams the response while
-showing you everything the model does under the hood.
+**Turn a written brief into a running panel screen.**  Switch to the
+**AI Design** tab, pick a provider and model, describe the screen you want and
+the Studio streams the model's answer, parses it into Designer widgets, draws
+them on the panel canvas and refreshes the live preview — all without leaving
+the window.  The same widgets then generate, preview and deploy through exactly
+the pipeline a hand-drawn design uses.
+
+<div align="center">
+
+<img src="docs/assets/screenshot-ai-design.png" alt="AI Design: the run log on the left with three sectioned turns, and the panel canvas on the right showing an engine data summary with three gauges, fuel quantity bars, start/stop buttons and a status bar" width="900" />
+
+<em><strong>An engine dashboard in three sections.</strong> The brief asked for
+an engine data summary; the model returned it as Section 1 (gauges), Section 2
+(temperature gauges and fuel) and Section 3 (bottom summary), each applied to
+the canvas as it arrived.  The chips on every turn say what happened —
+<code>14 widgets</code>, <code>+7 −0 ~0</code>, <code>Applied · panel preview
+refreshed</code>, <code>8.2k tok · 76.1 tok/s · 1m 26s</code>.</em>
+
+</div>
+
+### The layout
+
+| Region | What it is |
+|---|---|
+| **Provider / Model** | Which endpoint answers and which model it runs.  The status line beneath shows the live probe: `Connected · vLLM (Tailscale) · 63 ms · 1 models`.  **Endpoint** expands to edit the base URL or paste a key. |
+| **Run log** | One foldable *execution shell* per turn — request, thinking, response, parsed design, canvas diff, usage — followed by the result chips and an **Apply to canvas** button that re-applies that turn later. |
+| **Composer** | The brief.  **Auto-apply to canvas** (default on) puts each result on the canvas as it lands; `Ctrl+Enter` sends; **Clear** empties the conversation; the ▶ button becomes **Stop** while a run is live. |
+| **Session strip** | `3 runs · 21.1k tokens (5.1k in / 16k out) · 75.9 tok/s` — totals for the whole session. |
+| **Panel canvas** | The design drawn inside the panel bezel at the design target (`1024 × 768`), with the widget count and an **Open in Designer** shortcut.  It is the same canvas the Designer edits, so what you see here is what deploys. |
 
 ### Providers
 
@@ -852,41 +879,91 @@ showing you everything the model does under the hood.
 | **OpenAI** | `api.openai.com` | API key |
 | **Anthropic** | `api.anthropic.com` | API key |
 | **Google** | `generativelanguage.googleapis.com` | API key |
-| **vLLM (Tailscale)** | Tailscale-hosted endpoint | Tailscale network + key |
+| **vLLM (Tailscale)** | A vLLM server reached over your Tailscale network | Tailscale + the server's key, if any |
 | **BYOK** | Any OpenAI-compatible server | Base URL + key |
 
-The **Endpoint** section expands so you can change the base URL or paste an API
-key per provider — both are remembered.  The tab probes the endpoint on open and
-shows `Connected · <provider> · <latency> · <n> models` or `Not connected ·
-<reason>`.
+The tab probes the endpoint when it opens and again on the refresh button, and
+merges the models the endpoint actually serves into the **Model** list; the
+field stays editable for anything not listed.  Base URL and key are remembered
+per provider, so switching between a local Ollama and a hosted model is one
+click.
 
-### Execution Shell
+### How a brief becomes widgets
 
-Every turn produces a foldable execution record:
+1. **System prompt from the palette.**  The prompt sent with every brief is
+   built from the Designer's own widget registry and the current screen size,
+   so the model only knows about widgets the panel can actually render
+   (`ShGauge`, `ShValueTile`, `ShButton`, …) and lays them out for the glass
+   you are targeting.
+2. **Sectioned generation.**  Large screens do not fit in one response, and a
+   truncated JSON design is worthless.  The Studio therefore asks for the design
+   *in sections of at most eight widgets*.  Each section says whether the design
+   is complete and, if not, names the next section; the Studio queues
+   `Continue · Section n · <label>` automatically, tells the model which widget
+   ids already exist so it never repeats them, and merges each section into the
+   running project.  Up to eight sections run unattended; after that the tab
+   pauses and asks you to review before continuing.  A response that hits the
+   model's output limit is salvaged for whatever widgets it did finish and the
+   rest is requested again.
+3. **Parse and diff.**  The answer is parsed into `DesignerProject` /
+   `DesignerWidget` objects — unknown widget types fall back to a plain
+   rectangle rather than failing the whole design — and diffed against what is
+   on the canvas.  The chips report `+added −removed ~changed`; expand
+   **Canvas changes** in the shell for the ids.
+4. **Apply.**  With auto-apply on, the merged project replaces the canvas as
+   one undoable step, so `Ctrl+Z` in the Designer takes you back to the
+   previous turn.  The AI title (`AI Design`, `AI Design (partial)`) is coerced
+   to a deployable name (`ai-design-partial`) so the manifest is valid.
+5. **Preview.**  Applying also runs the Designer's own Preview: the QML is
+   generated, the manifest updated, and the bundle reloaded into the live
+   panel.  **You do not need a bundle open first** — if none is, the Designer
+   provisions one under `Documents/EmbeddedDisplay Studio/projects/<name>/`,
+   named after the design and never on top of an existing one, and the Studio
+   adopts it as the current bundle.  From there **Preview** and **Deploy** in
+   the Designer, and the Display Console, behave exactly as they do for any
+   other bundle.
+6. **Multi-turn.**  Up to three prior turns ride along with a new brief, so
+   "make the RPM gauge bigger" or "add a coolant warning" edit the design on the
+   canvas instead of starting over.  **Stop** cancels a run at the next token.
+
+### Reading the execution shell
+
+Every turn produces a foldable record that stays open while the run is live
+and folds once the conclusion lands:
 
 | Row | Content |
 |---|---|
 | **Head** | spinner / ✓ / ✗, status word (`Sending request… → Connecting… → Thinking… → Writing… → Parsing design… → Done`), elapsed |
 | **Request** | `POST <url>`, model, brief length |
-| **Thinking** | Model's reasoning (streamed, foldable) — `reasoning_content`, `<think>` tags, Anthropic/Gemini thought blocks |
+| **Thinking** | The model's reasoning as it streams — `reasoning_content`, `<think>` tags, Anthropic/Gemini thought blocks |
 | **Response** | The streamed answer — foldable, live-scrolling |
 | **Parsed design** | Widget count and types recovered from the output |
 | **Canvas changes** | `+added −removed ~changed` with ids listed inside |
 | **Usage** | `in · out · total · tok/s · TTFT · elapsed` |
 
 Counts prefixed with `~` are estimated from characters; they are replaced by
-provider-reported usage when those arrive.  The strip under the composer keeps
-session totals.
+provider-reported usage when those arrive.  The chips under each turn summarise
+the same record at a glance:
 
-### How it integrates
+| Chip | Meaning |
+|---|---|
+| `Section 2 · Temperature Gauges and Fuel` | Which section of a multi-section design this turn produced |
+| `14 widgets` | Widgets in the merged design after this turn |
+| `+7 −0 ~0` | Canvas diff: added, removed, changed |
+| `Applied · panel preview refreshed` | The design is on the canvas and the live panel reloaded it |
+| `Applied · continuing automatically` | Another section is queued and will start when this one exits |
+| `Stopped after 8 sections` | The unattended limit; review the canvas and send a new brief |
+| `8.2k tok · 76.1 tok/s · 1m 26s` | Tokens, throughput and wall time for the turn |
 
-1. **Brief → widgets** — the output is parsed into `DesignerProject` /
-   `DesignerWidget` objects and applied to the Designer canvas as one undoable
-   step (auto-apply is on by default).
-2. **Edit then deploy** — tweak the AI output in the Designer, then **Generate**
-   and **Deploy** follow the same pipeline as any hand-written design.
-3. **Multi-turn** — up to three prior turns ride along so follow-ups like "make
-   the gauge bigger" work reliably.  **Stop** cancels a run at the next token.
+### Where the AI output goes next
+
+The AI tab never writes QML itself.  It hands a `DesignerProject` to the
+Designer, and everything downstream — QML generation, `manifest.json`,
+`tags_required`, bundle validation, packaging, the atomic install on the panel
+and rollback if the app fails to come up — is the same code path a hand-drawn
+design uses.  Tune the result in the Designer (bind the gauges to real tags,
+resize, restyle), then **Deploy**.  Tag Lab can drive the bound tags before the
+panel is even connected.
 
 ---
 
