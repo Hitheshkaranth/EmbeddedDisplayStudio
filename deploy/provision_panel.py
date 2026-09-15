@@ -50,6 +50,10 @@ FILE_PAYLOAD: List[Tuple[str, str]] = [
     ("target/bin/hmi-gui-launch",           "usr/bin/hmi-gui-launch"),
     ("target/bin/hmi-hwd-launch",           "usr/bin/hmi-hwd-launch"),
     ("daemon/hmi_hwd.py",                   "usr/lib/hmi/hmi_hwd.py"),
+    # The Modbus TCP client the daemon imports as a sibling module; the
+    # launcher runs hmi_hwd.py as a script, so its own directory is on
+    # sys.path and `import modbus` resolves here.
+    ("daemon/modbus.py",                    "usr/lib/hmi/modbus.py"),
     # The single implementation of CONTRACT section 4; hmi-install calls it
     # from here rather than carrying its own copy of the manifest rules.
     ("schema/manifest.py",                  "usr/lib/hmi/manifest.py"),

@@ -86,6 +86,7 @@ mkdir -p "${CORE_FILES}"
 
 # Link or copy Layer 1 daemon and config
 cp daemon/hmi_hwd.py            "${CORE_FILES}/hmi_hwd.py"
+cp daemon/modbus.py             "${CORE_FILES}/modbus.py"
 cp schema/manifest.py           "${CORE_FILES}/manifest.py"
 cp daemon/hwd.json              "${CORE_FILES}/hwd.json"
 

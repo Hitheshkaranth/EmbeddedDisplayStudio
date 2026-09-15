@@ -100,8 +100,11 @@ QML bindings stay resolvable. `seq` increments monotonically and wraps at 2^31.
 | `ai.` | analog input (IIO ADC), float | no |
 | `di.` | digital input (GPIO in), bool | no |
 | `do.` | digital output (GPIO out), bool | **yes** |
+| `mb.` | Modbus TCP tag (coil/discrete/holding/input) | **yes** (coil/holding with `writable: true`) |
 | `uart.` | serial link tags | `uart.tx` only |
-| `sys.` | daemon health/diagnostics | no |
+| `sys.` | daemon health/diagnostics (incl. `sys.modbus_online`) | no |
+
+Modbus tags are registered under the `modbus` section of `hwd.json`. Each tag specifies a `kind` (coil, discrete, holding, input), a 0-based `address`, a `type` (bool for coils/discrete, int16/uint16/int32/uint32/float32 for holding/input), and optional `scale`/`offset`/`word_order` fields. The daemon polls all configured Modbus tags in a background thread and updates the tag store on each poll cycle. Read failures set the tag to `null` (never omit). A write to a Modbus holding register encodes the value using the configured `type` and `scale`/`offset`, then writes via FC 6 (single register) or FC 16 (multiple registers).
 
 **QML alias:** dots are illegal in QML property names, so the Tag Engine also
 exposes each tag with `.` replaced by `_` (`ai.pot` → `Tags.ai_pot`). Commands
@@ -114,6 +117,7 @@ always use the raw dotted name.
 | Path | Owner | Purpose |
 | --- | --- | --- |
 | `/usr/lib/hmi/hmi_hwd.py` | root:root 0755 | hardware daemon |
+| `/usr/lib/hmi/modbus.py` | root:root 0644 | its Modbus TCP client, imported as a sibling module |
 | `/usr/lib/hmi/manifest.py` | root:root 0644 | shared section 4 validator |
 | `/usr/lib/hmi/gui/` | root:root 0755 | GUI loader (`main.py`, `tagengine.py`) |
 | `/usr/lib/hmi/shell/` | root:root 0755 | `Shell.qml`, `Fallback.qml` |
@@ -377,6 +381,12 @@ deliberate.
 * Pins must be freed from their default pinmux via a Toradex device-tree overlay
   (`/boot/overlays.txt`) before the daemon can claim them. Document, don't guess.
 * Serial: prefer the stable `/dev/verdin-uartN` aliases over `/dev/ttymxcN`.
+* Modbus TCP: the daemon uses a pure-stdlib TCP client (no pyModbus3, no minimalmodbus).
+  It supports FC 1, 2, 3, 4, 5, 6, 16. Transaction IDs are monotonically increasing
+  and echoed by the device. The poll loop runs in a background thread and is independent
+  of the asyncio event loop. The Modbus module is imported from `daemon/modbus.py` (stdlib-only, no external deps).
+  On target it is installed beside the daemon as `/usr/lib/hmi/modbus.py` (section 3).
+  `--sim` mode uses an in-memory `ModbusSim` that tracks register/coil state locally.
 
 ## 9. Alarm and history semantics (C2 + C3)
 

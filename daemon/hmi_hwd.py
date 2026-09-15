@@ -33,6 +33,24 @@ import threading
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 # ---------------------------------------------------------------------------
+# Modbus support -- stdlib-only client.
+# In development, modbus.py is a sibling package (daemon.modbus).
+# On the target, hmi_hwd.py is deployed as a single file, so the modbus
+# code is inlined.  Try package-relative import, then top-level module.
+# ---------------------------------------------------------------------------
+try:
+    from . import modbus as _modbus_mod
+    from .modbus import decode_value, scale_read
+except ImportError:
+    try:
+        import modbus as _modbus_mod
+        from modbus import decode_value, scale_read
+    except ImportError:
+        _modbus_mod = None
+        decode_value = None
+        scale_read = None
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
@@ -909,6 +927,66 @@ def load_config(path: str) -> dict:
                 logger.error("Invalid tag name '%s' in adc.channels", tag)
                 sys.exit(1)
 
+    # Validate modbus block (optional, CONTRACT C6).
+    if "modbus" in cfg:
+        mcfg = cfg["modbus"]
+        if not isinstance(mcfg, dict):
+            logger.error("modbus config must be an object")
+            sys.exit(1)
+        host = mcfg.get("host")
+        if not isinstance(host, str):
+            logger.error("modbus.host must be a string, got %r", host)
+            sys.exit(1)
+        port = mcfg.get("port", 502)
+        if not isinstance(port, int) or not (1 <= port <= 65535):
+            logger.error("modbus.port must be 1..65535, got %r", port)
+            sys.exit(1)
+        unit_id = mcfg.get("unit_id", 1)
+        if not isinstance(unit_id, int) or unit_id < 0:
+            logger.error("modbus.unit_id must be a non-negative int, got %r", unit_id)
+            sys.exit(1)
+        timeout = mcfg.get("timeout_s", 1.0)
+        if not isinstance(timeout, (int, float)) or timeout <= 0:
+            logger.error("modbus.timeout_s must be a positive number, got %r", timeout)
+            sys.exit(1)
+        poll_interval = mcfg.get("poll_interval_ms", 200)
+        if not isinstance(poll_interval, (int, float)) or poll_interval <= 0:
+            logger.error("modbus.poll_interval_ms must be a positive number, got %r", poll_interval)
+            sys.exit(1)
+        reconnect = mcfg.get("reconnect_s", 5.0)
+        if not isinstance(reconnect, (int, float)) or reconnect <= 0:
+            logger.error("modbus.reconnect_s must be a positive number, got %r", reconnect)
+            sys.exit(1)
+        # Validate tags.
+        for tag_name, tcfg in mcfg.get("tags", {}).items():
+            if not TAG_RE.match(tag_name):
+                logger.error("Invalid tag name '%s' in modbus.tags", tag_name)
+                sys.exit(1)
+            if not isinstance(tcfg, dict):
+                logger.error("modbus.tag '%s' config must be an object", tag_name)
+                sys.exit(1)
+            kind = tcfg.get("kind")
+            if kind not in ("coil", "discrete", "holding", "input"):
+                logger.error("modbus.tag '%s' kind must be one of coil/discrete/holding/input, got %r", tag_name, kind)
+                sys.exit(1)
+            addr = tcfg.get("address")
+            if not isinstance(addr, int) or addr < 0:
+                logger.error("modbus.tag '%s' address must be a non-negative int", tag_name)
+                sys.exit(1)
+            type_name = tcfg.get("type", "bool")
+            if kind in ("coil", "discrete"):
+                if type_name != "bool":
+                    logger.error("modbus.tag '%s': kind '%s' requires type 'bool', got %r", tag_name, kind, type_name)
+                    sys.exit(1)
+            else:
+                if type_name not in ("int16", "uint16", "int32", "uint32", "float32"):
+                    logger.error("modbus.tag '%s': kind '%s' type must be int16/uint16/int32/uint32/float32, got %r", tag_name, kind, type_name)
+                    sys.exit(1)
+            # writable only on coil/holding.
+            if tcfg.get("writable", False) and kind not in ("coil", "holding"):
+                logger.error("modbus.tag '%s': writable=true only valid for coil/holding", tag_name)
+                sys.exit(1)
+
     return cfg
 
 # ---------------------------------------------------------------------------
@@ -1110,6 +1188,7 @@ class CommandProtocol(asyncio.DatagramProtocol):
         """Handle the 'set' command: drive an output tag to a value.
 
         Validates the tag exists, is writable, and value is 0/1/true/false.
+        Supports both GPIO outputs (do.*) and Modbus tags (mb.*).
         """
         tag = msg.get("tag")
         if not isinstance(tag, str) or not self._daemon.tags.exists(tag):
@@ -1135,7 +1214,7 @@ class CommandProtocol(asyncio.DatagramProtocol):
                 self._send_ack(msg_id, addr)
         except Exception:
             self._daemon.error_count += 1
-            _rl_log.warning(ERR_HW_ERROR, "GPIO write error for %s", tag)
+            _rl_log.warning(ERR_HW_ERROR, "Write error for %s", tag)
             if msg_id:
                 self._send_nack(msg_id, ERR_HW_ERROR, addr)
 
@@ -1363,6 +1442,16 @@ class HwDaemon:
         # -- UART init --
         self.uart: Optional[UartLink] = self._init_uart(cfg.get("uart"), force_sim)
 
+        # -- Modbus init --
+        self._modbus_client: Optional[Any] = None
+        self._modbus_sim: Optional[Any] = None
+        self._modbus_tags: Dict[str, dict] = {}
+        self._modbus_safe_states: Dict[str, int] = {}
+        self._modbus_online_event: threading.Event = threading.Event()
+        self._modbus_stop: threading.Event = threading.Event()
+        self._modbus_thread: Optional[threading.Thread] = None
+        self._init_modbus(cfg.get("modbus"), force_sim)
+
         # -- System tags --
         self.tags.register("sys.uptime", 0.0)
         self.tags.register("sys.errors", 0)
@@ -1552,22 +1641,269 @@ class HwDaemon:
             logger.warning("UART port %s unavailable (%s); feature disabled", port, exc)
             return None
 
-    def gpio_write(self, tag: str, value: int) -> None:
-        """Write a logical value to a GPIO output and update the tag store.
+    def _init_modbus(self, modbus_cfg: Optional[dict], force_sim: bool) -> None:
+        """Initialise the Modbus TCP backend.
+
+        Creates the Modbus client (real or simulated), registers mb.* tags,
+        and starts the poll thread.
 
         Args:
-            tag:   output tag name (must be in _output_map).
+            modbus_cfg: the "modbus" section of hwd.json, or None.
+            force_sim:  if True, use ModbusSim regardless of host reachability.
+
+        Side effects:
+            Creates ModbusTcpClient or ModbusSim, registers mb.* tags in
+            the tag store, starts a background poll thread.
+        """
+        if modbus_cfg is None:
+            self._modbus_client = None
+            self._modbus_sim = None
+            self._modbus_tags: Dict[str, dict] = {}
+            self._modbus_safe_states: Dict[str, int] = {}
+            self._modbus_online_event = threading.Event()
+            return
+
+        mcfg = modbus_cfg
+
+        # Create the client (sim or real).
+        if force_sim:
+            logger.warning("Simulation mode (--sim): Modbus operations are simulated")
+            client = _modbus_mod.ModbusSim()
+            self._modbus_sim = client
+            self._modbus_client = None
+        else:
+            host = mcfg.get("host", "127.0.0.1")
+            port = mcfg.get("port", 502)
+            unit_id = mcfg.get("unit_id", 1)
+            timeout = mcfg.get("timeout_s", 1.0)
+            client: Any = _modbus_mod.ModbusTcpClient(host, port, unit_id, timeout)
+            self._modbus_client = client
+            self._modbus_sim = None
+
+        self._modbus_tags = {}
+        self._modbus_safe_states = {}
+
+        # Register mb.* tags.
+        for tag_name, tcfg in mcfg.get("tags", {}).items():
+            kind = tcfg.get("kind", "holding")
+            writable = tcfg.get("writable", False)
+            # Initial value: 0/false.
+            initial = 0 if kind in ("holding", "input") else False
+            self.tags.register(tag_name, initial, writable=writable)
+            self._modbus_tags[tag_name] = {
+                "kind": kind,
+                "address": tcfg["address"],
+                "type": tcfg.get("type", "bool"),
+                "scale": tcfg.get("scale", 1.0),
+                "offset": tcfg.get("offset", 0.0),
+                "word_order": tcfg.get("word_order", "big"),
+                "writable": writable,
+            }
+            # Track safe_state for writable coils/registers.
+            if "safe_state" in tcfg and (kind == "coil" or kind == "holding"):
+                self._modbus_safe_states[tag_name] = int(tcfg["safe_state"])
+
+        # Register sys.modbus_online (CONTRACT C6).
+        self.tags.register("sys.modbus_online", False)
+
+        # Start the modbus poll thread.
+        self._modbus_stop = threading.Event()
+        poll_interval_s = mcfg.get("poll_interval_ms", 200) / 1000.0
+        reconnect_s = mcfg.get("reconnect_s", 5.0)
+        self._modbus_thread = threading.Thread(
+            target=self._modbus_poll_loop,
+            name="modbus-poll",
+            daemon=True,
+            args=(poll_interval_s, reconnect_s),
+        )
+        self._modbus_thread.start()
+        logger.info("Modbus poll thread started (interval=%dms, host=%s:%d)",
+                     mcfg.get("poll_interval_ms", 200), mcfg.get("host", "127.0.0.1"), mcfg.get("port", 502))
+
+    def _modbus_poll_loop(self, poll_interval_s: float, reconnect_s: float) -> None:
+        """Background thread: poll Modbus tags and update the tag store.
+
+        Runs continuously until _modbus_stop is set.  Read failures set
+        tags to None, count sys.errors, and retry after back-off.
+        No exception may escape this loop (CONTRACT 7).
+
+        Args:
+            poll_interval_s: time between polls (seconds).
+            reconnect_s: back-off time after a connect failure (seconds).
+        """
+        # Give the client a moment to initialize.
+        time.sleep(0.1)
+        last_reconnect: float = 0.0
+
+        while not self._modbus_stop.is_set():
+            try:
+                self._do_modbus_poll()
+                # Mark online on first successful poll.
+                self._modbus_online_event.set()
+                last_reconnect = 0.0
+            except Exception:
+                self._modbus_online_event.clear()
+                self.error_count += 1
+                _rl_log.warning("modbus_poll", "Modbus poll error, retrying in %.1fs", reconnect_s)
+                last_reconnect = time.monotonic()
+
+            # Check if we need to reconnect (link down after a failure).
+            if last_reconnect > 0 and time.monotonic() - last_reconnect >= reconnect_s:
+                last_reconnect = 0.0
+
+            self._modbus_stop.wait(timeout=poll_interval_s)
+
+    def _do_modbus_poll(self) -> None:
+        """Perform a single Modbus poll cycle.
+
+        Reads all configured tags and updates the tag store.  For writable
+        tags, only reads (writes are driven by commands).
+
+        Side effects:
+            Updates tag store via thread-safe dict operations.
+        """
+        client = self._modbus_sim
+        if client is None and self._modbus_client is not None:
+            # Try to ensure we're connected.
+            try:
+                if not self._modbus_client.online:
+                    if not self._modbus_client._connect():
+                        raise RuntimeError(self._modbus_client.last_error or "connect failed")
+            except Exception:
+                raise
+
+            # Dispatch by kind.
+            for tag_name, tcfg in self._modbus_tags.items():
+                kind = tcfg["kind"]
+                address = tcfg["address"]
+                type_name = tcfg["type"]
+                scale = tcfg["scale"]
+                offset = tcfg["offset"]
+                word_order = tcfg["word_order"]
+
+                try:
+                    if kind == "coil":
+                        raw_data = self._modbus_client.read_coils(address, 1)
+                        raw_val = int(raw_data[0]) if raw_data else 0
+                        self.tags.set(tag_name, bool(raw_val))
+                    elif kind == "discrete":
+                        raw_data = self._modbus_client.read_discrete_inputs(address, 1)
+                        raw_val = int(raw_data[0]) if raw_data else 0
+                        self.tags.set(tag_name, bool(raw_val))
+                    elif kind == "holding":
+                        raw_data = self._modbus_client.read_holding_registers(address, 1)
+                        raw_val = decode_value(raw_data, type_name, word_order) if raw_data else 0
+                        self.tags.set(tag_name, scale_read(raw_val, type_name, scale, offset))
+                    elif kind == "input":
+                        raw_data = self._modbus_client.read_input_registers(address, 1)
+                        raw_val = decode_value(raw_data, type_name, word_order) if raw_data else 0
+                        self.tags.set(tag_name, scale_read(raw_val, type_name, scale, offset))
+                except _modbus_mod.ModbusError:
+                    # Device-level error: set to None (CONTRACT 2.4).
+                    self.tags.set(tag_name, None)
+                except Exception:
+                    raise  # Network-level: let the poll loop handle back-off
+            return
+
+        # --- ModbusSim path ---
+        for tag_name, tcfg in self._modbus_tags.items():
+            kind = tcfg["kind"]
+            address = tcfg["address"]
+            type_name = tcfg["type"]
+            scale = tcfg["scale"]
+            offset = tcfg["offset"]
+
+            try:
+                if kind == "coil":
+                    raw_data = client.poll_coils(address, 1)
+                    val = bool(raw_data[0]) if raw_data else False
+                    self.tags.set(tag_name, val)
+                elif kind == "discrete":
+                    raw_data = client.poll_discrete_inputs(address, 1)
+                    val = bool(raw_data[0]) if raw_data else False
+                    self.tags.set(tag_name, val)
+                elif kind == "holding":
+                    raw_data = client.poll_holding_registers(address, 1)
+                    raw_val = decode_value(raw_data, type_name) if raw_data else 0
+                    val = scale_read(raw_val, type_name, scale, offset)
+                    self.tags.set(tag_name, val)
+                elif kind == "input":
+                    raw_data = client.poll_input_registers(address, 1)
+                    raw_val = decode_value(raw_data, type_name) if raw_data else 0
+                    val = scale_read(raw_val, type_name, scale, offset)
+                    self.tags.set(tag_name, val)
+            except Exception:
+                self.tags.set(tag_name, None)
+
+        # sys.modbus_online is always True for the sim.
+        self.tags.set("sys.modbus_online", True)
+
+    def gpio_write(self, tag: str, value: int) -> None:
+        """Write a logical value to a GPIO output or Modbus tag.
+
+        Routes to the appropriate backend based on the tag prefix:
+            do.*  -> GPIO output
+            mb.*  -> Modbus coil/register write
+
+        Args:
+            tag:   output tag name (must be registered and writable).
             value: 0 or 1, logical.
 
         Raises:
-            OSError: on hardware I/O error (caller is responsible for counting).
+            OSError: on GPIO hardware I/O error (caller counts).
+            ModbusError: on Modbus device exception (caller counts).
 
         Side effects:
-            Drives the physical GPIO line and updates the tag store.
+            Drives the physical GPIO line or Modbus register,
+            and updates the tag store.
         """
-        offset = self._output_map[tag]
-        self.gpio.write(offset, value)
-        self.tags.set(tag, bool(value))
+        if tag.startswith("mb."):
+            self._modbus_write(tag, value)
+        else:
+            offset = self._output_map[tag]
+            self.gpio.write(offset, value)
+            self.tags.set(tag, bool(value))
+
+    def _modbus_write(self, tag: str, value: int) -> None:
+        """Write a value to a Modbus tag (coil or holding register).
+
+        Sends the write to the Modbus device and only acks if the device
+        acknowledges.  Updates the tag store on success.
+
+        Args:
+            tag:   Modbus tag name (starts with "mb.").
+            value: 0 or 1 for coils; 0..65535 for holding registers.
+
+        Raises:
+            ModbusError: if the Modbus device returns an exception.
+            RuntimeError: if the transport is unavailable.
+
+        Side effects:
+            Sends a Modbus write command; updates tag store on success.
+        """
+        tcfg = self._modbus_tags.get(tag)
+        if tcfg is None:
+            return
+        kind = tcfg["kind"]
+        address = tcfg["address"]
+        type_name = tcfg["type"]
+
+        # Use the sim if available, otherwise the real client.
+        client = self._modbus_sim or self._modbus_client
+        if client is None:
+            raise RuntimeError("Modbus client not initialised")
+
+        try:
+            if kind == "coil":
+                client.write_single_coil(address, value)
+                self.tags.set(tag, bool(value))
+            elif kind == "holding":
+                raw = scale_write(value, type_name, tcfg["scale"], tcfg["offset"])
+                client.write_single_register(address, raw)
+                self.tags.set(tag, scale_read(raw, type_name, tcfg["scale"], tcfg["offset"]))
+        except Exception:
+            # Re-raise so the caller can count the error.
+            raise
 
     def gpio_write_safe(self, tag: str, value: int) -> None:
         """gpio_write wrapped in try/except for use as a call_later callback.
@@ -1618,6 +1954,12 @@ class HwDaemon:
         self.tags.set("sys.uptime", round(time.monotonic() - self._start_mono, 3))
         self.tags.set("sys.errors", self.error_count)
 
+        # Modbus online status (convenience for screens).
+        if self._modbus_online_event.is_set():
+            self.tags.set("sys.modbus_online", True)
+        elif self._modbus_tags:
+            self.tags.set("sys.modbus_online", False)
+
     def _build_telemetry_frame(self) -> bytes:
         """Build a single telemetry JSON frame per CONTRACT 2.4.
 
@@ -1638,12 +1980,32 @@ class HwDaemon:
         """Drive all outputs to their configured safe states, release resources.
 
         Called on SIGTERM/SIGINT.  Errors are logged but never raised.
+        Also stops the Modbus poll thread.
 
         Side effects:
             Drives GPIO outputs, releases GPIO lines, closes ADC fds and the
-            UART port.
+            UART port, writes Modbus safe states, and stops the Modbus poll
+            thread.
         """
         logger.info("Driving outputs to safe states and releasing resources")
+
+        # Stop the Modbus poll thread first.
+        if self._modbus_stop is not None:
+            self._modbus_stop.set()
+            if self._modbus_thread is not None:
+                try:
+                    self._modbus_thread.join(timeout=2.0)
+                except Exception:
+                    pass
+
+        # Write Modbus safe states (best-effort).
+        for tag, safe_val in self._modbus_safe_states.items():
+            try:
+                self._modbus_write(tag, safe_val)
+            except Exception:
+                logger.warning("Failed to set safe state for Modbus tag %s", tag)
+
+        # GPIO safe states and release.
         for tag, safe_val in self._safe_states.items():
             try:
                 self.gpio_write(tag, safe_val)
@@ -1654,6 +2016,13 @@ class HwDaemon:
             self.adc.close()
         if self.uart is not None:
             self.uart.close()
+
+        # Close Modbus TCP client.
+        if self._modbus_client is not None:
+            try:
+                self._modbus_client.close()
+            except Exception:
+                pass
 
     async def _publisher(self, send_sock: socket.socket) -> None:
         """Async task: poll inputs and publish telemetry at the configured rate.
@@ -1761,6 +2130,16 @@ class HwDaemon:
 
         transport.close()
         send_sock.close()
+
+        # Stop the modbus poll thread before safe shutdown.
+        if self._modbus_stop is not None:
+            self._modbus_stop.set()
+            if self._modbus_thread is not None:
+                try:
+                    self._modbus_thread.join(timeout=2.0)
+                except Exception:
+                    pass
+
         self._safe_shutdown()
         logger.info("Shutdown complete")
         return 0
