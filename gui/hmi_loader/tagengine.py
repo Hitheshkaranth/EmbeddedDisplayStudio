@@ -37,13 +37,16 @@ QML therefore sees two context properties:
             true), Bus.pulse("do.relay1", 250), Bus.value("ai.pot", 0).
 """
 
+import collections
+import copy
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from PySide6.QtCore import QEventLoop, QByteArray, QObject, Property, QTimer, Signal, Slot
 from PySide6.QtNetwork import QHostAddress, QUdpSocket
-from PySide6.QtQml import QQmlPropertyMap
+from PySide6.QtQml import QQmlComponent, QQmlPropertyMap
 
 logger = logging.getLogger("TagEngine")
 
@@ -93,6 +96,14 @@ class TagEngine(QObject):
     # Emitted when `unsubscribe()` receives an ack.
     unsubscribed = Signal()
 
+    # Emitted when the history version changes (once per telemetry frame).
+    historyVersionChanged = Signal()
+
+    # Emitted when the active alarms list changes (activation, clear, ack,
+    # severity change); NOT fired on every frame to avoid re-evaluating all
+    # alarm bindings in QML 10 times a second.
+    activeAlarmsChanged = Signal()
+
     def __init__(
         self,
         expected_tags: list[str],
@@ -100,6 +111,8 @@ class TagEngine(QObject):
         allow_any_port: bool = False,
         daemon_host: str = "127.0.0.1",
         daemon_port: int = 5000,
+        history_depth: int = 600,
+        alarm_defs: list[dict] = None,
         parent: QObject = None,
     ) -> None:
         """
@@ -117,6 +130,13 @@ class TagEngine(QObject):
             daemon_host: address of the command socket. Loopback only by
                 design; the daemon does not listen off-box.
             daemon_port: the daemon's command port, 1..65535 (default 5000).
+            history_depth: maximum samples to keep per tag in the ring buffer.
+                600 samples at 10 Hz = 60 seconds. Tags beyond this depth are
+                silently dropped (oldest first). Default 600.
+            alarm_defs: manifest-shaped alarm definitions (CONTRACT C2). Each
+                item: {"tag": ..., "label": ..., "unit": ..., "warning": ...,
+                "critical": ...}. Alarm tags are recorded alongside
+                expected_tags. Default [].
             parent: owning QObject, or None.
 
         Raises:
@@ -163,6 +183,39 @@ class TagEngine(QObject):
         # Mirror the link state into the map as well, so QML can bind
         # `Tags.online` alongside the tag values without needing the engine.
         self._map.insert("online", False)
+
+        # -- history ring buffers (CONTRACT C3) --------------------------------
+        # Each recorded tag gets a deque(maxlen=history_depth). Numeric values
+        # only: bool is converted to 0/1, null is skipped. Recording applies to
+        # expected_tags plus alarm_tags (so the engine records everything the
+        # alarm evaluator needs).
+        self._history_depth = max(1, history_depth)
+        self._history: dict[str, collections.deque] = {}
+        self._history_version = 0  # incremented once per frame after buffers
+
+        # -- alarm state (CONTRACT C2 + C3) -----------------------------------
+        # The raw alarm definitions from the manifest (or empty list).
+        self._alarm_defs: list[dict] = alarm_defs or []
+        # Active alarms: {tag: {tag, label, severity, value, message, timestamp, acknowledged}}
+        self._active_alarms: dict[str, dict] = {}
+        # Set of alarm tags (union of tags_required and alarm tag definitions).
+        self._alarm_tag_set: set[str] = set()
+        # Collect alarm tags from definitions.
+        for adef in self._alarm_defs:
+            if isinstance(adef, dict):
+                t = adef.get("tag")
+                if isinstance(t, str):
+                    self._alarm_tag_set.add(t)
+                    # Also seed the underscore alias.
+                    alias = t.replace(".", "_")
+                    self._alias_to_tag.setdefault(alias, t)
+
+        # Build the complete list of recorded tags = expected + alarm tags.
+        self._recorded_tags: set[str] = set(expected_tags or []) | self._alarm_tag_set
+
+        # Initialize ring buffers for all recorded tags.
+        for tag in self._recorded_tags:
+            self._history[tag] = collections.deque(maxlen=self._history_depth)
 
         self._socket = QUdpSocket(self)
         if not self._socket.bind(QHostAddress("127.0.0.1"), rx_port):
@@ -303,12 +356,13 @@ class TagEngine(QObject):
 
     def _handle_telemetry(self, msg: dict) -> None:
         """
-        Applies one telemetry frame to the map.
+        Applies one telemetry frame to the map, history, and alarm engine.
 
         Args:
             msg: parsed frame, expected to carry a "tags" object (CONTRACT 2.4).
 
-        Side effects: restarts the watchdog and may flip `online`.
+        Side effects: restarts the watchdog, updates history buffers,
+        evaluates alarms, and notifies QML on state changes.
         """
         tags = msg.get("tags")
         if not isinstance(tags, dict):
@@ -334,6 +388,28 @@ class TagEngine(QObject):
                 self._map.insert(tag, value)
                 self._map.insert(alias, value)
 
+        # -- record history for tracked tags ------------------------------------
+        # Record numeric values (bool -> 0/1) for every tag that appears in
+        # the frame AND is tracked (expected_tags + alarm_tags).
+        for tag in self._recorded_tags:
+            raw = tags.get(tag)
+            if raw is None:
+                # null means a failed hardware read; skip the buffer.
+                continue
+            if isinstance(raw, bool):
+                raw = 1 if raw else 0
+            if isinstance(raw, (int, float)):
+                buf = self._history.get(tag)
+                if buf is not None:
+                    buf.append(raw)
+
+        # -- evaluate alarms --------------------------------------------------
+        self._evaluate_alarms(tags)
+
+        # -- bump history version (after buffers updated, before alarm notify) --
+        self._history_version += 1
+        self.historyVersionChanged.emit()
+
     def _handle_ack(self, msg: dict) -> None:
         """
         Re-emits a command acknowledgement as a Qt signal and dispatches
@@ -358,6 +434,225 @@ class TagEngine(QObject):
     def _on_watchdog_timeout(self) -> None:
         """Declares the link lost after WATCHDOG_INTERVAL_MS without a frame."""
         self.set_online(False)
+
+    # ---------------------------------------------------------------- history
+    # History and alarm state live on the TagEngine (Bus), not on the QQmlPropertyMap
+    # (Tags), because they are derived state that does not belong in the value map
+    # (see the module docstring).
+
+    def get_history_version(self) -> int:
+        """Returns the current history version, incremented once per frame."""
+        return self._history_version
+
+    historyVersion = Property(int, get_history_version, notify=historyVersionChanged)
+
+    @Slot(str, int, result="QVariantList")
+    def history(self, tag: str, n: int = 100) -> list:
+        """
+        Returns the last <= n samples for a tracked tag, oldest first.
+
+        Implements CONTRACT C3: `Bus.history(tag, n)`.
+
+        Args:
+            tag: dotted or underscored tag name.
+            n: number of samples to return (default 100).
+
+        Returns:
+            A list of numeric samples, oldest first. Empty list for an
+            unknown tag or one that has never received a value.
+        """
+        tag = self._to_wire_name(tag)
+        buf = self._history.get(tag)
+        if buf is None:
+            return []
+        items = list(buf)
+        # deque is already in chronological order (oldest first, maxlen capped)
+        if len(items) > n:
+            items = items[-n:]
+        return list(items)
+
+    # ---------------------------------------------------------------- alarms
+    # CONTRACT C2 + C3: manifest-driven alarm evaluation on every telemetry
+    # frame. Hysteresis is out of scope (see CONTRACT 9).
+
+    def _threshold_fired(self, value: float, op: str, threshold: float) -> bool:
+        """Evaluate a single threshold against a value.
+
+        Args:
+            value: the current tag value (numeric).
+            op: one of >, >=, <, <=, ==, !=.
+            threshold: the threshold value.
+
+        Returns:
+            True when the condition is met.
+        """
+        if op == ">":
+            return value > threshold
+        elif op == ">=":
+            return value >= threshold
+        elif op == "<":
+            return value < threshold
+        elif op == "<=":
+            return value <= threshold
+        elif op == "==":
+            return value == threshold
+        elif op == "!=":
+            return value != threshold
+        return False
+
+    def _evaluate_alarms(self, tags: dict) -> None:
+        """Evaluate all alarm definitions against the current tag values.
+
+        Args:
+            tags: the tag values dict from the current telemetry frame.
+
+        Side effects: updates _active_alarms and emits activeAlarmsChanged
+        when the list actually changed (activation, severity change, clear,
+        acknowledge).
+        """
+        if not self._alarm_defs:
+            return
+
+        # Determine which alarm tags have a current value.
+        current_values: dict[str, Any] = {}
+        for adef in self._alarm_defs:
+            if not isinstance(adef, dict):
+                continue
+            tag = adef.get("tag")
+            if not isinstance(tag, str):
+                continue
+            raw = tags.get(tag)
+            current_values[tag] = raw
+
+        # Build the set of alarms that should be active based on thresholds.
+        # Track: tag -> {"severity": "critical"|"warning", ...}
+        newly_active: dict[str, dict] = {}
+        changed = False
+
+        for adef in self._alarm_defs:
+            if not isinstance(adef, dict):
+                continue
+            tag = adef.get("tag")
+            if not isinstance(tag, str):
+                continue
+            value = current_values.get(tag)
+
+            # null value -> alarm inactive (failed read is a link problem)
+            if value is None:
+                continue
+
+            # Determine highest severity. Critical takes priority.
+            severity = None
+
+            # Check critical first
+            critical = adef.get("critical")
+            if isinstance(critical, dict):
+                op = critical.get("op")
+                val = critical.get("value")
+                if isinstance(op, str) and isinstance(val, (int, float)) and value is not None:
+                    if self._threshold_fired(float(value), op, float(val)):
+                        severity = "critical"
+
+            # Check warning (only if critical didn't fire)
+            if severity is None:
+                warning = adef.get("warning")
+                if isinstance(warning, dict):
+                    op = warning.get("op")
+                    val = warning.get("value")
+                    if isinstance(op, str) and isinstance(val, (int, float)) and value is not None:
+                        if self._threshold_fired(float(value), op, float(val)):
+                            severity = "warning"
+
+            if severity is not None:
+                # Build alarm item
+                label = adef.get("label", tag)
+                unit = adef.get("unit", "")
+                message = f"{label} {value:g}{unit}"
+
+                existing = self._active_alarms.get(tag)
+                if existing is not None:
+                    # Still active. It stays in the list whether or not the
+                    # severity moved -- an alarm that merely persisted used
+                    # to be dropped here and re-raised on the next frame, so
+                    # the table flickered at the telemetry rate.
+                    if existing["severity"] != severity:
+                        existing["severity"] = severity
+                        existing["value"] = value
+                        existing["message"] = message
+                        # Timestamp and acknowledged survive an escalation.
+                        changed = True
+                    newly_active[tag] = existing
+                else:
+                    # New alarm
+                    now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+                    newly_active[tag] = {
+                        "tag": tag,
+                        "label": label,
+                        "severity": severity,
+                        "value": value,
+                        "message": message,
+                        "timestamp": now,
+                        "acknowledged": False,
+                    }
+                    changed = True
+
+        # Determine which existing alarms are now cleared
+        for tag in list(self._active_alarms.keys()):
+            if tag not in newly_active:
+                del self._active_alarms[tag]
+                changed = True
+
+        # Update with newly active/changed alarms
+        self._active_alarms.update(newly_active)
+
+        # Emit only when the list changed: the shell and any alarm table are
+        # bound to it, and a frame that changed nothing must not repaint them.
+        if changed:
+            self.activeAlarmsChanged.emit()
+
+    def get_active_alarms(self) -> list:
+        """Returns the list of active alarms, sorted critical first then newest.
+
+        Returns:
+            A list of alarm dicts, sorted critical-first then by timestamp
+            descending (newest first within severity group).
+        """
+        alarms = list(self._active_alarms.values())
+        alarms.sort(key=lambda a: (0 if a["severity"] == "critical" else 1,
+                                   a.get("timestamp", "")),
+                    reverse=False)
+        # critical first (0), then warning (1). Within same severity, newest first.
+        alarms.sort(key=lambda a: (0 if a["severity"] == "critical" else 1))
+        # Now within each severity group, reverse by timestamp (newest first)
+        critical = [a for a in alarms if a["severity"] == "critical"]
+        warning = [a for a in alarms if a["severity"] == "warning"]
+        critical.sort(key=lambda a: a.get("timestamp", ""), reverse=True)
+        warning.sort(key=lambda a: a.get("timestamp", ""), reverse=True)
+        return critical + warning
+
+    def get_alarm_count(self) -> int:
+        """Returns the count of active alarms."""
+        return len(self._active_alarms)
+
+    activeAlarms = Property("QVariantList", get_active_alarms, notify=activeAlarmsChanged)
+    alarmCount = Property(int, get_alarm_count, notify=activeAlarmsChanged)
+
+    @Slot(str)
+    def acknowledge(self, tag: str) -> None:
+        """
+        Marks an alarm as acknowledged until it clears.
+
+        Implements CONTRACT C3: `Bus.acknowledge(tag)`. A re-activation
+        creates a new, unacknowledged alarm entry.
+
+        Args:
+            tag: dotted or underscored tag name of the alarm to acknowledge.
+        """
+        tag = self._to_wire_name(tag)
+        alarm = self._active_alarms.get(tag)
+        if alarm is not None:
+            alarm["acknowledged"] = True
+            self.activeAlarmsChanged.emit()
 
     # ---------------------------------------------------------------- egress
 
@@ -553,3 +848,97 @@ class TagEngine(QObject):
         if "." in name:
             return name
         return self._alias_to_tag.get(name, name)
+
+
+# ---------------------------------------------------------------------------
+# The Bus the application actually sees
+#
+# A QML binding such as ``value: Bus.value("ai.pot", 0)`` is only re-evaluated
+# when something it *read through the QML engine* changes. Calling a Python
+# slot reads nothing the engine can see: the slot looks the value up inside
+# Python, returns it, and the binding is never touched again -- so every
+# gauge bound that way showed its first value for ever, while ``Tags.ai_pot``
+# beside it moved. The fix is to let the read happen in QML: ``Bus`` is a
+# small QML object whose ``value()`` indexes ``Tags`` inside the caller's own
+# binding, which the engine captures like any property read, and whose every
+# other member forwards to the engine below it (``BusImpl``). The source lives
+# here, not in a .qml file, so the panel image, a Studio checkout and the
+# packaged Studio all carry it without an install step.
+# ---------------------------------------------------------------------------
+BUS_QML = b"""
+import QtQuick 2.15
+
+QtObject {
+    id: bus
+
+    // Live state, forwarded as bindable properties.
+    readonly property bool online: BusImpl.online
+    readonly property int rxErrors: BusImpl.rxErrors
+    readonly property int historyVersion: BusImpl.historyVersion
+    readonly property var activeAlarms: BusImpl.activeAlarms
+    readonly property int alarmCount: BusImpl.alarmCount
+
+    // Signals an app may connect to, re-emitted from the engine.
+    signal ackReceived(string id, bool ok, string err)
+    signal listReceived(var tags)
+    signal unsubscribed()
+    property var _forward: Connections {
+        target: BusImpl
+        function onAckReceived(id, ok, err) { bus.ackReceived(id, ok, err) }
+        function onListReceived(tags) { bus.listReceived(tags) }
+        function onUnsubscribed() { bus.unsubscribed() }
+    }
+
+    // A tag read that the binding calling it depends on. Dotted and
+    // underscored names both work (CONTRACT 2.5); a missing or null tag
+    // yields the fallback, never an error.
+    function value(name, fallback) {
+        var v = Tags[name]
+        if (v === undefined || v === null) v = Tags[name.replace(/\\./g, "_")]
+        if (v === undefined || v === null) return fallback === undefined ? null : fallback
+        return v
+    }
+
+    function write(tag, value) { BusImpl.write(tag, value) }
+    function pulse(tag, ms) { BusImpl.pulse(tag, ms) }
+    function uart_tx(data) { BusImpl.uart_tx(data) }
+    function ping() { BusImpl.ping() }
+    function list_tags() { return BusImpl.list_tags() }
+    function unsubscribe() { BusImpl.unsubscribe() }
+    function history(tag, n) { return BusImpl.history(tag, n === undefined ? 100 : n) }
+    function acknowledge(tag) { BusImpl.acknowledge(tag) }
+}
+"""
+
+
+def expose_to_qml(engine, context, tag_engine):
+    """
+    Installs ``Tags``, ``BusImpl`` and ``Bus`` on a QML context.
+
+    Args:
+        engine:     the QQmlEngine the context belongs to (creates the shim).
+        context:    the QQmlContext to populate (usually engine.rootContext()).
+        tag_engine: the TagEngine instance.
+
+    Returns:
+        The object bound as ``Bus``: the QML shim, or the engine itself if
+        the shim failed to build -- the app then keeps commands and one-shot
+        reads and loses only live re-evaluation, which is logged, rather
+        than losing its UI.
+
+    Side effects: sets three context properties; parents the shim to the
+    engine so it lives exactly as long as the tags do.
+    """
+    context.setContextProperty("Tags", tag_engine.tagMap())
+    context.setContextProperty("BusImpl", tag_engine)
+    component = QQmlComponent(engine)
+    component.setData(QByteArray(BUS_QML), "")
+    bus = component.create(context)
+    if bus is None:
+        logger.error("Bus shim failed to build; bindings on Bus.value() will not update: %s",
+                     "; ".join(e.toString() for e in component.errors()))
+        bus = tag_engine
+    else:
+        bus.setParent(tag_engine)
+    context.setContextProperty("Bus", bus)
+    return bus

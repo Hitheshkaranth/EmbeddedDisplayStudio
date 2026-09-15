@@ -319,6 +319,79 @@ class TestBundleValidation(unittest.TestCase):
         b = self._create_bundle("bad_tags", manifest)
         self._assert_all(b, False)
 
+    def test_valid_alarms_accepted_everywhere(self):
+        manifest = {
+            "schema": 1, "name": "app", "version": "1.0.0",
+            "entry": "main.qml", "tags_required": ["ai.pressure"],
+            "alarms": [
+                {
+                    "tag": "ai.pressure",
+                    "label": "Pressure",
+                    "warning": {"op": ">", "value": 100},
+                    "critical": {"op": ">", "value": 150},
+                }
+            ],
+        }
+        b = self._create_bundle("valid_alarms", manifest)
+        self._assert_all(b, True)
+
+    def test_alarms_rejected_when_not_a_list(self):
+        manifest = {
+            "schema": 1, "name": "app", "version": "1.0.0",
+            "entry": "main.qml",
+            "alarms": "not a list",
+        }
+        b = self._create_bundle("bad_alarms_type", manifest)
+        self._assert_all(b, False)
+
+    def test_alarms_rejected_when_threshold_missing(self):
+        manifest = {
+            "schema": 1, "name": "app", "version": "1.0.0",
+            "entry": "main.qml",
+            "tags_required": ["ai.pressure"],
+            "alarms": [
+                {"tag": "ai.pressure", "label": "No thresholds"}
+            ],
+        }
+        b = self._create_bundle("no_threshold", manifest)
+        self._assert_all(b, False)
+
+    def test_alarms_rejected_with_unknown_op(self):
+        manifest = {
+            "schema": 1, "name": "app", "version": "1.0.0",
+            "entry": "main.qml",
+            "tags_required": ["ai.pressure"],
+            "alarms": [
+                {"tag": "ai.pressure", "warning": {"op": ">=", "value": 100}}
+            ],
+        }
+        b = self._create_bundle("op_ge_accepted", manifest)
+        self._assert_all(b, True)
+
+    def test_alarms_rejected_with_non_numeric_value(self):
+        manifest = {
+            "schema": 1, "name": "app", "version": "1.0.0",
+            "entry": "main.qml",
+            "tags_required": ["ai.pressure"],
+            "alarms": [
+                {"tag": "ai.pressure", "warning": {"op": ">", "value": "high"}}
+            ],
+        }
+        b = self._create_bundle("bad_alarm_value", manifest)
+        self._assert_all(b, False)
+
+    def test_alarms_rejected_with_bad_tag(self):
+        manifest = {
+            "schema": 1, "name": "app", "version": "1.0.0",
+            "entry": "main.qml",
+            "tags_required": ["ai.pressure"],
+            "alarms": [
+                {"tag": "invalid tag!", "warning": {"op": ">", "value": 100}}
+            ],
+        }
+        b = self._create_bundle("bad_alarm_tag", manifest)
+        self._assert_all(b, False)
+
 
 if __name__ == "__main__":
     unittest.main()

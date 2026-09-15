@@ -10,6 +10,42 @@ from typing import Any
 
 
 ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# CONTRACT 2.5: the dotted tag names a binding or an action may address.
+TAG_RE = re.compile(r"^[a-z][a-z0-9]*(\.[a-z0-9_]+)+$")
+# The comparison operators a threshold may use; the manifest's alarm entries
+# (CONTRACT 4, "alarms") accept exactly this set, so a threshold the Designer
+# accepts is one the panel's validator accepts. Two-character operators come
+# first so ">=" is not read as ">" followed by "=5".
+THRESHOLD_OPS = (">=", "<=", "!=", "==", ">", "<")
+ACTION_KINDS = ("write", "pulse", "navigate")
+# Pulse length limits, CONTRACT 2.2 ("ms": 1..10000).
+PULSE_MS_MIN, PULSE_MS_MAX = 1, 10000
+
+
+def parse_threshold(text):
+    """Turn a binding threshold string into ``(op, number)``.
+
+    Accepts ``> 80``, ``>= 80``, ``< 10``, ``<= 10``, ``== 1``, ``!= 0`` and a
+    bare number, which means ``>=`` (the reading has reached the level).
+    Whitespace is free. Returns None for an empty or unparseable string so a
+    caller can treat "no threshold" and "nonsense" alike -- validate() is
+    what reports the nonsense.
+    """
+    text = str(text or "").strip()
+    if not text:
+        return None
+    op = ">="
+    for candidate in THRESHOLD_OPS:
+        if text.startswith(candidate):
+            op, text = candidate, text[len(candidate):].strip()
+            break
+    try:
+        number = float(text)
+    except ValueError:
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return op, number
 
 
 @dataclass
@@ -32,6 +68,49 @@ class DesignerBinding:
 
 
 @dataclass
+class DesignerAction:
+    """What a widget does when one of its signals fires.
+
+    kind   -- ``write``: ``Bus.write(tag, value)``; with ``value`` None the
+              control's own state (checked / value / currentIndex) is sent.
+              ``pulse``: ``Bus.pulse(tag, ms)``.
+              ``navigate``: ask the page host to show ``page``.
+    tag    -- dotted CONTRACT 2.5 tag for write / pulse.
+    value  -- JSON scalar sent by ``write``; None means "the control's state".
+    ms     -- pulse length in milliseconds, 1..10000.
+    page   -- id of the page a ``navigate`` action shows.
+    """
+    kind: str = "write"
+    tag: str = ""
+    value: Any = None
+    ms: int = 250
+    page: str = ""
+
+    @classmethod
+    def from_data(cls, value: Any) -> "DesignerAction":
+        if isinstance(value, str):
+            return cls(kind="write", tag=value)
+        if not isinstance(value, dict):
+            raise ValueError("action must be a tag string or object")
+        data = {k: value[k] for k in cls.__dataclass_fields__ if k in value}
+        if "ms" in data:
+            data["ms"] = int(data["ms"])
+        return cls(**data)
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {"kind": self.kind}
+        if self.kind == "navigate":
+            data["page"] = self.page
+        else:
+            data["tag"] = self.tag
+            if self.kind == "pulse":
+                data["ms"] = int(self.ms)
+            elif self.value is not None:
+                data["value"] = self.value
+        return data
+
+
+@dataclass
 class DesignerWidget:
     type: str
     id: str
@@ -41,6 +120,8 @@ class DesignerWidget:
     children: list["DesignerWidget"] = field(default_factory=list)
     locked: bool = False
     z: int = 0
+    # Keyed by the signal that fires the action ("clicked", "toggled", ...).
+    actions: dict[str, DesignerAction] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DesignerWidget":
@@ -53,6 +134,7 @@ class DesignerWidget:
             bindings={k: DesignerBinding.from_data(v) for k, v in (data.get("bindings") or {}).items()},
             children=[cls.from_dict(item) for item in data.get("children", [])],
             locked=bool(data.get("locked", False)), z=int(data.get("z", 0)),
+            actions={k: DesignerAction.from_data(v) for k, v in (data.get("actions") or {}).items()},
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,6 +143,12 @@ class DesignerWidget:
             key: int(value) if float(value).is_integer() else value
             for key, value in self.geometry.items()
         }
+        # A widget with no actions serialises exactly as it did before actions
+        # existed, so an untouched design does not change on disk.
+        data.pop("actions", None)
+        if self.actions:
+            data["actions"] = {signal: action.to_dict() for signal, action in self.actions.items()}
+        data["children"] = [child.to_dict() for child in self.children]
         return data
 
     def walk(self):
@@ -162,8 +250,44 @@ class DesignerProject:
         return candidate
 
     def required_tags(self) -> list[str]:
-        return sorted({binding.tag for widget in self.all_widgets()
-                       for binding in widget.bindings.values() if binding.tag})
+        """Every tag the generated app reads or writes -- bindings and actions."""
+        # "*" is the alarm table's "every alarm" wildcard, not a tag.
+        tags = {binding.tag for widget in self.all_widgets()
+                for binding in widget.bindings.values() if binding.tag and binding.tag != "*"}
+        tags |= {action.tag for widget in self.all_widgets()
+                 for action in widget.actions.values()
+                 if action.kind in ("write", "pulse") and action.tag}
+        return sorted(tags)
+
+    def alarms(self) -> list[dict[str, Any]]:
+        """Manifest ``alarms`` entries derived from binding thresholds.
+
+        One entry per tag, in the shape the panel's validator accepts
+        (CONTRACT 4): ``{"tag", "label", "unit"?, "warning"?, "critical"?}``.
+        The label is the widget's own caption -- ``label``, ``title`` or
+        ``text`` -- so the alarm reads the way the screen does; the first
+        widget bound to a tag wins when several carry thresholds for it.
+        """
+        entries: dict[str, dict[str, Any]] = {}
+        for widget in self.all_widgets():
+            for binding in widget.bindings.values():
+                if not binding.tag or binding.tag in entries:
+                    continue
+                warning = parse_threshold(binding.warning)
+                critical = parse_threshold(binding.critical)
+                if not (warning or critical):
+                    continue
+                label = next((str(widget.properties[key]) for key in ("label", "title", "text")
+                              if widget.properties.get(key)), binding.tag)
+                entry: dict[str, Any] = {"tag": binding.tag, "label": label}
+                if binding.unit:
+                    entry["unit"] = binding.unit
+                if warning:
+                    entry["warning"] = {"op": warning[0], "value": warning[1]}
+                if critical:
+                    entry["critical"] = {"op": critical[0], "value": critical[1]}
+                entries[binding.tag] = entry
+        return list(entries.values())
 
     def validate(self, registry=None, project_dir: str = "", known_tags=None) -> list[ValidationIssue]:
         issues: list[ValidationIssue] = []
@@ -171,6 +295,7 @@ class DesignerProject:
             issues.append(ValidationIssue("screen", "width and height must be positive"))
         seen: set[str] = set()
         known = set(known_tags) if known_tags is not None else None
+        page_ids = {page.id for page in self.pages}
         for page_index, page in enumerate(self.pages):
             for widget in page.walk():
                 path = f"pages[{page_index}].{widget.id}"
@@ -201,4 +326,25 @@ class DesignerProject:
                         issues.append(ValidationIssue(f"{path}.bindings.{prop}", "empty tag binding"))
                     elif known is not None and binding.tag not in known:
                         issues.append(ValidationIssue(f"{path}.bindings.{prop}", "tag is not defined"))
+                    for name, text in (("warning", binding.warning), ("critical", binding.critical)):
+                        if text and parse_threshold(text) is None:
+                            issues.append(ValidationIssue(f"{path}.bindings.{prop}",
+                                                          f"{name} threshold {text!r} is not '<op> <number>'"))
+                definition = registry.get(widget.type) if registry is not None else None
+                for signal, action in widget.actions.items():
+                    apath = f"{path}.actions.{signal}"
+                    if definition is not None and signal not in definition.action_signals:
+                        issues.append(ValidationIssue(apath, f"{widget.type} has no action signal {signal!r}"))
+                    if action.kind not in ACTION_KINDS:
+                        issues.append(ValidationIssue(apath, f"unknown action kind {action.kind!r}"))
+                    elif action.kind == "navigate":
+                        if action.page not in page_ids:
+                            issues.append(ValidationIssue(apath, f"navigate target page {action.page!r} does not exist"))
+                    elif signal == "alarmActivated":
+                        pass  # the table supplies the alarm; the action acknowledges it
+                    else:
+                        if not TAG_RE.fullmatch(action.tag or ""):
+                            issues.append(ValidationIssue(apath, f"action tag {action.tag!r} is not a dotted tag name"))
+                        if action.kind == "pulse" and not (PULSE_MS_MIN <= int(action.ms) <= PULSE_MS_MAX):
+                            issues.append(ValidationIssue(apath, f"pulse ms must be {PULSE_MS_MIN}..{PULSE_MS_MAX}"))
         return issues

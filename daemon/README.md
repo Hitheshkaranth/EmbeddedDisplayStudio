@@ -101,20 +101,30 @@ Writes a string to the configured serial port.
 ```
 * `data`: String payload to transmit over UART.
 
-#### 4. Dynamic Subscription (`subscribe`)
+#### 4. Write Modbus Tag (`set`)
+The `set` command also supports Modbus tags prefixed with `mb.*`. For coils, `value` is `0`/`1`/`true`/`false`. For holding registers, the value is first encoded to the configured `type`, then written to the Modbus device.
+
+```json
+{"id": "c-201", "cmd": "set", "tag": "mb.coil1", "value": 1}
+{"id": "c-202", "cmd": "set", "tag": "mb.reg1", "value": 42}
+```
+* `tag`: Modbus tag name (must start with `mb.`, exist in `modbus.tags` configuration, and have `writable: true`).
+* `value`: For coils: `0`, `1`, `true`, or `false`. For holding registers: the scaled value, which is then encoded back to raw and written.
+
+#### 5. Dynamic Subscription (`subscribe`)
 Registers the sender's UDP host and port to receive telemetry frames.
 ```json
 {"id": "c-104", "cmd": "subscribe", "ttl": 10.0}
 ```
 * `ttl`: (Optional) Float duration in seconds before subscription expires. If omitted, defaults to `daemon.subscriber_ttl_s` (5.0 s).
 
-#### 5. Unsubscribe (`unsubscribe`)
+#### 6. Unsubscribe (`unsubscribe`)
 Removes the sender from the dynamic telemetry distribution list.
 ```json
 {"id": "c-105", "cmd": "unsubscribe"}
 ```
 
-#### 6. List Registered Tags (`list`)
+#### 7. List Registered Tags (`list`)
 Queries all known tag names registered in the tag store.
 ```json
 {"id": "c-106", "cmd": "list"}
@@ -281,6 +291,32 @@ The configuration file defines network parameters and maps symbolic tag names to
   * `transform_offset`: Float voltage offset added after gain is applied.
   * **Formula:** $\text{Volts} = \left(\frac{(\text{raw} + \text{offset}) \times \text{scale\_mv}}{1000.0}\right) \times \text{gain} + \text{transform\_offset}$
 
+#### Section: `modbus`
+* `host`: String IP address or hostname of the Modbus TCP server (e.g. `"192.168.1.50"`).
+* `port`: Integer TCP port (default `502`).
+* `unit_id`: Integer Modbus unit/slave identifier (default `1`).
+* `poll_interval_ms`: Integer milliseconds between read polls (default `200`).
+* `timeout_s`: Float TCP read timeout in seconds (default `1.0`).
+* `reconnect_s`: Float seconds to wait after a connection failure before retrying (default `5.0`).
+* `tags`: Map of Modbus tag definitions (see §3.3 Tag Prefixes).
+
+##### Modbus Tag Fields
+Each entry under `modbus.tags` specifies:
+
+* `kind`: `"coil"`, `"discrete"`, `"holding"`, or `"input"`.
+* `address`: Integer 0-based register/coil address.
+* `type`: For coils/discrete: `"bool"`. For holding/input: `"int16"`, `"uint16"`, `"int32"`, `"uint32"`, or `"float32"`.
+* `writable`: Boolean. `true` permits `set` commands on coils and holding registers (default `false`).
+* `scale`: Float multiplier applied to the raw decoded value (default `1.0`).
+* `offset`: Float added after scaling (default `0.0`).
+* `word_order`: `"big"` or `"little"` — byte/word order for 32-bit values (default `"big"`).
+* `safe_state`: Integer value driven to the tag during `SIGTERM`/`SIGINT` (only for coil/holding with `writable: true`).
+
+##### Modbus Read Formula
+$$\text{Value} = (\text{decoded\_raw} \times \text{scale}) + \text{offset}$$
+
+For 32-bit types (int32, uint32, float32) the daemon reads two consecutive registers and reassembles them according to `word_order`.
+
 #### Section: `uart`
 * `port`: Device path (e.g. `/dev/verdin-uart3` or `/dev/ttymxc3`).
 * `baudrate`: Integer baud rate (e.g. `115200`).
@@ -297,8 +333,10 @@ All tag names must conform to `TAG_RE` (`^[a-z][a-z0-9]*(\.[a-z0-9_]+)+$`):
   * `ai.*`: Analog inputs (read-only float or `null`).
   * `di.*`: Digital inputs (read-only boolean).
   * `do.*`: Digital outputs (writable boolean).
-  * `sys.*`: Daemon diagnostics (`sys.uptime`, `sys.errors`).
+  * `mb.*`: Modbus TCP tags — coils, discrete inputs, holding registers, input registers.
+  * `sys.*`: Daemon diagnostics (`sys.uptime`, `sys.errors`, `sys.modbus_online`).
   * `uart.*`: Serial link status (`uart.rx`, `uart.last`).
+  * Modbus tags always use the `mb.` prefix followed by a descriptive name (e.g. `mb.temp`, `mb.valve_state`).
 
 ---
 

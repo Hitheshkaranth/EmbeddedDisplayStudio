@@ -26,7 +26,7 @@ if GUI_DIR not in sys.path:
     sys.path.insert(0, GUI_DIR)
 
 try:
-    from hmi_loader.tagengine import TagEngine
+    from hmi_loader.tagengine import TagEngine, expose_to_qml
 except ImportError as e:
     logging.warning(f"Failed to import TagEngine from gui/hmi_loader/tagengine.py: {e}")
     class TagEngine(QObject):
@@ -46,6 +46,10 @@ except ImportError as e:
         def pulse(self, tag, ms): pass
         @Slot(str, "QVariant", result="QVariant")
         def value(self, name, fallback=None): return fallback
+    def expose_to_qml(engine, context, tag_engine):
+        context.setContextProperty("Tags", tag_engine.tagMap())
+        context.setContextProperty("Bus", tag_engine)
+        return tag_engine
 
 # Selectable panel geometries, ordered by diagonal. Each entry is
 # (label, diagonal_inches, width_px, height_px). These are the display sizes
@@ -356,8 +360,9 @@ class DevicePanel(QWidget):
                     self.tag_engine.tagMap().insert(tag, None)
 
         ctx = self.quick_widget.rootContext()
-        ctx.setContextProperty("Tags", self.tag_engine.tagMap())
-        ctx.setContextProperty("Bus", self.tag_engine)
+        # The same shim the panel installs, so a Bus.value() binding is as
+        # live in the bezel as it is on the glass.
+        expose_to_qml(self.quick_widget.engine(), ctx, self.tag_engine)
         
         entry = manifest.get("entry", "main.qml")
         runtime = manifest.get("runtime", "qml")

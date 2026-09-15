@@ -6,6 +6,7 @@
 #
 # Target paths (CONTRACT section 3):
 #   /usr/lib/hmi/hmi_hwd.py          hardware daemon
+#   /usr/lib/hmi/modbus.py           its Modbus TCP client (sibling module)
 #   /usr/lib/hmi/manifest.py         shared CONTRACT section 4 validator
 #   /etc/hmi/hwd.json                runtime pin/bus configuration
 #   /usr/bin/hmi-install             application installer helper
@@ -43,6 +44,7 @@ LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda
 # ---------------------------------------------------------------------------
 SRC_URI = " \
     file://hmi_hwd.py \
+    file://modbus.py \
     file://hwd.json \
     file://hmi-install \
     file://hmi-gui-launch \
@@ -195,6 +197,9 @@ do_install() {
     # required, but the contract fixes the mode and an integrator comparing
     # the running system against it should not find a discrepancy.
     install -m 0755 ${S}/hmi_hwd.py ${D}${nonarch_libdir}/hmi/hmi_hwd.py
+    # The Modbus client is a sibling module of the daemon (imported as
+    # `modbus` from the script's own directory), so it lives beside it.
+    install -m 0644 ${S}/modbus.py   ${D}${nonarch_libdir}/hmi/modbus.py
 
     # The single implementation of CONTRACT section 4. hmi-install calls it
     # from /usr/lib/hmi/manifest.py; the host CLI and the desktop tool call

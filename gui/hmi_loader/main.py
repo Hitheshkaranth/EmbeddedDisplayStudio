@@ -18,7 +18,8 @@ from PySide6.QtCore import QObject, QUrl, Slot, Property, QTimer, qInstallMessag
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 
-from tagengine import TagEngine
+from tagengine import TagEngine, expose_to_qml
+from schema.manifest import validate_bundle, alarm_tags as _alarm_tags
 
 # Structured logging for journald (CONTRACT 7)
 logging.basicConfig(
@@ -254,24 +255,32 @@ def main():
     if error:
         logger.error(error)
         
-    expected_tags = manifest.get("tags_required", []) if manifest else []
+    # Collect tags that need tracking: declared required tags + alarm tags.
+    expected_tags = list(manifest.get("tags_required", []) or [])
+    alarm_defs = manifest.get("alarms") or []
+    
+    # Add alarm tags to the expected list so QML can bind to them.
+    for atag in _alarm_tags(manifest):
+        if atag not in expected_tags:
+            expected_tags.append(atag)
     
     tag_engine = TagEngine(
         expected_tags,
         rx_port=args.rx_port,
         daemon_host=args.daemon_host,
         daemon_port=args.daemon_port,
+        alarm_defs=alarm_defs,
     )
     hmi = Hmi(manifest, apps_dir, Path(args.ready_file))
     if error:
         hmi.set_last_error(error)
 
-    # Two context properties, because a QQmlPropertyMap subclass cannot carry
-    # slots under PySide6 (see the note at the top of tagengine.py):
-    #   Tags - the value map, for declarative bindings (Tags.ai_pot, Tags.online)
-    #   Bus  - the engine, for commands (Bus.write / Bus.pulse / Bus.value)
-    engine.rootContext().setContextProperty("Tags", tag_engine.tagMap())
-    engine.rootContext().setContextProperty("Bus", tag_engine)
+    # Tags - the value map, for declarative bindings (Tags.ai_pot, Tags.online)
+    # Bus  - commands and live reads (Bus.write / Bus.pulse / Bus.value); a QML
+    #        shim over the engine so that Bus.value() bindings re-evaluate
+    #        (see expose_to_qml in tagengine.py for why it cannot be the
+    #        engine itself).
+    expose_to_qml(engine, engine.rootContext(), tag_engine)
     engine.rootContext().setContextProperty("Hmi", hmi)
     
     # Load the shell

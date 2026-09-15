@@ -137,6 +137,12 @@ THEMES = ("light", "dark")
 # Matches the shell's --theme default, and CONTRACT 11.1.
 DEFAULT_THEME = "dark"
 
+# Alarm severity operation tokens (CONTRACT C2).
+ALARM_OPS = (">", ">=", "<", "<=", "==", "!=")
+
+# Tag naming regex from CONTRACT 2.5, re-used for alarm validation.
+_ALARM_TAG_RE = re.compile(r"^[a-z][a-z0-9]*(\.[a-z0-9_]+)+$")
+
 
 def _load(bundle_dir):
     """Read and parse manifest.json from a bundle directory.
@@ -448,6 +454,82 @@ def validate_bundle(bundle_dir):
     if qt_version is not None and not isinstance(qt_version, str):
         errors.append("manifest.json: 'qt' must be a string such as '>=6.5'.")
 
+    # -- alarms (optional) --------------------------------------------------
+    # CONTRACT C2: per-tag threshold-based alarms. Optional field; absent means
+    # no automatic alarm evaluation. When present each item is validated and
+    # alarm tag names are collected for the loader (CONTRACT C3).
+    alarms = manifest.get("alarms")
+    if alarms is not None:
+        if not isinstance(alarms, list):
+            errors.append(
+                "manifest.json: 'alarms' must be a list of alarm definitions."
+            )
+        else:
+            for idx, alarm in enumerate(alarms):
+                prefix = "manifest.json: 'alarms[%d]'" % idx
+                if not isinstance(alarm, dict):
+                    errors.append(
+                        "%s: each alarm must be an object." % prefix
+                    )
+                    continue
+
+                # tag (required)
+                tag = alarm.get("tag")
+                if not tag or not isinstance(tag, str):
+                    errors.append(
+                        "%s: 'tag' is required and must be a string." % prefix
+                    )
+                elif not _ALARM_TAG_RE.match(tag):
+                    errors.append(
+                        "%s: 'tag' %r does not match the tag naming rule."
+                        % (prefix, tag)
+                    )
+
+                # label (optional, str)
+                label = alarm.get("label")
+                if label is not None and not isinstance(label, str):
+                    errors.append(
+                        "%s: 'label' must be a string." % prefix
+                    )
+
+                # unit (optional, str)
+                unit = alarm.get("unit")
+                if unit is not None and not isinstance(unit, str):
+                    errors.append(
+                        "%s: 'unit' must be a string." % prefix
+                    )
+
+                # warning and critical (optional, must have at least one)
+                threshold_keys = []
+                for tk in ("warning", "critical"):
+                    val = alarm.get(tk)
+                    if val is not None:
+                        threshold_keys.append(tk)
+                        if not isinstance(val, dict):
+                            errors.append(
+                                "%s: '%s' must be an object with 'op' and 'value'."
+                                % (prefix, tk)
+                            )
+                            continue
+                        op = val.get("op")
+                        if not isinstance(op, str) or op not in ALARM_OPS:
+                            errors.append(
+                                "%s: '%s.op' must be one of %s (got %r)."
+                                % (prefix, tk, ", ".join(repr(o) for o in ALARM_OPS), op)
+                            )
+                        value = val.get("value")
+                        if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+                            errors.append(
+                                "%s: '%s.value' must be a number."
+                                % (prefix, tk)
+                            )
+
+                if not threshold_keys:
+                    errors.append(
+                        "%s: at least one of 'warning' or 'critical' is required."
+                        % prefix
+                    )
+
     if errors:
         return False, errors
 
@@ -488,6 +570,30 @@ def theme_of(manifest):
     """
     theme = (manifest or {}).get("theme")
     return theme if theme in THEMES else DEFAULT_THEME
+
+
+def alarm_tags(manifest):
+    """Return the set of tag names that have alarm definitions.
+
+    These tags must be tracked by the tag engine so that alarm evaluation
+    can run on every telemetry frame (CONTRACT C3).
+
+    Args:
+        manifest: a parsed manifest dict (may be empty).
+
+    Returns:
+        A list of unique tag-name strings, preserving the order they appear
+        in the manifest's ``alarms`` list.
+    """
+    seen = set()
+    result = []
+    for alarm in (manifest or {}).get("alarms") or []:
+        if isinstance(alarm, dict):
+            tag = alarm.get("tag")
+            if isinstance(tag, str) and tag not in seen:
+                seen.add(tag)
+                result.append(tag)
+    return result
 
 
 def main(argv=None):

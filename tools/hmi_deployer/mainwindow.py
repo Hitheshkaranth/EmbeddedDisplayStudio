@@ -290,6 +290,11 @@ class MainWindow(QMainWindow):
 
         self.simulator = None
         self.relay = None
+        # Answers the daemon's command port while Tag Lab sends (offline).
+        self._cmd_sink = None
+        self._cmd_poll_timer = None
+        # The connected panel's tag list, while a relay is up.
+        self._panel_catalogue = None
         # Tag Lab sender – mutually exclusive with simulator and relay.
         self.taglab_sender: TagLabSender = None
         # Manifest of the loaded bundle; the panel picker's Custom entry reads it.
@@ -1019,6 +1024,9 @@ class MainWindow(QMainWindow):
         self._themed_page_icon(self.taglab_panel.title_icon, "activity")
         self.taglab_panel.sendingStarted.connect(self._on_taglab_start)
         self.taglab_panel.sendingStopped.connect(self._on_taglab_stop)
+        # Phase B: wire the CommandSink so incoming commands are logged
+        if hasattr(self, "_cmd_sink") and self._cmd_sink is not None:
+            self.taglab_panel.sink = self._cmd_sink
         taglab_scroll = self._scrollable(self.taglab_panel)
         self._right_tabs.addTab(taglab_scroll, "Tag Lab")
         self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(taglab_scroll), "gauge")
@@ -1833,6 +1841,15 @@ class MainWindow(QMainWindow):
         if self.relay:
             self.relay.stop()
             self.relay = None
+        if self._panel_catalogue is not None:
+            # The panel's tags leave with the link; the design's own stay.
+            self._panel_catalogue = None
+            workspace = getattr(self, "designer_workspace", None)
+            if workspace is not None:
+                workspace.bindings.set_tags(workspace.project.required_tags())
+                if hasattr(workspace, "actions"):
+                    workspace.actions.set_tags(workspace.bindings.tags)
+        self._shutdown_cmd_sink()
         if self.taglab_sender:
             self.taglab_sender.stop()
             self.taglab_sender = None
@@ -1869,6 +1886,7 @@ class MainWindow(QMainWindow):
             host, user, self.ssh_port(), key, self, udp_port=self.tag_rx_port()
         )
         self.relay.error.connect(self.log)
+        self.relay.catalogueReceived.connect(self._on_catalogue)
         self.relay.start()
 
     # ------------------------------------------------------------------
@@ -1885,9 +1903,13 @@ class MainWindow(QMainWindow):
         self.taglab_sender.error.connect(self.log)
         self.taglab_sender.start()
         self.taglab_panel.set_sending(True)
+        # Offline, Tag Lab is the daemon: it answers the preview's commands
+        # on the daemon's port so a button in the bezel changes a tag here.
+        self._init_cmd_sink(model)
 
     def _on_taglab_stop(self) -> None:
         """Slot: TagLabPanel requested stop."""
+        self._shutdown_cmd_sink()
         if self.taglab_sender:
             self.taglab_sender.stop()
             self.taglab_sender = None
@@ -1897,6 +1919,64 @@ class MainWindow(QMainWindow):
         tags = (self.current_manifest or {}).get("tags_required", [])
         if tags:
             self.start_simulator(tags)
+
+    # ------------------------------------------------------------------
+    # CommandSink lifecycle (Phase B)
+    # ------------------------------------------------------------------
+
+    def _init_cmd_sink(self, model) -> None:
+        """Answer daemon commands from the preview with the Tag Lab model."""
+        if self._cmd_sink is not None:
+            return
+        from .taglab import CommandSink
+
+        self._cmd_sink = CommandSink(model, parent=self)
+        if not self._cmd_sink.online:
+            self.log("Tag Lab: port 5000 is held by another process (a local "
+                     "hmi-hwd?); commands from the preview will go there instead.")
+        # Wire the sink to the Tag Lab panel for command logging
+        self.taglab_panel.sink = self._cmd_sink
+        # Start a QTimer to poll for incoming datagrams
+        if not getattr(self, "_cmd_poll_timer", None):
+            self._cmd_poll_timer = QTimer(self)
+            self._cmd_poll_timer.setInterval(50)  # 50 ms polling
+            self._cmd_poll_timer.timeout.connect(self._process_cmds)
+        self._cmd_poll_timer.start()
+
+    def _shutdown_cmd_sink(self) -> None:
+        """Release the CommandSink port and stop polling."""
+        if self._cmd_poll_timer is not None:
+            self._cmd_poll_timer.stop()
+            self._cmd_poll_timer = None
+        if self._cmd_sink is not None:
+            self._cmd_sink.release()
+            self._cmd_sink = None
+            self.taglab_panel.sink = None
+
+    def _process_cmds(self) -> None:
+        """Poll the CommandSink for pending datagrams and log them."""
+        self.taglab_panel.process_commands()
+
+    # ------------------------------------------------------------------
+    # Tag catalogue from the panel
+    # ------------------------------------------------------------------
+
+    def _on_catalogue(self, tags) -> None:
+        """Offer the daemon's real tags in the Designer's binding inspector.
+
+        Merged with the design's own tags, so nothing already bound
+        disappears from the list; the project-only list returns when the
+        relay stops (see _stop_all_senders).
+        """
+        workspace = getattr(self, "designer_workspace", None)
+        if workspace is None:
+            return
+        self._panel_catalogue = list(tags)
+        merged = sorted(set(workspace.project.required_tags()) | set(tags))
+        workspace.bindings.set_tags(merged)
+        if hasattr(workspace, "actions"):
+            workspace.actions.set_tags(merged)
+        self.log(f"Panel tag catalogue: {len(tags)} tag(s) offered in the Designer.")
 
     # ------------------------------------------------------------------
     # Deployment progress
