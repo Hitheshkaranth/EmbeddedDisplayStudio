@@ -82,6 +82,7 @@ Window {
     // Placed at the top-right corner, z-indexed above the app
     ShBadge {
         id: alarmBadge
+        objectName: "alarmBadge"
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.topMargin: 12
@@ -89,7 +90,7 @@ Window {
         z: 100
         text: String(Bus.alarmCount)
         visible: Bus.alarmCount > 0
-        color: "destructive"
+        variant: "destructive"
     }
 
     Connections {

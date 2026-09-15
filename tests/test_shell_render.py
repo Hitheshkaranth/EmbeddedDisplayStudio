@@ -47,6 +47,7 @@ class TestFallbackScreenRenders(unittest.TestCase):
     engine = None
     root = None
     warnings: list = []
+    qml_errors: list = []
     # The context objects must be held for the engine's lifetime. As locals
     # they were garbage-collected as soon as setUpClass returned, and every
     # binding onto Tags/Bus/Hmi then reported "property of null".
@@ -76,15 +77,18 @@ class TestFallbackScreenRenders(unittest.TestCase):
         spec.loader.exec_module(loader)
 
         cls.warnings = []
+        cls.qml_errors = []
 
         def handler(msg_type, context, message):
-            """Collect Qt warnings so the test can assert there were none."""
+            """Collect Qt messages so the test can assert there were none."""
             if msg_type in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg):
                 # The offscreen platform has no font directory; that says
                 # nothing about our QML.
                 if "QFontDatabase" in message:
                     return
                 cls.warnings.append(message)
+            elif msg_type in (QtMsgType.QtFatalMsg, QtMsgType.QtDebugMsg):
+                cls.qml_errors.append(message)
 
         qInstallMessageHandler(handler)
 
@@ -115,7 +119,12 @@ class TestFallbackScreenRenders(unittest.TestCase):
         )
         roots = cls.engine.rootObjects()
         if not roots:
-            raise unittest.SkipTest("Shell.qml did not load in this environment")
+            reason = "Shell.qml did not load in this environment"
+            if cls.qml_errors:
+                reason += ": " + "; ".join(cls.qml_errors[:3])
+            elif cls.warnings:
+                reason += ": " + "; ".join(cls.warnings[:3])
+            raise unittest.SkipTest(reason)
         cls.root = roots[0]
 
     @classmethod

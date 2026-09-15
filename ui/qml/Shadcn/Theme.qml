@@ -133,7 +133,8 @@ QtObject {
             if (available.indexOf(preferred[i]) !== -1)
                 return preferred[i]
         }
-        return Qt.application.font.family
+        var fallback = Qt.application ? Qt.application.font.family : ""
+        return fallback || "Sans Serif"
     }
 
     /** @property {string} fontFamily */
