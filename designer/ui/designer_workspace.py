@@ -22,7 +22,7 @@ from designer.canvas import widget_previews
 from designer.canvas.designer_view import POSITIONERS, DesignerScene, DesignerView
 from designer.commands import CallbackCommand
 from designer.generators import QmlGenerationError, QmlGenerator
-from designer.model import DesignerBinding, DesignerPage, DesignerProject, DesignerWidget
+from designer.model import DesignerAction, DesignerBinding, DesignerPage, DesignerProject, DesignerWidget
 from designer.palette.widget_palette import WidgetPalette
 from designer.palette.widget_registry import default_registry
 from schema.manifest import NAME_RE, deployable_name, theme_of
@@ -389,6 +389,118 @@ class BindingEditor(QWidget):
 
     def _remove(self):
         if self.property.currentText(): self.bindingEdited.emit(self.property.currentText(), None)
+
+
+class ActionEditor(QWidget):
+    """Attach a write / pulse / navigate action to one of a widget's signals.
+
+    Mirrors BindingEditor: the signal list comes from the registry's
+    ``action_signals`` for the selected widget, the tag list is shared with
+    the binding inspector, and Apply / Remove emit ``actionEdited(signal,
+    DesignerAction | None)`` for the workspace to turn into an undoable
+    command.
+    """
+    actionEdited = Signal(str, object)
+
+    def __init__(self, registry, parent=None):
+        super().__init__(parent)
+        self.setObjectName("actionEditor")
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.registry, self.widget_model, self.tags, self.page_ids = registry, None, [], []
+        form = QFormLayout(self)
+        form.setContentsMargins(12, 10, 12, 12)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(6)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        form.setRowWrapPolicy(QFormLayout.DontWrapRows)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        self.signal = ComboBox(); self.kind = ComboBox(); self.kind.addItems(["write", "pulse", "navigate"])
+        self.tag = ComboBox(); self.tag.setEditable(True)
+        self.value = QLineEdit(); self.value.setPlaceholderText("empty = the control's own state")
+        self.ms = SpinBox(); self.ms.setRange(1, 10000); self.ms.setValue(250); self.ms.setSuffix(" ms")
+        self.page = ComboBox()
+        for label, editor in (("Signal", self.signal), ("Action", self.kind), ("Tag", self.tag),
+                              ("Value", self.value), ("Pulse", self.ms), ("Page", self.page)):
+            _mark(editor, "propField")
+            if isinstance(editor, QSpinBox):
+                editor.setButtonSymbols(QSpinBox.NoButtons)
+            form.addRow(_field_label(label), editor)
+        actions = QHBoxLayout(); actions.setContentsMargins(0, 6, 0, 0); actions.setSpacing(6)
+        apply_button = QPushButton("Apply action"); apply_button.setObjectName("primaryAction")
+        remove = QPushButton("Remove"); remove.setObjectName("secondaryAction")
+        for button in (apply_button, remove):
+            button.setFixedHeight(30); button.setCursor(Qt.PointingHandCursor)
+        actions.addWidget(apply_button, 1); actions.addWidget(remove); form.addRow(actions)
+        self.signal.currentTextChanged.connect(self._load_action)
+        self.kind.currentTextChanged.connect(self._sync_fields)
+        apply_button.clicked.connect(self._apply); remove.clicked.connect(self._remove)
+        self._sync_fields(self.kind.currentText())
+
+    def set_tags(self, tags):
+        current = self.tag.currentText()
+        self.tags = sorted(set(tags or [])); self.tag.clear(); self.tag.addItems(self.tags)
+        self.tag.setCurrentText(current)
+
+    def set_pages(self, pages):
+        """Offer every page by name; the action stores the page id."""
+        current = self.page.currentData()
+        self.page_ids = [page.id for page in pages]
+        self.page.clear()
+        for page in pages:
+            self.page.addItem(page.name or page.id, page.id)
+        if current in self.page_ids:
+            self.page.setCurrentIndex(self.page_ids.index(current))
+
+    def set_widget(self, widget):
+        self.widget_model = widget; self.signal.clear()
+        definition = self.registry.get(widget.type) if widget else None
+        signals = tuple(definition.action_signals) if definition else ()
+        self.signal.addItems(signals)
+        self.setEnabled(bool(signals))
+        self._load_action(self.signal.currentText())
+
+    def _sync_fields(self, kind):
+        self.tag.setEnabled(kind != "navigate"); self.value.setEnabled(kind == "write")
+        self.ms.setEnabled(kind == "pulse"); self.page.setEnabled(kind == "navigate")
+
+    def _load_action(self, signal):
+        action = self.widget_model.actions.get(signal) if self.widget_model else None
+        if not action:
+            return
+        self.kind.setCurrentText(action.kind); self.tag.setCurrentText(action.tag)
+        self.value.setText("" if action.value is None else json.dumps(action.value))
+        self.ms.setValue(int(action.ms) if action.kind == "pulse" else 250)
+        if action.page in self.page_ids:
+            self.page.setCurrentIndex(self.page_ids.index(action.page))
+
+    @staticmethod
+    def _parse_value(text):
+        """A JSON scalar if the text is one, else the text itself; None if empty."""
+        text = text.strip()
+        if not text:
+            return None
+        try:
+            value = json.loads(text)
+        except ValueError:
+            return text
+        return value if isinstance(value, (bool, int, float, str)) else text
+
+    def _apply(self):
+        signal, kind = self.signal.currentText(), self.kind.currentText()
+        if not signal:
+            return
+        if kind == "navigate":
+            action = DesignerAction("navigate", page=self.page.currentData() or "")
+        elif kind == "pulse":
+            action = DesignerAction("pulse", self.tag.currentText().strip(), ms=self.ms.value())
+        else:
+            action = DesignerAction("write", self.tag.currentText().strip(), value=self._parse_value(self.value.text()))
+        self.actionEdited.emit(signal, action)
+
+    def _remove(self):
+        if self.signal.currentText(): self.actionEdited.emit(self.signal.currentText(), None)
+
+
 class DesignerWorkspace(QWidget):
     previewRequested = Signal(str)
     deployRequested = Signal(str)
@@ -708,12 +820,14 @@ class DesignerWorkspace(QWidget):
         right.setChildrenCollapsible(False)
         inspector_layout.addWidget(right)
         self.properties = PropertyEditor(self.registry); self.bindings = BindingEditor(self.registry)
+        self.actions = ActionEditor(self.registry)
         self.selection_chip = QLabel("None"); self.selection_chip.setObjectName("chip")
         right.addWidget(self._panel("Properties", "sliders", self._scroll_panel(self.properties),
                                     trailing=(self.selection_chip,)))
         right.addWidget(self._panel("Tag binding", "link", self._scroll_panel(self.bindings)))
+        right.addWidget(self._panel("Actions", "bolt", self._scroll_panel(self.actions)))
         right.addWidget(self._build_chat()); split.addWidget(inspector)
-        right.setSizes([360, 300, 220])
+        right.setSizes([320, 260, 220, 200])
         split.setStretchFactor(0, 0); split.setStretchFactor(1, 1); split.setStretchFactor(2, 0)
         sidebar.setMinimumWidth(220); inspector.setMinimumWidth(260)
         split.setSizes([250, 700, 300]); layout.addWidget(split, 1)
@@ -721,6 +835,7 @@ class DesignerWorkspace(QWidget):
         self.scene.geometryEdited.connect(self._geometry_command); self.tree.itemSelectionChanged.connect(self._tree_selection)
         self.tree.itemChanged.connect(self._tree_renamed); self.properties.propertyEdited.connect(self._property_command)
         self.properties.geometryEdited.connect(self._single_geometry_command); self.bindings.bindingEdited.connect(self._binding_command)
+        self.actions.actionEdited.connect(self._action_command)
         self.properties.assetRequested.connect(self._choose_property_asset)
         self.scene.assetRequested.connect(self._asset_requested)
         self.scene.textRequested.connect(self._text_requested)
@@ -1327,9 +1442,22 @@ class DesignerWorkspace(QWidget):
         self.undo_stack.push(CallbackCommand("Change tag binding", lambda: apply(value), lambda: apply(before)))
         self.bindings.set_tags(self.bindings.tags + ([value.tag] if value else []))
 
+    def _action_command(self, signal, value):
+        selected = self.scene.selected_models()
+        if not selected: return
+        model = selected[0]; before = copy.deepcopy(model.actions.get(signal))
+        def apply(v):
+            if v is None: model.actions.pop(signal, None)
+            else: model.actions[signal] = copy.deepcopy(v)
+            self._load_page(select=[model.id])
+        self.undo_stack.push(CallbackCommand("Change action", lambda: apply(value), lambda: apply(before)))
+        if value is not None and value.tag:
+            self.bindings.set_tags(self.bindings.tags + [value.tag]); self.actions.set_tags(self.bindings.tags)
+
     def _load_page(self, select=None):
         self.current_page_index = min(self.current_page_index, len(self.project.pages)-1)
         self.pages.blockSignals(True); self.pages.clear(); self.pages.addItems([p.name for p in self.project.pages]); self.pages.setCurrentIndex(self.current_page_index); self.pages.blockSignals(False)
+        self.actions.set_pages(self.project.pages)
         self.scene.load_page(self.project, self.current_page); self._refresh_tree()
         # Loading a page clears the selection without emitting a selection
         # change, so the alignment buttons would stay enabled over an empty
@@ -1363,7 +1491,7 @@ class DesignerWorkspace(QWidget):
         model = self._find(ids[0]) if len(ids) == 1 else None
         parent = self._find(self.parent_id_of(model)) if model else None
         self.properties.set_widget(model, positioned=bool(parent and parent.type in POSITIONERS))
-        self.bindings.set_widget(model)
+        self.bindings.set_widget(model); self.actions.set_widget(model)
         self.selection_chip.setText(model.id if model else (f"{len(ids)} selected" if ids else "None"))
         self._sync_text_alignment()
         self.tree.blockSignals(True); self.tree.clearSelection()
@@ -1591,6 +1719,11 @@ class DesignerWorkspace(QWidget):
                          "screen": {"width": self.project.screen.width, "height": self.project.screen.height},
                          "theme": self.project.screen.theme,
                          "tags_required": self.project.required_tags()})
+        # Binding thresholds become the panel's alarm list (CONTRACT 4). None
+        # left -> no key, so a design without thresholds validates as before.
+        alarms = self.project.alarms()
+        if alarms: manifest["alarms"] = alarms
+        else: manifest.pop("alarms", None)
         with open(path, "w", encoding="utf-8", newline="\n") as handle: json.dump(manifest, handle, indent=2); handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
 
     def _bundle_project_name(self, manifest=None):
@@ -1648,7 +1781,8 @@ class DesignerWorkspace(QWidget):
             output_dir = os.path.join(self.bundle_dir, "generated")
             paths = self.generator.write(self.project, output_dir, self.bundle_dir)
             entry = os.path.relpath(paths[0], self.bundle_dir); self._update_manifest(entry)
-            self.bindings.set_tags(self.project.required_tags()); self.message.emit(f"Generated {len(paths)} QML page(s) in {output_dir}"); return paths
+            self.bindings.set_tags(self.project.required_tags()); self.actions.set_tags(self.bindings.tags)
+            self.message.emit(f"Generated {len(paths)} QML page(s) in {output_dir}"); return paths
         except (OSError, QmlGenerationError, ValueError) as exc:
             QMessageBox.critical(self, "Generation failed", str(exc)); return []
     def preview(self):

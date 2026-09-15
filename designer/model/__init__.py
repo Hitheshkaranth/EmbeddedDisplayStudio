@@ -1,9 +1,9 @@
 from .project import (
-    DesignerBinding, DesignerPage, DesignerProject, DesignerScreen,
-    DesignerWidget, ValidationIssue,
+    DesignerAction, DesignerBinding, DesignerPage, DesignerProject, DesignerScreen,
+    DesignerWidget, ValidationIssue, parse_threshold,
 )
 
 __all__ = [
-    "DesignerBinding", "DesignerPage", "DesignerProject", "DesignerScreen",
-    "DesignerWidget", "ValidationIssue",
+    "DesignerAction", "DesignerBinding", "DesignerPage", "DesignerProject", "DesignerScreen",
+    "DesignerWidget", "ValidationIssue", "parse_threshold",
 ]
