@@ -19,6 +19,7 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 
 from tagengine import TagEngine
+from schema.manifest import validate_bundle, alarm_tags as _alarm_tags
 
 # Structured logging for journald (CONTRACT 7)
 logging.basicConfig(
@@ -254,13 +255,21 @@ def main():
     if error:
         logger.error(error)
         
-    expected_tags = manifest.get("tags_required", []) if manifest else []
+    # Collect tags that need tracking: declared required tags + alarm tags.
+    expected_tags = list(manifest.get("tags_required", []) or [])
+    alarm_defs = manifest.get("alarms") or []
+    
+    # Add alarm tags to the expected list so QML can bind to them.
+    for atag in _alarm_tags(manifest):
+        if atag not in expected_tags:
+            expected_tags.append(atag)
     
     tag_engine = TagEngine(
         expected_tags,
         rx_port=args.rx_port,
         daemon_host=args.daemon_host,
         daemon_port=args.daemon_port,
+        alarm_defs=alarm_defs,
     )
     hmi = Hmi(manifest, apps_dir, Path(args.ready_file))
     if error:

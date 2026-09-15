@@ -194,6 +194,23 @@ class TestFallbackScreenRenders(unittest.TestCase):
         self.assertIsNotNone(alert, "Fallback.qml must name its error ShAlert")
         self.assertIn("Manifest not found", alert.property("description"))
 
+    def test_alarm_badge_exists_in_shell(self):
+        """
+        Shell.qml must expose an alarm count badge. The badge is hidden when
+        there are no active alarms (Bus.alarmCount == 0).
+        """
+        badge = self._find("alarmBadge")
+        self.assertIsNotNone(badge, "Shell.qml must name its alarm ShBadge 'alarmBadge'")
+        self.assertEqual(badge.property("text"), "0")
+
+    def test_alarm_badge_hidden_when_no_alarms(self):
+        """
+        When Bus.alarmCount is 0, the alarm badge must not be visible.
+        """
+        badge = self._find("alarmBadge")
+        self.assertIsNotNone(badge, "Shell.qml must name its alarm ShBadge 'alarmBadge'")
+        self.assertFalse(badge.property("visible"))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

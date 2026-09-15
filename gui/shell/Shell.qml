@@ -77,4 +77,25 @@ Window {
             description: "Telemetry stream stopped. Check daemon status."
         }
     }
+
+    // Alarm count badge, shown when there are active alarms
+    // Placed at the top-right corner, z-indexed above the app
+    ShBadge {
+        id: alarmBadge
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.topMargin: 12
+        anchors.rightMargin: 12
+        z: 100
+        text: String(Bus.alarmCount)
+        visible: Bus.alarmCount > 0
+        color: "destructive"
+    }
+
+    Connections {
+        target: Bus
+        function onActiveAlarmsChanged() {
+            // Badge visibility and text are bound to Bus.alarmCount
+        }
+    }
 }

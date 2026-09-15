@@ -194,9 +194,51 @@ main.qml
 | `tags_required` | no | `[]` |
 | `qt` | no | unconstrained |
 | `qt_binding` | no | `"pyside6"` (only meaningful when `runtime` is `python`) |
+| `alarms` | no | `[]` (no alarm evaluation) |
 
 An optional field that IS present is still type-checked. Absence is not an
 error; a `screen` that is a string is.
+
+#### Alarm definitions (`alarms`)
+
+When present, `alarms` must be a list of alarm definition objects. Each object
+describes a single tag-level alarm:
+
+```jsonc
+{
+  "alarms": [
+    {
+      "tag": "ai.pressure",       // required, must match tag naming rule
+      "label": "Pressure Alarm",  // optional, human-readable name
+      "unit": " bar",             // optional, unit string
+      "warning": {                // optional: at least one of warning/critical required
+        "op": ">=",
+        "value": 5.0
+      },
+      "critical": {
+        "op": ">",
+        "value": 8.0
+      }
+    }
+  ]
+}
+```
+
+**Validation rules:**
+
+| Constraint | Rule |
+| --- | --- |
+| `tag` | Required, must match `^[a-z][a-z0-9]*(\.[a-z0-9_]+)+$` |
+| `label` | Optional string |
+| `unit` | Optional string |
+| `warning` / `critical` | Optional objects with `op` and `value` |
+| `op` | One of `">"`, `">="`, `"<"`, `"<="`, `"=="`, `"!="` |
+| `value` | Required when `op` is present; must be a number (int or float, not bool) |
+| Thresholds | At least one of `warning` or `critical` must be present |
+
+Alarm tag names are collected at load time and added to the tag engine's
+tracking set (CONTRACT C3), so the engine records history and evaluates alarms
+for them.
 
 This table exists because its absence caused a real divergence: three
 implementations each guessed differently at which fields were mandatory. The
@@ -336,7 +378,61 @@ deliberate.
   (`/boot/overlays.txt`) before the daemon can claim them. Document, don't guess.
 * Serial: prefer the stable `/dev/verdin-uartN` aliases over `/dev/ttymxcN`.
 
-## 9. Repository layout & swarm ownership
+## 9. Alarm and history semantics (C2 + C3)
+
+### 9.1 Manifest alarm definitions
+
+A manifest may include an optional `"alarms"` array. Each entry describes a
+threshold-based alarm bound to a single tag (CONTRACT 4.1, §4). The alarm engine
+runs inside the tag engine (Bus/TagEngine) — it does not speak to the daemon.
+
+### 9.2 History ring buffer
+
+The tag engine maintains a per-tag ring buffer that records every numeric value
+received on every telemetry frame.
+
+* **Recorded tags:** every tag in `tags_required` plus every tag referenced in
+  `alarms[*].tag`. Tags that arrive on the wire but are not tracked are NOT
+  recorded.
+* **Value conversion:** booleans are stored as 0/1. `null` values are skipped
+  (a failed hardware read does not corrupt the buffer).
+* **Depth:** configurable via `TagEngine(..., history_depth=N)`. Default 600
+  (60 s at 10 Hz). When the buffer is full, the oldest sample is dropped.
+* **QML API:** `Bus.history(tag, n)` returns the last ≤ n samples, oldest first,
+  as a `QVariantList`. Unknown tags return an empty list.
+* **Version:** `Bus.historyVersion` increments by one on every telemetry frame,
+  so QML bindings that depend on history re-evaluate once per frame.
+
+### 9.3 Alarm evaluation
+
+Alarms are evaluated on every telemetry frame against the current tag values.
+
+* **Activation:** an alarm activates when the threshold condition is met.
+  Condition: `tag_value <op> threshold_value`, where `<op>` is one of `>`,
+  `>=`, `<`, `<=`, `==`, `!=`.
+* **Dual thresholds:** each alarm may define both `warning` and `critical`.
+  If both are met, `critical` takes priority.
+* **Null clears:** if a tag value becomes `null` (failed read), any active alarm
+  for that tag is cleared.
+* **Severity escalation/de-escalation:** if a value moves from the warning range
+  into the critical range, the alarm's severity updates in place. The reverse is
+  also true.
+* **QML API:**
+  * `Bus.alarmCount` — number of active alarms (Property, int).
+  * `Bus.activeAlarms` — list of active alarm objects (Property, QVariantList),
+    each containing `{tag, label, severity, value, message, timestamp, acknowledged}`.
+    Sorted: critical first, then warning. Within each severity: newest first.
+  * `Bus.acknowledge(tag)` — marks an alarm as acknowledged. Re-activation
+    creates a new, unacknowledged entry.
+  * `Bus.activeAlarmsChanged` — emitted whenever the alarm list changes.
+
+### 9.4 Single emission per burst
+
+`Bus.activeAlarmsChanged` is emitted after alarm evaluation, not on every
+individual value update. This prevents QML alarm bindings from re-evaluating
+10 times a second unnecessarily.
+
+## 10. Repository layout & swarm ownership
 
 Each worker owns **only** its listed paths. Do not create, edit or delete files
 outside your scope — the architect owns integration.
@@ -355,7 +451,7 @@ outside your scope — the architect owns integration.
 Wave 1 (parallel): W1, W3, W4, W6, W7. Wave 2 (parallel, consumes `ui/`):
 W2, W5.
 
-## 10. Host deployer GUI look & feel (W5)
+## 11. Host deployer GUI look & feel (W5)
 
 The tool's centrepiece is a **centred hardware mock-up of the panel** — the
 deployment target rendered as the physical device, with the customer's Qt app
@@ -378,7 +474,7 @@ drawn inside it exactly as it appears on the HMI.
 
 ---
 
-## 11. Design system — shadcn/ui, ported to Qt (NORMATIVE)
+## 12. Design system — shadcn/ui, ported to Qt (NORMATIVE)
 
 **Every user-facing element** — the on-target HMI shell, the demo app, the
 fallback screen and the host deployer tool — is built from a Qt port of
@@ -402,7 +498,7 @@ ui/README.md
 The GUI loader adds `/usr/lib/hmi/qml` to the QML import path, so **BYOA apps
 get the kit for free** with `import Shadcn 1.0`.
 
-### 11.1 Tokens (shadcn default "slate" theme, verbatim)
+### 12.1 Tokens (shadcn default "slate" theme, verbatim)
 
 | Token | Light | Dark |
 | --- | --- | --- |
