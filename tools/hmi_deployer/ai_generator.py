@@ -11,7 +11,7 @@ import copy
 from typing import Optional
 
 from PySide6.QtCore import Signal, QObject
-from designer.model import DesignerBinding, DesignerProject, DesignerPage, DesignerWidget
+from designer.model import DesignerAction, DesignerBinding, DesignerProject, DesignerPage, DesignerWidget
 from designer.palette.widget_registry import WidgetDefinition, WidgetRegistry
 
 logger = logging.getLogger(__name__)
@@ -202,9 +202,22 @@ def build_system_prompt(registry: Optional[WidgetRegistry] = None,
         '{"type": "<WidgetType>", "id": "<camelCaseId>", '
         '"geometry": {"x": 0, "y": 0, "width": 200, "height": 60}, '
         '"properties": {"text": "..."}, '
-        '"bindings": {"value": {"tag": "plc.tag.name"}}}]}]}\n\n'
+        '"bindings": {"value": {"tag": "plc.tag.name", "unit": "V", "warning": "> 2.5", "critical": "> 3.0"}}, '
+        '"actions": {"clicked": {"kind": "write", "tag": "do.relay1", "value": true}}}]}]}\n\n'
         "Allowed widget types: " + ", ".join(types) + ".\n"
-        "Use bindings for any live value that should come from a PLC/telemetry tag. "
+        "Use bindings for any live value that should come from a PLC/telemetry tag; "
+        "tags are lowercase dotted names (ai.pot, di.estop, do.relay1, mb.line_speed). "
+        "A binding may carry \"warning\" and \"critical\" thresholds written as "
+        "\"> 80\", \">= 80\", \"< 10\" or a bare number; they colour the widget and raise a panel alarm. "
+        "Bind ShTrendChart.data and ShAlarmTable.alarms (tag \"*\") for history and alarm lists.\n"
+        "Controls act through \"actions\", keyed by the widget's signal: "
+        "ShButton clicked; ShToggle toggled; ShCheckbox checkedChanged; ShSlider and ShNumInput valueChanged; "
+        "ShSelect activated; ShAlarmTable alarmActivated. "
+        "Action kinds: {\"kind\": \"write\", \"tag\": \"do.x\", \"value\": true} sends a value "
+        "(omit value to send the control's own state, e.g. a toggle's checked); "
+        "{\"kind\": \"pulse\", \"tag\": \"do.x\", \"ms\": 250} pulses an output; "
+        "{\"kind\": \"navigate\", \"page\": \"settings\"} shows another page by id. "
+        "Give every start/stop/reset button an action. "
         "Keep ids unique across every section. Set section.complete=true and section.next=\"\" "
         "when the requested design is finished. Before the JSON block, write at most one sentence; "
         "after it, nothing. If asked to continue, return only the next section and do not repeat "
@@ -349,6 +362,17 @@ class AIDesignGenerator:
                 if child:
                     children.append(child)
 
+            # Actions ride along in the model's own type; a malformed one is
+            # dropped rather than failing the section, like a bad binding.
+            actions = {}
+            for signal, value in (wdata.get("actions") or {}).items():
+                try:
+                    action = DesignerAction.from_data(value)
+                except (ValueError, TypeError):
+                    continue
+                if action.kind in ("write", "pulse", "navigate"):
+                    actions[str(signal)] = action
+
             # Keep the model's own id when it is a legal QML id: stable ids
             # are what make "changed" (vs added/removed) meaningful between
             # two generations of the same screen.
@@ -366,6 +390,7 @@ class AIDesignGenerator:
                 properties=properties,
                 bindings=bindings,
                 children=children,
+                actions=actions,
             ))
         return result
 

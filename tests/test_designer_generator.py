@@ -94,7 +94,10 @@ class DesignerGeneratorTests(unittest.TestCase):
         paths = []
         try:
             paths = self.generator.write(project, ".tmp")
-            self.assertEqual({os.path.basename(path) for path in paths}, {"DesignerTestMain.qml", "DesignerTestSettings.qml"})
+            # A multi-page design gains a host, and it comes first because the
+            # workspace makes paths[0] the manifest entry.
+            self.assertEqual([os.path.basename(path) for path in paths],
+                             ["App.qml", "DesignerTestMain.qml", "DesignerTestSettings.qml"])
         finally:
             for path in paths:
                 if os.path.exists(path):

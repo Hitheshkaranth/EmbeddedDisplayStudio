@@ -18,6 +18,13 @@ class WidgetDefinition:
     choices: dict[str, tuple[str, ...]] = field(default_factory=dict)
     color_properties: tuple[str, ...] = ()
     asset_properties: tuple[str, ...] = ()
+    # Signals an action may be attached to, named as the QML kit declares
+    # them (``clicked`` -> ``onClicked``). Property-change notifications count:
+    # a control with no dedicated signal exposes ``<prop>Changed``.
+    action_signals: tuple[str, ...] = ()
+    # The property that holds the control's own state -- what a ``write``
+    # action with no explicit value sends, and what a two-way binding targets.
+    state_property: str = ""
 
 
 class WidgetRegistry:
@@ -39,10 +46,31 @@ class WidgetRegistry:
         return tuple(dict.fromkeys(item.category for item in self._definitions.values()))
 
 
+# Which registry types can fire actions, and from which signal. ShButton and
+# ShToggle declare real signals in the kit; ShCheckbox, ShSlider and
+# ShNumInput do not, so their state property's change notification is the
+# only hook -- which is also why a two-way binding on them goes through a
+# ``Binding on`` element rather than a plain property binding (see the QML
+# generator). ShSelect fires ``activated(index)`` on user choice only, which
+# is exactly what a write wants: telemetry feeding ``currentIndex`` back does
+# not re-trigger it.
+ACTION_SIGNALS = {
+    "ShButton": (("clicked",), ""),
+    "ShToggle": (("toggled",), "checked"),
+    "ShCheckbox": (("checkedChanged",), "checked"),
+    "ShSlider": (("valueChanged",), "value"),
+    "ShNumInput": (("valueChanged",), "value"),
+    "ShSelect": (("activated",), "currentIndex"),
+    "ShAlarmTable": (("alarmActivated",), ""),
+}
+
+
 def default_registry() -> WidgetRegistry:
     registry = WidgetRegistry()
     def add(*args, **kwargs):
-        registry.register(WidgetDefinition(*args, **kwargs))
+        signals, state = ACTION_SIGNALS.get(args[0], ((), ""))
+        registry.register(WidgetDefinition(*args, action_signals=signals,
+                                           state_property=state, **kwargs))
 
     common = {"opacity": float, "visible": bool}
     common_defaults = {"opacity": 1.0, "visible": True}
