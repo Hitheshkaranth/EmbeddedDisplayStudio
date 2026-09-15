@@ -58,5 +58,29 @@
     "parity": "N",
     "stopbits": 1,
     "timeout_s": 0.1
+  },
+  "modbus": {
+    "host": "127.0.0.1",
+    "port": 502,
+    "unit_id": 1,
+    "poll_interval_ms": 200,
+    "reconnect_s": 5.0,
+    "timeout_s": 1.0,
+    "tags": {
+      "mb.coil1": {
+        "kind": "coil",
+        "address": 0,
+        "type": "bool",
+        "writable": true,
+        "safe_state": 0
+      },
+      "mb.reg1": {
+        "kind": "holding",
+        "address": 100,
+        "type": "int16",
+        "writable": true,
+        "safe_state": 0
+      }
+    }
   }
 }
