@@ -46,7 +46,7 @@ from typing import Any, Optional
 
 from PySide6.QtCore import QEventLoop, QByteArray, QObject, Property, QTimer, Signal, Slot
 from PySide6.QtNetwork import QHostAddress, QUdpSocket
-from PySide6.QtQml import QQmlPropertyMap
+from PySide6.QtQml import QQmlComponent, QQmlPropertyMap
 
 logger = logging.getLogger("TagEngine")
 
@@ -527,6 +527,7 @@ class TagEngine(QObject):
         # Build the set of alarms that should be active based on thresholds.
         # Track: tag -> {"severity": "critical"|"warning", ...}
         newly_active: dict[str, dict] = {}
+        changed = False
 
         for adef in self._alarm_defs:
             if not isinstance(adef, dict):
@@ -570,13 +571,17 @@ class TagEngine(QObject):
 
                 existing = self._active_alarms.get(tag)
                 if existing is not None:
-                    # Alarm already active — update severity if escalated
+                    # Still active. It stays in the list whether or not the
+                    # severity moved -- an alarm that merely persisted used
+                    # to be dropped here and re-raised on the next frame, so
+                    # the table flickered at the telemetry rate.
                     if existing["severity"] != severity:
                         existing["severity"] = severity
                         existing["value"] = value
                         existing["message"] = message
-                        # Don't re-set timestamp or acknowledged
-                        newly_active[tag] = existing
+                        # Timestamp and acknowledged survive an escalation.
+                        changed = True
+                    newly_active[tag] = existing
                 else:
                     # New alarm
                     now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -589,17 +594,21 @@ class TagEngine(QObject):
                         "timestamp": now,
                         "acknowledged": False,
                     }
+                    changed = True
 
         # Determine which existing alarms are now cleared
         for tag in list(self._active_alarms.keys()):
             if tag not in newly_active:
                 del self._active_alarms[tag]
+                changed = True
 
         # Update with newly active/changed alarms
         self._active_alarms.update(newly_active)
 
-        # Emit signal only if the list changed (not on every frame)
-        self.activeAlarmsChanged.emit()
+        # Emit only when the list changed: the shell and any alarm table are
+        # bound to it, and a frame that changed nothing must not repaint them.
+        if changed:
+            self.activeAlarmsChanged.emit()
 
     def get_active_alarms(self) -> list:
         """Returns the list of active alarms, sorted critical first then newest.
@@ -839,3 +848,97 @@ class TagEngine(QObject):
         if "." in name:
             return name
         return self._alias_to_tag.get(name, name)
+
+
+# ---------------------------------------------------------------------------
+# The Bus the application actually sees
+#
+# A QML binding such as ``value: Bus.value("ai.pot", 0)`` is only re-evaluated
+# when something it *read through the QML engine* changes. Calling a Python
+# slot reads nothing the engine can see: the slot looks the value up inside
+# Python, returns it, and the binding is never touched again -- so every
+# gauge bound that way showed its first value for ever, while ``Tags.ai_pot``
+# beside it moved. The fix is to let the read happen in QML: ``Bus`` is a
+# small QML object whose ``value()`` indexes ``Tags`` inside the caller's own
+# binding, which the engine captures like any property read, and whose every
+# other member forwards to the engine below it (``BusImpl``). The source lives
+# here, not in a .qml file, so the panel image, a Studio checkout and the
+# packaged Studio all carry it without an install step.
+# ---------------------------------------------------------------------------
+BUS_QML = b"""
+import QtQuick 2.15
+
+QtObject {
+    id: bus
+
+    // Live state, forwarded as bindable properties.
+    readonly property bool online: BusImpl.online
+    readonly property int rxErrors: BusImpl.rxErrors
+    readonly property int historyVersion: BusImpl.historyVersion
+    readonly property var activeAlarms: BusImpl.activeAlarms
+    readonly property int alarmCount: BusImpl.alarmCount
+
+    // Signals an app may connect to, re-emitted from the engine.
+    signal ackReceived(string id, bool ok, string err)
+    signal listReceived(var tags)
+    signal unsubscribed()
+    property var _forward: Connections {
+        target: BusImpl
+        function onAckReceived(id, ok, err) { bus.ackReceived(id, ok, err) }
+        function onListReceived(tags) { bus.listReceived(tags) }
+        function onUnsubscribed() { bus.unsubscribed() }
+    }
+
+    // A tag read that the binding calling it depends on. Dotted and
+    // underscored names both work (CONTRACT 2.5); a missing or null tag
+    // yields the fallback, never an error.
+    function value(name, fallback) {
+        var v = Tags[name]
+        if (v === undefined || v === null) v = Tags[name.replace(/\\./g, "_")]
+        if (v === undefined || v === null) return fallback === undefined ? null : fallback
+        return v
+    }
+
+    function write(tag, value) { BusImpl.write(tag, value) }
+    function pulse(tag, ms) { BusImpl.pulse(tag, ms) }
+    function uart_tx(data) { BusImpl.uart_tx(data) }
+    function ping() { BusImpl.ping() }
+    function list_tags() { return BusImpl.list_tags() }
+    function unsubscribe() { BusImpl.unsubscribe() }
+    function history(tag, n) { return BusImpl.history(tag, n === undefined ? 100 : n) }
+    function acknowledge(tag) { BusImpl.acknowledge(tag) }
+}
+"""
+
+
+def expose_to_qml(engine, context, tag_engine):
+    """
+    Installs ``Tags``, ``BusImpl`` and ``Bus`` on a QML context.
+
+    Args:
+        engine:     the QQmlEngine the context belongs to (creates the shim).
+        context:    the QQmlContext to populate (usually engine.rootContext()).
+        tag_engine: the TagEngine instance.
+
+    Returns:
+        The object bound as ``Bus``: the QML shim, or the engine itself if
+        the shim failed to build -- the app then keeps commands and one-shot
+        reads and loses only live re-evaluation, which is logged, rather
+        than losing its UI.
+
+    Side effects: sets three context properties; parents the shim to the
+    engine so it lives exactly as long as the tags do.
+    """
+    context.setContextProperty("Tags", tag_engine.tagMap())
+    context.setContextProperty("BusImpl", tag_engine)
+    component = QQmlComponent(engine)
+    component.setData(QByteArray(BUS_QML), "")
+    bus = component.create(context)
+    if bus is None:
+        logger.error("Bus shim failed to build; bindings on Bus.value() will not update: %s",
+                     "; ".join(e.toString() for e in component.errors()))
+        bus = tag_engine
+    else:
+        bus.setParent(tag_engine)
+    context.setContextProperty("Bus", bus)
+    return bus

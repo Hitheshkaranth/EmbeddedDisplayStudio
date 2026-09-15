@@ -352,6 +352,33 @@ class TestAlarmEvaluation(unittest.TestCase):
         alarms = engine.get_active_alarms()
         self.assertEqual(alarms[0]["severity"], "critical")
 
+    def test_alarm_persists_across_frames_and_notifies_only_on_change(self):
+        """An alarm that stays tripped stays listed; identical frames are silent.
+
+        The first cut kept only alarms that were new or escalated on this
+        frame, so a steady over-limit reading was listed on odd frames and
+        dropped on even ones, and the change signal fired on every frame
+        regardless.
+        """
+        engine = self._create_engine_with_alarms([
+            {"tag": "ai.val", "label": "Val", "warning": {"op": ">", "value": 10},
+             "critical": {"op": ">", "value": 20}},
+        ])
+        fired = []
+        engine.activeAlarmsChanged.connect(lambda: fired.append(len(engine.get_active_alarms())))
+        for value in (15, 15, 16, 15):
+            engine._handle_telemetry({"kind": "tags", "tags": {"ai.val": value}})
+            self.assertEqual([a["severity"] for a in engine.get_active_alarms()], ["warning"], value)
+        self.assertEqual(fired, [1], "one activation, then silence for a steady alarm")
+        engine._handle_telemetry({"kind": "tags", "tags": {"ai.val": 25}})
+        engine._handle_telemetry({"kind": "tags", "tags": {"ai.val": 26}})
+        self.assertEqual([a["severity"] for a in engine.get_active_alarms()], ["critical"])
+        self.assertEqual(fired, [1, 1], "escalation notifies once")
+        engine._handle_telemetry({"kind": "tags", "tags": {"ai.val": 5}})
+        engine._handle_telemetry({"kind": "tags", "tags": {"ai.val": 5}})
+        self.assertEqual(engine.get_active_alarms(), [])
+        self.assertEqual(fired, [1, 1, 0], "clearing notifies once")
+
     def test_alarm_clears_when_value_returns_to_normal(self):
         engine = self._create_engine_with_alarms([
             {"tag": "ai.pressure", "warning": {"op": ">", "value": 100}}
