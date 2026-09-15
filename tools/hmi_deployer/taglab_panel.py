@@ -19,7 +19,11 @@ Design constraints
 """
 from __future__ import annotations
 
-from typing import List, Optional
+import time
+from typing import TYPE_CHECKING, List, Optional
+
+if TYPE_CHECKING:
+    from .taglab import CommandSink  # noqa: F401  # avoid circular import at runtime
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -69,6 +73,20 @@ _COL_TOGGLE = 4
 _COL_REMOVE = 5
 _NUM_COLS = 6
 _HEADERS = ["Tag", "Status", "Waveform", "Parameters", "", ""]
+
+# ---------------------------------------------------------------------------
+# Column indices for the commands log table
+# ---------------------------------------------------------------------------
+_COL_CMD_SEQ = 0
+_COL_CMD_TIME = 1
+_COL_CMD_SRC = 2
+_COL_CMD_TYPE = 3
+_COL_CMD_TAG = 4
+_COL_CMD_VALUE = 5
+_COL_CMD_OK = 6
+_COL_CMD_ERR = 7
+_NUM_CMD_COLS = 8
+_CMD_HEADERS = ["#", "Time", "Source", "Cmd", "Tag", "Value", "OK", "Error"]
 
 
 def _make_waveform_label(entry: TagEntry) -> str:
@@ -345,6 +363,57 @@ class TagLabPanel(QWidget):
         self._refresh_table()
 
     # ------------------------------------------------------------------
+    # Public API — CommandSink wiring (Phase B)
+    # ------------------------------------------------------------------
+
+    @property
+    def sink(self) -> Optional["CommandSink"]:  # noqa: F821
+        """Read the attached CommandSink (set by MainWindow)."""
+        return self._sink
+
+    @sink.setter
+    def sink(self, value: "CommandSink") -> None:  # noqa: F821
+        """
+        Attach a CommandSink so that incoming commands are logged in the
+        Commands Log table.
+        """
+        self._sink = value
+
+    def _append_command_row(
+        self,
+        cmd_type: str,
+        tag: str,
+        value: object,
+        ok: bool,
+        err: str = "",
+        source: str = "127.0.0.1:5000",
+    ) -> None:
+        """Append a row to the commands log table."""
+        row = self._cmd_log.rowCount()
+        self._cmd_log.insertRow(row)
+        self._cmd_log.setItem(row, _COL_CMD_SEQ, QTableWidgetItem(str(self._cmd_seq)))
+        self._cmd_log.setItem(
+            row, _COL_CMD_TIME,
+            QTableWidgetItem(time.strftime("%H:%M:%S", time.localtime())),
+        )
+        self._cmd_log.setItem(row, _COL_CMD_SRC, QTableWidgetItem(source))
+        self._cmd_log.setItem(row, _COL_CMD_TYPE, QTableWidgetItem(cmd_type))
+        self._cmd_log.setItem(row, _COL_CMD_TAG, QTableWidgetItem(tag))
+        self._cmd_log.setItem(row, _COL_CMD_VALUE, QTableWidgetItem(str(value)))
+        ok_item = QTableWidgetItem("✓" if ok else "✗")
+        ok_item.setForeground(
+            self.palette().color("success_text") if ok else self.palette().color("destructive_text")
+        )
+        ok_item.setForeground(
+            getattr(self.palette(), "color", lambda *a, **k: None)("success_text" if ok else "destructive_text")
+        )
+        self._cmd_log.setItem(row, _COL_CMD_OK, ok_item)
+        self._cmd_log.setItem(row, _COL_CMD_ERR, QTableWidgetItem(err))
+        self._cmd_seq += 1
+        # Auto-scroll to the bottom
+        self._cmd_log.scrollToBottom()
+
+    # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
 
@@ -490,6 +559,49 @@ class TagLabPanel(QWidget):
         workspace_layout.addWidget(workspace_body, 1)
         layout.addWidget(workspace_panel, 1)
 
+        # ── Commands log ──────────────────────────────────────────────────
+        self._cmd_log: QTableWidget = QTableWidget(0, _NUM_CMD_COLS)
+        self._cmd_log.setHorizontalHeaderLabels(_CMD_HEADERS)
+        self._cmd_log.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._cmd_log.setSelectionBehavior(QTableWidget.SelectRows)
+        self._cmd_log.setAlternatingRowColors(True)
+        self._cmd_log.verticalHeader().setVisible(False)
+        self._cmd_log.horizontalHeader().setStretchLastSection(True)
+        self._cmd_log.horizontalHeader().setSectionResizeMode(_COL_CMD_SEQ, QHeaderView.Fixed)
+        self._cmd_log.setColumnWidth(_COL_CMD_SEQ, 40)
+        self._cmd_log.horizontalHeader().setSectionResizeMode(_COL_CMD_TIME, QHeaderView.Fixed)
+        self._cmd_log.setColumnWidth(_COL_CMD_TIME, 90)
+        self._cmd_log.horizontalHeader().setSectionResizeMode(_COL_CMD_SRC, QHeaderView.Fixed)
+        self._cmd_log.setColumnWidth(_COL_CMD_SRC, 110)
+        self._cmd_log.horizontalHeader().setSectionResizeMode(_COL_CMD_TYPE, QHeaderView.ResizeToContents)
+        self._cmd_log.horizontalHeader().setSectionResizeMode(_COL_CMD_TAG, QHeaderView.ResizeToContents)
+        self._cmd_log.horizontalHeader().setSectionResizeMode(_COL_CMD_VALUE, QHeaderView.ResizeToContents)
+        self._cmd_log.horizontalHeader().setSectionResizeMode(_COL_CMD_OK, QHeaderView.ResizeToContents)
+        self._cmd_log.horizontalHeader().setSectionResizeMode(_COL_CMD_ERR, QHeaderView.Stretch)
+        self._cmd_log.setObjectName("tagLabCommandsLog")
+        self._cmd_log.setToolTip("Incoming commands received by the CommandSink")
+        self._cmd_log.setAccessibleName("Commands log")
+        self._cmd_log.setMaximumHeight(180)
+
+        cmd_panel = QFrame()
+        cmd_panel.setProperty("class", "consoleSectionPanel")
+        cmd_layout = QVBoxLayout(cmd_panel)
+        cmd_layout.setContentsMargins(14, 14, 14, 14)
+        cmd_layout.setSpacing(8)
+        cmd_title = QLabel("Commands Log")
+        cmd_title.setObjectName("sectionTitle")
+        cmd_layout.addWidget(cmd_title)
+        cmd_body = QFrame()
+        cmd_body.setProperty("class", "consoleSectionBody")
+        cmd_body_layout = QVBoxLayout(cmd_body)
+        cmd_body_layout.setContentsMargins(12, 12, 12, 12)
+        cmd_body_layout.addWidget(self._cmd_log)
+        cmd_layout.addWidget(cmd_body, 1)
+        layout.addWidget(cmd_panel)
+
+        self._cmd_seq: int = 0
+        self._sink: Optional["CommandSink"] = None  # noqa: F821
+
         self._refresh_empty_state()
 
     # ------------------------------------------------------------------
@@ -584,6 +696,33 @@ class TagLabPanel(QWidget):
 
     def _on_stop(self) -> None:
         self.sendingStopped.emit()
+
+    def process_commands(self) -> None:
+        """
+        Process any pending datagrams on the attached CommandSink.
+
+        Called from MainWindow's event loop (via QTimer or readyRead signal).
+        Each processed datagram is logged in the Commands Log table.
+        """
+        if self._sink is None:
+            return
+        try:
+            count = self._sink._handle_datagrams()
+        except Exception:
+            count = 0
+
+        # Log any new commands from the sink's command log
+        if self._sink is not None and hasattr(self._sink, "_command_log"):
+            while self._cmd_seq < self._sink._cmd_seq:
+                entry = self._sink._command_log[self._cmd_seq - 1]  # 1-indexed
+                self._append_command_row(
+                    cmd_type=entry["cmd"],
+                    tag=entry["tag"],
+                    value=entry["value"],
+                    ok=entry["ok"],
+                    err=entry.get("err", ""),
+                    source=entry.get("src", "127.0.0.1:5000"),
+                )
 
     def _on_save_scenario(self) -> None:
         path, _ = QFileDialog.getSaveFileName(

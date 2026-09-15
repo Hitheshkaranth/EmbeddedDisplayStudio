@@ -290,6 +290,8 @@ class MainWindow(QMainWindow):
 
         self.simulator = None
         self.relay = None
+        self._cmd_sink = None  # Phase B: CommandSink
+        self._cmd_poll_timer = None  # Phase B: QTimer for polling
         # Tag Lab sender – mutually exclusive with simulator and relay.
         self.taglab_sender: TagLabSender = None
         # Manifest of the loaded bundle; the panel picker's Custom entry reads it.
@@ -1019,6 +1021,9 @@ class MainWindow(QMainWindow):
         self._themed_page_icon(self.taglab_panel.title_icon, "activity")
         self.taglab_panel.sendingStarted.connect(self._on_taglab_start)
         self.taglab_panel.sendingStopped.connect(self._on_taglab_stop)
+        # Phase B: wire the CommandSink so incoming commands are logged
+        if hasattr(self, "_cmd_sink") and self._cmd_sink is not None:
+            self.taglab_panel.sink = self._cmd_sink
         taglab_scroll = self._scrollable(self.taglab_panel)
         self._right_tabs.addTab(taglab_scroll, "Tag Lab")
         self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(taglab_scroll), "gauge")
@@ -1833,6 +1838,8 @@ class MainWindow(QMainWindow):
         if self.relay:
             self.relay.stop()
             self.relay = None
+        # Phase B: release the CommandSink
+        self._shutdown_cmd_sink()
         if self.taglab_sender:
             self.taglab_sender.stop()
             self.taglab_sender = None
@@ -1870,6 +1877,8 @@ class MainWindow(QMainWindow):
         )
         self.relay.error.connect(self.log)
         self.relay.start()
+        # Phase B: start the command sink when relay becomes active
+        self._init_cmd_sink()
 
     # ------------------------------------------------------------------
     # Tag Lab sender lifecycle (mutual exclusion enforced here)
@@ -1897,6 +1906,40 @@ class MainWindow(QMainWindow):
         tags = (self.current_manifest or {}).get("tags_required", [])
         if tags:
             self.start_simulator(tags)
+
+    # ------------------------------------------------------------------
+    # CommandSink lifecycle (Phase B)
+    # ------------------------------------------------------------------
+
+    def _init_cmd_sink(self) -> None:
+        """Create and wire the CommandSink if not already created."""
+        if self._cmd_sink is not None:
+            return
+        from .taglab import CommandSink
+
+        self._cmd_sink = CommandSink()
+        # Wire the sink to the Tag Lab panel for command logging
+        self.taglab_panel.sink = self._cmd_sink
+        # Start a QTimer to poll for incoming datagrams
+        if not getattr(self, "_cmd_poll_timer", None):
+            self._cmd_poll_timer = QTimer(self)
+            self._cmd_poll_timer.setInterval(50)  # 50 ms polling
+            self._cmd_poll_timer.timeout.connect(self._process_cmds)
+        self._cmd_poll_timer.start()
+
+    def _shutdown_cmd_sink(self) -> None:
+        """Release the CommandSink port and stop polling."""
+        if self._cmd_poll_timer is not None:
+            self._cmd_poll_timer.stop()
+            self._cmd_poll_timer = None
+        if self._cmd_sink is not None:
+            self._cmd_sink.release()
+            self._cmd_sink = None
+            self.taglab_panel.sink = None
+
+    def _process_cmds(self) -> None:
+        """Poll the CommandSink for pending datagrams and log them."""
+        self.taglab_panel.process_commands()
 
     # ------------------------------------------------------------------
     # Deployment progress
