@@ -204,6 +204,31 @@ class SshWorker(QThread):
         self._timed_out = False
         self._watchdog: Optional[threading.Timer] = None
 
+    def inject(self, line: str) -> bool:
+        """
+        Write one line to the child's stdin.
+
+        Args:
+            line: text to send; a newline is appended if missing.
+
+        Returns:
+            True if the line was written, False if the child has no open
+            stdin (not started, already exited, or created without one).
+
+        Side effects: flushes the pipe, so the remote reads it at once.
+        Safe to call from another thread than run(): a pipe write is atomic
+        below PIPE_BUF and the reader loop never touches stdin.
+        """
+        proc = self._proc
+        if proc is None or proc.stdin is None:
+            return False
+        try:
+            proc.stdin.write(line if line.endswith("\n") else line + "\n")
+            proc.stdin.flush()
+            return True
+        except (OSError, ValueError):
+            return False
+
     def run(self) -> None:
         """
         Executes the subprocess, reads output line by line, and waits.
@@ -222,6 +247,11 @@ class SshWorker(QThread):
 
             self._proc = subprocess.Popen(
                 self.command,
+                # A pipe on stdin, so the relay can be handed commands
+                # (inject) and so the child sees EOF the moment this
+                # process lets go of it, rather than inheriting a console
+                # that stays open for ever.
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,

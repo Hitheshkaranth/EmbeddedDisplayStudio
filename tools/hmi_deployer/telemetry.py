@@ -10,6 +10,7 @@ import random
 import socket
 import time
 from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtNetwork import QHostAddress, QUdpSocket
 from .ssh import SshWorker, build_ssh_cmd
 from typing import Optional, List
 
@@ -159,25 +160,42 @@ class TelemetrySimulator(QObject):
             pass
 
 
+# Correlation id of the `list` the relay sends on start; the ack carrying it
+# is routed to catalogueReceived instead of the tag engine.
+CATALOGUE_REQUEST_ID = "studio-catalogue"
+
+
 def build_remote_relay_script() -> str:
     """Return the Python 3 bridge executed on the target panel."""
     return (
         "import sys, socket, json, time, threading, os\n"
+        "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+        "sock.bind(('127.0.0.1', 0))\n"
         # Nothing signals this process when the ssh transport dies: it is run
         # without a TTY, so killing the local ssh leaves the remote interpreter
         # running. Every deploy restarts the relay, which stopped the previous
         # one locally and left its python on the panel, subscribed, for the
         # rest of the session. Watching stdin fixes that -- ssh closes it on
         # the way out, the read returns EOF, and the relay exits.
-        "def _die_with_parent():\n"
+        #
+        # The same stdin carries commands downstream: one CONTRACT 2.2 JSON
+        # object per line, sent to the daemon from the relay's own socket so
+        # the ack comes back through it and up stdout with the telemetry.
+        # That is what lets a button in the Studio's preview flip a relay on
+        # the panel. A blank line is ignored.
+        "def _stdin_loop():\n"
         "    try:\n"
-        "        sys.stdin.read()\n"
+        "        for line in sys.stdin:\n"
+        "            line = line.strip()\n"
+        "            if line:\n"
+        "                try:\n"
+        "                    sock.sendto(line.encode('utf-8'), ('127.0.0.1', 5000))\n"
+        "                except Exception:\n"
+        "                    pass\n"
         "    except Exception:\n"
         "        pass\n"
         "    os._exit(0)\n"
-        "threading.Thread(target=_die_with_parent, daemon=True).start()\n"
-        "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
-        "sock.bind(('127.0.0.1', 0))\n"
+        "threading.Thread(target=_stdin_loop, daemon=True).start()\n"
         "sub = json.dumps({'cmd': 'subscribe', 'ttl': 300}).encode()\n"
         "sock.sendto(sub, ('127.0.0.1', 5000))\n"
         "last_renew = time.monotonic()\n"
@@ -269,6 +287,8 @@ class TelemetryRelay(QObject):
     renewal loop uses a proper while-True structure with exception handling).
     """
 
+    #: The daemon's tag catalogue, answered to the `list` sent on start.
+    catalogueReceived = Signal(list)
     #: Reported once when frames stop reaching the tag engine.
     #:
     #: A send that fails silently is the same fault as a bind that fails
@@ -286,6 +306,7 @@ class TelemetryRelay(QObject):
         key_path: str,
         parent: Optional[QObject] = None,
         udp_port: int = 5001,
+        command_port: int = 5000,
     ) -> None:
         super().__init__(parent)
 
@@ -298,16 +319,59 @@ class TelemetryRelay(QObject):
         self.worker.outputLine.connect(self._on_line)
 
         self._udp_port = udp_port
+        # The command side. The preview's TagEngine sends CONTRACT 2.2
+        # commands to 127.0.0.1:5000 exactly as it would on the panel; while
+        # the relay is up, this socket is what answers that address and
+        # each datagram goes up the ssh channel as one line. Acks come back
+        # down with the telemetry and _on_line delivers them to the engine's
+        # port like any other frame, so Bus.write() sees its ack.
+        self._command_port = command_port
+        self._command_sock: Optional[QUdpSocket] = None
         self._closed: bool = False
         self.local_sock: Optional[socket.socket] = socket.socket(
             socket.AF_INET, socket.SOCK_DGRAM
         )
 
+    def _open_command_port(self) -> None:
+        """Bind the command port; a taken port is reported, not fatal."""
+        sock = QUdpSocket(self)
+        if not sock.bind(QHostAddress("127.0.0.1"), self._command_port):
+            self.error.emit(
+                f"Relay: port {self._command_port} is held by another process; "
+                "commands from the preview will not reach the panel."
+            )
+            sock.deleteLater()
+            return
+        sock.readyRead.connect(self._forward_commands)
+        self._command_sock = sock
+
+    def _forward_commands(self) -> None:
+        """Send every pending command datagram up the ssh channel."""
+        sock = self._command_sock
+        if sock is None or self.worker is None:
+            return
+        while sock.hasPendingDatagrams():
+            datagram = sock.receiveDatagram()
+            text = bytes(datagram.data()).decode("utf-8", errors="replace").strip()
+            # One object per line is the wire format; a command with a
+            # newline inside would split, and the engine never emits one.
+            if text and "\n" not in text:
+                self.worker.inject(text)
+
+    def request_catalogue(self) -> None:
+        """Ask the daemon for its tag list; catalogueReceived carries the answer."""
+        if self.worker is not None and not self._closed:
+            self.worker.inject(json.dumps({"id": CATALOGUE_REQUEST_ID, "cmd": "list"}))
+
     def start(self) -> None:
         if self._closed:
             return
+        self._open_command_port()
         self.worker.start()
         _retire_worker(self.worker)
+        # The catalogue request goes up once the remote's stdin thread is
+        # certainly running, which is well before the first frame comes back.
+        QTimer.singleShot(1500, self.request_catalogue)
 
     def stop(self) -> None:
         """
@@ -328,6 +392,10 @@ class TelemetryRelay(QObject):
             _retire_worker(self.worker)
             return
         self._closed = True
+        if self._command_sock is not None:
+            self._command_sock.close()
+            self._command_sock.deleteLater()
+            self._command_sock = None
         self.worker.cancel()
         if self.worker.isRunning():
             self.worker.wait(2000)
@@ -345,6 +413,17 @@ class TelemetryRelay(QObject):
         """Guard against use-after-close before writing to the local socket."""
         if self._closed or self.local_sock is None:
             return
+        # The catalogue answer is for the Studio, not the engine.
+        if CATALOGUE_REQUEST_ID in line:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                msg = None
+            if isinstance(msg, dict) and msg.get("id") == CATALOGUE_REQUEST_ID:
+                tags = msg.get("tags")
+                if isinstance(tags, list):
+                    self.catalogueReceived.emit([t for t in tags if isinstance(t, str)])
+                return
         try:
             self.local_sock.sendto(
                 line.encode("utf-8"), ("127.0.0.1", self._udp_port)

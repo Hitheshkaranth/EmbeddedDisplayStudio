@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from .taglab import CommandSink  # noqa: F401  # avoid circular import at runtime
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -43,6 +44,22 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+try:
+    from ui.python.shadcn import color as _shadcn_color
+except ImportError:  # pragma: no cover - the design kit is part of the tree
+    _shadcn_color = None
+
+
+def _token_color(name: str) -> str:
+    """A tokens.json colour by name, dark theme; a sane fallback if the kit is absent."""
+    if _shadcn_color is not None:
+        try:
+            return _shadcn_color(name, "dark")
+        except Exception:
+            pass
+    return "#22c55e" if name == "success" else "#ef4444"
+
 
 from .taglab import (
     WAVEFORM_KINDS,
@@ -401,12 +418,10 @@ class TagLabPanel(QWidget):
         self._cmd_log.setItem(row, _COL_CMD_TAG, QTableWidgetItem(tag))
         self._cmd_log.setItem(row, _COL_CMD_VALUE, QTableWidgetItem(str(value)))
         ok_item = QTableWidgetItem("✓" if ok else "✗")
-        ok_item.setForeground(
-            self.palette().color("success_text") if ok else self.palette().color("destructive_text")
-        )
-        ok_item.setForeground(
-            getattr(self.palette(), "color", lambda *a, **k: None)("success_text" if ok else "destructive_text")
-        )
+        # The panel carries no inline styling (see the module header); the
+        # verdict colour is the one place the QSS cannot reach a cell, so it
+        # is the token the rest of the window uses for the same meaning.
+        ok_item.setForeground(QColor(_token_color("success" if ok else "destructive")))
         self._cmd_log.setItem(row, _COL_CMD_OK, ok_item)
         self._cmd_log.setItem(row, _COL_CMD_ERR, QTableWidgetItem(err))
         self._cmd_seq += 1
@@ -714,7 +729,9 @@ class TagLabPanel(QWidget):
         # Log any new commands from the sink's command log
         if self._sink is not None and hasattr(self._sink, "_command_log"):
             while self._cmd_seq < self._sink._cmd_seq:
-                entry = self._sink._command_log[self._cmd_seq - 1]  # 1-indexed
+                # The sink numbers commands from 1; the table has shown the
+                # first _cmd_seq of them, so the next one is at that index.
+                entry = self._sink._command_log[self._cmd_seq]
                 self._append_command_row(
                     cmd_type=entry["cmd"],
                     tag=entry["tag"],
