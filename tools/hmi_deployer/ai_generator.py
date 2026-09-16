@@ -194,11 +194,13 @@ def summarize_widgets(project) -> str:
 
 
 def build_system_prompt(registry: Optional[WidgetRegistry] = None,
-                        screen_width: int = 1280, screen_height: int = 800) -> str:
+                        screen_width: int = 1280, screen_height: int = 800,
+                        brief: str = "") -> str:
     """System prompt that steers the model at the JSON payload we parse best.
 
     Lists the registry's real widget types so the model does not invent
     component names, and pins the screen size so geometry lands on glass.
+    When *brief* matches a design preset, its rules and exemplar are appended.
     """
     types: list[str] = []
     if registry is not None:
@@ -208,7 +210,7 @@ def build_system_prompt(registry: Optional[WidgetRegistry] = None,
             types = []
     if not types:
         types = sorted(set(_AI_TYPE_ALIASES.values()))
-    return (
+    prompt = (
         "You are an expert HMI designer for embedded Qt/QML panels built with the "
         "EmbeddedDisplay Studio widget set (Shadcn-styled). "
         f"The target screen is {screen_width}x{screen_height} px; place every widget "
@@ -244,6 +246,12 @@ def build_system_prompt(registry: Optional[WidgetRegistry] = None,
         "after it, nothing. If asked to continue, return only the next section and do not repeat "
         "widgets already emitted."
     )
+    if brief:
+        from tools.hmi_deployer.design_presets import match_preset, prompt_section
+        preset = match_preset(brief)
+        if preset is not None:
+            prompt += "\n\n" + prompt_section(preset, screen_width, screen_height)
+    return prompt
 
 
 class AIDesignGenerator:
