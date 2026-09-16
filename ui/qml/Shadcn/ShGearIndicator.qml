@@ -23,9 +23,12 @@ Item {
     readonly property var _list: {
         var parts = root.gears.split(",").map(function(s) { return s.trim() })
                         .filter(function(s) { return s !== "" });
-        if (parts.indexOf(root.gear) < 0 && root.gear !== "")
+        // A gear is a letter; a number (a simulator feeding 0, an unmapped
+        // register) is not shown as one.
+        var known = root.gear !== "" && isNaN(Number(root.gear));
+        if (known && parts.indexOf(root.gear) < 0)
             parts.push(root.gear);
-        return root.showAll ? parts : [root.gear];
+        return root.showAll ? parts : (known ? [root.gear] : []);
     }
 
     Row {

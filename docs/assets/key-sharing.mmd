@@ -1,0 +1,36 @@
+flowchart LR
+    subgraph first["First machine — the one that provisioned the panel"]
+        direction TB
+        K["~/.ssh/id_ed25519<br/>the private key the panel trusts"]
+        P["deploy/provision_panel.py<br/>installs the platform and this key's<br/>public half into /root/.ssh/authorized_keys"]
+        X["Studio ▸ Display Console ▸ Target Details<br/><b>Export key…</b><br/>python -m tools.hmi_deployer.deploy_key export"]
+        K --> P
+        K --> X
+    end
+
+    B["<b>line3-panel.hmikey</b><br/>one zip: private key, .pub,<br/>host / user / port, who exported it and when<br/><i>hand it over directly — it is a private key</i>"]
+    X --> B
+
+    subgraph second["Any other machine"]
+        direction TB
+        I["Studio ▸ <b>Import key…</b><br/>python -m tools.hmi_deployer.deploy_key import"]
+        S["~/.ssh/hmi-deploy/line3-panel<br/>owner-only permissions<br/>(0600 · icacls on Windows)"]
+        F["Key, Target IP, User and Port<br/>filled in and saved"]
+        I --> S --> F
+    end
+    B --> I
+
+    subgraph link["The link"]
+        direction TB
+        C["<b>Connect</b><br/>ssh -i key, BatchMode<br/>display probe · tag catalogue · telemetry relay"]
+        D["<b>Deploy to Target</b><br/>package → upload → hmi-install<br/>checksum · validate · atomic swap · ready check"]
+        R["<b>Disconnect</b><br/>relay and command loop stopped;<br/>Cancel while a connect is in flight"]
+        C --> D
+        C --> R
+    end
+    F --> C
+
+    T[("Panel<br/>/root/.ssh/authorized_keys<br/>holds one public key —<br/>every imported bundle opens the same door")]
+    P -.->|trusts| T
+    C ==>|ssh| T
+    D ==>|scp + hmi-install| T

@@ -37,12 +37,14 @@ first.</em>
 
 <br /><br />
 
-<img src="docs/assets/screenshot-designer.png" alt="The Designer workspace: widget library and layer tree, the canvas inside the panel bezel, and the property, binding and chat inspectors" width="900" />
+<img src="docs/assets/screenshot-designer.png" alt="The Designer workspace with the automotive cluster project open: widget library and layer tree, the canvas drawing every widget with its real QML, the cluster gauge selected with its eight resize handles, and the property, binding, actions and chat inspectors" width="900" />
 
-<em>The same screen, hand-edited in the Studio's own Designer — library and
-layers to the left, the canvas inside a bezel of the real glass, inspectors for
-properties and tag bindings to the right. The canvas is 1024 × 768 because that
-is what the panel at the top of the window reported.</em>
+<em>The automotive cluster preset open in the Studio's own Designer — library
+and layers to the left, the canvas inside a bezel of the real glass with every
+widget drawn by its own QML, the cluster gauge selected with its eight resize
+handles, and the property, tag-binding, actions and chat inspectors to the
+right. The canvas is 1024 × 768 because that is what the panel at the top of
+the window reported.</em>
 
 </div>
 
@@ -271,12 +273,28 @@ is restored. The window is one header — target address, port, **Connect** /
 | **Panel Logs** | Follow the journal from `hmi-gui` and `hmi-hwd` live, which is where a fault an hour after a good deploy shows up |
 | **System Profile** | What the live release costs the board: package, footprint, filesystem split, free RAM |
 
-**Sharing the deploy key.** A panel trusts one SSH key. In *Display
-Console → Target Details*, **Export key…** packs that key and the panel's
-address into a `.hmikey` file; a colleague presses **Import key…**, the key
-is installed under `~/.ssh/hmi-deploy/` with owner-only permissions, the
-connection fields fill in, and they can Connect and Deploy at once. The same
-from a terminal:
+### Sharing the deploy key
+
+A panel trusts one SSH key — the one `deploy/provision_panel.py` put into its
+`/root/.ssh/authorized_keys`. Until now that key lived in one person's
+`~/.ssh`, and "copy this file, then type the host, user and port" was how
+it reached the next person. A **deploy key bundle** is one file that carries
+the key pair and the panel's address:
+
+<div align="center">
+
+<img src="docs/assets/key-sharing.svg" alt="Export key packs the private key and the panel address into a .hmikey; Import key installs it with owner-only permissions and fills the connection fields; Connect, Deploy and Disconnect then reach the panel, whose authorized_keys holds the one public key" width="900" />
+
+<sub>Source: <a href="docs/assets/key-sharing.mmd"><code>docs/assets/key-sharing.mmd</code></a></sub>
+
+</div>
+
+In *Display Console → Target Details*, **Export key…** writes the bundle
+from the Key field (or the `~/.ssh` default key); **Import key…** on the
+other machine installs it under `~/.ssh/hmi-deploy/` with owner-only
+permissions (`0600`, `icacls` on Windows — OpenSSH refuses anything looser),
+fills Key, Target IP, User and Port, and saves them. The same from a
+terminal:
 
 ```bash
 python -m tools.hmi_deployer.deploy_key export --host 172.16.20.70 --out line3.hmikey
@@ -284,7 +302,7 @@ python -m tools.hmi_deployer.deploy_key import line3.hmikey
 ```
 
 The file contains a private key: hand it over directly. A passphrase-protected
-key is refused (the Studio deploys non-interactively).
+key is refused, because the Studio deploys non-interactively (`BatchMode`).
 
 Then, for an application you already have:
 
@@ -541,8 +559,8 @@ photo-real mock-up of the panel, then push it.
 
 One window, six workspaces across the top — **Designer**, **AI Design**,
 **Display Console**, **Tag Lab**, **Panel Logs**, **System Profile** — over a
-header that holds the panel's address, port and **Connect**. Everything below
-is about the panel that header points at.
+header that holds the panel's address, port, **Connect** and **Disconnect**.
+Everything below is about the panel that header points at.
 
 **Authoring**
 
@@ -568,6 +586,20 @@ is about the panel that header points at.
   engine bar, dual-tank fuel quantity, annunciator and compact data-field
   widgets, all bindable to live tags, with EFIS colours that hold across
   light and dark modes.
+* **An automotive cluster palette** — arc cluster gauge with redline band
+  and centre readout, gear indicator, curved fuel / coolant level bar,
+  readout with icon and warn limits, drive-mode selector, telltale lamps,
+  icon tiles, trip-info box, segmented battery bar and a top-view tyre
+  pressure display — modelled on a classic instrument cluster and an EV
+  infotainment screen. Every one binds to tags; the interactive ones write
+  back through actions. Two ready-made cluster projects ship as design
+  presets (see [Design presets](#design-presets)).
+* **The canvas is the real thing** — each widget on the Designer canvas is
+  drawn with its own QML, rendered offscreen at the canvas zoom and cached,
+  so what you lay out is what the glass will show; not a sketch of it.
+  Toggle **Live QML** next to Grid and Snap.
+* **Resize from any handle** — all eight handles on a selected widget drag
+  their own edge; the cursor names the direction.
 * **Scaffold** — "New App…" writes a valid starter bundle, already importing
   the design kit.
 * **Adopts apps that were never written for this platform** — point it at an
@@ -579,6 +611,11 @@ is about the panel that header points at.
 * **True WYSIWYG** — the bezel contains a live QML engine rendering *your
   actual app* at target resolution with the same tag engine the device runs.
   Not a screenshot, not an approximation.
+* **A Live Preview window** — Preview also opens the design in a window of
+  its own at the panel's resolution, on the same tag engine, so a drive-mode
+  selector or a start button can be operated at full size while Tag Lab, the
+  simulator or the connected panel feeds it. Zoom 50–150 %; also **Open Live
+  Preview** beside Deploy for any loaded QML bundle.
 * **An operable bezel, not a photograph** — clicks, drags, wheel and keys are
   mapped from panel pixels into the application's own window and delivered as
   real Qt events, so the preview is something you use rather than watch.
@@ -625,6 +662,15 @@ is about the panel that header points at.
 * **Rollback, releases, restart** — the previous release is one button away;
   every release the panel still holds is listed from the panel itself and can
   be activated; the GUI can be restarted without a reboot.
+* **Connect and Disconnect** — Connect probes the display, pulls the panel's
+  tag catalogue into the Designer and starts the telemetry relay; Disconnect
+  tears all of that down again (and cancels a connect still in flight), so
+  the Studio can be pointed at another board or back at Tag Lab without a
+  restart.
+* **Deploy keys that travel** — the panel trusts one SSH key. **Export key…**
+  packs it and the panel's address into a `.hmikey`; a colleague presses
+  **Import key…** and can Connect and Deploy at once. The flow, and what
+  the panel actually holds, is in [Sharing the deploy key](#sharing-the-deploy-key).
 
 **Diagnose**
 
@@ -642,21 +688,33 @@ is about the panel that header points at.
 
 <img src="docs/assets/screenshot-deploy.png" alt="The Display Console: target details, bundle verdict, deploy, rollback and installed releases" width="880" />
 
-<em><strong>Display Console.</strong> The deployment view. The target's user and
-key, and the display geometry last read off the panel; the bundle's verdict
-before anything is sent — <code>Bundle Valid: test_one_d v0.1.0 [QML]</code> —
-and the one button that sends it. Beside it the two things you need when a
-deploy was wrong: <strong>Rollback</strong> to the release that worked, and
-<strong>Restart GUI</strong> without a reboot. Installed releases are listed
-from the panel itself, so activating an older one is a choice from what is
-really there rather than a guess. The bar and the console below report the
-installer's own steps as the panel reaches them.</em>
+<em><strong>Display Console.</strong> The deployment view, connected to a
+panel: the header's <strong>Connected</strong> badge with <strong>Disconnect</strong>
+beside it, the target's user and key with <strong>Export key…</strong> /
+<strong>Import key…</strong> under them, the display geometry read off the
+panel, the readiness checklist, the bundle's verdict —
+<code>Bundle Valid: automotive-cluster v1.0.0 [QML]</code> — and the one button
+that sends it, with <strong>Open Live Preview</strong> beneath. Further down:
+<strong>Rollback</strong> to the release that worked, <strong>Restart GUI</strong>
+without a reboot, and the releases the panel still holds, listed from the
+panel itself. The bar and the console report the installer's own steps as the
+panel reaches them.</em>
+
+<br /><br />
+
+<img src="docs/assets/screenshot-live-preview.png" alt="The Live Preview window running the automotive cluster at the panel's resolution" width="880" />
+
+<em><strong>Live Preview window.</strong> The same generated QML the panel
+runs, in a window of its own at 1280 × 800 (shown at 75 %), on the Studio's
+tag engine — here with no feed connected, so every bound value sits at its
+fallback and the battery readout is already red. Tag Lab, the simulator or a
+connected panel drives it; the drive-mode chevrons and tiles are operable.</em>
 
 <br /><br />
 
 <img src="docs/assets/screenshot-studio.png" alt="A Qt5 application running in the live preview beside the panel it deploys to" width="880" />
 
-<em><strong>Live preview.</strong> A customer's Qt5 application running inside
+<em><strong>Bezel preview.</strong> A customer's Qt5 application running inside
 the preview of the panel, beside the target it deploys to — connected here to a
 10.1", 1024 × 768 panel, which is the geometry the bezel composes it at.</em>
 
