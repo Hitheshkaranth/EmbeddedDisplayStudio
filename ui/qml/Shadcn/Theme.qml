@@ -100,6 +100,40 @@ QtObject {
     /** @property {color} efisBug -- selected-value bugs and targets */
     readonly property color efisBug: "#00d4ff"
 
+    // Automotive cluster colours. Like the efis* block these do not follow
+    // the light/dark theme: a driver reads blue for the value arc, red for
+    // the redline and amber/green/red/blue telltales in any cabin.
+    /** @property {color} autoPanel -- instrument background */
+    readonly property color autoPanel: "#0b0f16"
+    /** @property {color} autoTrack -- unfilled scale / track */
+    readonly property color autoTrack: "#1a222e"
+    /** @property {color} autoAccent -- value arcs and fills (cyan-blue) */
+    readonly property color autoAccent: "#22a8ff"
+    /** @property {color} autoAccentDeep -- far end of the accent gradient */
+    readonly property color autoAccentDeep: "#0a4f8a"
+    /** @property {color} autoGlow -- highlight on the leading edge of a fill */
+    readonly property color autoGlow: "#7fd4ff"
+    /** @property {color} autoRedline -- redline band / over-limit fill */
+    readonly property color autoRedline: "#ff2d55"
+    /** @property {color} autoText -- readouts */
+    readonly property color autoText: "#ffffff"
+    /** @property {color} autoMuted -- captions, units, unselected gears */
+    readonly property color autoMuted: "#8a97a8"
+    /** @property {color} autoLine -- tick marks and scale labels */
+    readonly property color autoLine: "#c9d3df"
+    /** @property {color} autoAmber -- telltale: caution (lights, low fuel) */
+    readonly property color autoAmber: "#ffb000"
+    /** @property {color} autoGreen -- telltale: indicators, ready */
+    readonly property color autoGreen: "#2fe07f"
+    /** @property {color} autoRed -- telltale: fault, brake, out-of-range value */
+    readonly property color autoRed: "#ff3b3b"
+    /** @property {color} autoBlue -- telltale: high beam */
+    readonly property color autoBlue: "#4f9dff"
+    /** @property {color} autoTileBg -- icon tile face */
+    readonly property color autoTileBg: "#141c28"
+    /** @property {color} autoTileBorder -- icon tile edge */
+    readonly property color autoTileBorder: "#22304a"
+
     /** @property {real} radiusSm */
     readonly property real radiusSm: 4
     /** @property {real} radiusMd */

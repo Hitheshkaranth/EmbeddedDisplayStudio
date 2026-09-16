@@ -62,6 +62,10 @@ ACTION_SIGNALS = {
     "ShNumInput": (("valueChanged",), "value"),
     "ShSelect": (("activated",), "currentIndex"),
     "ShAlarmTable": (("alarmActivated",), ""),
+    # Automotive: the mode selector fires activated(index) on a tap like
+    # ShSelect; the tile is a button with an icon.
+    "ShDriveMode": (("activated",), "currentIndex"),
+    "ShIconTile": (("clicked",), ""),
 }
 
 
@@ -175,6 +179,49 @@ def default_registry() -> WidgetRegistry:
         {"text": "LOW FUEL", "severity": "caution", "lit": True, **common_defaults},
         ("lit", "severity"), False,
         {"severity": ("advisory", "caution", "warning")})
+    # -- Automotive ----------------------------------------------------------
+    # Instrument cluster widgets after the two reference dashboards; colours
+    # come from Theme.qml's auto* block and are not exposed as properties.
+    add("ShClusterGauge", "Cluster Gauge", "Automotive", "ShClusterGauge", 240, 240,
+        {"value": float, "minimumValue": float, "maximumValue": float, "majorStep": float, "redlineFrom": float, "sweep": float, "readout": str, "readoutUnit": str, "caption": str, "label": str, "decimals": int, "showInnerDial": bool, **common},
+        {"value": 4.2, "minimumValue": 0.0, "maximumValue": 8.0, "majorStep": 1.0, "redlineFrom": 7.0, "sweep": 240.0, "readout": '137', "readoutUnit": 'km/h', "caption": '', "label": 'x1000 RPM', "decimals": 0, "showInnerDial": True, **common_defaults},
+        ('value', 'readout', 'caption'))
+    add("ShGearIndicator", "Gear Indicator", "Automotive", "ShGearIndicator", 120, 70,
+        {"gears": str, "gear": str, "modeNumber": int, "showAll": bool, **common},
+        {"gears": 'P,R,N,D', "gear": 'D', "modeNumber": 4, "showAll": True, **common_defaults},
+        ('gear', 'modeNumber'))
+    add("ShAutoLevel", "Level Bar", "Automotive", "ShAutoLevel", 90, 220,
+        {"value": float, "minimumValue": float, "maximumValue": float, "topLabel": str, "midLabel": str, "bottomLabel": str, "redZone": str, "redZoneSpan": float, "icon": str, "curved": bool, "showTicks": bool, **common},
+        {"value": 55.0, "minimumValue": 0.0, "maximumValue": 100.0, "topLabel": 'F', "midLabel": '1/2', "bottomLabel": 'E', "redZone": 'low', "redZoneSpan": 12.0, "icon": 'gas-station', "curved": True, "showTicks": True, **common_defaults},
+        ('value',), False, {'redZone': ('low', 'high', 'none')})
+    add("ShAutoReadout", "Readout", "Automotive", "ShAutoReadout", 150, 56,
+        {"value": float, "unit": str, "icon": str, "iconSide": str, "decimals": int, "label": str, "warnBelow": float, "warnAbove": float, **common},
+        {"value": 90.0, "unit": '°C', "icon": 'temperature', "iconSide": 'right', "decimals": 0, "label": '', "warnBelow": 0.0, "warnAbove": 0.0, **common_defaults},
+        ('value',), False, {'iconSide': ('left', 'right')})
+    add("ShDriveMode", "Drive Mode", "Automotive", "ShDriveMode", 180, 56,
+        {"label": str, "modes": str, "currentIndex": int, "enabled": bool, **common},
+        {"label": 'Drive mode', "modes": 'ECO,COMFORT,SPORT', "currentIndex": 2, "enabled": True, **common_defaults},
+        ('currentIndex',))
+    add("ShTelltale", "Telltale", "Automotive", "ShTelltale", 48, 48,
+        {"icon": str, "color": str, "lit": bool, "blink": bool, "label": str, **common},
+        {"icon": 'bulb', "color": 'amber', "lit": True, "blink": False, "label": '', **common_defaults},
+        ('lit', 'blink', 'color'), False, {'color': ('amber', 'green', 'red', 'blue', 'white')})
+    add("ShTripInfo", "Trip Info", "Automotive", "ShTripInfo", 200, 110,
+        {"title": str, "row1Label": str, "row1Value": str, "row1Unit": str, "row2Label": str, "row2Value": str, "row2Unit": str, **common},
+        {"title": 'Distance', "row1Label": 'Day', "row1Value": '352', "row1Unit": 'km', "row2Label": 'Total', "row2Value": '110 593', "row2Unit": 'km', **common_defaults},
+        ('row1Value', 'row2Value'))
+    add("ShSegmentBar", "Segment Bar", "Automotive", "ShSegmentBar", 320, 36,
+        {"value": float, "minimumValue": float, "maximumValue": float, "segments": int, "label": str, "showPercent": bool, "lowLevel": float, **common},
+        {"value": 60.0, "minimumValue": 0.0, "maximumValue": 100.0, "segments": 12, "label": 'SOC', "showPercent": True, "lowLevel": 20.0, **common_defaults},
+        ('value',))
+    add("ShIconTile", "Icon Tile", "Automotive", "ShIconTile", 100, 110,
+        {"icon": str, "label": str, "enabled": bool, "active": bool, **common},
+        {"icon": 'phone', "label": 'BT', "enabled": True, "active": False, **common_defaults},
+        ('active',))
+    add("ShVehicleStatus", "Vehicle Status", "Automotive", "ShVehicleStatus", 150, 190,
+        {"frontLeft": float, "frontRight": float, "rearLeft": float, "rearRight": float, "unit": str, "warnBelow": float, "decimals": int, "label": str, **common},
+        {"frontLeft": 2.6, "frontRight": 2.5, "rearLeft": 1.6, "rearRight": 2.2, "unit": 'bar', "warnBelow": 1.8, "decimals": 1, "label": 'TPMS', **common_defaults},
+        ('frontLeft', 'frontRight', 'rearLeft', 'rearRight'))
     # -- Industrial controls -------------------------------------------------
     add("ShSlider", "Slider", "Industrial", "ShSlider", 250, 64,
         {"value": float, "minValue": float, "maxValue": float, "step": float,

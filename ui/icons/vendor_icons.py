@@ -19,7 +19,17 @@ ICON_LIST = [
     "adjustments", "sun", "moon", "alert-triangle", "circle-check", "circle-x", 
     "info-circle", "loader-2", "player-play", "player-stop", "power", "bolt", 
     "activity", "gauge", "wifi", "wifi-off", "key", "search", "plus", "x", 
-    "chevron-down", "chevron-right", "clipboard-text", "history"
+    "chevron-down", "chevron-right", "clipboard-text", "history",
+    # Automotive cluster glyphs -- telltales, readouts and tiles
+    "gas-station", "temperature", "battery", "battery-charging", "battery-2",
+    "engine", "engine-off", "car", "car-garage", "car-crash", "car-fan", "droplet",
+    "arrow-big-left", "arrow-big-right", "chevron-left", "arrow-back-up",
+    "phone", "device-tv", "device-mobile", "usb", "bluetooth", "brand-apple",
+    "brand-android", "link", "volume", "volume-2", "volume-3", "bulb",
+    "brightness", "brightness-up", "snowflake", "steering-wheel", "parking",
+    "circle-letter-p", "alert-circle", "clock", "road", "eye", "door",
+    "hand-stop", "lock", "lock-open", "dashboard", "tir", "bus", "flame",
+    "wind", "wheel", "circle-dot", "leaf", "hourglass", "speedboat",
 ]
 
 BASE_URL = "https://unpkg.com/@tabler/icons@3.31.0/icons/outline/{name}.svg"
@@ -86,22 +96,31 @@ def generate_python_registry(icons_dict, filepath):
             f.write(f"    '{name}': '{safe_content}',\n")
         f.write('}\n')
 
+_SVG_WRAP = ("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' stroke-width='2' "
+             "stroke='currentColor' fill='none' stroke-linecap='round' stroke-linejoin='round'>{}</svg>")
+
+
 def generate_qml_js_registry(icons_dict, filepath):
     """
     Generates a JS module containing the SVG data for QML usage.
-    
+
+    ShIcon.qml hands each entry to Image as a data: URL, so unlike the Python
+    registry every entry here is a complete <svg> document.
+
     Args:
         icons_dict (dict): Mapping of icon name to inner SVG content.
         filepath (str): The absolute path to save the generated file.
     """
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    with open(filepath, 'w', encoding='utf-8') as f:
-        f.write('// Generated Tabler Icons Registry for QML.\n.pragma library\n\n')
-        f.write('var icons = {\n')
+    with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
+        f.write('// Generated Tabler Icons registry for QML -- ui/icons/vendor_icons.py writes it.\n'
+                '// Each entry is a complete SVG document; ShIcon swaps currentColor and\n'
+                '// hands it to Image as a data: URL.\n.pragma library\n\nvar icons = {\n')
         for name, content in icons_dict.items():
-            safe_content = content.replace("'", "\\'").replace('\\n', '').replace('\n', '')
-            f.write(f"    '{name}': '{safe_content}',\n")
+            svg = _SVG_WRAP.format(re.sub(r'\s+', ' ', content).replace('"', "'"))
+            f.write(f'    "{name}": "{svg}",\n')
         f.write('};\n')
+
 
 def main():
     """
@@ -109,7 +128,14 @@ def main():
     """
     print("Starting icon vendoring...", file=sys.stderr)
     icons_dict = {}
+    try:
+        from tabler_icons import TABLER_ICONS
+        icons_dict.update(TABLER_ICONS)
+    except ImportError:
+        pass
     for name in ICON_LIST:
+        if name in icons_dict:
+            continue
         print(f"Fetching {name}...", file=sys.stderr)
         svg_content = fetch_icon(name)
         if svg_content:
