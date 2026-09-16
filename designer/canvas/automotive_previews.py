@@ -50,62 +50,30 @@ def paint_auto_readout(painter, rect, props, ctx):
 
 
 def paint_drive_mode(painter, rect, props, ctx):
-    """ShDriveMode: label at top, chevrons flanking the current mode name."""
-    # Background with subtle gradient effect
-    painter.setBrush(QBrush(auto("panel")))
-    painter.setPen(Qt.NoPen)
-    painter.drawRect(rect)
-
-    # Subtle top accent line
-    painter.setPen(QPen(auto("accent"), 3, Qt.SolidLine, Qt.FlatCap))
-    painter.drawLine(rect.left() + 8, rect.top() + 1,
-                     rect.right() - 8, rect.top() + 1)
-
-    modes_str = str(_prop(props, "modes", "ECO,COMFORT,SPORT"))
-    modes = [m.strip() for m in modes_str.split(",") if m.strip()]
+    """ShDriveMode: the caption over the current mode name between two
+    chevrons. No panel behind it -- the QML draws none either."""
+    modes = [m.strip() for m in str(_prop(props, "modes", "ECO,COMFORT,SPORT")).split(",")
+             if m.strip()]
     current = int(_number(props, "currentIndex", 2))
     label = str(_prop(props, "label", "Drive mode"))
-    n_modes = max(1, len(modes))
-    if current < 0:
-        current = 0
-    if current >= n_modes:
-        current = n_modes - 1
+    mode_name = modes[current] if 0 <= current < len(modes) else ""
 
     h = rect.height()
-    top_rect = QRectF(rect.left(), rect.top() + h * 0.02, rect.width(), h * 0.28)
-    _text(painter, top_rect, label, size=FONT["sm"], color=auto("muted"),
-          weight=WEIGHT_MEDIUM, flags=Qt.AlignCenter)
+    if label:
+        _text(painter, QRectF(rect.left(), rect.top() + h * 0.04, rect.width(), h * 0.3),
+              label, size=max(8, int(h * 0.24)), color=auto("muted"),
+              weight=WEIGHT_MEDIUM, flags=Qt.AlignCenter)
 
-    # Separator line under label
-    sep_y = rect.top() + h * 0.30
-    painter.setPen(QPen(auto("line"), 1, Qt.DashLine, Qt.FlatCap))
-    painter.drawLine(rect.left() + 20, sep_y, rect.right() - 20, sep_y)
-
-    mode_name = modes[current] if current < n_modes else ""
-    mode_rect = QRectF(rect.left(), rect.top() + h * 0.33, rect.width(), h * 0.52)
-    _text(painter, mode_rect, mode_name, size=int(h * 0.34), color=auto("amber"),
+    row = QRectF(rect.left(), rect.top() + h * 0.36, rect.width(), h * 0.62)
+    _text(painter, row, mode_name, size=max(8, int(h * 0.34)), color=auto("amber"),
           weight=WEIGHT_SEMIBOLD, flags=Qt.AlignCenter)
-
-    # Mode dots indicator
-    dot_y = rect.top() + h * 0.27
-    dot_h = h * 0.03
-    for i in range(n_modes):
-        dot_x = rect.left() + rect.width() * (0.30 + i * 0.10)
-        color = auto("amber") if i == current else auto("muted")
-        painter.setBrush(QBrush(color))
-        painter.drawEllipse(QPointF(dot_x, dot_y), 3, dot_h)
-
-    # Left chevron
-    left_x = rect.left() + rect.width() * 0.15
-    left_rect = QRectF(left_x, rect.top() + h * 0.33, rect.width() * 0.2, h * 0.52)
-    painter.setFont(_painter_font(painter, int(h * 0.30), WEIGHT_SEMIBOLD))
-    painter.setPen(QPen(auto("accent"), 2, Qt.SolidLine, Qt.FlatCap))
-    painter.drawText(left_rect, Qt.AlignCenter, "\u2039")
-
-    # Right chevron
-    right_x = rect.left() + rect.width() * 0.65
-    right_rect = QRectF(right_x, rect.top() + h * 0.33, rect.width() * 0.2, h * 0.52)
-    painter.drawText(right_rect, Qt.AlignCenter, "\u203A")
+    # Chevrons sit either side of the name, spaced as the QML Row spaces them.
+    metrics = painter.fontMetrics()
+    half = metrics.horizontalAdvance(mode_name) / 2 + h * 0.2 + h * 0.45
+    chevron = max(8, int(h * 0.36))
+    for glyph, cx in (("‹", row.center().x() - half), ("›", row.center().x() + half)):
+        _text(painter, QRectF(cx - h * 0.45, row.top(), h * 0.9, row.height()), glyph,
+              size=chevron, color=auto("line"), weight=WEIGHT_MEDIUM, flags=Qt.AlignCenter)
 
 
 def paint_telltale(painter, rect, props, ctx):
@@ -151,9 +119,9 @@ def paint_telltale(painter, rect, props, ctx):
 
     painter.save()
     painter.setOpacity(opacity)
-    painter.setBrush(QBrush(icon_color))
-    painter.setPen(QPen(Qt.NoPen))
-    painter.drawRoundedRect(icon_rect, icon_size * 0.25, icon_size * 0.25)
+    painter.setBrush(Qt.NoBrush)
+    painter.setPen(QPen(icon_color, max(1.5, icon_size * 0.09)))
+    painter.drawRoundedRect(icon_rect.adjusted(2, 2, -2, -2), icon_size * 0.25, icon_size * 0.25)
     painter.restore()
 
     # Blink: hint at 0.6 alpha
@@ -214,9 +182,9 @@ def paint_icon_tile(painter, rect, props, ctx):
     cx = tile_rect.center().x()
     cy = tile_rect.center().y()
     icon_r = QRectF(cx - icon_size / 2, cy - icon_size / 2, icon_size, icon_size)
-    painter.setBrush(QBrush(auto("text")))
-    painter.setPen(Qt.NoPen)
-    painter.drawRoundedRect(icon_r, icon_size * 0.3, icon_size * 0.3)
+    painter.setBrush(Qt.NoBrush)
+    painter.setPen(QPen(auto("text"), max(1.5, icon_size * 0.08)))
+    painter.drawRoundedRect(icon_r.adjusted(2, 2, -2, -2), icon_size * 0.3, icon_size * 0.3)
 
     # Label
     label_rect = QRectF(rect.left(), tile_rect.bottom() + 4,
