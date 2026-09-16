@@ -786,7 +786,7 @@ tests/                protocol, integration and cross-validator suites
 ## Verification
 
 ```bash
-python tests/run_all.py          # 492 tests, 46 of them Linux-only
+python tests/run_all.py          # 738 tests, 52 of them Linux-only
 ```
 
 | Area | Coverage |
@@ -1102,6 +1102,27 @@ python -m tools.hmi_deployer.design_presets --list
 ```
 
 ### What changed recently
+
+**0.0.8**
+
+* **Automotive widget set**: `ShClusterGauge`, `ShGearIndicator`, `ShAutoLevel`,
+  `ShAutoReadout`, `ShDriveMode`, `ShTelltale`, `ShIconTile`, `ShTripInfo`,
+  `ShSegmentBar`, `ShVehicleStatus` — after a classic instrument cluster and an
+  EV infotainment screen; 47 Tabler cluster icons vendored.
+* **Design presets**: a brief that reads like a cluster or an EV dashboard gets
+  a style guide and a hand-built exemplar in the AI prompt; the two templates
+  open as projects too.
+* **The canvas is the real thing**: each widget is drawn with its own QML,
+  rendered offscreen and cached, instead of a painted sketch ("Live QML").
+* **Live Preview window**: Preview runs the design in its own window at the
+  panel's resolution on the Studio's tag engine, so controls can be operated.
+* Resize from any of the eight handles; **Disconnect** beside Connect;
+  **Export / Import key** (`.hmikey`) so another user can deploy to a panel.
+* Generator never emits a property or enum a widget does not declare (an
+  AI-invented `active` on a status dot used to fail the deploy on the panel);
+  a bound text property falls back to `""`, not `0`.
+* Panel: the GUI loader finds the validator in the panel layout, the
+  provisioner ships `modbus.py`, 32-bit Modbus tags read both registers.
 
 **0.0.7**
 
