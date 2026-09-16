@@ -11,8 +11,6 @@ from typing import Any
 
 
 ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-# A page name minus its spaces is the page's QML file name.
-PAGE_NAME_RE = re.compile(r"^[A-Za-z0-9_ ]+$")
 # CONTRACT 2.5: the dotted tag names a binding or an action may address.
 TAG_RE = re.compile(r"^[a-z][a-z0-9]*(\.[a-z0-9_]+)+$")
 # The comparison operators a threshold may use; the manifest's alarm entries
@@ -73,9 +71,12 @@ class DesignerBinding:
         # not a number is rejected here rather than emitted as code.
         for key in ("multiplier", "offset"):
             if key in data:
-                if isinstance(data[key], bool) or not isinstance(data[key], (int, float)):
+                if isinstance(data[key], bool):
                     raise ValueError(f"binding {key} must be a number")
-                data[key] = float(data[key])
+                try:
+                    data[key] = float(data[key])   # "0.001" from a model's JSON is fine
+                except (TypeError, ValueError):
+                    raise ValueError(f"binding {key} must be a number") from None
         for key in ("tag", "format", "unit", "warning", "critical"):
             if key in data:
                 data[key] = str(data[key])
@@ -322,9 +323,10 @@ class DesignerProject:
             if page.id in seen_pages:
                 issues.append(ValidationIssue(ppath, "duplicate page id"))
             seen_pages.add(page.id)
-            if page.name and not PAGE_NAME_RE.fullmatch(page.name):
-                issues.append(ValidationIssue(ppath, "page name may only contain letters, digits, spaces and underscores"))
-            stem = page.name.replace(" ", "") or page.id
+            # The name becomes the page's file name with everything but
+            # [A-Za-z0-9_] dropped; "Main - Overview" is fine, two names that
+            # collapse to the same stem are not.
+            stem = re.sub(r"[^A-Za-z0-9_]", "", page.name) or page.id
             if stem in seen_stems:
                 issues.append(ValidationIssue(ppath, f"page name {page.name!r} collides with another page's file name"))
             seen_stems.add(stem)

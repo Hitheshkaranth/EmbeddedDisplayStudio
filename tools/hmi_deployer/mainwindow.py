@@ -388,7 +388,41 @@ class MainWindow(QMainWindow):
         self.btn_test.style().unpolish(self.btn_test)
         self.btn_test.style().polish(self.btn_test)
         self._link_state = state
+        if hasattr(self, "btn_disconnect"):
+            self.btn_disconnect.setEnabled(state in ("connecting", "connected"))
+            self.btn_disconnect.setText("Cancel" if state == "connecting" else "Disconnect")
         self._refresh_readiness()
+
+    def disconnect_panel(self) -> None:
+        """Drop the link to the panel: stop the relay and the command loop,
+        cancel a connect still in flight, and say so on every indicator that
+        claimed the link was up.
+
+        The design's own tags stay in the Designer; the panel's catalogue
+        leaves with the relay (_stop_all_senders does that).
+        """
+        if self._link_state == "connecting":
+            for worker in list(self._ssh_workers):
+                if getattr(worker, "isRunning", lambda: False)():
+                    worker.cancel()
+            self.log("Connection attempt cancelled.")
+        elif self._link_state == "connected":
+            self.log("Disconnected from the panel.")
+        else:
+            return
+        self._stop_all_senders()
+        self.device_panel.set_led_state(0)
+        if hasattr(self, "lbl_connection"):
+            self.lbl_connection.setText("●  DISCONNECTED")
+            self.lbl_connection.setProperty("state", "")
+            self.lbl_connection.style().unpolish(self.lbl_connection)
+            self.lbl_connection.style().polish(self.lbl_connection)
+        if self.detected_resolution is not None:
+            width, height = self.detected_resolution
+            self.lbl_target_resolution.setText(f"{width} x {height} px (last seen; not connected)")
+        else:
+            self.lbl_target_resolution.setText("Not detected")
+        self._set_link_state("idle")
 
     def _themed_icon(self, widget, name: str) -> None:
         """
@@ -635,6 +669,16 @@ class MainWindow(QMainWindow):
         self.btn_test.setObjectName("connectButton")
         self._themed_icon(self.btn_test, "plug-connected")
         self.btn_test.clicked.connect(self.on_test_conn)
+        # The link's other half. Connect used to be the only verb: once the
+        # relay was up the panel fed every preview until the Studio closed,
+        # and the only way to point the Studio at another board, or at Tag
+        # Lab, was to restart it. Enabled while connecting (it cancels the
+        # attempt) and while connected (it tears the link down).
+        self.btn_disconnect = QPushButton("Disconnect")
+        self.btn_disconnect.setObjectName("connectButton")
+        self._themed_icon(self.btn_disconnect, "plug-off")
+        self.btn_disconnect.clicked.connect(self.disconnect_panel)
+        self.btn_disconnect.setEnabled(False)
 
         self.btn_open = QPushButton("Open Bundle...")
         self.btn_open.setObjectName("topBarAction")
@@ -674,6 +718,8 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(self.inp_port)
         top_bar.addSpacing(6)
         top_bar.addWidget(self.btn_test)
+        top_bar.addSpacing(4)
+        top_bar.addWidget(self.btn_disconnect)
         top_bar.addSpacing(8)
         top_bar.addWidget(self.lbl_connection)
         top_bar.addSpacing(8)
