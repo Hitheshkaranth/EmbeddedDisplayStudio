@@ -1,7 +1,10 @@
 /**
  * ShGearIndicator.qml
- * Gear Indicator -- Automotive cluster widget. CONTRACT STUB: the property API
- * below is fixed; the visuals are still to be drawn.
+ * Gear Indicator -- the "P R N D" row of an automatic cluster, in order,
+ * with the engaged gear large and bright and the others dimmed. A
+ * ``modeNumber`` above 0 follows the engaged gear as a lighter digit
+ * ("D4"). A gear that is not in the list is still shown, appended, so a
+ * telemetry value the list did not foresee never blanks the display.
  */
 import QtQuick 2.15
 
@@ -16,17 +19,45 @@ Item {
     implicitWidth: 120
     implicitHeight: 70
 
-    Rectangle {
-        anchors.fill: parent
-        radius: 8
-        color: Theme.autoPanel
-        border.color: Theme.autoTileBorder
-        Text {
-            anchors.centerIn: parent
-            text: "Gear Indicator"
-            color: Theme.autoMuted
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSizeSm
+    readonly property real _h: Math.max(1, height)
+    readonly property var _list: {
+        var parts = root.gears.split(",").map(function(s) { return s.trim() })
+                        .filter(function(s) { return s !== "" });
+        if (parts.indexOf(root.gear) < 0 && root.gear !== "")
+            parts.push(root.gear);
+        return root.showAll ? parts : [root.gear];
+    }
+
+    Row {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: root._h * 0.12
+        spacing: Math.round(root._h * 0.12)
+
+        Repeater {
+            model: root._list
+            delegate: Row {
+                readonly property bool current: modelData === root.gear
+                anchors.bottom: parent.bottom
+                spacing: 1
+                Text {
+                    anchors.bottom: parent.bottom
+                    text: modelData
+                    color: current ? Theme.autoText : Theme.autoMuted
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Math.max(8, Math.round(root._h * (current ? 0.62 : 0.4)))
+                    font.weight: current ? Theme.fontSemibold : Theme.fontMedium
+                }
+                Text {
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: Math.round(root._h * 0.02)
+                    visible: current && root.modeNumber > 0
+                    text: visible ? root.modeNumber.toString() : ""
+                    color: Theme.autoLine
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Math.max(8, Math.round(root._h * 0.45))
+                }
+            }
         }
     }
 }
