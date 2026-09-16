@@ -103,6 +103,40 @@ _AI_TYPE_ALIASES = {
 }
 
 
+# Words a model drops or adds around an enum ("TextRight" for
+# Text.AlignRight, "center" for Text.AlignHCenter); stripped before matching.
+_CHOICE_NOISE = ("text", "align", "qt", "image", "grid", "mode", "_", ".", " ", "-")
+
+
+def _choice_key(value) -> str:
+    key = str(value).lower()
+    for noise in _CHOICE_NOISE:
+        key = key.replace(noise, "")
+    return key
+
+
+def _coerce_choices(definition, properties: dict) -> dict:
+    """Map a model's enum spellings onto the registry's declared choices.
+
+    A value already in the choices is kept; one that matches a single
+    choice once the boilerplate words are stripped is replaced by it; one
+    that matches nothing is dropped so the widget's default applies rather
+    than the panel failing to load the page.
+    """
+    for key, choices in (definition.choices or {}).items():
+        if key not in properties or properties[key] in choices:
+            continue
+        wanted = _choice_key(properties[key])
+        hits = [c for c in choices if _choice_key(c) == wanted]
+        if not hits:
+            hits = [c for c in choices if wanted and wanted in _choice_key(c)]
+        if len(hits) == 1:
+            properties[key] = hits[0]
+        else:
+            properties.pop(key)
+    return properties
+
+
 # ---------------------------------------------------------------------------
 # Change reporting -- what a generation did to the canvas
 # ---------------------------------------------------------------------------
@@ -373,7 +407,14 @@ class AIDesignGenerator:
             y = geometry.get("y", i * 20 % 800)
             w = geometry.get("width", 140)
             h = geometry.get("height", 40)
-            properties = wdata.get("properties", {})
+            properties = dict(wdata.get("properties") or {})
+            # A model invents properties freely ("active" on a status dot);
+            # one unknown key makes the generated QML fail to load on the
+            # panel. Keep only what the registry declares for this type.
+            definition = self.registry.get(aliased)
+            if definition is not None and definition.properties:
+                properties = {k: v for k, v in properties.items() if k in definition.properties}
+                properties = _coerce_choices(definition, properties)
             # Bindings are what the prompt asks for ("value" -> plc tag); keep
             # every one that has a tag, in the model's own DesignerBinding type.
             bindings = {}

@@ -126,6 +126,9 @@ class StudioCommandLoopTests(unittest.TestCase):
     def test_panel_catalogue_reaches_the_designer_and_leaves_with_the_relay(self):
         window = self.window
         workspace = window.designer_workspace
+        # The window restores the user's last bundle at startup; the
+        # expected tag list below assumes a design with none of its own.
+        workspace.new_ui()
         workspace.add_widget("ShGauge")
         gauge = workspace.project.pages[0].widgets[0]
         from designer.model import DesignerBinding

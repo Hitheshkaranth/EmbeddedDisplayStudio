@@ -304,8 +304,19 @@ class QmlGenerator:
         # Properties the thresholds and units on bindings decide; they win
         # over whatever the inspector holds for the same key.
         derived, state_prop = self._derived_properties(widget, definition)
+        known = definition.properties
         for key, value in widget.properties.items():
             if key in widget.bindings or key in derived or value == "":
+                continue
+            # A key the registry does not declare (a hand-edited or
+            # model-invented one) would be "Cannot assign to non-existent
+            # property" on the panel; it is not emitted.
+            if known and key not in known:
+                continue
+            # An enum value outside the declared choices is "unknown
+            # enumeration" on the panel; the component's default is better.
+            choices = definition.choices.get(key) if definition.choices else None
+            if choices and value not in choices:
                 continue
             qml_key = aliases.get((widget.type, key), key)
             # Property value is a sim.* tag name → emit osc() expression.
