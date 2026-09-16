@@ -760,16 +760,6 @@ application and free space, and the RAM left over.</em>
 follows the operator, and the preview inside the bezel follows the theme with
 it.</em>
 
-<br /><br />
-
-<img src="docs/assets/screenshot-hmi.png" alt="AI Design tab with model selection, brief composer and execution log" width="880" />
-
-<em><strong>AI Design, first release.</strong> The execution shell streams
-thinking, response and token counts; the canvas diff shows exactly what
-changed. The current tab — sectioned generation, the panel canvas beside the
-log, no bundle needed — is the screenshot at the top of this page and is
-described in <a href="#ai-design">AI Design</a>.</em>
-
 </div>
 
 ---
