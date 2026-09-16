@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSettings, QTimer, QSize
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
 from .devicepanel import DevicePanel, PANEL_PRESETS
+from .live_preview import LivePreviewWindow
 from .deployer import (
     DependencyWorker, PackageWorker, validate_bundle, detect_bundle,
     detect_qt_binding, write_manifest,
@@ -883,6 +884,18 @@ class MainWindow(QMainWindow):
         self.btn_deploy.setEnabled(False)
         self.btn_deploy.setFixedHeight(28)
         deploy_body_layout.addWidget(self.btn_deploy)
+
+        # The bezel shows the screen; this runs it. Same generated QML, same
+        # tag engine, in a window of its own at the panel's real size, so
+        # the buttons and selectors can actually be operated.
+        self.btn_live_preview = QPushButton("Open Live Preview")
+        self.btn_live_preview.setProperty("variant", "secondary")
+        self._themed_icon(self.btn_live_preview, "eye")
+        self.btn_live_preview.clicked.connect(self.open_live_preview)
+        self.btn_live_preview.setEnabled(False)
+        self.btn_live_preview.setFixedHeight(28)
+        deploy_body_layout.addWidget(self.btn_live_preview)
+        self._live_preview = None
 
         # Deployment progress. A deploy spends most of its wall clock inside
         # one silent scp, so without this the tool looks frozen for minutes on
@@ -1783,6 +1796,7 @@ class MainWindow(QMainWindow):
             )
             self.val_label.setStyleSheet("color: #22c55e;")  # success
             self.btn_deploy.setEnabled(True)
+            self.btn_live_preview.setEnabled(manifest.get("runtime", "qml") == "qml")
 
             if self._right_tabs.currentWidget() in (self.designer_workspace, self._ai_tab):
                 # Loading the last bundle happens after the initial tab-change
@@ -1818,9 +1832,54 @@ class MainWindow(QMainWindow):
             self._refresh_readiness()
 
     def _preview_designed_bundle(self, bundle_dir: str) -> None:
-        """Reload generated QML through the established in-process preview."""
+        """Reload generated QML through the established in-process preview,
+        and run it in the live preview window so it can be operated."""
         self.load_bundle(bundle_dir)
         self.log("Designer preview loaded.")
+        self.open_live_preview()
+
+    def open_live_preview(self) -> None:
+        """Run the loaded bundle in its own window on the Studio's tag engine.
+
+        One window is kept and reloaded; closing it lets the next Preview
+        open a fresh one. A python-runtime bundle has no QML to host, so the
+        button stays disabled for it.
+        """
+        panel = self.device_panel
+        bundle_dir = panel.bundle_dir or self.bundle_dir
+        if not bundle_dir:
+            return
+        # With the Designer tab in front the bezel is suspended and holds no
+        # manifest; the file on disk is the truth either way.
+        manifest = panel.manifest
+        if manifest is None:
+            try:
+                with open(os.path.join(bundle_dir, "manifest.json"), encoding="utf-8") as handle:
+                    manifest = json.load(handle)
+            except (OSError, ValueError) as exc:
+                self.log(f"Live preview: cannot read manifest: {exc}")
+                return
+        if manifest.get("runtime", "qml") != "qml":
+            self.log("Live preview: only QML bundles run in the live preview window.")
+            return
+        tag_engine = panel.ensure_tag_engine(manifest.get("tags_required", []))
+        if self._live_preview is None:
+            self._live_preview = LivePreviewWindow(self)
+            self._live_preview.closed.connect(self._on_live_preview_closed)
+        try:
+            from hmi_loader.tagengine import expose_to_qml
+        except ImportError:
+            expose_to_qml = None
+        self._live_preview.load(bundle_dir, manifest, tag_engine if expose_to_qml else None,
+                                expose_to_qml or (lambda *_: None))
+        self._live_preview.show()
+        self._live_preview.raise_()
+        self._live_preview.activateWindow()
+
+    def _on_live_preview_closed(self) -> None:
+        window, self._live_preview = self._live_preview, None
+        if window is not None:
+            window.deleteLater()
 
     def _deploy_designed_bundle(self, bundle_dir: str) -> None:
         """Generate first, then enter the existing validated deploy pipeline."""

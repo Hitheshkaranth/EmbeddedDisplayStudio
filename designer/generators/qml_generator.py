@@ -341,7 +341,18 @@ class QmlGenerator:
             elif binding.tag in _SIM_TAGS:
                 expression = _sim_expression(binding.tag)
             else:
-                expression = self._value_expression(binding, _state_fallback(key) if key in two_way else "0")
+                # A text property (a gear letter, a caption) bound before its
+                # tag arrives must read "", not 0. ``value`` stays numeric even
+                # where it is typed str (ShValueTile formats a number), as does
+                # anything scaled or formatted.
+                if key in two_way:
+                    fallback = _state_fallback(key)
+                elif (definition.properties.get(key) is str and key != "value"
+                      and binding.multiplier == 1.0 and not binding.offset and not binding.format):
+                    fallback = '""'
+                else:
+                    fallback = "0"
+                expression = self._value_expression(binding, fallback)
             if key in two_way:
                 lines.append(f"{indent}    Binding on {qml_key} {{ value: {expression} }}")
             else:
