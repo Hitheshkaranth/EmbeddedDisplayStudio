@@ -174,10 +174,12 @@ step "install-gui" "ok" "/usr/lib/hmi/gui, /usr/lib/hmi/shell, /usr/lib/hmi/qml"
 # ---- Layer 1: hardware daemon ----------------------------------------
 
 install_file   "usr/lib/hmi/hmi_hwd.py" 0755
+# The Modbus TCP client the daemon imports as a sibling module.
+install_file   "usr/lib/hmi/modbus.py"  0644
 # The shared CONTRACT section 4 validator, called by hmi-install.
 install_file   "usr/lib/hmi/manifest.py" 0644
 install_config "etc/hmi/hwd.json"       0644
-step "install-hwd" "ok" "/usr/lib/hmi/hmi_hwd.py, /usr/lib/hmi/manifest.py"
+step "install-hwd" "ok" "/usr/lib/hmi/hmi_hwd.py, /usr/lib/hmi/modbus.py, /usr/lib/hmi/manifest.py"
 
 # ---- Configuration ---------------------------------------------------
 

@@ -211,7 +211,10 @@ class QmlGenerator:
 
     @staticmethod
     def _page_file(page) -> str:
-        return f"{page.name.replace(' ', '') or page.id}.qml"
+        # validate() has already rejected names outside [A-Za-z0-9_ ]; the
+        # strip here keeps the file name inside output_dir regardless.
+        stem = re.sub(r"[^A-Za-z0-9_]", "", page.name) or page.id
+        return f"{stem}.qml"
 
     def _host(self, project) -> str:
         """App.qml: a Loader that shows one page and swaps on navigateRequested."""
@@ -301,8 +304,19 @@ class QmlGenerator:
         # Properties the thresholds and units on bindings decide; they win
         # over whatever the inspector holds for the same key.
         derived, state_prop = self._derived_properties(widget, definition)
+        known = definition.properties
         for key, value in widget.properties.items():
             if key in widget.bindings or key in derived or value == "":
+                continue
+            # A key the registry does not declare (a hand-edited or
+            # model-invented one) would be "Cannot assign to non-existent
+            # property" on the panel; it is not emitted.
+            if known and key not in known:
+                continue
+            # An enum value outside the declared choices is "unknown
+            # enumeration" on the panel; the component's default is better.
+            choices = definition.choices.get(key) if definition.choices else None
+            if choices and value not in choices:
                 continue
             qml_key = aliases.get((widget.type, key), key)
             # Property value is a sim.* tag name → emit osc() expression.
@@ -338,7 +352,18 @@ class QmlGenerator:
             elif binding.tag in _SIM_TAGS:
                 expression = _sim_expression(binding.tag)
             else:
-                expression = self._value_expression(binding, _state_fallback(key) if key in two_way else "0")
+                # A text property (a gear letter, a caption) bound before its
+                # tag arrives must read "", not 0. ``value`` stays numeric even
+                # where it is typed str (ShValueTile formats a number), as does
+                # anything scaled or formatted.
+                if key in two_way:
+                    fallback = _state_fallback(key)
+                elif (definition.properties.get(key) is str and key != "value"
+                      and binding.multiplier == 1.0 and not binding.offset and not binding.format):
+                    fallback = '""'
+                else:
+                    fallback = "0"
+                expression = self._value_expression(binding, fallback)
             if key in two_way:
                 lines.append(f"{indent}    Binding on {qml_key} {{ value: {expression} }}")
             else:

@@ -49,16 +49,19 @@ class ReparentTests(unittest.TestCase):
     def drag(self, workspace, widget_id, scene_x, scene_y):
         """A real press / move / release on the canvas item."""
         item = workspace.scene.item_for_id(widget_id)
+        # Grab the body: a press on a corner of a selected item is a resize
+        # handle now, not a move.
+        grip = QPointF(item.rect().width() / 2, item.rect().height() / 2)
         press = QGraphicsSceneMouseEvent(QGraphicsSceneMouseEvent.GraphicsSceneMousePress)
         press.setButton(Qt.LeftButton)
         press.setButtons(Qt.LeftButton)
-        press.setPos(QPointF(4, 4))
+        press.setPos(grip)
         item.mousePressEvent(press)
         item.setPos(scene_x, scene_y)
         release = QGraphicsSceneMouseEvent(QGraphicsSceneMouseEvent.GraphicsSceneMouseRelease)
         release.setButton(Qt.LeftButton)
         release.setButtons(Qt.NoButton)
-        release.setPos(QPointF(4, 4))
+        release.setPos(grip)
         item.mouseReleaseEvent(release)
 
     def click(self, workspace, widget_id):

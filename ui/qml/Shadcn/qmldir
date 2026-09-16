@@ -40,3 +40,13 @@ ShNumDisplay 1.0 ShNumDisplay.qml
 ShAnalogDisplay 1.0 ShAnalogDisplay.qml
 ShTrendChart 1.0 ShTrendChart.qml
 ShAlarmTable 1.0 ShAlarmTable.qml
+ShClusterGauge 1.0 ShClusterGauge.qml
+ShGearIndicator 1.0 ShGearIndicator.qml
+ShAutoLevel 1.0 ShAutoLevel.qml
+ShAutoReadout 1.0 ShAutoReadout.qml
+ShDriveMode 1.0 ShDriveMode.qml
+ShTelltale 1.0 ShTelltale.qml
+ShTripInfo 1.0 ShTripInfo.qml
+ShSegmentBar 1.0 ShSegmentBar.qml
+ShIconTile 1.0 ShIconTile.qml
+ShVehicleStatus 1.0 ShVehicleStatus.qml

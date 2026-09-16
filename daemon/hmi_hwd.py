@@ -40,14 +40,15 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 # ---------------------------------------------------------------------------
 try:
     from . import modbus as _modbus_mod
-    from .modbus import decode_value, scale_read
+    from .modbus import decode_value, register_count, scale_read
 except ImportError:
     try:
         import modbus as _modbus_mod
-        from modbus import decode_value, scale_read
+        from modbus import decode_value, register_count, scale_read
     except ImportError:
         _modbus_mod = None
         decode_value = None
+        register_count = None
         scale_read = None
 
 # ---------------------------------------------------------------------------
@@ -533,11 +534,13 @@ class IioAdc:
 
         Raises:
             FileNotFoundError: if the raw channel file does not exist.
+            RuntimeError: if called before the IIO device path was resolved.
 
         Side effects:
             Opens the raw file descriptor and keeps it for the process lifetime.
         """
-        assert self._device_path is not None
+        if self._device_path is None:
+            raise RuntimeError("IIO device path not resolved before channel setup")
         raw_path = self._device_path / channel_file
         if not raw_path.is_file():
             raise FileNotFoundError("Channel file %s not found" % raw_path)
@@ -1757,86 +1760,51 @@ class HwDaemon:
         """Perform a single Modbus poll cycle.
 
         Reads all configured tags and updates the tag store.  For writable
-        tags, only reads (writes are driven by commands).
+        tags, only reads (writes are driven by commands).  The sim and the
+        TCP client share the FC 1-4 read API, so one loop serves both.
+
+        Raises:
+            Exception: any network-level failure (connect, socket, framing),
+                so the poll loop can count it and back off.  Device-level
+                exceptions (ModbusError) degrade the one tag to None.
 
         Side effects:
             Updates tag store via thread-safe dict operations.
         """
-        client = self._modbus_sim
-        if client is None and self._modbus_client is not None:
-            # Try to ensure we're connected.
-            try:
-                if not self._modbus_client.online:
-                    if not self._modbus_client._connect():
-                        raise RuntimeError(self._modbus_client.last_error or "connect failed")
-            except Exception:
-                raise
-
-            # Dispatch by kind.
-            for tag_name, tcfg in self._modbus_tags.items():
-                kind = tcfg["kind"]
-                address = tcfg["address"]
-                type_name = tcfg["type"]
-                scale = tcfg["scale"]
-                offset = tcfg["offset"]
-                word_order = tcfg["word_order"]
-
-                try:
-                    if kind == "coil":
-                        raw_data = self._modbus_client.read_coils(address, 1)
-                        raw_val = int(raw_data[0]) if raw_data else 0
-                        self.tags.set(tag_name, bool(raw_val))
-                    elif kind == "discrete":
-                        raw_data = self._modbus_client.read_discrete_inputs(address, 1)
-                        raw_val = int(raw_data[0]) if raw_data else 0
-                        self.tags.set(tag_name, bool(raw_val))
-                    elif kind == "holding":
-                        raw_data = self._modbus_client.read_holding_registers(address, 1)
-                        raw_val = decode_value(raw_data, type_name, word_order) if raw_data else 0
-                        self.tags.set(tag_name, scale_read(raw_val, type_name, scale, offset))
-                    elif kind == "input":
-                        raw_data = self._modbus_client.read_input_registers(address, 1)
-                        raw_val = decode_value(raw_data, type_name, word_order) if raw_data else 0
-                        self.tags.set(tag_name, scale_read(raw_val, type_name, scale, offset))
-                except _modbus_mod.ModbusError:
-                    # Device-level error: set to None (CONTRACT 2.4).
-                    self.tags.set(tag_name, None)
-                except Exception:
-                    raise  # Network-level: let the poll loop handle back-off
+        client = self._modbus_sim if self._modbus_sim is not None else self._modbus_client
+        if client is None:
             return
+        if self._modbus_sim is None and not client.online:
+            # Ensure the link is up before touching any tag; the poll loop
+            # treats the raise as a network error and schedules a reconnect.
+            if not client._connect():
+                raise RuntimeError(client.last_error or "connect failed")
 
-        # --- ModbusSim path ---
+        readers = {
+            "coil": client.read_coils,
+            "discrete": client.read_discrete_inputs,
+            "holding": client.read_holding_registers,
+            "input": client.read_input_registers,
+        }
         for tag_name, tcfg in self._modbus_tags.items():
             kind = tcfg["kind"]
-            address = tcfg["address"]
             type_name = tcfg["type"]
-            scale = tcfg["scale"]
-            offset = tcfg["offset"]
-
             try:
-                if kind == "coil":
-                    raw_data = client.poll_coils(address, 1)
-                    val = bool(raw_data[0]) if raw_data else False
-                    self.tags.set(tag_name, val)
-                elif kind == "discrete":
-                    raw_data = client.poll_discrete_inputs(address, 1)
-                    val = bool(raw_data[0]) if raw_data else False
-                    self.tags.set(tag_name, val)
-                elif kind == "holding":
-                    raw_data = client.poll_holding_registers(address, 1)
-                    raw_val = decode_value(raw_data, type_name) if raw_data else 0
-                    val = scale_read(raw_val, type_name, scale, offset)
-                    self.tags.set(tag_name, val)
-                elif kind == "input":
-                    raw_data = client.poll_input_registers(address, 1)
-                    raw_val = decode_value(raw_data, type_name) if raw_data else 0
-                    val = scale_read(raw_val, type_name, scale, offset)
-                    self.tags.set(tag_name, val)
-            except Exception:
+                if kind in ("coil", "discrete"):
+                    raw_data = readers[kind](tcfg["address"], 1)
+                    self.tags.set(tag_name, bool(raw_data[0]) if raw_data else False)
+                else:
+                    raw_data = readers[kind](tcfg["address"], register_count(type_name))
+                    raw_val = decode_value(raw_data, type_name, tcfg["word_order"]) if raw_data else 0
+                    self.tags.set(tag_name, scale_read(raw_val, type_name, tcfg["scale"], tcfg["offset"]))
+            except _modbus_mod.ModbusError:
+                # Device-level error: set to None (CONTRACT 2.4).
                 self.tags.set(tag_name, None)
+            # Anything else is network-level: let the poll loop handle back-off.
 
-        # sys.modbus_online is always True for the sim.
-        self.tags.set("sys.modbus_online", True)
+        if self._modbus_sim is not None:
+            # sys.modbus_online is always True for the sim.
+            self.tags.set("sys.modbus_online", True)
 
     def gpio_write(self, tag: str, value: int) -> None:
         """Write a logical value to a GPIO output or Modbus tag.

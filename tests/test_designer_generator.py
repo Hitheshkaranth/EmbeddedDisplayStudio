@@ -13,7 +13,7 @@ class DesignerGeneratorTests(unittest.TestCase):
 
     def test_registry_has_requested_categories_and_controls(self):
         self.assertEqual(self.registry.categories(),
-                         ("Basic", "Industrial", "Avionics", "Containers", "Navigation"))
+                         ("Basic", "Industrial", "Avionics", "Automotive", "Containers", "Navigation"))
         self.assertEqual(self.registry.get("ShValueTile").qml_component, "ShValueTile")
         self.assertGreaterEqual(len(self.registry.definitions()), 16)
 
@@ -106,3 +106,52 @@ class DesignerGeneratorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnknownPropertyTests(unittest.TestCase):
+    """A property the registry does not declare never reaches the QML.
+
+    An AI design shipped ``ShStatDot { color: ..., active: true }``; the
+    panel answered "Cannot assign to non-existent property" and rolled the
+    release back. The key is dropped at import and, for a hand-edited
+    project, again at generation.
+    """
+
+    def test_generator_drops_undeclared_properties(self):
+        from designer.model import DesignerProject, DesignerWidget
+        from designer.palette import default_registry
+        project = DesignerProject()
+        project.pages[0].widgets.append(DesignerWidget(
+            "ShStatDot", "dot", {"x": 0, "y": 0, "width": 20, "height": 20},
+            {"state": "ok", "color": "#22a8ff", "active": True}))
+        qml = QmlGenerator(default_registry()).generate(project)["Main.qml"]
+        self.assertIn('state: "ok"', qml)
+        self.assertNotIn("active:", qml)
+        self.assertNotIn("color: \"#22a8ff\"", qml)
+
+    def test_ai_import_drops_undeclared_properties(self):
+        from designer.palette import default_registry
+        from tools.hmi_deployer.ai_generator import AIDesignGenerator
+        text = ('```json\n{"name": "x", "pages": [{"id": "main", "name": "Main", "widgets": ['
+                '{"type": "StatusDot", "id": "dot", "geometry": {"x": 0, "y": 0, "width": 20, "height": 20}, '
+                '"properties": {"state": "ok", "color": "#22a8ff", "active": true}}]}]}\n```')
+        project = AIDesignGenerator(default_registry()).generate(text, 1280, 800)
+        widget = project.pages[0].widgets[0]
+        self.assertEqual(widget.type, "ShStatDot")
+        self.assertEqual(set(widget.properties), {"state"})
+
+    def test_enum_spellings_are_mapped_or_dropped(self):
+        from designer.model import DesignerProject, DesignerWidget
+        from designer.palette import default_registry
+        from tools.hmi_deployer.ai_generator import _coerce_choices
+        text = default_registry().get("Text")
+        self.assertEqual(_coerce_choices(text, {"horizontalAlignment": "TextRight"}),
+                         {"horizontalAlignment": "Text.AlignRight"})
+        self.assertEqual(_coerce_choices(text, {"horizontalAlignment": "banana"}), {})
+        # A hand-edited project with a bad enum still generates loadable QML.
+        project = DesignerProject()
+        project.pages[0].widgets.append(DesignerWidget(
+            "Text", "t", {"x": 0, "y": 0, "width": 100, "height": 20},
+            {"text": "x", "horizontalAlignment": "TextRight"}))
+        qml = QmlGenerator(default_registry()).generate(project)["Main.qml"]
+        self.assertNotIn("TextRight", qml)

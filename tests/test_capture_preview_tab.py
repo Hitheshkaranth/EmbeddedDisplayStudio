@@ -59,6 +59,11 @@ class CapturePreviewTab(unittest.TestCase):
         cls._name = cls.app.applicationName()
         cls.app.setOrganizationName("MIL-HMI-tests")
         cls.app.setApplicationName("CapturePreviewTab")
+        # MainWindow keeps its settings under a fixed ("MIL-HMI", "Deployer")
+        # key, so every bundle a test opens becomes the user's startup bundle.
+        # Put back whatever was there when the class is done.
+        from PySide6.QtCore import QSettings
+        cls._last_bundle = QSettings("MIL-HMI", "Deployer").value("last_bundle", "")
 
     @classmethod
     def tearDownClass(cls):
@@ -66,6 +71,8 @@ class CapturePreviewTab(unittest.TestCase):
         cls.app.setFont(cls._font)
         cls.app.setOrganizationName(cls._org)
         cls.app.setApplicationName(cls._name)
+        from PySide6.QtCore import QSettings
+        QSettings("MIL-HMI", "Deployer").setValue("last_bundle", cls._last_bundle)
 
     def setUp(self):
         self.window = MainWindow()

@@ -307,19 +307,12 @@ class DevicePanel(QWidget):
         
     ledState = Property(int, get_led_state, set_led_state)
 
-    def load_bundle(self, bundle_dir: str, manifest: dict):
-        self.bundle_dir = bundle_dir
-        self.manifest = manifest
-        # The panel applies the manifest's mode before loading the app, so the
-        # preview must too or it shows colours the device will never produce.
-        self.set_preview_theme(theme_of(manifest))
-        
-        screen = manifest.get("screen", {})
-        self.target_width = screen.get("width", 1280)
-        self.target_height = screen.get("height", 800)
-        
-        expected_tags = manifest.get("tags_required", [])
+    def ensure_tag_engine(self, expected_tags):
+        """The one TagEngine the Studio's previews share; built on first use.
 
+        The live preview window asks for it too, so a design run there sees
+        the same feed as the bezel.
+        """
         # The engine binds UDP 5001, and only one socket may hold it. Creating a
         # fresh engine per bundle meant the second load - which happens on any
         # normal run, because the window restores the last bundle at startup and
@@ -358,6 +351,23 @@ class DevicePanel(QWidget):
                 if self.tag_engine.tagMap().value(tag.replace(".", "_")) is None:
                     self.tag_engine.tagMap().insert(tag.replace(".", "_"), None)
                     self.tag_engine.tagMap().insert(tag, None)
+
+        return self.tag_engine
+
+    def load_bundle(self, bundle_dir: str, manifest: dict):
+        self.bundle_dir = bundle_dir
+        self.manifest = manifest
+        # The panel applies the manifest's mode before loading the app, so the
+        # preview must too or it shows colours the device will never produce.
+        self.set_preview_theme(theme_of(manifest))
+        
+        screen = manifest.get("screen", {})
+        self.target_width = screen.get("width", 1280)
+        self.target_height = screen.get("height", 800)
+        
+        expected_tags = manifest.get("tags_required", [])
+
+        self.ensure_tag_engine(expected_tags)
 
         ctx = self.quick_widget.rootContext()
         # The same shim the panel installs, so a Bus.value() binding is as

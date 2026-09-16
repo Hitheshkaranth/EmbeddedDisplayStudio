@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSettings, QTimer, QSize
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
 from .devicepanel import DevicePanel, PANEL_PRESETS
+from .live_preview import LivePreviewWindow
 from .deployer import (
     DependencyWorker, PackageWorker, validate_bundle, detect_bundle,
     detect_qt_binding, write_manifest,
@@ -387,7 +388,102 @@ class MainWindow(QMainWindow):
         self.btn_test.style().unpolish(self.btn_test)
         self.btn_test.style().polish(self.btn_test)
         self._link_state = state
+        if hasattr(self, "btn_disconnect"):
+            self.btn_disconnect.setEnabled(state in ("connecting", "connected"))
+            self.btn_disconnect.setText("Cancel" if state == "connecting" else "Disconnect")
         self._refresh_readiness()
+
+    # ------------------------------------------------------------------
+    # Deploy key bundles
+    # ------------------------------------------------------------------
+
+    def on_export_key(self) -> None:
+        """Write a .hmikey for the key in the Key field (or the ~/.ssh default)."""
+        from .deploy_key import DeployKeyError, default_private_key, export_bundle
+        key = self.inp_key.text().strip() or default_private_key()
+        host = self.inp_host.text().strip()
+        if not key:
+            QMessageBox.warning(self, "No key to export",
+                                "The Key field is empty and there is no id_ed25519 / id_ecdsa / "
+                                "id_rsa in your ~/.ssh. Point the Key field at the private key the "
+                                "panel trusts.")
+            return
+        if not host:
+            QMessageBox.warning(self, "No panel", "Fill in the Target IP first; the bundle carries it.")
+            return
+        suggested = os.path.join(os.path.expanduser("~"), f"{host.replace('.', '-')}-deploy.hmikey")
+        path, _ = QFileDialog.getSaveFileName(self, "Export deploy key", suggested,
+                                              "HMI deploy key (*.hmikey)")
+        if not path:
+            return
+        try:
+            written = export_bundle(key, path, host, self.inp_user.text().strip() or "root",
+                                    self.ssh_port(), label=host)
+        except DeployKeyError as exc:
+            QMessageBox.critical(self, "Export failed", str(exc))
+            return
+        self.log(f"Deploy key exported to {written}")
+        QMessageBox.information(
+            self, "Deploy key exported",
+            f"Written:\n{written}\n\nIt contains the private key that opens {host}. Hand it to the "
+            "other user directly; they import it with the Import key button and can deploy at once.")
+
+    def on_import_key(self) -> None:
+        """Install a .hmikey and point the connection fields at its panel."""
+        from .deploy_key import DeployKeyError, import_bundle
+        path, _ = QFileDialog.getOpenFileName(self, "Import deploy key", os.path.expanduser("~"),
+                                              "HMI deploy key (*.hmikey)")
+        if not path:
+            return
+        try:
+            info = import_bundle(path)
+        except DeployKeyError as exc:
+            QMessageBox.critical(self, "Import failed", str(exc))
+            return
+        self.apply_deploy_key(info)
+        self.log(f"Deploy key installed at {info['key']} for {info['user']}@{info['host']}:{info['port']}"
+                 f" (exported by {info['exported_by']} {info['exported_at']})")
+
+    def apply_deploy_key(self, info: dict) -> None:
+        """Fill Key / host / user / port from an imported bundle and save them."""
+        if self._link_state in ("connecting", "connected"):
+            self.disconnect_panel()
+        self.inp_key.setText(info["key"])
+        self.inp_host.setText(info["host"])
+        self.inp_user.setText(info.get("user", "root"))
+        self.inp_port.setText(str(info.get("port", 22)))
+        self.save_settings()
+
+    def disconnect_panel(self) -> None:
+        """Drop the link to the panel: stop the relay and the command loop,
+        cancel a connect still in flight, and say so on every indicator that
+        claimed the link was up.
+
+        The design's own tags stay in the Designer; the panel's catalogue
+        leaves with the relay (_stop_all_senders does that).
+        """
+        if self._link_state == "connecting":
+            for worker in list(self._ssh_workers):
+                if getattr(worker, "isRunning", lambda: False)():
+                    worker.cancel()
+            self.log("Connection attempt cancelled.")
+        elif self._link_state == "connected":
+            self.log("Disconnected from the panel.")
+        else:
+            return
+        self._stop_all_senders()
+        self.device_panel.set_led_state(0)
+        if hasattr(self, "lbl_connection"):
+            self.lbl_connection.setText("●  DISCONNECTED")
+            self.lbl_connection.setProperty("state", "")
+            self.lbl_connection.style().unpolish(self.lbl_connection)
+            self.lbl_connection.style().polish(self.lbl_connection)
+        if self.detected_resolution is not None:
+            width, height = self.detected_resolution
+            self.lbl_target_resolution.setText(f"{width} x {height} px (last seen; not connected)")
+        else:
+            self.lbl_target_resolution.setText("Not detected")
+        self._set_link_state("idle")
 
     def _themed_icon(self, widget, name: str) -> None:
         """
@@ -634,6 +730,16 @@ class MainWindow(QMainWindow):
         self.btn_test.setObjectName("connectButton")
         self._themed_icon(self.btn_test, "plug-connected")
         self.btn_test.clicked.connect(self.on_test_conn)
+        # The link's other half. Connect used to be the only verb: once the
+        # relay was up the panel fed every preview until the Studio closed,
+        # and the only way to point the Studio at another board, or at Tag
+        # Lab, was to restart it. Enabled while connecting (it cancels the
+        # attempt) and while connected (it tears the link down).
+        self.btn_disconnect = QPushButton("Disconnect")
+        self.btn_disconnect.setObjectName("connectButton")
+        self._themed_icon(self.btn_disconnect, "plug-off")
+        self.btn_disconnect.clicked.connect(self.disconnect_panel)
+        self.btn_disconnect.setEnabled(False)
 
         self.btn_open = QPushButton("Open Bundle...")
         self.btn_open.setObjectName("topBarAction")
@@ -673,6 +779,8 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(self.inp_port)
         top_bar.addSpacing(6)
         top_bar.addWidget(self.btn_test)
+        top_bar.addSpacing(4)
+        top_bar.addWidget(self.btn_disconnect)
         top_bar.addSpacing(8)
         top_bar.addWidget(self.lbl_connection)
         top_bar.addSpacing(8)
@@ -816,6 +924,24 @@ class MainWindow(QMainWindow):
 
         conn_form.addRow("User:", self.inp_user)
         conn_form.addRow("Key:", self.inp_key)
+        # The key the panel trusts lives in one person's ~/.ssh. A deploy key
+        # bundle (.hmikey) carries it, with the panel's address, to the next
+        # person who has to deploy -- see deploy_key.py.
+        key_row = QHBoxLayout()
+        key_row.setSpacing(6)
+        self.btn_export_key = QPushButton("Export key…")
+        self.btn_export_key.setProperty("variant", "outline")
+        self.btn_export_key.setToolTip("Pack the deploy key and this panel's address into a .hmikey "
+                                       "file for another user")
+        self.btn_export_key.clicked.connect(self.on_export_key)
+        self.btn_import_key = QPushButton("Import key…")
+        self.btn_import_key.setProperty("variant", "outline")
+        self.btn_import_key.setToolTip("Install a .hmikey file and connect to the panel it names")
+        self.btn_import_key.clicked.connect(self.on_import_key)
+        key_row.addWidget(self.btn_export_key)
+        key_row.addWidget(self.btn_import_key)
+        key_row.addStretch(1)
+        conn_form.addRow("", key_row)
 
         self.lbl_target_resolution = QLabel("Not detected")
         self.lbl_target_resolution.setObjectName("targetResolution")
@@ -883,6 +1009,18 @@ class MainWindow(QMainWindow):
         self.btn_deploy.setEnabled(False)
         self.btn_deploy.setFixedHeight(28)
         deploy_body_layout.addWidget(self.btn_deploy)
+
+        # The bezel shows the screen; this runs it. Same generated QML, same
+        # tag engine, in a window of its own at the panel's real size, so
+        # the buttons and selectors can actually be operated.
+        self.btn_live_preview = QPushButton("Open Live Preview")
+        self.btn_live_preview.setProperty("variant", "secondary")
+        self._themed_icon(self.btn_live_preview, "eye")
+        self.btn_live_preview.clicked.connect(self.open_live_preview)
+        self.btn_live_preview.setEnabled(False)
+        self.btn_live_preview.setFixedHeight(28)
+        deploy_body_layout.addWidget(self.btn_live_preview)
+        self._live_preview = None
 
         # Deployment progress. A deploy spends most of its wall clock inside
         # one silent scp, so without this the tool looks frozen for minutes on
@@ -1783,6 +1921,7 @@ class MainWindow(QMainWindow):
             )
             self.val_label.setStyleSheet("color: #22c55e;")  # success
             self.btn_deploy.setEnabled(True)
+            self.btn_live_preview.setEnabled(manifest.get("runtime", "qml") == "qml")
 
             if self._right_tabs.currentWidget() in (self.designer_workspace, self._ai_tab):
                 # Loading the last bundle happens after the initial tab-change
@@ -1818,9 +1957,54 @@ class MainWindow(QMainWindow):
             self._refresh_readiness()
 
     def _preview_designed_bundle(self, bundle_dir: str) -> None:
-        """Reload generated QML through the established in-process preview."""
+        """Reload generated QML through the established in-process preview,
+        and run it in the live preview window so it can be operated."""
         self.load_bundle(bundle_dir)
         self.log("Designer preview loaded.")
+        self.open_live_preview()
+
+    def open_live_preview(self) -> None:
+        """Run the loaded bundle in its own window on the Studio's tag engine.
+
+        One window is kept and reloaded; closing it lets the next Preview
+        open a fresh one. A python-runtime bundle has no QML to host, so the
+        button stays disabled for it.
+        """
+        panel = self.device_panel
+        bundle_dir = panel.bundle_dir or self.bundle_dir
+        if not bundle_dir:
+            return
+        # With the Designer tab in front the bezel is suspended and holds no
+        # manifest; the file on disk is the truth either way.
+        manifest = panel.manifest
+        if manifest is None:
+            try:
+                with open(os.path.join(bundle_dir, "manifest.json"), encoding="utf-8") as handle:
+                    manifest = json.load(handle)
+            except (OSError, ValueError) as exc:
+                self.log(f"Live preview: cannot read manifest: {exc}")
+                return
+        if manifest.get("runtime", "qml") != "qml":
+            self.log("Live preview: only QML bundles run in the live preview window.")
+            return
+        tag_engine = panel.ensure_tag_engine(manifest.get("tags_required", []))
+        if self._live_preview is None:
+            self._live_preview = LivePreviewWindow(self)
+            self._live_preview.closed.connect(self._on_live_preview_closed)
+        try:
+            from hmi_loader.tagengine import expose_to_qml
+        except ImportError:
+            expose_to_qml = None
+        self._live_preview.load(bundle_dir, manifest, tag_engine if expose_to_qml else None,
+                                expose_to_qml or (lambda *_: None))
+        self._live_preview.show()
+        self._live_preview.raise_()
+        self._live_preview.activateWindow()
+
+    def _on_live_preview_closed(self) -> None:
+        window, self._live_preview = self._live_preview, None
+        if window is not None:
+            window.deleteLater()
 
     def _deploy_designed_bundle(self, bundle_dir: str) -> None:
         """Generate first, then enter the existing validated deploy pipeline."""

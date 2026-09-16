@@ -20,12 +20,15 @@ from PySide6.QtWidgets import (
 
 from designer.canvas import widget_previews
 from designer.canvas.designer_view import POSITIONERS, DesignerScene, DesignerView
+from designer.canvas.qml_previews import QmlPreviewRenderer
 from designer.commands import CallbackCommand
 from designer.generators import QmlGenerationError, QmlGenerator
 from designer.model import DesignerAction, DesignerBinding, DesignerPage, DesignerProject, DesignerWidget
 from designer.palette.widget_palette import WidgetPalette
 from designer.palette.widget_registry import default_registry
 from schema.manifest import NAME_RE, deployable_name, theme_of
+
+UNDO_LIMIT = 200
 
 try:
     from ui.python.shadcn import color, icon
@@ -526,6 +529,9 @@ class DesignerWorkspace(QWidget):
         self.projects_root = ""
         self.current_page_index = 0
         self.undo_stack = QUndoStack(self)
+        # Each command closes over a copy of the widgets it touched; a
+        # long session would otherwise keep every edit's snapshot alive.
+        self.undo_stack.setUndoLimit(UNDO_LIMIT)
         self.clipboard = []
         self._designer_icon_names = {}
         self._build_ui(); self._shortcuts(); self._load_page()
@@ -688,6 +694,8 @@ class DesignerWorkspace(QWidget):
         canvas_bar.addSeparator()
         self.grid_action = action(canvas_bar, "Grid", self.toggle_grid, "grid-dots", checkable=True, compact=True); self.grid_action.setChecked(True)
         self.snap_action = action(canvas_bar, "Snap", self.toggle_snap, "magnet", checkable=True, compact=True); self.snap_action.setChecked(True)
+        self.live_action = action(canvas_bar, "Live QML", self.toggle_live_previews, "eye", checkable=True, compact=True); self.live_action.setChecked(True)
+        self.live_action.setToolTip("Draw each widget with its real QML instead of the canvas sketch")
         canvas_bar.addSeparator()
         # Ten align actions as separate buttons is more than any row can hold
         # at the width this pane actually gets inside the Studio, and Qt hides
@@ -810,6 +818,8 @@ class DesignerWorkspace(QWidget):
 
         # -- centre: the canvas ------------------------------------------------
         self.scene = DesignerScene(self.registry); self.view = DesignerView(self.scene); self.view.setObjectName("designerCanvas")
+        self.scene.qml_previews = QmlPreviewRenderer(self.generator, self)
+        self.scene.qml_previews.ready.connect(lambda _key: self.scene.update())
         self.view.setFrameShape(QFrame.NoFrame)
         split.addWidget(self.view)
 
@@ -1704,6 +1714,10 @@ class DesignerWorkspace(QWidget):
         self.undo_stack.push(CallbackCommand(
             "Bring to front" if mode == "front" else "Send to back", redo, undo))
     def toggle_grid(self, checked): self.scene.grid_visible = checked; self.scene.update()
+    def toggle_live_previews(self, checked):
+        if self.scene.qml_previews is not None:
+            self.scene.qml_previews.enabled = checked
+        self.scene.update()
     def toggle_snap(self, checked): self.scene.snap_enabled = checked
     def view_fit(self): self.view.fit_canvas()
 

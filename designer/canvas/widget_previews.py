@@ -45,6 +45,33 @@ EFIS = {
 }
 
 
+# Automotive cluster colours -- Theme.qml's auto* block; same reasoning.
+AUTO = {
+    "panel": "#0b0f16",
+    "track": "#1a222e",
+    "accent": "#22a8ff",
+    "accentDeep": "#0a4f8a",
+    "glow": "#7fd4ff",
+    "redline": "#ff2d55",
+    "text": "#ffffff",
+    "muted": "#8a97a8",
+    "line": "#c9d3df",
+    "amber": "#ffb000",
+    "green": "#2fe07f",
+    "red": "#ff3b3b",
+    "blue": "#4f9dff",
+    "tileBg": "#141c28",
+    "tileBorder": "#22304a",
+}
+
+
+def auto(name: str) -> QColor:
+    """An automotive cluster colour. Unknown names are loud rather than black."""
+    if name not in AUTO:
+        raise KeyError(f"no automotive colour named {name!r}")
+    return QColor(AUTO[name])
+
+
 def efis(name: str) -> QColor:
     """An instrument colour. Unknown names are loud rather than silently black."""
     if name not in EFIS:
@@ -1228,6 +1255,9 @@ _PAINTERS = {
     "ShTrendChart": paint_trend_chart,
     "ShAlarmTable": paint_alarm_table,
 }
+# Automotive painters live in their own module; see automotive_previews.py.
+from designer.canvas import automotive_previews  # noqa: E402
+_PAINTERS.update(automotive_previews.PAINTERS)
 
 
 def painter_for(widget_type):

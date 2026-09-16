@@ -3,6 +3,7 @@
 import json
 import sys
 import os
+import struct
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "daemon"))
@@ -232,6 +233,34 @@ class ModbusSimIntegrationTest(unittest.TestCase):
             val = daemon.tags.get("mb.reg1")
             self.assertIsNotNone(val, "Tag should not be None after successful sim poll")
             self.assertEqual(val, 200.0, f"Expected 200.0, got {val}")
+        finally:
+            daemon._safe_shutdown()
+            os.remove(path)
+
+    def test_modbus_32bit_tag_reads_both_registers(self):
+        """A float32/int32 tag spans two registers; a one-register read
+        hands decode_value() half a payload and the tag stays at 0."""
+        modbus_cfg = {
+            "host": "127.0.0.1",
+            "poll_interval_ms": 50,
+            "reconnect_s": 1.0,
+            "tags": {
+                "mb.flow": {"kind": "holding", "address": 10, "type": "float32"},
+                "mb.total": {"kind": "input", "address": 20, "type": "int32"},
+            },
+        }
+        daemon, path = self._make_daemon(modbus_cfg)
+        try:
+            hi, lo = struct.unpack(">HH", struct.pack(">f", 12.5))
+            daemon._modbus_sim.holding_registers[10] = hi
+            daemon._modbus_sim.holding_registers[11] = lo
+            hi, lo = struct.unpack(">HH", struct.pack(">i", -70000))
+            daemon._modbus_sim.input_registers[20] = hi
+            daemon._modbus_sim.input_registers[21] = lo
+            daemon._modbus_stop.wait(timeout=1.0)
+            daemon._do_modbus_poll()
+            self.assertAlmostEqual(daemon.tags.get("mb.flow"), 12.5, places=5)
+            self.assertEqual(daemon.tags.get("mb.total"), -70000)
         finally:
             daemon._safe_shutdown()
             os.remove(path)

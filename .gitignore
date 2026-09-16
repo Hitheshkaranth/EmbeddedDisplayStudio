@@ -46,3 +46,6 @@ yocto/meta-hmi/recipes-*/*/files/
 tmp-glibc/
 sstate-cache/
 downloads/
+
+# Swarm worker briefs (copied into worktrees, never committed)
+/.swarm/

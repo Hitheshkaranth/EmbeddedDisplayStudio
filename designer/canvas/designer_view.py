@@ -26,6 +26,7 @@ class DesignerItem(QGraphicsRectItem):
         self.definition = definition
         self._designer_scene = scene
         self._resizing = False
+        self._resize_handle = None
         self._before = None
         self._press_pos = QPointF(widget.geometry["x"], widget.geometry["y"])
         self._press_size = self.rect().size()
@@ -75,6 +76,17 @@ class DesignerItem(QGraphicsRectItem):
         # the generic box below is now only the fallback for a type without a
         # preview -- which is Image, and anything added to the registry before
         # a painter is written for it.
+        # The real thing first: the generated QML of this widget, rendered
+        # offscreen at the canvas zoom and cached. Containers stay with the
+        # painter (their children are canvas items of their own) and so does
+        # anything the renderer could not draw.
+        image = self._qml_image(painter)
+        if image is not None:
+            painter.save()
+            painter.drawImage(self.rect(), image)
+            painter.restore()
+            self._paint_chrome(painter, selected)
+            return
         preview = widget_previews.painter_for(self.widget_model.type)
         if preview is not None:
             painter.save()
@@ -133,6 +145,21 @@ class DesignerItem(QGraphicsRectItem):
                                  Qt.AlignCenter | Qt.TextWordWrap, self.label_text())
         self._paint_chrome(painter, selected)
 
+    def _qml_image(self, painter):
+        """The cached QML render for this widget, or None."""
+        renderer = self._designer_scene.qml_previews
+        if renderer is None or self.definition.container or self.widget_model.type == "Image":
+            return None
+        rect = self.rect()
+        # Render at the zoom the canvas is showing so glyphs stay crisp.
+        zoom = max(0.25, min(4.0, painter.worldTransform().m11()))
+        zoom = round(zoom * 4) / 4
+        image = renderer.image_for(self.widget_model, rect.width(), rect.height(),
+                                   self._designer_scene.theme, zoom)
+        if image is None or image.isNull():
+            return None
+        return image
+
     def _paint_chrome(self, painter, selected):
         """Editing affordances drawn over the component, never by it.
 
@@ -172,6 +199,13 @@ class DesignerItem(QGraphicsRectItem):
         margin = self.HANDLE / 2 + self.SELECTION_PEN
         return super().boundingRect().adjusted(-margin, -margin, margin, margin)
 
+    # Which edges each handle drags, in _handles() order: (horizontal,
+    # vertical) with -1 the left/top edge, +1 the right/bottom edge, 0 none.
+    HANDLE_EDGES = ((-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1))
+    HANDLE_CURSORS = (Qt.SizeFDiagCursor, Qt.SizeVerCursor, Qt.SizeBDiagCursor,
+                      Qt.SizeHorCursor, Qt.SizeHorCursor,
+                      Qt.SizeBDiagCursor, Qt.SizeVerCursor, Qt.SizeFDiagCursor)
+
     def _handles(self):
         r, h = self.rect(), self.HANDLE
         return [QRectF(x - h / 2, y - h / 2, h, h) for x, y in (
@@ -179,8 +213,18 @@ class DesignerItem(QGraphicsRectItem):
             (r.left(), r.center().y()), (r.right(), r.center().y()),
             (r.left(), r.bottom()), (r.center().x(), r.bottom()), (r.right(), r.bottom()))]
 
+    def _handle_at(self, point):
+        """Index of the resize handle under ``point``, or None."""
+        if not self.isSelected():
+            return None
+        for index, handle in enumerate(self._handles()):
+            if handle.contains(point):
+                return index
+        return None
+
     def hoverMoveEvent(self, event):
-        self.setCursor(Qt.SizeFDiagCursor if self.isSelected() and self._handles()[-1].contains(event.pos()) else Qt.ArrowCursor)
+        handle = self._handle_at(event.pos())
+        self.setCursor(Qt.ArrowCursor if handle is None else self.HANDLE_CURSORS[handle])
         super().hoverMoveEvent(event)
 
     def contextMenuEvent(self, event):
@@ -211,7 +255,8 @@ class DesignerItem(QGraphicsRectItem):
         self._before = dict(self.widget_model.geometry)
         self._press_pos = self.pos()
         self._press_size = self.rect().size()
-        self._resizing = self.isSelected() and self._handles()[-1].contains(event.pos())
+        self._resize_handle = self._handle_at(event.pos())
+        self._resizing = self._resize_handle is not None
         if self._resizing:
             event.accept()
             return
@@ -219,15 +264,42 @@ class DesignerItem(QGraphicsRectItem):
 
     def mouseMoveEvent(self, event):
         if self._resizing:
-            point = event.pos()
-            step = self._designer_scene.grid_size if self._designer_scene.snap_enabled else 1
-            width = max(12, round(point.x() / step) * step)
-            height = max(12, round(point.y() / step) * step)
-            self.setRect(0, 0, width, height)
-            self.update()
+            self._drag_edges(event.pos())
             event.accept()
             return
         super().mouseMoveEvent(event)
+
+    def _drag_edges(self, point):
+        """Resize from whichever handle was grabbed. A left or top handle
+        moves that edge and keeps the opposite one in place, so the item's
+        position shifts with it; a widget laid out by a Row/Column/Grid
+        (``positioned``) has no position of its own and only grows."""
+        step = self._designer_scene.grid_size if self._designer_scene.snap_enabled else 1
+        horizontal, vertical = self.HANDLE_EDGES[self._resize_handle]
+        x, y = self._press_pos.x(), self._press_pos.y()
+        width, height = self._press_size.width(), self._press_size.height()
+        # The edge being dragged, in the parent's coordinates, snapped.
+        px = self.pos().x() + point.x()
+        py = self.pos().y() + point.y()
+        if horizontal > 0:
+            width = max(12, round(px / step) * step - x)
+        elif horizontal < 0:
+            left = min(round(px / step) * step, x + width - 12)
+            if self.positioned or self.widget_model.locked:
+                width = x + width - left
+            else:
+                width, x = x + width - left, left
+        if vertical > 0:
+            height = max(12, round(py / step) * step - y)
+        elif vertical < 0:
+            top = min(round(py / step) * step, y + height - 12)
+            if self.positioned or self.widget_model.locked:
+                height = y + height - top
+            else:
+                height, y = y + height - top, top
+        self.setPos(x, y)
+        self.setRect(0, 0, width, height)
+        self.update()
 
     def mouseReleaseEvent(self, event):
         resizing, self._resizing = self._resizing, False
@@ -292,6 +364,10 @@ class DesignerScene(QGraphicsScene):
         self._bezel_logo = bezel_logo()
         self.theme = "dark"
         self.project_dir = ""
+        # Real QML renders for the canvas (see qml_previews.py); the painters
+        # in widget_previews.py are the fallback while one is in flight or
+        # when the QML fails to render. None until a workspace installs it.
+        self.qml_previews = None
         # Strong references to every item on the canvas, by widget id.
         #
         # Qt owns an item once it is in the scene -- until anything asks a
