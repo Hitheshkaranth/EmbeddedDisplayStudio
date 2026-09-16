@@ -101,6 +101,19 @@ _TYPE_INFO: Dict[str, Tuple[str, int]] = {
 }
 
 
+def register_count(type_name: str) -> int:
+    """Number of 16-bit registers a value of `type_name` occupies.
+
+    A 32-bit type spans two consecutive registers; reading one would hand
+    decode_value() half the payload.
+
+    Raises:
+        KeyError: if type_name is unknown.
+    """
+    _, byte_count = _TYPE_INFO[type_name]
+    return max(1, byte_count // 2)
+
+
 def encode_value(raw: int, type_name: str) -> bytes:
     """Pack a raw integer into protocol bytes.
 

@@ -866,6 +866,9 @@ class NativePreview(QObject):
                 pass
             try:
                 self._proc.kill()
+                # Reap it, or the killed child sits as a zombie until the
+                # interpreter next happens to sweep Popen's _active list.
+                self._proc.wait(timeout=1)
             except (OSError, subprocess.SubprocessError):
                 pass
         self._teardown()

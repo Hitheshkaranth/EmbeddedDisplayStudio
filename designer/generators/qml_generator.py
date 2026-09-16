@@ -211,7 +211,10 @@ class QmlGenerator:
 
     @staticmethod
     def _page_file(page) -> str:
-        return f"{page.name.replace(' ', '') or page.id}.qml"
+        # validate() has already rejected names outside [A-Za-z0-9_ ]; the
+        # strip here keeps the file name inside output_dir regardless.
+        stem = re.sub(r"[^A-Za-z0-9_]", "", page.name) or page.id
+        return f"{stem}.qml"
 
     def _host(self, project) -> str:
         """App.qml: a Loader that shows one page and swaps on navigateRequested."""

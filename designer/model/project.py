@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 import json
+import math
 import ntpath
 import os
 import re
@@ -10,6 +11,8 @@ from typing import Any
 
 
 ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# A page name minus its spaces is the page's QML file name.
+PAGE_NAME_RE = re.compile(r"^[A-Za-z0-9_ ]+$")
 # CONTRACT 2.5: the dotted tag names a binding or an action may address.
 TAG_RE = re.compile(r"^[a-z][a-z0-9]*(\.[a-z0-9_]+)+$")
 # The comparison operators a threshold may use; the manifest's alarm entries
@@ -64,7 +67,19 @@ class DesignerBinding:
             return cls(tag=value)
         if not isinstance(value, dict):
             raise ValueError("binding must be a tag string or object")
-        return cls(**{k: value[k] for k in cls.__dataclass_fields__ if k in value})
+        data = {k: value[k] for k in cls.__dataclass_fields__ if k in value}
+        # The generator writes multiplier and offset straight into a QML
+        # expression; a project file is untrusted input, so anything that is
+        # not a number is rejected here rather than emitted as code.
+        for key in ("multiplier", "offset"):
+            if key in data:
+                if isinstance(data[key], bool) or not isinstance(data[key], (int, float)):
+                    raise ValueError(f"binding {key} must be a number")
+                data[key] = float(data[key])
+        for key in ("tag", "format", "unit", "warning", "critical"):
+            if key in data:
+                data[key] = str(data[key])
+        return cls(**data)
 
 
 @dataclass
@@ -296,7 +311,23 @@ class DesignerProject:
         seen: set[str] = set()
         known = set(known_tags) if known_tags is not None else None
         page_ids = {page.id for page in self.pages}
+        seen_pages: set[str] = set()
+        seen_stems: set[str] = set()
         for page_index, page in enumerate(self.pages):
+            ppath = f"pages[{page_index}]"
+            # The id keys the host's page table and the name becomes the
+            # page's QML file name, so both must be plain identifiers.
+            if not ID_RE.fullmatch(page.id):
+                issues.append(ValidationIssue(ppath, "invalid page id"))
+            if page.id in seen_pages:
+                issues.append(ValidationIssue(ppath, "duplicate page id"))
+            seen_pages.add(page.id)
+            if page.name and not PAGE_NAME_RE.fullmatch(page.name):
+                issues.append(ValidationIssue(ppath, "page name may only contain letters, digits, spaces and underscores"))
+            stem = page.name.replace(" ", "") or page.id
+            if stem in seen_stems:
+                issues.append(ValidationIssue(ppath, f"page name {page.name!r} collides with another page's file name"))
+            seen_stems.add(stem)
             for widget in page.walk():
                 path = f"pages[{page_index}].{widget.id}"
                 if not ID_RE.fullmatch(widget.id):
@@ -322,6 +353,9 @@ class DesignerProject:
                     elif project_dir and not os.path.isfile(os.path.join(project_dir, normalized)):
                         issues.append(ValidationIssue(path, f"missing asset {source!r}"))
                 for prop, binding in widget.bindings.items():
+                    for name in ("multiplier", "offset"):
+                        if not math.isfinite(getattr(binding, name)):
+                            issues.append(ValidationIssue(f"{path}.bindings.{prop}", f"{name} must be finite"))
                     if not binding.tag:
                         issues.append(ValidationIssue(f"{path}.bindings.{prop}", "empty tag binding"))
                     elif known is not None and binding.tag not in known:

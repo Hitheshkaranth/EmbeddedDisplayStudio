@@ -27,6 +27,8 @@ from designer.palette.widget_palette import WidgetPalette
 from designer.palette.widget_registry import default_registry
 from schema.manifest import NAME_RE, deployable_name, theme_of
 
+UNDO_LIMIT = 200
+
 try:
     from ui.python.shadcn import color, icon
 except ImportError:
@@ -526,6 +528,9 @@ class DesignerWorkspace(QWidget):
         self.projects_root = ""
         self.current_page_index = 0
         self.undo_stack = QUndoStack(self)
+        # Each command closes over a copy of the widgets it touched; a
+        # long session would otherwise keep every edit's snapshot alive.
+        self.undo_stack.setUndoLimit(UNDO_LIMIT)
         self.clipboard = []
         self._designer_icon_names = {}
         self._build_ui(); self._shortcuts(); self._load_page()
