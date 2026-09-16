@@ -101,7 +101,7 @@ class AutomotiveContractTests(unittest.TestCase):
         body = "\n".join(self.generator._widget(widget, 1))
         source = ("import QtQuick 2.15\nimport QtQuick.Controls 2.15\nimport Shadcn 1.0\n"
                   f"Rectangle {{ width: {definition.default_width + 16}; "
-                  f"height: {definition.default_height + 16}; color: Theme.background\n{body}\n}}")
+                  f"height: {definition.default_height + 16}; color: Theme.autoPanel\n{body}\n}}")
         component = QQmlComponent(view.engine())
         component.setData(source.encode(), QUrl.fromLocalFile(str(ROOT / "tests" / "contract.qml")))
         errors = [e.toString() for e in component.errors()]
