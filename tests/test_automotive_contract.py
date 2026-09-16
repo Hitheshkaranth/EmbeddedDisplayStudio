@@ -15,6 +15,12 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
+# The offscreen platform ships no fonts; without real glyphs a "4" and a "7"
+# render as the same box and text-only changes are invisible to the tests.
+for _font_dir in ("C:/Windows/Fonts", "/usr/share/fonts"):
+    if os.path.isdir(_font_dir):
+        os.environ.setdefault("QT_QPA_FONTDIR", _font_dir)
+        break
 
 from PySide6.QtCore import QRectF, QUrl, Qt, qInstallMessageHandler
 from PySide6.QtGui import QImage, QPainter
