@@ -41,7 +41,7 @@ except ImportError:
     def qml_import_path(): return ""
 
 # Product version, shown hard right in the footer. Single source of truth.
-APP_VERSION = "0.0.8"
+APP_VERSION = "0.0.9"
 
 # Exact, machine-readable marker emitted by DISPLAY_PROBE_COMMAND over SSH.
 DISPLAY_RESOLUTION_RE = re.compile(r"^HMI_DISPLAY=(\d{1,5})x(\d{1,5})$")
@@ -431,22 +431,46 @@ class MainWindow(QMainWindow):
         if not host:
             QMessageBox.warning(self, "No panel", "Fill in the Target IP first; the bundle carries it.")
             return
+        # Only a key the panel actually accepts is worth handing over. The
+        # Key field may name one key while the link works through another
+        # (ssh offers the ~/.ssh defaults as well), so try the field's key
+        # alone first, then the defaults, and pack the one that opens the
+        # door.
+        from .deploy_key import working_key_for
+        user = self.inp_user.text().strip() or "root"
+        self.log(f"Checking which key {host} accepts...")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            chosen, reasons = working_key_for(host, user, self.ssh_port(), [key])
+        finally:
+            QApplication.restoreOverrideCursor()
+        for reason in reasons:
+            self.log("  " + reason)
+        if not chosen:
+            QMessageBox.critical(
+                self, "No key opens the panel",
+                f"None of your keys is accepted by {host} on its own:\n\n" + "\n".join(reasons) +
+                "\n\nProvision the panel with deploy/provision_panel.py from this machine first, "
+                "or point the Key field at the key it was provisioned with.")
+            return
+        if os.path.normcase(chosen) != os.path.normcase(key):
+            self.log(f"The panel accepts {chosen}, not the Key field's {key}; exporting that one.")
         suggested = os.path.join(os.path.expanduser("~"), f"{host.replace('.', '-')}-deploy.hmikey")
         path, _ = QFileDialog.getSaveFileName(self, "Export deploy key", suggested,
                                               "HMI deploy key (*.hmikey)")
         if not path:
             return
         try:
-            written = export_bundle(key, path, host, self.inp_user.text().strip() or "root",
-                                    self.ssh_port(), label=host)
+            written = export_bundle(chosen, path, host, user, self.ssh_port(), label=host)
         except DeployKeyError as exc:
             QMessageBox.critical(self, "Export failed", str(exc))
             return
-        self.log(f"Deploy key exported to {written}")
+        self.log(f"Deploy key exported to {written} (verified against {host})")
         QMessageBox.information(
             self, "Deploy key exported",
-            f"Written:\n{written}\n\nIt contains the private key that opens {host}. Hand it to the "
-            "other user directly; they import it with the Import key button and can deploy at once.")
+            f"Written:\n{written}\n\nIt contains the private key that opens {host}, verified just "
+            "now. Hand it to the other user directly; they import it with the Import key button "
+            "and can deploy at once.")
 
     def on_import_key(self) -> None:
         """Install a .hmikey and point the connection fields at its panel."""
@@ -467,6 +491,34 @@ class MainWindow(QMainWindow):
             self.log(f"The panel's host key is now trusted in ~/.ssh/known_hosts ({info['host_keys_installed']} entries).")
         else:
             self.log("The bundle carried no host key; the first Connect accepts the panel's.")
+        # Try the link now and say exactly what is wrong if it is not there,
+        # rather than leaving "it does not work" for the console to explain.
+        from .deploy_key import verify_key
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            ok, reason = verify_key(info["key"], info["host"], info.get("user", "root"), info.get("port", 22))
+        finally:
+            QApplication.restoreOverrideCursor()
+        if ok:
+            self.log(f"Verified: {info['key']} opens {info['user']}@{info['host']}. Press Connect.")
+            QMessageBox.information(self, "Deploy key ready",
+                                    f"The key opens {info['host']}. Press Connect, then Deploy.")
+            return
+        self.log(f"Key check failed: {reason}")
+        advice = {
+            "no-ssh": "Install the OpenSSH client (Windows: Settings > Apps > Optional features > "
+                      "OpenSSH Client) and try again.",
+            "unreachable": "The panel did not answer. Check the wired network and that this machine "
+                           "has an address on the panel's subnet.",
+            "host-key": "known_hosts holds another key for this address. Press Connect; the Studio "
+                        "will offer to forget it.",
+            "refused": "The panel does not trust this key. Ask for a bundle exported with the key "
+                       "the panel was provisioned with (the exporter's Studio verifies that now).",
+            "permissions": "ssh refuses a key other users can read. Re-import the bundle; the Studio "
+                           "restricts the file to your account.",
+        }.get(reason.split(":", 1)[0], "See the console for ssh's own message.")
+        QMessageBox.warning(self, "Deploy key installed, but the panel could not be reached",
+                            f"{reason}\n\n{advice}")
 
     def apply_deploy_key(self, info: dict) -> None:
         """Fill Key / host / user / port from an imported bundle and save them."""

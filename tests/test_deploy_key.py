@@ -85,7 +85,7 @@ class DeployKeyBundleTests(unittest.TestCase):
         key = _keypair(self.tmp)
         out = os.path.join(self.tmp, "cli")
         self.assertEqual(deploy_key.main(["export", "--key", key, "--host", "10.1.1.5", "--port", "2222",
-                                          "--out", out]), 0)
+                                          "--out", out, "--no-verify"]), 0)
         self.assertTrue(os.path.isfile(out + ".hmikey"))
         self.assertEqual(deploy_key.read_bundle(out + ".hmikey")["target"]["port"], 2222)
 
@@ -167,4 +167,43 @@ class HostKeyTests(unittest.TestCase):
         info = deploy_key.import_bundle(bundle, install_dir=os.path.join(self.tmp, "i"))
         self.assertEqual(info["host_keys_installed"], 0)
         self.assertFalse(os.path.exists(self.known))
+
+
+class VerifyKeyTests(unittest.TestCase):
+    """verify_key names the failure class a user can act on."""
+
+    def _fake_ssh(self, stdout="", stderr="", returncode=255):
+        class _Result:
+            pass
+        result = _Result()
+        result.stdout, result.stderr, result.returncode = stdout, stderr, returncode
+        original_run, original_which = deploy_key.subprocess.run, deploy_key.shutil.which
+        deploy_key.subprocess.run = lambda *a, **k: result
+        deploy_key.shutil.which = lambda name: "ssh"
+        self.addCleanup(lambda: setattr(deploy_key.subprocess, "run", original_run))
+        self.addCleanup(lambda: setattr(deploy_key.shutil, "which", original_which))
+
+    def test_success_and_each_failure_class(self):
+        cases = [
+            ({"stdout": "HMI-KEY-OK\n", "returncode": 0}, "ok"),
+            ({"stderr": "Host key verification failed."}, "host-key"),
+            ({"stderr": "root@10.0.0.1: Permission denied (publickey)."}, "refused"),
+            ({"stderr": "Permissions 0644 for 'k' are too open."}, "permissions"),
+            ({"stderr": "ssh: connect to host 10.0.0.1 port 22: Connection timed out"}, "unreachable"),
+            ({"stderr": "something else entirely"}, "unknown"),
+        ]
+        for kwargs, expected in cases:
+            with self.subTest(expected=expected):
+                self._fake_ssh(**kwargs)
+                ok, reason = deploy_key.verify_key("k", "10.0.0.1")
+                self.assertEqual(ok, expected == "ok")
+                self.assertTrue(reason == "ok" if expected == "ok" else reason.startswith(expected + ":"), reason)
+
+    def test_missing_ssh_client_is_named(self):
+        original = deploy_key.shutil.which
+        deploy_key.shutil.which = lambda name: None
+        self.addCleanup(lambda: setattr(deploy_key.shutil, "which", original))
+        ok, reason = deploy_key.verify_key("k", "10.0.0.1")
+        self.assertFalse(ok)
+        self.assertTrue(reason.startswith("no-ssh:"))
 

@@ -301,6 +301,16 @@ python -m tools.hmi_deployer.deploy_key export --host 172.16.20.70 --out line3.h
 python -m tools.hmi_deployer.deploy_key import line3.hmikey
 ```
 
+**Export verifies before it packs.** The Key field may name one key while the
+link actually works through another (ssh also offers the `~/.ssh` defaults),
+so Export tries each key *on its own* against the panel and packs the one the
+panel accepts — a bundle that opens the door, not the one that happened to be
+typed. **Import verifies after it installs** and says in plain words what is
+wrong when the link is not there: no OpenSSH client on this machine, panel
+unreachable, host key mismatch, key not trusted by the panel, or file
+permissions. `python -m tools.hmi_deployer.deploy_key verify --host <ip>`
+does the same from a terminal.
+
 The file contains a private key: hand it over directly. A passphrase-protected
 key is refused, because the Studio deploys non-interactively (`BatchMode`).
 
@@ -1178,6 +1188,20 @@ or deploy it to a bench panel as a demonstrator. The full list of values is
 `CAR_TAGS` in `designer/generators/qml_generator.py`.
 
 ### What changed recently
+
+**0.0.9**
+
+* `sim.car.*` drive cycle and the `automotive_cluster_demo` preset: a cluster
+  that drives itself on the canvas, in the Live Preview window and on the
+  panel.
+* Deploy keys: Export verifies the key against the panel and packs the one it
+  accepts; the bundle carries the panel's host key; Import installs it,
+  verifies the link and explains any failure (no ssh client, unreachable,
+  host-key mismatch, key not trusted, permissions). Connect offers to forget
+  a stale host key.
+* Size-like properties have floors: a cleared or negative font size, dot size
+  or segment count can no longer blank every widget on the page.
+* The gear indicator ignores a numeric gear from a simulator.
 
 **0.0.8**
 

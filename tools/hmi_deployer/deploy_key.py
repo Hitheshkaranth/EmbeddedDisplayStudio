@@ -23,6 +23,7 @@ import io
 import json
 import os
 import platform
+import shutil
 import socket
 import stat
 import subprocess
@@ -130,6 +131,61 @@ def install_host_keys(host: str, port: int, lines: list) -> int:
         for line in lines:
             handle.write(line.rstrip() + "\n")
     return len(lines)
+
+
+def verify_key(private_key: str, host: str, user: str = "root", port: int = 22,
+               timeout_s: int = 15) -> tuple:
+    """Try the key, and only the key, against the panel.
+
+    Returns:
+        (ok, reason) -- reason is one of "ok", "no-ssh", "unreachable",
+        "host-key", "refused", "permissions", "unknown", with the transport's
+        own last line appended after a colon for the console.
+    """
+    if not shutil.which("ssh"):
+        return False, "no-ssh: the OpenSSH client (ssh.exe) is not installed or not on PATH"
+    cmd = ["ssh", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+           "-o", "StrictHostKeyChecking=accept-new", "-o", f"ConnectTimeout={timeout_s}",
+           "-i", private_key, "-p", str(port), f"{user}@{host}", "echo HMI-KEY-OK"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s + 10, check=False)
+    except subprocess.TimeoutExpired:
+        return False, "unreachable: the panel did not answer"
+    except OSError as exc:
+        return False, f"no-ssh: {exc}"
+    if "HMI-KEY-OK" in result.stdout:
+        return True, "ok"
+    err = " ".join(line.strip() for line in result.stderr.splitlines()
+                   if line.strip() and not line.startswith("**")).strip()
+    low = err.lower()
+    if "host key verification failed" in low or "remote host identification has changed" in low:
+        return False, "host-key: " + err[-160:]
+    if "permission denied" in low:
+        return False, "refused: the panel does not trust this key (it is not in /root/.ssh/authorized_keys): " + err[-120:]
+    if "permissions" in low and ("too open" in low or "bad permissions" in low):
+        return False, "permissions: the key file is readable by others and ssh refuses it: " + err[-120:]
+    if "timed out" in low or "no route" in low or "could not resolve" in low or "connection refused" in low:
+        return False, "unreachable: " + err[-160:]
+    return False, "unknown: " + (err[-200:] or f"ssh exited {result.returncode}")
+
+
+def working_key_for(host: str, user: str = "root", port: int = 22, candidates=()) -> tuple:
+    """The first key among ``candidates`` then the ~/.ssh defaults that the
+    panel accepts, with the reasons the others gave: (key_or_"", reasons)."""
+    reasons = []
+    seen = []
+    ssh_dir = os.path.join(os.path.expanduser("~"), ".ssh")
+    for path in list(candidates) + [os.path.join(ssh_dir, n) for n in DEFAULT_KEYS]:
+        if not path or path in seen or not os.path.isfile(path):
+            continue
+        seen.append(path)
+        ok, reason = verify_key(path, host, user, port)
+        if ok:
+            return path, reasons
+        reasons.append(f"{path}: {reason}")
+        if reason.startswith(("no-ssh", "unreachable", "host-key")):
+            break     # not the key's fault; trying more keys says nothing
+    return "", reasons
 
 
 def export_bundle(private_key: str, out_path: str, host: str, user: str = "root",
@@ -246,14 +302,32 @@ def main(argv=None) -> int:
     exp.add_argument("--port", type=int, default=22)
     exp.add_argument("--label", default="")
     exp.add_argument("--out", required=True)
+    exp.add_argument("--no-verify", action="store_true",
+                     help="pack without trying the key against the panel (offline)")
     imp = sub.add_parser("import", help="install a .hmikey and print the connection it opens")
     imp.add_argument("bundle")
+    ver = sub.add_parser("verify", help="try a key, and only that key, against a panel")
+    ver.add_argument("--key", default="")
+    ver.add_argument("--host", required=True)
+    ver.add_argument("--user", default="root")
+    ver.add_argument("--port", type=int, default=22)
     args = parser.parse_args(argv)
     try:
         if args.command == "export":
-            path = export_bundle(args.key or default_private_key(), args.out, args.host,
-                                 args.user, args.port, label=args.label)
+            key = args.key or default_private_key()
+            ok, reason = (True, "ok") if args.no_verify else verify_key(key, args.host, args.user, args.port)
+            if not ok:
+                chosen, reasons = working_key_for(args.host, args.user, args.port, [key])
+                if not chosen:
+                    raise DeployKeyError("no key opens the panel:\n  " + "\n  ".join(reasons))
+                print(f"{key} is not accepted by {args.host}; exporting {chosen}, which is")
+                key = chosen
+            path = export_bundle(key, args.out, args.host, args.user, args.port, label=args.label)
             print(f"wrote {path} -- hand it over in person; it contains a private key")
+        elif args.command == "verify":
+            ok, reason = verify_key(args.key or default_private_key(), args.host, args.user, args.port)
+            print("ok" if ok else reason)
+            return 0 if ok else 1
         else:
             info = import_bundle(args.bundle)
             print(f"installed {info['key']}")
@@ -263,6 +337,9 @@ def main(argv=None) -> int:
                 print("bundle carried no host key; the first connect accepts the panel's")
             print(f"target {info['user']}@{info['host']}:{info['port']}  ({info['label']}, "
                   f"exported by {info['exported_by']} {info['exported_at']})")
+            ok, reason = verify_key(info["key"], info["host"], info["user"], info["port"])
+            print("link: ok -- deploy away" if ok else f"link: {reason}")
+            return 0 if ok else 1
     except DeployKeyError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
