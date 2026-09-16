@@ -15,6 +15,13 @@ from designer.canvas.widget_previews import (
 )
 
 
+def _painter_font(painter, pixel_size, weight=QFont.Normal):
+    font = QFont(painter.font())
+    font.setPixelSize(pixel_size)
+    font.setWeight(weight)
+    return font
+
+
 def _stub(painter, rect, props, display_name):
     """Placeholder until the real painter lands: a panel with the type name."""
     _rounded(painter, rect, auto("panel"), 8, auto("tileBorder"), 1)
@@ -43,13 +50,127 @@ def paint_auto_readout(painter, rect, props, ctx):
 
 
 def paint_drive_mode(painter, rect, props, ctx):
-    """ShDriveMode: TODO -- see the brief."""
-    _stub(painter, rect, props, "Drive Mode")
+    """ShDriveMode: label at top, chevrons flanking the current mode name."""
+    # Background with subtle gradient effect
+    painter.setBrush(QBrush(auto("panel")))
+    painter.setPen(Qt.NoPen)
+    painter.drawRect(rect)
+
+    # Subtle top accent line
+    painter.setPen(QPen(auto("accent"), 3, Qt.SolidLine, Qt.FlatCap))
+    painter.drawLine(rect.left() + 8, rect.top() + 1,
+                     rect.right() - 8, rect.top() + 1)
+
+    modes_str = str(_prop(props, "modes", "ECO,COMFORT,SPORT"))
+    modes = [m.strip() for m in modes_str.split(",") if m.strip()]
+    current = int(_number(props, "currentIndex", 2))
+    label = str(_prop(props, "label", "Drive mode"))
+    n_modes = max(1, len(modes))
+    if current < 0:
+        current = 0
+    if current >= n_modes:
+        current = n_modes - 1
+
+    h = rect.height()
+    top_rect = QRectF(rect.left(), rect.top() + h * 0.02, rect.width(), h * 0.28)
+    _text(painter, top_rect, label, size=FONT["sm"], color=auto("muted"),
+          weight=WEIGHT_MEDIUM, flags=Qt.AlignCenter)
+
+    # Separator line under label
+    sep_y = rect.top() + h * 0.30
+    painter.setPen(QPen(auto("line"), 1, Qt.DashLine, Qt.FlatCap))
+    painter.drawLine(rect.left() + 20, sep_y, rect.right() - 20, sep_y)
+
+    mode_name = modes[current] if current < n_modes else ""
+    mode_rect = QRectF(rect.left(), rect.top() + h * 0.33, rect.width(), h * 0.52)
+    _text(painter, mode_rect, mode_name, size=int(h * 0.34), color=auto("amber"),
+          weight=WEIGHT_SEMIBOLD, flags=Qt.AlignCenter)
+
+    # Mode dots indicator
+    dot_y = rect.top() + h * 0.27
+    dot_h = h * 0.03
+    for i in range(n_modes):
+        dot_x = rect.left() + rect.width() * (0.30 + i * 0.10)
+        color = auto("amber") if i == current else auto("muted")
+        painter.setBrush(QBrush(color))
+        painter.drawEllipse(QPointF(dot_x, dot_y), 3, dot_h)
+
+    # Left chevron
+    left_x = rect.left() + rect.width() * 0.15
+    left_rect = QRectF(left_x, rect.top() + h * 0.33, rect.width() * 0.2, h * 0.52)
+    painter.setFont(_painter_font(painter, int(h * 0.30), WEIGHT_SEMIBOLD))
+    painter.setPen(QPen(auto("accent"), 2, Qt.SolidLine, Qt.FlatCap))
+    painter.drawText(left_rect, Qt.AlignCenter, "\u2039")
+
+    # Right chevron
+    right_x = rect.left() + rect.width() * 0.65
+    right_rect = QRectF(right_x, rect.top() + h * 0.33, rect.width() * 0.2, h * 0.52)
+    painter.drawText(right_rect, Qt.AlignCenter, "\u203A")
 
 
 def paint_telltale(painter, rect, props, ctx):
-    """ShTelltale: TODO -- see the brief."""
-    _stub(painter, rect, props, "Telltale")
+    """ShTelltale: icon lamp -- bright when lit, dim ghost when unlit, with glow."""
+    lit = bool(_prop(props, "lit", True))
+    blink = bool(_prop(props, "blink", False))
+    color_name = str(_prop(props, "color", "amber"))
+    label = str(_prop(props, "label", ""))
+
+    # Map color name
+    color_map = {"amber": auto("amber"), "green": auto("green"),
+                 "red": auto("red"), "blue": auto("blue"),
+                 "white": auto("text")}
+    lamp_color = color_map.get(color_name, auto("amber"))
+
+    dim_color = QColor(auto("muted"))
+    if lit:
+        icon_color = lamp_color
+        opacity = 1.0
+    else:
+        icon_color = dim_color
+        opacity = 0.35
+
+    # Glow behind icon when lit
+    if lit:
+        glow_rect = QRectF(rect.left() + rect.width() * 0.05,
+                           rect.top() + rect.height() * 0.05,
+                           rect.width() * 0.9, rect.height() * 0.9)
+        glow_col = QColor(lamp_color)
+        glow_col.setAlphaF(0.18)
+        painter.setBrush(QBrush(glow_col))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(glow_rect, rect.width() * 0.5, rect.height() * 0.5)
+
+    # Icon placeholder: rounded square (like ShIcon would render)
+    icon_size = int(min(rect.width(), rect.height()) * 0.62)
+    if label:
+        icon_size = int(rect.height() * 0.5)
+
+    cx = rect.left() + rect.width() * 0.5
+    cy = rect.top() + rect.height() * (0.38 if label else 0.5)
+    icon_rect = QRectF(cx - icon_size / 2, cy - icon_size / 2, icon_size, icon_size)
+
+    painter.save()
+    painter.setOpacity(opacity)
+    painter.setBrush(QBrush(icon_color))
+    painter.setPen(QPen(Qt.NoPen))
+    painter.drawRoundedRect(icon_rect, icon_size * 0.25, icon_size * 0.25)
+    painter.restore()
+
+    # Blink: hint at 0.6 alpha
+    if blink and lit:
+        painter.save()
+        painter.setOpacity(0.6)
+        painter.setBrush(QBrush(lamp_color))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(icon_rect, icon_size * 0.25, icon_size * 0.25)
+        painter.restore()
+
+    # Label
+    if label:
+        label_rect = QRectF(rect.left(), rect.top() + rect.height() * 0.65,
+                            rect.width(), rect.height() * 0.3)
+        _text(painter, label_rect, label, size=int(rect.height() * 0.18),
+              color=auto("muted"), weight=WEIGHT_MEDIUM, flags=Qt.AlignCenter)
 
 
 def paint_trip_info(painter, rect, props, ctx):
@@ -63,8 +184,45 @@ def paint_segment_bar(painter, rect, props, ctx):
 
 
 def paint_icon_tile(painter, rect, props, ctx):
-    """ShIconTile: TODO -- see the brief."""
-    _stub(painter, rect, props, "Icon Tile")
+    """ShIconTile: rounded tile with icon and label below."""
+    active = bool(_prop(props, "active", False))
+    label = str(_prop(props, "label", "BT"))
+
+    tile_h = int(rect.height() * 0.72)
+    tile_w = rect.width()
+    tile_rect = QRectF(rect.left(), rect.top(), tile_w, tile_h)
+    radius = int(rect.width() * 0.18)
+
+    # Glow behind tile when active
+    if active:
+        glow_rect = QRectF(tile_rect.left() - 4, tile_rect.top() - 4,
+                           tile_rect.width() + 8, tile_rect.height() + 8)
+        glow_col = QColor(auto("accent"))
+        glow_col.setAlphaF(0.20)
+        painter.setBrush(QBrush(glow_col))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(glow_rect, radius + 4, radius + 4)
+
+    # Tile background
+    painter.setBrush(QBrush(auto("tileBg")))
+    border_col = QColor(auto("accent")) if active else QColor(auto("tileBorder"))
+    painter.setPen(QPen(border_col, 2 if active else 1))
+    painter.drawRoundedRect(tile_rect, radius, radius)
+
+    # Icon placeholder centred in tile
+    icon_size = int(tile_w * 0.42)
+    cx = tile_rect.center().x()
+    cy = tile_rect.center().y()
+    icon_r = QRectF(cx - icon_size / 2, cy - icon_size / 2, icon_size, icon_size)
+    painter.setBrush(QBrush(auto("text")))
+    painter.setPen(Qt.NoPen)
+    painter.drawRoundedRect(icon_r, icon_size * 0.3, icon_size * 0.3)
+
+    # Label
+    label_rect = QRectF(rect.left(), tile_rect.bottom() + 4,
+                        rect.width(), rect.height() - tile_rect.height() - 4)
+    _text(painter, label_rect, label, size=int(rect.height() * 0.14),
+          color=auto("text"), weight=WEIGHT_MEDIUM, flags=Qt.AlignCenter)
 
 
 def paint_vehicle_status(painter, rect, props, ctx):
