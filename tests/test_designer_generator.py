@@ -13,7 +13,7 @@ class DesignerGeneratorTests(unittest.TestCase):
 
     def test_registry_has_requested_categories_and_controls(self):
         self.assertEqual(self.registry.categories(),
-                         ("Basic", "Industrial", "Avionics", "Containers", "Navigation"))
+                         ("Basic", "Industrial", "Avionics", "Automotive", "Containers", "Navigation"))
         self.assertEqual(self.registry.get("ShValueTile").qml_component, "ShValueTile")
         self.assertGreaterEqual(len(self.registry.definitions()), 16)
 
