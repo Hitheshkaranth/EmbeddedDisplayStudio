@@ -1067,7 +1067,26 @@ design uses.  Tune the result in the Designer (bind the gauges to real tags,
 resize, restyle), then **Deploy**.  Tag Lab can drive the bound tags before the
 panel is even connected.
 
-## What changed recently
+### Design presets
+
+When the brief text mentions certain domain keywords the AI tab automatically
+appends a **design preset** to the system prompt: a hand-built layout exemplar
+and a style guide that steer the model toward the right idiom.  Two presets ship
+with the Studio today:
+
+| Preset | Brief keywords | What it adds |
+|---|---|---|
+| **Automotive cluster** | `automotive`, `cluster`, `car`, `dashboard`, `speedometer`, `rpm`, `fuel`, `gear` | Dark instrument-cluster template with arc gauge, readouts, level bars, telltales and trip info. |
+| **EV infotainment cluster** | `ev`, `electric`, `soc`, `battery`, `tyre`, `tpms`, `carplay`, `android auto` | EV dashboard with dual round gauges, tyre-pressure display, SOC segment bar and icon tiles. |
+
+A preset is just a validated ``.edsui`` project (loadable in the Designer
+itself) plus a short composition guide.  You can list them with the CLI:
+
+```
+python -m tools.hmi_deployer.design_presets --list
+```
+
+### What changed recently
 
 **0.0.7**
 

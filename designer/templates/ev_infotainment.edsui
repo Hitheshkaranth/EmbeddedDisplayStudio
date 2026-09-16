@@ -1,0 +1,387 @@
+{
+  "version": 1,
+  "name": "EV infotainment cluster",
+  "screen": {
+    "width": 1280,
+    "height": 800,
+    "background": "#070b14",
+    "theme": "dark"
+  },
+  "pages": [
+    {
+      "id": "main",
+      "name": "Main",
+      "widgets": [
+        {
+          "type": "ShTelltale",
+          "id": "highBeam",
+          "geometry": {
+            "x": 40,
+            "y": 12,
+            "width": 48,
+            "height": 48
+          },
+          "properties": {
+            "icon": "bulb",
+            "color": "blue",
+            "lit": true,
+            "blink": false
+          },
+          "bindings": {}
+        },
+        {
+          "type": "ShTelltale",
+          "id": "turnLeft",
+          "geometry": {
+            "x": 100,
+            "y": 12,
+            "width": 48,
+            "height": 48
+          },
+          "properties": {
+            "icon": "arrow-big-left",
+            "color": "green",
+            "lit": true,
+            "blink": false
+          },
+          "bindings": {}
+        },
+        {
+          "type": "ShTelltale",
+          "id": "turnRight",
+          "geometry": {
+            "x": 160,
+            "y": 12,
+            "width": 48,
+            "height": 48
+          },
+          "properties": {
+            "icon": "arrow-big-right",
+            "color": "green",
+            "lit": true,
+            "blink": false
+          },
+          "bindings": {}
+        },
+        {
+          "type": "Text",
+          "id": "clock",
+          "geometry": {
+            "x": 1060,
+            "y": 14,
+            "width": 180,
+            "height": 36
+          },
+          "properties": {
+            "text": "10:49 PM",
+            "fontSize": 20,
+            "color": "#ffffff"
+          },
+          "bindings": {}
+        },
+        {
+          "type": "ShClusterGauge",
+          "id": "speed",
+          "geometry": {
+            "x": 80,
+            "y": 80,
+            "width": 320,
+            "height": 320
+          },
+          "properties": {
+            "label": "",
+            "readout": "50",
+            "readoutUnit": "mph",
+            "caption": "",
+            "value": 50.0,
+            "minimumValue": 0.0,
+            "maximumValue": 100.0,
+            "redlineFrom": 90.0,
+            "sweep": 240.0,
+            "decimals": 0,
+            "showInnerDial": true
+          },
+          "bindings": {
+            "value": {
+              "tag": "mb.speed"
+            },
+            "readout": {
+              "tag": "mb.speed"
+            }
+          }
+        },
+        {
+          "type": "ShClusterGauge",
+          "id": "current",
+          "geometry": {
+            "x": 880,
+            "y": 80,
+            "width": 320,
+            "height": 320
+          },
+          "properties": {
+            "label": "",
+            "readout": "480",
+            "readoutUnit": "A",
+            "caption": "",
+            "value": 240.0,
+            "minimumValue": 0.0,
+            "maximumValue": 500.0,
+            "redlineFrom": 0.0,
+            "sweep": 240.0,
+            "decimals": 0,
+            "showInnerDial": true
+          },
+          "bindings": {
+            "value": {
+              "tag": "mb.batt_a"
+            },
+            "readout": {
+              "tag": "mb.batt_a"
+            }
+          }
+        },
+        {
+          "type": "ShGearIndicator",
+          "id": "gear",
+          "geometry": {
+            "x": 570,
+            "y": 100,
+            "width": 140,
+            "height": 56
+          },
+          "properties": {
+            "gears": "P,R,N,D",
+            "gear": "N",
+            "modeNumber": 0,
+            "showAll": false
+          },
+          "bindings": {}
+        },
+        {
+          "type": "ShVehicleStatus",
+          "id": "tyrePressure",
+          "geometry": {
+            "x": 520,
+            "y": 170,
+            "width": 240,
+            "height": 220
+          },
+          "properties": {
+            "frontLeft": 2.6,
+            "frontRight": 2.5,
+            "rearLeft": 1.6,
+            "rearRight": 2.2,
+            "unit": "bar",
+            "warnBelow": 1.8,
+            "decimals": 1,
+            "label": "TPMS"
+          },
+          "bindings": {
+            "frontLeft": {
+              "tag": "mb.tp_fl"
+            },
+            "frontRight": {
+              "tag": "mb.tp_fr"
+            },
+            "rearLeft": {
+              "tag": "mb.tp_rl"
+            },
+            "rearRight": {
+              "tag": "mb.tp_rr"
+            }
+          }
+        },
+        {
+          "type": "ShAutoReadout",
+          "id": "trip",
+          "geometry": {
+            "x": 60,
+            "y": 440,
+            "width": 260,
+            "height": 80
+          },
+          "properties": {
+            "value": 8888.8,
+            "unit": "miles",
+            "label": "TRIP",
+            "icon": "road",
+            "iconSide": "left",
+            "decimals": 1
+          },
+          "bindings": {
+            "value": {
+              "tag": "mb.trip_mi"
+            }
+          }
+        },
+        {
+          "type": "ShAutoReadout",
+          "id": "voltage",
+          "geometry": {
+            "x": 360,
+            "y": 440,
+            "width": 200,
+            "height": 80
+          },
+          "properties": {
+            "value": 72.8,
+            "unit": "V",
+            "icon": "battery",
+            "iconSide": "left",
+            "decimals": 1,
+            "label": ""
+          },
+          "bindings": {
+            "value": {
+              "tag": "mb.batt_v"
+            }
+          }
+        },
+        {
+          "type": "ShSegmentBar",
+          "id": "socBar",
+          "geometry": {
+            "x": 600,
+            "y": 440,
+            "width": 320,
+            "height": 80
+          },
+          "properties": {
+            "value": 60.0,
+            "minimumValue": 0.0,
+            "maximumValue": 100.0,
+            "segments": 12,
+            "label": "SOC",
+            "showPercent": true,
+            "lowLevel": 15.0
+          },
+          "bindings": {
+            "value": {
+              "tag": "mb.soc_pct"
+            }
+          }
+        },
+        {
+          "type": "ShAutoReadout",
+          "id": "odo",
+          "geometry": {
+            "x": 960,
+            "y": 440,
+            "width": 280,
+            "height": 80
+          },
+          "properties": {
+            "value": 888888.0,
+            "unit": "miles",
+            "label": "ODO",
+            "icon": "dashboard",
+            "iconSide": "left",
+            "decimals": 0
+          },
+          "bindings": {
+            "value": {
+              "tag": "mb.odo_mi"
+            }
+          }
+        },
+        {
+          "type": "ShIconTile",
+          "id": "tile_bt",
+          "geometry": {
+            "x": 280,
+            "y": 560,
+            "width": 110,
+            "height": 110
+          },
+          "properties": {
+            "icon": "bluetooth",
+            "label": "BT",
+            "enabled": true,
+            "active": false
+          },
+          "bindings": {},
+          "actions": {
+            "clicked": {
+              "kind": "pulse",
+              "tag": "do.tile_bt",
+              "ms": 200
+            }
+          }
+        },
+        {
+          "type": "ShIconTile",
+          "id": "tile_screen",
+          "geometry": {
+            "x": 420,
+            "y": 560,
+            "width": 110,
+            "height": 110
+          },
+          "properties": {
+            "icon": "device-tv",
+            "label": "SCREEN",
+            "enabled": true,
+            "active": false
+          },
+          "bindings": {},
+          "actions": {
+            "clicked": {
+              "kind": "pulse",
+              "tag": "do.tile_screen",
+              "ms": 200
+            }
+          }
+        },
+        {
+          "type": "ShIconTile",
+          "id": "tile_usb",
+          "geometry": {
+            "x": 560,
+            "y": 560,
+            "width": 110,
+            "height": 110
+          },
+          "properties": {
+            "icon": "usb",
+            "label": "USB",
+            "enabled": true,
+            "active": false
+          },
+          "bindings": {},
+          "actions": {
+            "clicked": {
+              "kind": "pulse",
+              "tag": "do.tile_usb",
+              "ms": 200
+            }
+          }
+        },
+        {
+          "type": "ShIconTile",
+          "id": "tile_settings",
+          "geometry": {
+            "x": 700,
+            "y": 560,
+            "width": 110,
+            "height": 110
+          },
+          "properties": {
+            "icon": "settings",
+            "label": "SET",
+            "enabled": true,
+            "active": false
+          },
+          "bindings": {},
+          "actions": {
+            "clicked": {
+              "kind": "pulse",
+              "tag": "do.tile_settings",
+              "ms": 200
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

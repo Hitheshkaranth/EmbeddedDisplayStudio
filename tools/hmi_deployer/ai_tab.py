@@ -1308,6 +1308,10 @@ class AIDesignTab(QWidget):
         ("droplet", "Pump control", "Two pump cards with run toggles, flow and pressure",
          "Pump control screen: two pump cards side by side, each with a run toggle, a flow "
          "numeric display bound to pump.N.flow, a pressure gauge and a running status dot."),
+        ("gauge", "Automotive cluster", "Instrument cluster with RPM, speed, fuel and coolant",
+         "Automotive cluster: instrument cluster with RPM arc gauge, speed readout, fuel level, "
+         "coolant temperature, gear indicator, drive mode selector, trip info telltales and "
+         "ambient readout — dark palette with redline bands."),
     ]
 
     def _build_ui(self):
@@ -2097,7 +2101,7 @@ class AIDesignTab(QWidget):
 
         width, height = self._screen_size()
         registry = getattr(self.generator, "registry", None)
-        self.connector.system_prompt = build_system_prompt(registry, width, height)
+        self.connector.system_prompt = build_system_prompt(registry, width, height, brief=self._root_brief)
 
         self.streaming = True
         self.send_btn.setToolTip("Stop")
