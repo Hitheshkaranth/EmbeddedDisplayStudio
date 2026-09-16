@@ -26,6 +26,7 @@ class DesignerItem(QGraphicsRectItem):
         self.definition = definition
         self._designer_scene = scene
         self._resizing = False
+        self._resize_handle = None
         self._before = None
         self._press_pos = QPointF(widget.geometry["x"], widget.geometry["y"])
         self._press_size = self.rect().size()
@@ -172,6 +173,13 @@ class DesignerItem(QGraphicsRectItem):
         margin = self.HANDLE / 2 + self.SELECTION_PEN
         return super().boundingRect().adjusted(-margin, -margin, margin, margin)
 
+    # Which edges each handle drags, in _handles() order: (horizontal,
+    # vertical) with -1 the left/top edge, +1 the right/bottom edge, 0 none.
+    HANDLE_EDGES = ((-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1))
+    HANDLE_CURSORS = (Qt.SizeFDiagCursor, Qt.SizeVerCursor, Qt.SizeBDiagCursor,
+                      Qt.SizeHorCursor, Qt.SizeHorCursor,
+                      Qt.SizeBDiagCursor, Qt.SizeVerCursor, Qt.SizeFDiagCursor)
+
     def _handles(self):
         r, h = self.rect(), self.HANDLE
         return [QRectF(x - h / 2, y - h / 2, h, h) for x, y in (
@@ -179,8 +187,18 @@ class DesignerItem(QGraphicsRectItem):
             (r.left(), r.center().y()), (r.right(), r.center().y()),
             (r.left(), r.bottom()), (r.center().x(), r.bottom()), (r.right(), r.bottom()))]
 
+    def _handle_at(self, point):
+        """Index of the resize handle under ``point``, or None."""
+        if not self.isSelected():
+            return None
+        for index, handle in enumerate(self._handles()):
+            if handle.contains(point):
+                return index
+        return None
+
     def hoverMoveEvent(self, event):
-        self.setCursor(Qt.SizeFDiagCursor if self.isSelected() and self._handles()[-1].contains(event.pos()) else Qt.ArrowCursor)
+        handle = self._handle_at(event.pos())
+        self.setCursor(Qt.ArrowCursor if handle is None else self.HANDLE_CURSORS[handle])
         super().hoverMoveEvent(event)
 
     def contextMenuEvent(self, event):
@@ -211,7 +229,8 @@ class DesignerItem(QGraphicsRectItem):
         self._before = dict(self.widget_model.geometry)
         self._press_pos = self.pos()
         self._press_size = self.rect().size()
-        self._resizing = self.isSelected() and self._handles()[-1].contains(event.pos())
+        self._resize_handle = self._handle_at(event.pos())
+        self._resizing = self._resize_handle is not None
         if self._resizing:
             event.accept()
             return
@@ -219,15 +238,42 @@ class DesignerItem(QGraphicsRectItem):
 
     def mouseMoveEvent(self, event):
         if self._resizing:
-            point = event.pos()
-            step = self._designer_scene.grid_size if self._designer_scene.snap_enabled else 1
-            width = max(12, round(point.x() / step) * step)
-            height = max(12, round(point.y() / step) * step)
-            self.setRect(0, 0, width, height)
-            self.update()
+            self._drag_edges(event.pos())
             event.accept()
             return
         super().mouseMoveEvent(event)
+
+    def _drag_edges(self, point):
+        """Resize from whichever handle was grabbed. A left or top handle
+        moves that edge and keeps the opposite one in place, so the item's
+        position shifts with it; a widget laid out by a Row/Column/Grid
+        (``positioned``) has no position of its own and only grows."""
+        step = self._designer_scene.grid_size if self._designer_scene.snap_enabled else 1
+        horizontal, vertical = self.HANDLE_EDGES[self._resize_handle]
+        x, y = self._press_pos.x(), self._press_pos.y()
+        width, height = self._press_size.width(), self._press_size.height()
+        # The edge being dragged, in the parent's coordinates, snapped.
+        px = self.pos().x() + point.x()
+        py = self.pos().y() + point.y()
+        if horizontal > 0:
+            width = max(12, round(px / step) * step - x)
+        elif horizontal < 0:
+            left = min(round(px / step) * step, x + width - 12)
+            if self.positioned or self.widget_model.locked:
+                width = x + width - left
+            else:
+                width, x = x + width - left, left
+        if vertical > 0:
+            height = max(12, round(py / step) * step - y)
+        elif vertical < 0:
+            top = min(round(py / step) * step, y + height - 12)
+            if self.positioned or self.widget_model.locked:
+                height = y + height - top
+            else:
+                height, y = y + height - top, top
+        self.setPos(x, y)
+        self.setRect(0, 0, width, height)
+        self.update()
 
     def mouseReleaseEvent(self, event):
         resizing, self._resizing = self._resizing, False
