@@ -76,6 +76,17 @@ class DesignerItem(QGraphicsRectItem):
         # the generic box below is now only the fallback for a type without a
         # preview -- which is Image, and anything added to the registry before
         # a painter is written for it.
+        # The real thing first: the generated QML of this widget, rendered
+        # offscreen at the canvas zoom and cached. Containers stay with the
+        # painter (their children are canvas items of their own) and so does
+        # anything the renderer could not draw.
+        image = self._qml_image(painter)
+        if image is not None:
+            painter.save()
+            painter.drawImage(self.rect(), image)
+            painter.restore()
+            self._paint_chrome(painter, selected)
+            return
         preview = widget_previews.painter_for(self.widget_model.type)
         if preview is not None:
             painter.save()
@@ -133,6 +144,21 @@ class DesignerItem(QGraphicsRectItem):
                 painter.drawText(self.rect().adjusted(7, 5, -7, -5),
                                  Qt.AlignCenter | Qt.TextWordWrap, self.label_text())
         self._paint_chrome(painter, selected)
+
+    def _qml_image(self, painter):
+        """The cached QML render for this widget, or None."""
+        renderer = self._designer_scene.qml_previews
+        if renderer is None or self.definition.container or self.widget_model.type == "Image":
+            return None
+        rect = self.rect()
+        # Render at the zoom the canvas is showing so glyphs stay crisp.
+        zoom = max(0.25, min(4.0, painter.worldTransform().m11()))
+        zoom = round(zoom * 4) / 4
+        image = renderer.image_for(self.widget_model, rect.width(), rect.height(),
+                                   self._designer_scene.theme, zoom)
+        if image is None or image.isNull():
+            return None
+        return image
 
     def _paint_chrome(self, painter, selected):
         """Editing affordances drawn over the component, never by it.
@@ -338,6 +364,10 @@ class DesignerScene(QGraphicsScene):
         self._bezel_logo = bezel_logo()
         self.theme = "dark"
         self.project_dir = ""
+        # Real QML renders for the canvas (see qml_previews.py); the painters
+        # in widget_previews.py are the fallback while one is in flight or
+        # when the QML fails to render. None until a workspace installs it.
+        self.qml_previews = None
         # Strong references to every item on the canvas, by widget id.
         #
         # Qt owns an item once it is in the scene -- until anything asks a
