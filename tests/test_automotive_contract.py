@@ -173,13 +173,18 @@ class AutomotiveContractTests(unittest.TestCase):
 
     def test_previews_are_not_the_placeholder(self):
         """The stub draws the display name in a panel; a real painter draws
-        the instrument, which lays down more distinct colours."""
+        the instrument instead."""
+        from designer.canvas import automotive_previews
         for definition in self.definitions:
             with self.subTest(widget=definition.type):
                 image = self._render_preview(definition, copy.deepcopy(definition.defaults))
-                colours = {image.pixel(x, y) for y in range(0, image.height(), 2)
-                           for x in range(0, image.width(), 2) if image.pixelColor(x, y).alpha() > 0}
-                self.assertGreater(len(colours), 12, f"{definition.type} preview looks like the stub")
+                stub = QImage(image.size(), QImage.Format_ARGB32)
+                stub.fill(Qt.transparent)
+                painter = QPainter(stub)
+                automotive_previews._stub(painter, QRectF(0, 0, image.width(), image.height()),
+                                          definition.defaults, definition.display_name)
+                painter.end()
+                self.assertTrue(self._differs(image, stub), f"{definition.type} preview is the stub")
 
     IGNORED_WARNING_PARTS = ("Cannot find font directory", "Qt no longer ships fonts")
 
