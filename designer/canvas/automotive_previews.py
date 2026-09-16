@@ -51,10 +51,10 @@ def paint_cluster_gauge(painter, rect, props, ctx):
     cx = rect.center().x()
     cy = rect.center().y()
     start_angle = 90 + (360 - sweep) / 2  # degrees, canvas coords (CW from 3 o'clock)
-    arc_r = 0.42 * d
+    arc_r = 0.38 * d
     stroke_w = 0.05 * d
     tick_len = 0.035 * d
-    label_r = 0.52 * d
+    label_r = 0.47 * d
 
     painter.save()
     painter.setRenderHint(QPainter.Antialiasing)
@@ -130,11 +130,13 @@ def paint_cluster_gauge(painter, rect, props, ctx):
             2, Qt.SolidLine, Qt.FlatCap))
         painter.drawLine(QPointF(tx1, ty1), QPointF(tx2, ty2))
 
-        # Label at 0.52d from center
+        # Label at 0.52d from centre, in a box the glyphs actually fit.
         lx = cx + label_r * math.cos(angle_rad)
         ly = cy + label_r * math.sin(angle_rad)
-        _text(painter, QRectF(lx - 12, ly - 6, 24, 12),
-              str(int(mv)), size=0.075 * d,
+        label_size = max(7, int(0.068 * d))
+        box_w, box_h = label_size * 2.4, label_size * 1.4
+        _text(painter, QRectF(lx - box_w / 2, ly - box_h / 2, box_w, box_h),
+              str(int(mv)), size=label_size,
               color=auto("redline") if is_redline else auto("line"),
               weight=WEIGHT_MEDIUM, flags=Qt.AlignCenter, elide=False)
 
@@ -158,7 +160,7 @@ def paint_cluster_gauge(painter, rect, props, ctx):
 
     # 6. Inner dial
     if show_inner:
-        inner_r = 0.3 * d
+        inner_r = 0.28 * d
         # Fill circle
         painter.setBrush(QBrush(auto("panel")))
         painter.setPen(Qt.NoPen)
@@ -203,12 +205,12 @@ def paint_cluster_gauge(painter, rect, props, ctx):
         _text(painter, cap_rect, caption, size=0.07 * d,
               color=auto("amber"), weight=WEIGHT_MEDIUM, flags=Qt.AlignCenter, elide=False)
 
-    # 9. Label (bottom-right)
+    # 9. Label at the foot of the arc's opening, as the QML places it.
     if label:
-        lbl_rect = QRectF(rect.right() - 0.5 * d, rect.bottom() - 0.06 * d,
-                          0.5 * d, 0.06 * d)
-        _text(painter, lbl_rect, label, size=0.06 * d,
-              color=auto("muted"), weight=WEIGHT_MEDIUM, flags=Qt.AlignRight | Qt.AlignBottom, elide=False)
+        label_size = max(7, int(0.045 * d))
+        lbl_rect = QRectF(cx + 0.2 * d, cy + 0.33 * d - label_size * 0.7, 0.4 * d, label_size * 1.4)
+        _text(painter, lbl_rect, label, size=label_size,
+              color=auto("muted"), weight=WEIGHT_MEDIUM, flags=Qt.AlignLeft | Qt.AlignVCenter, elide=False)
 
     painter.restore()
 

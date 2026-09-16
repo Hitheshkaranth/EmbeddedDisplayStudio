@@ -19,7 +19,14 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 
 from tagengine import TagEngine, expose_to_qml
-from schema.manifest import validate_bundle, alarm_tags as _alarm_tags
+try:
+    # Repository layout: schema/ is a package at the checkout root.
+    from schema.manifest import validate_bundle, alarm_tags as _alarm_tags
+except ImportError:
+    # Panel layout (CONTRACT 3): this file is /usr/lib/hmi/gui/main.py and
+    # the one shared validator is /usr/lib/hmi/manifest.py, beside gui/.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from manifest import validate_bundle, alarm_tags as _alarm_tags
 
 # Structured logging for journald (CONTRACT 7)
 logging.basicConfig(

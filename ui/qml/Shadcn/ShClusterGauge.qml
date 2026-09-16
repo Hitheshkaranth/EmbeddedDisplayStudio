@@ -5,7 +5,7 @@
  * caption and an optional inner dial ring.
  *
  * Drawing (from outside in, all dimensions relative to d = Math.min(width, height)):
- * 1. Scale track   – arc of `sweep` degrees, radius 0.42d, stroke 0.05d
+ * 1. Scale track   – arc of `sweep` degrees, radius 0.38d, stroke 0.05d
  * 2. Redline band  – same arc from redlineFrom..maximumValue
  * 3. Value arc     – gradient from accentDeep to accent, redline portion red
  * 4. Major ticks+labels  – every majorStep
@@ -63,7 +63,7 @@ Item {
 
             // -- 1. Scale track --
             var startAngle = 90 + (360 - root.sweep) / 2;
-            var arcR = 0.42 * d;
+            var arcR = 0.38 * d;
             var strokeW = 0.05 * d;
 
             // Track (unfilled scale)
@@ -131,7 +131,7 @@ Item {
 
             // -- 4. Major ticks and labels --
             var tickLen = 0.035 * d;
-            var labelR = 0.52 * d;
+            var labelR = 0.47 * d;
             for (var mv = root.minimumValue; mv <= root.maximumValue + 0.0001; mv += root.majorStep) {
                 var mvFrac = (mv - root.minimumValue) / root._span;
                 var a = (startAngle + root.sweep * mvFrac) * Math.PI / 180;
@@ -174,7 +174,7 @@ Item {
 
             // -- 6. Inner dial --
             if (root.showInnerDial) {
-                var innerR = 0.3 * d;
+                var innerR = 0.28 * d;
                 ctx.beginPath();
                 ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
                 ctx.fillStyle = Theme.autoPanel;
@@ -220,12 +220,12 @@ Item {
         model: root._majors
         delegate: Text {
             readonly property real angle: (root._startAngle + root.sweep * ((modelData - root.minimumValue) / root._span)) * Math.PI / 180
-            x: width / 2 + root.width / 2 + 0.52 * root._d * Math.cos(angle) - width
-            y: root.height / 2 + 0.52 * root._d * Math.sin(angle) - height / 2
+            x: width / 2 + root.width / 2 + 0.47 * root._d * Math.cos(angle) - width
+            y: root.height / 2 + 0.47 * root._d * Math.sin(angle) - height / 2
             text: Number(modelData).toFixed(0)
             color: modelData >= root.redlineFrom ? Theme.autoRedline : Theme.autoLine
             font.family: Theme.fontFamily
-            font.pixelSize: Math.max(7, Math.round(0.075 * root._d))
+            font.pixelSize: Math.max(7, Math.round(0.068 * root._d))
             font.weight: Theme.fontMedium
         }
     }
@@ -270,8 +270,8 @@ Item {
     // -- 9. Label (bottom-right) --
     Text {
         // At the foot of the arc's opening, beside the last scale label.
-        x: root.width / 2 + 0.22 * root._d
-        y: root.height / 2 + 0.36 * root._d - height / 2
+        x: root.width / 2 + 0.2 * root._d
+        y: root.height / 2 + 0.33 * root._d - height / 2
         text: root.label
         color: Theme.autoMuted
         font.family: Theme.fontFamily
