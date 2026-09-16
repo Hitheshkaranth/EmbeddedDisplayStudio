@@ -15,8 +15,14 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
+# The offscreen platform ships no fonts; without real glyphs a "4" and a "7"
+# render as the same box and text-only changes are invisible to the tests.
+for _font_dir in ("C:/Windows/Fonts", "/usr/share/fonts"):
+    if os.path.isdir(_font_dir):
+        os.environ.setdefault("QT_QPA_FONTDIR", _font_dir)
+        break
 
-from PySide6.QtCore import QRectF, QUrl, Qt
+from PySide6.QtCore import QRectF, QUrl, Qt, qInstallMessageHandler
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtQml import QQmlComponent
 from PySide6.QtQuick import QQuickView
@@ -76,7 +82,17 @@ class AutomotiveContractTests(unittest.TestCase):
 
     # -- rendering helpers ---------------------------------------------------
 
-    def _render_qml(self, definition, props):
+    def _render_qml(self, definition, props, warnings=None):
+        """Render one widget; QML warnings (a TypeError inside onPaint, an
+        undefined id) land in ``warnings`` when a list is given."""
+        sink = warnings if warnings is not None else []
+        handler = qInstallMessageHandler(lambda _t, _c, msg: sink.append(msg))
+        try:
+            return self._render_qml_unguarded(definition, props)
+        finally:
+            qInstallMessageHandler(handler)
+
+    def _render_qml_unguarded(self, definition, props):
         view = QQuickView()
         view.engine().addImportPath(str(ROOT / "ui" / "qml"))
         widget = DesignerWidget(definition.type, "sample",
@@ -163,19 +179,32 @@ class AutomotiveContractTests(unittest.TestCase):
 
     def test_previews_are_not_the_placeholder(self):
         """The stub draws the display name in a panel; a real painter draws
-        the instrument, which lays down more distinct colours."""
+        the instrument instead."""
+        from designer.canvas import automotive_previews
         for definition in self.definitions:
             with self.subTest(widget=definition.type):
                 image = self._render_preview(definition, copy.deepcopy(definition.defaults))
-                colours = {image.pixel(x, y) for y in range(0, image.height(), 2)
-                           for x in range(0, image.width(), 2) if image.pixelColor(x, y).alpha() > 0}
-                self.assertGreater(len(colours), 12, f"{definition.type} preview looks like the stub")
+                stub = QImage(image.size(), QImage.Format_ARGB32)
+                stub.fill(Qt.transparent)
+                painter = QPainter(stub)
+                automotive_previews._stub(painter, QRectF(0, 0, image.width(), image.height()),
+                                          definition.defaults, definition.display_name)
+                painter.end()
+                self.assertTrue(self._differs(image, stub), f"{definition.type} preview is the stub")
+
+    IGNORED_WARNING_PARTS = ("Cannot find font directory", "Qt no longer ships fonts")
 
     def test_widgets_render_at_the_registered_size_without_warnings(self):
+        """A Canvas whose onPaint throws paints nothing and says so only on
+        the console; an undefined id likewise. Neither may ship."""
         for definition in self.definitions:
             with self.subTest(widget=definition.type):
-                image = self._render_qml(definition, copy.deepcopy(definition.defaults))
+                warnings = []
+                image = self._render_qml(definition, copy.deepcopy(definition.defaults), warnings)
                 self.assertGreater(self._ink_count(image), 40)
+                relevant = [w for w in warnings
+                            if not any(part in w for part in self.IGNORED_WARNING_PARTS)]
+                self.assertEqual(relevant, [], f"{definition.type} logged QML warnings")
 
     def test_generated_qml_binds_and_acts(self):
         """A bound value reaches Bus.value(); an action signal reaches Bus.write()."""
