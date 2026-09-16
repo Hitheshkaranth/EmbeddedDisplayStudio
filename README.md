@@ -259,8 +259,8 @@ python main.py                             # from the repository root
 ```
 
 `--bundle <dir>` opens an application on start; with no argument the last one
-is restored. The window is one header — target address, port, **Connect**,
-**Open Bundle…**, **New App…**, theme — over six workspaces:
+is restored. The window is one header — target address, port, **Connect** /
+**Disconnect**, **Open Bundle…**, **New App…**, theme — over six workspaces:
 
 | Tab | What it is for |
 |---|---|
@@ -270,6 +270,21 @@ is restored. The window is one header — target address, port, **Connect**,
 | **Tag Lab** | Inject signals into any tag the app declares — sine, square, ramp, noise, constant — before the I/O exists |
 | **Panel Logs** | Follow the journal from `hmi-gui` and `hmi-hwd` live, which is where a fault an hour after a good deploy shows up |
 | **System Profile** | What the live release costs the board: package, footprint, filesystem split, free RAM |
+
+**Sharing the deploy key.** A panel trusts one SSH key. In *Display
+Console → Target Details*, **Export key…** packs that key and the panel's
+address into a `.hmikey` file; a colleague presses **Import key…**, the key
+is installed under `~/.ssh/hmi-deploy/` with owner-only permissions, the
+connection fields fill in, and they can Connect and Deploy at once. The same
+from a terminal:
+
+```bash
+python -m tools.hmi_deployer.deploy_key export --host 172.16.20.70 --out line3.hmikey
+python -m tools.hmi_deployer.deploy_key import line3.hmikey
+```
+
+The file contains a private key: hand it over directly. A passphrase-protected
+key is refused (the Studio deploys non-interactively).
 
 Then, for an application you already have:
 

@@ -393,6 +393,67 @@ class MainWindow(QMainWindow):
             self.btn_disconnect.setText("Cancel" if state == "connecting" else "Disconnect")
         self._refresh_readiness()
 
+    # ------------------------------------------------------------------
+    # Deploy key bundles
+    # ------------------------------------------------------------------
+
+    def on_export_key(self) -> None:
+        """Write a .hmikey for the key in the Key field (or the ~/.ssh default)."""
+        from .deploy_key import DeployKeyError, default_private_key, export_bundle
+        key = self.inp_key.text().strip() or default_private_key()
+        host = self.inp_host.text().strip()
+        if not key:
+            QMessageBox.warning(self, "No key to export",
+                                "The Key field is empty and there is no id_ed25519 / id_ecdsa / "
+                                "id_rsa in your ~/.ssh. Point the Key field at the private key the "
+                                "panel trusts.")
+            return
+        if not host:
+            QMessageBox.warning(self, "No panel", "Fill in the Target IP first; the bundle carries it.")
+            return
+        suggested = os.path.join(os.path.expanduser("~"), f"{host.replace('.', '-')}-deploy.hmikey")
+        path, _ = QFileDialog.getSaveFileName(self, "Export deploy key", suggested,
+                                              "HMI deploy key (*.hmikey)")
+        if not path:
+            return
+        try:
+            written = export_bundle(key, path, host, self.inp_user.text().strip() or "root",
+                                    self.ssh_port(), label=host)
+        except DeployKeyError as exc:
+            QMessageBox.critical(self, "Export failed", str(exc))
+            return
+        self.log(f"Deploy key exported to {written}")
+        QMessageBox.information(
+            self, "Deploy key exported",
+            f"Written:\n{written}\n\nIt contains the private key that opens {host}. Hand it to the "
+            "other user directly; they import it with the Import key button and can deploy at once.")
+
+    def on_import_key(self) -> None:
+        """Install a .hmikey and point the connection fields at its panel."""
+        from .deploy_key import DeployKeyError, import_bundle
+        path, _ = QFileDialog.getOpenFileName(self, "Import deploy key", os.path.expanduser("~"),
+                                              "HMI deploy key (*.hmikey)")
+        if not path:
+            return
+        try:
+            info = import_bundle(path)
+        except DeployKeyError as exc:
+            QMessageBox.critical(self, "Import failed", str(exc))
+            return
+        self.apply_deploy_key(info)
+        self.log(f"Deploy key installed at {info['key']} for {info['user']}@{info['host']}:{info['port']}"
+                 f" (exported by {info['exported_by']} {info['exported_at']})")
+
+    def apply_deploy_key(self, info: dict) -> None:
+        """Fill Key / host / user / port from an imported bundle and save them."""
+        if self._link_state in ("connecting", "connected"):
+            self.disconnect_panel()
+        self.inp_key.setText(info["key"])
+        self.inp_host.setText(info["host"])
+        self.inp_user.setText(info.get("user", "root"))
+        self.inp_port.setText(str(info.get("port", 22)))
+        self.save_settings()
+
     def disconnect_panel(self) -> None:
         """Drop the link to the panel: stop the relay and the command loop,
         cancel a connect still in flight, and say so on every indicator that
@@ -863,6 +924,24 @@ class MainWindow(QMainWindow):
 
         conn_form.addRow("User:", self.inp_user)
         conn_form.addRow("Key:", self.inp_key)
+        # The key the panel trusts lives in one person's ~/.ssh. A deploy key
+        # bundle (.hmikey) carries it, with the panel's address, to the next
+        # person who has to deploy -- see deploy_key.py.
+        key_row = QHBoxLayout()
+        key_row.setSpacing(6)
+        self.btn_export_key = QPushButton("Export key…")
+        self.btn_export_key.setProperty("variant", "outline")
+        self.btn_export_key.setToolTip("Pack the deploy key and this panel's address into a .hmikey "
+                                       "file for another user")
+        self.btn_export_key.clicked.connect(self.on_export_key)
+        self.btn_import_key = QPushButton("Import key…")
+        self.btn_import_key.setProperty("variant", "outline")
+        self.btn_import_key.setToolTip("Install a .hmikey file and connect to the panel it names")
+        self.btn_import_key.clicked.connect(self.on_import_key)
+        key_row.addWidget(self.btn_export_key)
+        key_row.addWidget(self.btn_import_key)
+        key_row.addStretch(1)
+        conn_form.addRow("", key_row)
 
         self.lbl_target_resolution = QLabel("Not detected")
         self.lbl_target_resolution.setObjectName("targetResolution")
