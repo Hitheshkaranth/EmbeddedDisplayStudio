@@ -220,10 +220,10 @@
           "type": "ShTripInfo",
           "id": "distance",
           "geometry": {
-            "x": 120,
-            "y": 540,
-            "width": 280,
-            "height": 130
+            "x": 96,
+            "y": 580,
+            "width": 260,
+            "height": 120
           },
           "properties": {
             "title": "Distance",

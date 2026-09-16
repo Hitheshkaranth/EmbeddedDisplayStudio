@@ -66,7 +66,10 @@ Item {
             Text {
                 id: number
                 anchors.left: parent.left
-                width: Math.max(10, parent.width - unitText.width - 3)
+                // Left-aligned (icon on the left) the number hugs its unit;
+                // right-aligned it fills the block so the unit ends flush.
+                width: root._iconLeft ? Math.min(implicitWidth, Math.max(10, parent.width - unitText.width - 3))
+                                      : Math.max(10, parent.width - unitText.width - 3)
                 text: root.value.toFixed(root.decimals)
                 color: root._warns ? Theme.autoRed : Theme.autoText
                 font.family: Theme.fontFamily

@@ -38,6 +38,15 @@ Item {
 
     readonly property real _span: Math.max(0.0001, root.maximumValue - root.minimumValue)
     readonly property real _d: Math.max(1, Math.min(width, height))
+    readonly property real _startAngle: 90 + (360 - root.sweep) / 2
+    /** The major scale values, min..max every majorStep (at most 60). */
+    readonly property var _majors: {
+        var out = [];
+        var step = Math.max(0.0001, root.majorStep);
+        for (var v = root.minimumValue, i = 0; v <= root.maximumValue + 0.0001 && i < 60; v += step, ++i)
+            out.push(v);
+        return out;
+    }
     readonly property real _clamped:
         Math.max(root.minimumValue, Math.min(root.maximumValue, root.value))
 
@@ -138,16 +147,6 @@ Item {
                 ctx.strokeStyle = isRedline ? Theme.autoRedline : Theme.autoLine;
                 ctx.stroke();
 
-                // Label
-                var lx = cx + labelR * Math.cos(a);
-                var ly = cy + labelR * Math.sin(a);
-                var txt = mv.toFixed(0);
-                // The CSS font shorthand drops spaces from an unquoted family.
-                ctx.font = Math.round(0.075 * d) + "px \"" + Theme.fontFamily + "\"";
-                ctx.fillStyle = isRedline ? Theme.autoRedline : Theme.autoLine;
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.fillText(txt, lx, ly);
             }
 
             // -- 5. Minor ticks --
@@ -216,6 +215,21 @@ Item {
         onHeightChanged: requestPaint()
     }
 
+    // -- 4b. Scale labels, as Text so they stay crisp at any size --
+    Repeater {
+        model: root._majors
+        delegate: Text {
+            readonly property real angle: (root._startAngle + root.sweep * ((modelData - root.minimumValue) / root._span)) * Math.PI / 180
+            x: width / 2 + root.width / 2 + 0.52 * root._d * Math.cos(angle) - width
+            y: root.height / 2 + 0.52 * root._d * Math.sin(angle) - height / 2
+            text: Number(modelData).toFixed(0)
+            color: modelData >= root.redlineFrom ? Theme.autoRedline : Theme.autoLine
+            font.family: Theme.fontFamily
+            font.pixelSize: Math.max(7, Math.round(0.075 * root._d))
+            font.weight: Theme.fontMedium
+        }
+    }
+
     // -- 7 & 8. Readout + caption (crisp Text elements) --
 
     Text {
@@ -255,14 +269,13 @@ Item {
 
     // -- 9. Label (bottom-right) --
     Text {
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 8
-        anchors.right: parent.right
-        anchors.rightMargin: 8
+        // At the foot of the arc's opening, beside the last scale label.
+        x: root.width / 2 + 0.22 * root._d
+        y: root.height / 2 + 0.36 * root._d - height / 2
         text: root.label
         color: Theme.autoMuted
         font.family: Theme.fontFamily
-        font.pixelSize: Math.round(0.06 * root._d)
+        font.pixelSize: Math.max(7, Math.round(0.045 * root._d))
         visible: root.label !== ""
     }
 }
