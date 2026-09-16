@@ -155,3 +155,47 @@ class UnknownPropertyTests(unittest.TestCase):
             {"text": "x", "horizontalAlignment": "TextRight"}))
         qml = QmlGenerator(default_registry()).generate(project)["Main.qml"]
         self.assertNotIn("TextRight", qml)
+
+
+class PropertyFloorTests(unittest.TestCase):
+    """A size below its floor never reaches the QML or the model.
+
+    A cleared spin box sends its minimum, which used to be -100000; a 0 px
+    font is invisible and Qt warns on every repaint.
+    """
+
+    def test_generator_raises_a_font_size_to_its_floor(self):
+        from designer.model import DesignerProject, DesignerWidget
+        from designer.palette import default_registry
+        project = DesignerProject()
+        project.pages[0].widgets.append(DesignerWidget(
+            "Text", "t", {"x": 0, "y": 0, "width": 100, "height": 20}, {"text": "x", "fontSize": -100000}))
+        project.pages[0].widgets.append(DesignerWidget(
+            "ShStatDot", "d", {"x": 0, "y": 0, "width": 20, "height": 20}, {"state": "ok", "size": 0}))
+        qml = QmlGenerator(default_registry()).generate(project)["Main.qml"]
+        self.assertIn("font.pixelSize: 1", qml)
+        self.assertIn("size: 1", qml)
+        self.assertNotIn("-100000", qml)
+
+    def test_inspector_editors_stop_at_the_floor_and_the_command_clamps(self):
+        import os
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication, QFormLayout
+        app = QApplication.instance() or QApplication([])
+        from designer.ui import DesignerWorkspace
+        workspace = DesignerWorkspace()
+        self.addCleanup(workspace.close)
+        workspace.new_ui()
+        workspace.add_widget("Text")
+        model = workspace.current_page.widgets[0]
+        workspace.scene.item_for_id(model.id).setSelected(True)
+        app.processEvents()
+        form = workspace.properties.form
+        editor = next(form.itemAt(row, QFormLayout.FieldRole).widget() for row in range(form.rowCount())
+                      if form.itemAt(row, QFormLayout.LabelRole)
+                      and form.itemAt(row, QFormLayout.LabelRole).widget().text() == "fontSize")
+        self.assertEqual(editor.minimum(), 1)
+        workspace._property_command("fontSize", -7)
+        self.assertEqual(model.properties["fontSize"], 1)
+        workspace._property_command("fontSize", 0)
+        self.assertEqual(model.properties["fontSize"], 1)

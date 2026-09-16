@@ -88,8 +88,53 @@ def _openssh_key_is_encrypted(text: str) -> bool:
     return cipher != b"none"
 
 
+def scan_host_keys(host: str, port: int = 22, timeout_s: int = 8) -> list:
+    """The panel's SSH host keys as known_hosts lines, or [] when unreachable.
+
+    Carried in the bundle so the importing machine trusts the panel at
+    once. Without them, a known_hosts that already holds another board's
+    key for the same DHCP address fails with "Host key verification
+    failed" -- which is what "the key does not work" usually means.
+    """
+    try:
+        result = subprocess.run(["ssh-keyscan", "-p", str(port), "-T", str(timeout_s), host],
+                                capture_output=True, text=True, timeout=timeout_s + 5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [line.strip() for line in result.stdout.splitlines()
+            if line.strip() and not line.startswith("#")]
+
+
+def known_hosts_path() -> str:
+    return os.path.join(os.path.expanduser("~"), ".ssh", "known_hosts")
+
+
+def forget_host(host: str, port: int = 22) -> None:
+    """Drop every known_hosts entry for the panel's address (both spellings)."""
+    for name in {host, f"[{host}]:{port}"}:
+        subprocess.run(["ssh-keygen", "-R", name, "-f", known_hosts_path()],
+                       capture_output=True, check=False)
+
+
+def install_host_keys(host: str, port: int, lines: list) -> int:
+    """Replace the known_hosts entries for ``host`` with ``lines``.
+
+    Returns the number of lines written.
+    """
+    if not lines:
+        return 0
+    ssh_dir = os.path.dirname(known_hosts_path())
+    os.makedirs(ssh_dir, exist_ok=True)
+    forget_host(host, port)
+    with open(known_hosts_path(), "a", encoding="utf-8") as handle:
+        for line in lines:
+            handle.write(line.rstrip() + "\n")
+    return len(lines)
+
+
 def export_bundle(private_key: str, out_path: str, host: str, user: str = "root",
-                  port: int = 22, public_key: Optional[str] = None, label: str = "") -> str:
+                  port: int = 22, public_key: Optional[str] = None, label: str = "",
+                  host_keys: Optional[list] = None) -> str:
     """Write ``out_path`` (a .hmikey zip) from a private key and a target.
 
     Args:
@@ -99,6 +144,8 @@ def export_bundle(private_key: str, out_path: str, host: str, user: str = "root"
         public_key: path to the matching .pub; defaults to private_key + ".pub"
             and is optional -- the panel already holds the public half.
         label: a short name shown on import (defaults to the host).
+        host_keys: known_hosts lines for the panel; scanned from the panel
+            when None (and left out when it cannot be reached).
 
     Returns:
         The path written.
@@ -121,6 +168,7 @@ def export_bundle(private_key: str, out_path: str, host: str, user: str = "root"
         "label": label.strip() or host.strip(),
         "target": {"host": host.strip(), "user": user.strip() or "root", "port": int(port or 22)},
         "key_file": os.path.basename(private_key),
+        "host_keys": scan_host_keys(host.strip(), int(port or 22)) if host_keys is None else list(host_keys),
         "exported_by": f"{getpass.getuser()}@{socket.gethostname()}",
         "exported_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
     }
@@ -181,8 +229,10 @@ def import_bundle(bundle_path: str, install_dir: str = INSTALL_DIR) -> dict:
                 handle.write(archive.read(pub_name))
     _restrict_to_owner(key_path)
     target = manifest["target"]
+    port = int(target.get("port", 22))
+    trusted = install_host_keys(target["host"], port, manifest.get("host_keys") or [])
     return {"key": key_path, "host": target["host"], "user": target.get("user", "root"),
-            "port": int(target.get("port", 22)), "label": manifest.get("label", ""),
+            "port": port, "label": manifest.get("label", ""), "host_keys_installed": trusted,
             "exported_by": manifest.get("exported_by", ""), "exported_at": manifest.get("exported_at", "")}
 
 
@@ -207,6 +257,10 @@ def main(argv=None) -> int:
         else:
             info = import_bundle(args.bundle)
             print(f"installed {info['key']}")
+            if info["host_keys_installed"]:
+                print(f"trusted the panel's host key(s) in {known_hosts_path()}")
+            else:
+                print("bundle carried no host key; the first connect accepts the panel's")
             print(f"target {info['user']}@{info['host']}:{info['port']}  ({info['label']}, "
                   f"exported by {info['exported_by']} {info['exported_at']})")
     except DeployKeyError as exc:

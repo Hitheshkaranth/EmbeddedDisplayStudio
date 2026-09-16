@@ -119,6 +119,52 @@ class StudioAppliesTheKeyTests(unittest.TestCase):
         self.assertEqual(window.inp_port.text(), "2200")
         self.assertTrue(window.btn_export_key.isEnabled())
 
+    def test_the_studio_recognises_a_host_key_mismatch(self):
+        from tools.hmi_deployer.mainwindow import MainWindow
+        window = MainWindow()
+        self.addCleanup(lambda: (window.close(), window.deleteLater(), self.app.processEvents()))
+        window._host_key_mismatch = False
+        window._record_transport_line("Host key verification failed.")
+        self.assertTrue(window._host_key_mismatch)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HostKeyTests(unittest.TestCase):
+    """The bundle carries the panel's host key and import trusts it.
+
+    Another user's known_hosts often already holds a key for the panel's
+    DHCP address from a board that had it before; without this the link is
+    refused with "Host key verification failed".
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.known = os.path.join(self.tmp, "known_hosts")
+        self._original = deploy_key.known_hosts_path
+        deploy_key.known_hosts_path = lambda: self.known
+        self.addCleanup(lambda: setattr(deploy_key, "known_hosts_path", self._original))
+
+    def test_import_replaces_a_stale_entry_with_the_bundled_key(self):
+        key = _keypair(self.tmp)
+        with open(self.known, "w", encoding="utf-8") as handle:
+            handle.write("10.9.9.9 ssh-ed25519 AAAAstale\n10.9.9.8 ssh-ed25519 AAAAother\n")
+        bundle = deploy_key.export_bundle(key, os.path.join(self.tmp, "b"), "10.9.9.9", port=22,
+                                          host_keys=["10.9.9.9 ssh-ed25519 AAAAfresh"])
+        info = deploy_key.import_bundle(bundle, install_dir=os.path.join(self.tmp, "i"))
+        self.assertEqual(info["host_keys_installed"], 1)
+        with open(self.known, encoding="utf-8") as handle:
+            lines = [line.strip() for line in handle if line.strip()]
+        self.assertIn("10.9.9.9 ssh-ed25519 AAAAfresh", lines)
+        self.assertNotIn("10.9.9.9 ssh-ed25519 AAAAstale", lines)
+        self.assertIn("10.9.9.8 ssh-ed25519 AAAAother", lines)   # other hosts untouched
+
+    def test_a_bundle_without_host_keys_leaves_known_hosts_alone(self):
+        key = _keypair(self.tmp)
+        bundle = deploy_key.export_bundle(key, os.path.join(self.tmp, "b"), "10.9.9.9", host_keys=[])
+        info = deploy_key.import_bundle(bundle, install_dir=os.path.join(self.tmp, "i"))
+        self.assertEqual(info["host_keys_installed"], 0)
+        self.assertFalse(os.path.exists(self.known))
+

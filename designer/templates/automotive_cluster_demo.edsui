@@ -1,0 +1,362 @@
+{
+  "version": 1,
+  "name": "automotive-cluster-demo",
+  "screen": {
+    "width": 1280,
+    "height": 800,
+    "background": "#0b0f16",
+    "theme": "dark"
+  },
+  "pages": [
+    {
+      "id": "main",
+      "name": "Main",
+      "widgets": [
+        {
+          "type": "Text",
+          "id": "clock",
+          "geometry": {
+            "x": 40,
+            "y": 22,
+            "width": 260,
+            "height": 30
+          },
+          "properties": {
+            "text": "19 feb 2021 20:37",
+            "fontSize": 16,
+            "color": "#8a97a8"
+          },
+          "bindings": {},
+          "actions": {}
+        },
+        {
+          "type": "ShAutoReadout",
+          "id": "ambient",
+          "geometry": {
+            "x": 1060,
+            "y": 16,
+            "width": 180,
+            "height": 44
+          },
+          "properties": {
+            "unit": "°C",
+            "icon": "snowflake",
+            "label": "",
+            "iconSide": "right",
+            "decimals": 0,
+            "value": "sim.car.ambient_c"
+          },
+          "bindings": {},
+          "actions": {}
+        },
+        {
+          "type": "ShClusterGauge",
+          "id": "tacho",
+          "geometry": {
+            "x": 360,
+            "y": 120,
+            "width": 560,
+            "height": 560
+          },
+          "properties": {
+            "label": "x1000 RPM",
+            "readout": "sim.car.speed",
+            "readoutUnit": "km/h",
+            "caption": "",
+            "value": "sim.car.rpm_k",
+            "minimumValue": 0.0,
+            "maximumValue": 8.0,
+            "redlineFrom": 7.0,
+            "sweep": 240.0,
+            "decimals": 0,
+            "showInnerDial": true
+          },
+          "bindings": {},
+          "actions": {}
+        },
+        {
+          "type": "ShDriveMode",
+          "id": "driveMode",
+          "geometry": {
+            "x": 540,
+            "y": 236,
+            "width": 200,
+            "height": 56
+          },
+          "properties": {
+            "label": "Drive mode",
+            "modes": "ECO,COMFORT,SPORT",
+            "currentIndex": "sim.car.drive_mode",
+            "enabled": true
+          },
+          "bindings": {},
+          "actions": {
+            "activated": {
+              "kind": "write",
+              "tag": "mb.drive_mode"
+            }
+          }
+        },
+        {
+          "type": "ShGearIndicator",
+          "id": "gear",
+          "geometry": {
+            "x": 540,
+            "y": 512,
+            "width": 200,
+            "height": 64
+          },
+          "properties": {
+            "gears": "P,R,N,D",
+            "gear": "sim.car.gear",
+            "modeNumber": "sim.car.gear_step",
+            "showAll": true
+          },
+          "bindings": {},
+          "actions": {}
+        },
+        {
+          "type": "ShAutoLevel",
+          "id": "fuel",
+          "geometry": {
+            "x": 150,
+            "y": 140,
+            "width": 100,
+            "height": 300
+          },
+          "properties": {
+            "value": "sim.car.fuel_pct",
+            "minimumValue": 0.0,
+            "maximumValue": 100.0,
+            "topLabel": "F",
+            "midLabel": "1/2",
+            "bottomLabel": "E",
+            "redZone": "low",
+            "redZoneSpan": 12.0,
+            "icon": "gas-station",
+            "curved": true,
+            "showTicks": true
+          },
+          "bindings": {},
+          "actions": {}
+        },
+        {
+          "type": "ShAutoReadout",
+          "id": "fuelLitres",
+          "geometry": {
+            "x": 262,
+            "y": 240,
+            "width": 170,
+            "height": 60
+          },
+          "properties": {
+            "value": "sim.car.fuel_l",
+            "unit": "l",
+            "icon": "gas-station",
+            "iconSide": "left",
+            "decimals": 0,
+            "label": ""
+          },
+          "bindings": {},
+          "actions": {}
+        },
+        {
+          "type": "Text",
+          "id": "fuelConsumption",
+          "geometry": {
+            "x": 262,
+            "y": 312,
+            "width": 170,
+            "height": 24
+          },
+          "properties": {
+            "text": "12 l / 100 km",
+            "fontSize": 14,
+            "color": "#8a97a8"
+          },
+          "bindings": {},
+          "actions": {}
+        },
+        {
+          "type": "Text",
+          "id": "fuelRange",
+          "geometry": {
+            "x": 262,
+            "y": 338,
+            "width": 170,
+            "height": 24
+          },
+          "properties": {
+            "text": "→ 416 km",
+            "fontSize": 14,
+            "color": "#8a97a8"
+          },
+          "bindings": {},
+          "actions": {}
+        },
+        {
+          "type": "ShTripInfo",
+          "id": "distance",
+          "geometry": {
+            "x": 96,
+            "y": 580,
+            "width": 260,
+            "height": 120
+          },
+          "properties": {
+            "title": "Distance",
+            "row1Label": "Day",
+            "row1Value": "sim.car.trip_km",
+            "row1Unit": "km",
+            "row2Label": "Total",
+            "row2Value": "110 593",
+            "row2Unit": "km"
+          },
+          "bindings": {},
+          "actions": {}
+        },
+        {
+          "type": "ShAutoLevel",
+          "id": "coolant",
+          "geometry": {
+            "x": 1030,
+            "y": 140,
+            "width": 100,
+            "height": 300
+          },
+          "properties": {
+            "value": "sim.car.coolant_c",
+            "minimumValue": 50.0,
+            "maximumValue": 130.0,
+            "topLabel": "130",
+            "midLabel": "90",
+            "bottomLabel": "50",
+            "redZone": "high",
+            "redZoneSpan": 15.0,
+            "icon": "temperature",
+            "curved": true,
+            "showTicks": true
+          },
+          "bindings": {},
+          "actions": {}
+        },
+        {
+          "type": "ShAutoReadout",
+          "id": "coolantC",
+          "geometry": {
+            "x": 848,
+            "y": 240,
+            "width": 170,
+            "height": 60
+          },
+          "properties": {
+            "value": "sim.car.coolant_c",
+            "unit": "°C",
+            "icon": "temperature",
+            "iconSide": "right",
+            "decimals": 0,
+            "label": "",
+            "warnAbove": 110.0,
+            "warnBelow": 0.0
+          },
+          "bindings": {},
+          "actions": {}
+        },
+        {
+          "type": "ShAutoReadout",
+          "id": "battery",
+          "geometry": {
+            "x": 848,
+            "y": 450,
+            "width": 170,
+            "height": 60
+          },
+          "properties": {
+            "value": "sim.car.batt_v",
+            "unit": "v",
+            "icon": "battery",
+            "iconSide": "right",
+            "decimals": 1,
+            "label": "",
+            "warnBelow": 11.8,
+            "warnAbove": 0.0
+          },
+          "bindings": {},
+          "actions": {}
+        },
+        {
+          "type": "ShTelltale",
+          "id": "lowBeam",
+          "geometry": {
+            "x": 464,
+            "y": 716,
+            "width": 56,
+            "height": 56
+          },
+          "properties": {
+            "icon": "bulb",
+            "color": "amber",
+            "lit": "sim.car.low_beam",
+            "blink": false
+          },
+          "bindings": {},
+          "actions": {}
+        },
+        {
+          "type": "ShTelltale",
+          "id": "oil",
+          "geometry": {
+            "x": 568,
+            "y": 716,
+            "width": 56,
+            "height": 56
+          },
+          "properties": {
+            "icon": "droplet",
+            "color": "red",
+            "lit": "sim.car.oil_warn",
+            "blink": false
+          },
+          "bindings": {},
+          "actions": {}
+        },
+        {
+          "type": "ShTelltale",
+          "id": "turn",
+          "geometry": {
+            "x": 672,
+            "y": 716,
+            "width": 56,
+            "height": 56
+          },
+          "properties": {
+            "icon": "arrow-big-left",
+            "color": "green",
+            "lit": "sim.car.turn_left",
+            "blink": true
+          },
+          "bindings": {},
+          "actions": {}
+        },
+        {
+          "type": "ShTelltale",
+          "id": "engine",
+          "geometry": {
+            "x": 776,
+            "y": 716,
+            "width": 56,
+            "height": 56
+          },
+          "properties": {
+            "icon": "engine",
+            "color": "amber",
+            "lit": "sim.car.check_engine",
+            "blink": false
+          },
+          "bindings": {},
+          "actions": {}
+        }
+      ]
+    }
+  ]
+}

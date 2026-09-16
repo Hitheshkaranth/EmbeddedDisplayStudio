@@ -25,6 +25,7 @@ from designer.commands import CallbackCommand
 from designer.generators import QmlGenerationError, QmlGenerator
 from designer.model import DesignerAction, DesignerBinding, DesignerPage, DesignerProject, DesignerWidget
 from designer.palette.widget_palette import WidgetPalette
+from designer.palette.widget_registry import PROPERTY_MINIMUMS, clamp_property
 from designer.palette.widget_registry import default_registry
 from schema.manifest import NAME_RE, deployable_name, theme_of
 
@@ -298,11 +299,11 @@ class PropertyEditor(QWidget):
             editor.toggled.connect(lambda v: self.propertyEdited.emit(name, v))
         elif value_type is int:
             editor = SpinBox(); _mark(editor, "propField"); editor.setButtonSymbols(QSpinBox.NoButtons)
-            editor.setRange(-100000, 100000); editor.setValue(int(value or 0))
+            editor.setRange(int(PROPERTY_MINIMUMS.get(name, -100000)), 100000); editor.setValue(int(value or 0))
             editor.valueChanged.connect(lambda v: self.propertyEdited.emit(name, v))
         elif value_type is float:
             try:
-                editor = DoubleSpinBox(); editor.setRange(-1e9, 1e9); editor.setDecimals(4); editor.setValue(float(value or 0))
+                editor = DoubleSpinBox(); editor.setRange(float(PROPERTY_MINIMUMS.get(name, -1e9)), 1e9); editor.setDecimals(4); editor.setValue(float(value or 0))
             except (ValueError, TypeError):
                 editor = QLineEdit(str(value or ""))
                 editor.editingFinished.connect(lambda e=editor: self.propertyEdited.emit(name, e.text()))
@@ -1427,6 +1428,7 @@ class DesignerWorkspace(QWidget):
         selected = self.scene.selected_models()
         if not selected: return
         model = selected[0]
+        value = clamp_property(name, value)
         if name == "id":
             value = value.strip()
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value) or (self._find(value) and value != model.id):

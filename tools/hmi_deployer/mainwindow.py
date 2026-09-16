@@ -393,6 +393,26 @@ class MainWindow(QMainWindow):
             self.btn_disconnect.setText("Cancel" if state == "connecting" else "Disconnect")
         self._refresh_readiness()
 
+    def _offer_to_forget_host_key(self) -> None:
+        """A known_hosts entry from another board at this address blocks the
+        link with "Host key verification failed"; forgetting it lets the
+        next Connect accept the panel that is there now."""
+        from .deploy_key import forget_host
+        host = self.inp_host.text().strip()
+        self.log(f"Connect refused: ~/.ssh/known_hosts holds a different host key for {host} "
+                 "(a previous board at this address, or a stale entry).")
+        answer = QMessageBox.question(
+            self, "Host key mismatch",
+            f"Your known_hosts already holds a different SSH host key for {host}.\n\n"
+            "That is normal when a panel's DHCP address was used by another board "
+            "before. Forget the stored key and connect again?\n\n"
+            "Only do this for a panel you expect at this address.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if answer == QMessageBox.Yes:
+            forget_host(host, self.ssh_port())
+            self.log(f"Forgot the stored host key for {host}; connecting again.")
+            self.on_test_conn()
+
     # ------------------------------------------------------------------
     # Deploy key bundles
     # ------------------------------------------------------------------
@@ -443,6 +463,10 @@ class MainWindow(QMainWindow):
         self.apply_deploy_key(info)
         self.log(f"Deploy key installed at {info['key']} for {info['user']}@{info['host']}:{info['port']}"
                  f" (exported by {info['exported_by']} {info['exported_at']})")
+        if info.get("host_keys_installed"):
+            self.log(f"The panel's host key is now trusted in ~/.ssh/known_hosts ({info['host_keys_installed']} entries).")
+        else:
+            self.log("The bundle carried no host key; the first Connect accepts the panel's.")
 
     def apply_deploy_key(self, info: dict) -> None:
         """Fill Key / host / user / port from an imported bundle and save them."""
@@ -2258,11 +2282,15 @@ class MainWindow(QMainWindow):
         self.log(f"DEPLOY FAILED: {reason}")
         self.device_panel.set_led_state(3)
 
+    HOST_KEY_MISMATCH = ("Host key verification failed", "REMOTE HOST IDENTIFICATION HAS CHANGED")
+
     def _record_transport_line(self, line: str) -> None:
         """Remember the last thing an SSH/SCP step said, for failure messages."""
         text = line.strip()
         if text:
             self._last_transport_line = text
+            if any(marker in text for marker in self.HOST_KEY_MISMATCH):
+                self._host_key_mismatch = True
 
     def _transport_failure(self, what: str, code: int) -> str:
         """
@@ -2443,6 +2471,7 @@ class MainWindow(QMainWindow):
         worker = UploadWorker(cmd, local_path, timeout_s=timeout_s, parent=self)
         self._ssh_workers.append(worker)
         self._last_transport_line = ""
+        self._host_key_mismatch = False
         worker.outputLine.connect(self.log)
         worker.outputLine.connect(self._record_transport_line)
         worker.error.connect(self._record_transport_line)
@@ -2557,6 +2586,8 @@ class MainWindow(QMainWindow):
                 self.device_panel.set_led_state(3)  # Fault
                 if desc == "Test Connection":
                     self._set_link_state("fault")
+                    if getattr(self, "_host_key_mismatch", False):
+                        QTimer.singleShot(0, self._offer_to_forget_host_key)
                     # Nothing answered, so nothing reported a display. Leaving
                     # the previous panel's geometry up reads as a live value.
                     if self.detected_resolution is None:

@@ -27,6 +27,34 @@ class WidgetDefinition:
     state_property: str = ""
 
 
+# The floor for numeric properties that stop meaning anything below it. A
+# font of 0 px is invisible and Qt says so on every repaint; a negative one
+# (what a cleared spin box sends) takes the widget with it. The inspector
+# refuses to go lower, the generator clamps what a project file carries,
+# and an edit command is clamped before it lands in the model.
+PROPERTY_MINIMUMS = {
+    "fontSize": 1, "size": 1, "segments": 1, "maxPoints": 2, "maxVisible": 1,
+    "decimals": 0, "decimalPlaces": 0, "tickCount": 0, "borderWidth": 0,
+    "cornerRadius": 0, "radius": 0, "handleRadius": 1, "lineWidth": 0.5,
+    "rowHeight": 8, "pixelsPerDegree": 0.1, "spacing": 0, "columns": 0,
+    "rows": 0, "majorStep": 0.001, "sweep": 10, "redZoneSpan": 0, "step": 0,
+}
+
+
+def clamp_property(name, value):
+    """``value`` raised to the property's floor when it has one."""
+    floor = PROPERTY_MINIMUMS.get(name)
+    if floor is None or isinstance(value, bool):
+        return value
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return value
+    if number < floor:
+        return type(value)(floor) if isinstance(value, (int, float)) else floor
+    return value
+
+
 class WidgetRegistry:
     def __init__(self):
         self._definitions: dict[str, WidgetDefinition] = {}

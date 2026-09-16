@@ -1,3 +1,4 @@
-from .widget_registry import WidgetDefinition, WidgetRegistry, default_registry
+from .widget_registry import (PROPERTY_MINIMUMS, WidgetDefinition, WidgetRegistry, clamp_property,
+                              default_registry)
 
-__all__ = ["WidgetDefinition", "WidgetRegistry", "default_registry"]
+__all__ = ["PROPERTY_MINIMUMS", "WidgetDefinition", "WidgetRegistry", "clamp_property", "default_registry"]

@@ -304,6 +304,12 @@ python -m tools.hmi_deployer.deploy_key import line3.hmikey
 The file contains a private key: hand it over directly. A passphrase-protected
 key is refused, because the Studio deploys non-interactively (`BatchMode`).
 
+The bundle also carries the panel's SSH **host key** (read with `ssh-keyscan`
+at export). Import writes it into the other user's `known_hosts`, replacing
+any entry another board left behind at the same DHCP address — the usual
+cause of "Host key verification failed" on the first Connect. When a stale
+entry is hit anyway, Connect explains it and offers to forget the stored key.
+
 Then, for an application you already have:
 
 1. **Open Bundle…** — point it at the directory. The manifest is validated, or
@@ -1159,10 +1165,36 @@ itself) plus a short composition guide.  You can list them with the CLI:
 python -m tools.hmi_deployer.design_presets --list
 ```
 
+### A cluster that drives itself
+
+`sim.car.*` values are a drive cycle, not a sweep: sixty seconds that idle in
+P, pull away through the gears, cruise in fourth, kick down for a sprint to
+the redline, brake, cruise in ECO and stop — with rpm derived from speed and
+gear, the coolant warming to 90 °C, fuel and SOC creeping down, the trip
+counting and the indicators blinking. Put a value such as `sim.car.rpm_k`,
+`sim.car.speed` or `sim.car.gear` on any widget property and the page carries
+its own clock; no daemon, no Tag Lab, and it runs the same on the canvas, in
+the Live Preview window and on the panel.
+
+<div align="center">
+
+<img src="docs/assets/cluster-drive.gif" alt="The automotive cluster running its drive cycle: pull-away, cruise, sprint to the redline, braking and stop" width="720" />
+
+</div>
+
+`designer/templates/automotive_cluster_demo.edsui` is the cluster preset
+with every binding replaced by a `sim.car.*` value — open it, press Preview,
+or deploy it to a bench panel as a demonstrator. The full list of values is
+`CAR_TAGS` in `designer/generators/qml_generator.py`.
+
 ### What changed recently
 
 **0.0.8**
 
+* **A cluster that drives itself**: `sim.car.*` values run a 60 s drive cycle
+  on any page, and `automotive_cluster_demo.edsui` is the cluster preset
+  running on it. Deploy keys carry the panel's host key, so an imported key
+  connects at once instead of failing host-key verification.
 * **Automotive widget set**: `ShClusterGauge`, `ShGearIndicator`, `ShAutoLevel`,
   `ShAutoReadout`, `ShDriveMode`, `ShTelltale`, `ShIconTile`, `ShTripInfo`,
   `ShSegmentBar`, `ShVehicleStatus` — after a classic instrument cluster and an

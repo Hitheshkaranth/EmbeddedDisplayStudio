@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
+
+from designer.palette.widget_registry import clamp_property
 from typing import Any
 
 from designer.model.project import parse_threshold
@@ -129,6 +131,80 @@ _SIM_TAGS: dict[str, tuple] = {
     "sim.low_fuel":       (  0.0,     1.0,   2.50,  False, False),  # boolean flash
 }
 
+# A drive cycle rather than a sweep: sixty seconds that idle, pull away
+# through the gears, cruise, sprint to the redline, brake and stop, so a
+# cluster on the bench moves the way a car moves. Every value is a function
+# of the page clock; see _CAR_JS. The tag names are what a widget property
+# or binding carries ("sim.car.rpm").
+CAR_TAGS = ("speed", "rpm", "rpm_k", "gear", "gear_step", "fuel_pct", "fuel_l", "range_km",
+            "coolant_c", "batt_v", "ambient_c", "trip_km", "drive_mode", "turn_left",
+            "turn_right", "low_beam", "high_beam", "oil_warn", "check_engine", "soc_pct",
+            "batt_a", "trip_mi", "odo_mi", "tp_fl", "tp_fr", "tp_rl", "tp_rr")
+for _name in CAR_TAGS:
+    _SIM_TAGS["sim.car." + _name] = (0.0, 0.0, 0.0, False, False)
+
+_CAR_JS = """    // ── Drive cycle (sim.car.*): one 60 s lap of a real drive ──────────────
+    function _ease(a, b, f) { f = Math.max(0, Math.min(1, f)); f = f * f * (3 - 2 * f); return a + (b - a) * f }
+    function carSpeed(t) {
+        if (t < 3)  return 0;
+        if (t < 15) return _ease(0, 110, (t - 3) / 12);
+        if (t < 25) return 110 + 3 * Math.sin((t - 15) * 1.3);
+        if (t < 31) return _ease(110, 137, (t - 25) / 6);
+        if (t < 33) return 137;
+        if (t < 40) return _ease(137, 45, (t - 33) / 7);
+        if (t < 48) return 45 + 2 * Math.sin((t - 40) * 2.0);
+        if (t < 55) return _ease(45, 0, (t - 48) / 7);
+        return 0;
+    }
+    // The sprint (25..33 s) is a kickdown: the box holds fourth and the
+    // needle climbs into the redline before it lets go.
+    function carGearStep(v, t) {
+        if (t >= 25 && t < 33.5) return 4;
+        return v < 1 ? 0 : v < 25 ? 1 : v < 50 ? 2 : v < 80 ? 3 : v < 115 ? 4 : 5;
+    }
+    function carRpm(t, v) {
+        if (v < 1) return 850 + 40 * Math.sin(t * 7);
+        var g = carGearStep(v, t);
+        var lo = [0, 0, 25, 50, 80, 115][g];
+        var hi = [0, 25, 50, 80, 115, 160][g];
+        if (g === 4 && t >= 25 && t < 33.5) hi = 140;   // held gear: 137 km/h sits at ~7000 rpm
+        var accelerating = carSpeed(t + 0.2) > v + 0.05;
+        var span = accelerating ? 5900 : 3800;
+        return Math.min(7600, 1100 + (v - lo) / (hi - lo) * span + 60 * Math.sin(t * 9));
+    }
+    function car(key) {
+        var t = root._t % 60, v = carSpeed(t), rpm = carRpm(t, v), lap = Math.floor(root._t / 60);
+        var moving = v >= 1, running = true;
+        switch (key) {
+        case "speed":        return Math.round(v);
+        case "rpm":          return Math.round(rpm);
+        case "rpm_k":        return rpm / 1000;
+        case "gear":         return t < 2 ? "P" : (moving || t > 3) ? "D" : "N";
+        case "gear_step":    return carGearStep(v, t);
+        case "fuel_l":       return Math.max(5, 58 - lap * 0.6 - t * 0.01);
+        case "fuel_pct":     return Math.max(5, 58 - lap * 0.6 - t * 0.01) / 70 * 100;
+        case "range_km":     return Math.round(Math.max(5, 58 - lap * 0.6 - t * 0.01) * 7.2);
+        case "coolant_c":    return 50 + 40 * (1 - Math.exp(-(root._t) / 25)) + 1.5 * Math.sin(t * 0.7);
+        case "batt_v":       return (moving ? 14.1 : 13.5) + 0.15 * Math.sin(t * 3);
+        case "ambient_c":    return -14;
+        case "trip_km":      return (352 + lap * 1.2 + t * 0.02).toFixed(1);
+        case "drive_mode":   return (t >= 40 && t < 55) ? 0 : (t >= 25 && t < 33) ? 2 : 1;
+        case "turn_left":    return (t >= 10 && t < 16) || (t >= 40 && t < 46);
+        case "turn_right":   return (t >= 20 && t < 24);
+        case "low_beam":     return true;
+        case "high_beam":    return t >= 25 && t < 33;
+        case "oil_warn":     return false;
+        case "check_engine": return false;
+        case "soc_pct":      return Math.max(10, 60 - lap * 2 - t * 0.03);
+        case "batt_a":       return Math.round(moving ? 120 + rpm / 20 : 12);
+        case "trip_mi":      return (8888.8 + lap * 0.7 + t * 0.012).toFixed(1);
+        case "odo_mi":       return String(888888 + lap);
+        case "tp_fl":        return 2.6; case "tp_fr": return 2.5; case "tp_rl": return 1.6 + 0.02 * Math.sin(t); case "tp_rr": return 2.2;
+        }
+        return 0;
+    }
+"""
+
 # Injected into the root Rectangle whenever any sim.* property value is found.
 # _t  ticks at 20 Hz – fast oscillation (attitude, IAS, heading …).
 # _ts ticks at  4 Hz – slow oscillation (altitude, fuel, baro, OAT …).
@@ -155,7 +231,7 @@ _SIM_CLOCK_BLOCK = """\
     function osc_slow(lo, hi, phase) {
         return lo + (hi - lo) * (0.5 + 0.5 * Math.sin(root._ts + phase))
     }
-    // ────────────────────────────────────────────────────────────────────────"""
+""" + _CAR_JS + """    // ────────────────────────────────────────────────────────────────────────"""
 
 
 def _sim_expression(tag: str) -> str:
@@ -166,6 +242,8 @@ def _sim_expression(tag: str) -> str:
     Bool  → sign-cross   (low_fuel annunciator)
     Int   → Math.round() wrapper (ground_speed)
     """
+    if tag.startswith("sim.car."):
+        return f'car("{tag[len("sim.car."):]}")'
     lo, hi, phase, slow, integer = _SIM_TAGS[tag]
     if tag == "sim.low_fuel":
         return f"(Math.sin(root._t + {phase}) > 0)"
@@ -329,6 +407,9 @@ class QmlGenerator:
                 value = [part.strip() for part in str(value).split(",") if part.strip()]
                 if not value:
                     continue
+            # A project file may carry a size below its floor (a 0 px font
+            # is invisible and warns on every repaint); it is raised here.
+            value = clamp_property(key, value)
             lines.append(f"{indent}    {qml_key}: {_literal(value)}")
         for key, value in derived.items():
             lines.append(f"{indent}    {key}: {value}")

@@ -22,6 +22,8 @@ from PySide6.QtGui import QImage
 from PySide6.QtQml import QQmlComponent
 from PySide6.QtQuick import QQuickView
 
+from designer.generators.qml_generator import _CAR_JS
+
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CACHE_LIMIT = 400
 # A Canvas-based instrument needs one event-loop turn to paint after it is
@@ -31,12 +33,14 @@ MAX_ATTEMPTS = 8
 
 # What a bound expression sees when no panel is connected: its own fallback.
 # ``Bus.value("mb.rpm", 0)`` reads 0, ``Bus.history(...)`` is empty.
+# The canvas is a still: the clock is frozen at a moment 26 s into the drive
+# cycle (mid-cruise, fourth gear) so sim.car.* widgets show a car in motion.
 _SIM_BLOCK = """
-    property real _t: 1.3
+    property real _t: 26.3
     property real _ts: 0.7
     function osc(lo, hi, phase) { return lo + (hi - lo) * (0.5 + 0.5 * Math.sin(_t + phase)) }
     function osc_slow(lo, hi, phase) { return lo + (hi - lo) * (0.5 + 0.5 * Math.sin(_ts + phase)) }
-"""
+""" + _CAR_JS
 
 
 class _StillBus(QObject):
