@@ -378,6 +378,9 @@ class QmlGenerator:
             ("ShSelect", "options"): "model",
             ("ShToggle", "onLabel"): "onText",
             ("ShToggle", "offLabel"): "offText",
+            ("ShStatDot", "active"): "state",
+            ("ShStatDot", "value"): "state",
+            ("ShTripInfo", "value"): "row1Value",
         }
         # Properties the thresholds and units on bindings decide; they win
         # over whatever the inspector holds for the same key.
@@ -445,6 +448,15 @@ class QmlGenerator:
                 else:
                     fallback = "0"
                 expression = self._value_expression(binding, fallback)
+            # ShTripInfo needs string values for row1Value/row2Value; a raw
+            # Bus.value() number would produce "52.31000000000001" which is
+            # unreadable.  Format it with toFixed() so the trip box shows
+            # something like "52.3".
+            if widget.type == "ShTripInfo" and key in ("value",):
+                numeric = self._numeric_expression(binding)
+                expression = f'String(Number({numeric}).toFixed(1))'
+                lines.append(f"{indent}    Binding {{ target: {widget.id}; property: \"{qml_key}\"; value: {expression} }}")
+                continue
             if key in two_way:
                 lines.append(f"{indent}    Binding on {qml_key} {{ value: {expression} }}")
             else:
