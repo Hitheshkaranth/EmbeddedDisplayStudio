@@ -4,7 +4,7 @@
 #
 # Adding a test: drop tst_<name>.cpp here and append it to HMI_GUI_TESTS.
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
 
 set(HMI_GUI_TESTS
     tst_history

@@ -18,7 +18,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick Network)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Qml Quick Network)
 
 # Everything except main() lives in a static library so the unit tests link
 # the real objects rather than re-compiling sources per test.
