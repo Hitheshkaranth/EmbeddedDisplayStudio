@@ -1,6 +1,18 @@
-// native/hmi-gui/src/tagengine.cpp -- STUB. Owner: W1. See tagengine.h and
+// native/hmi-gui/src/tagengine.cpp -- implementation. Owner: W1. See tagengine.h and
 // gui/hmi_loader/tagengine.py (the specification).
 #include "tagengine.h"
+
+#include <QCoreApplication>
+#include <QEventLoop>
+#include <QJsonDocument>
+#include <QTimer>
+
+#include "log.h"
+
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
 
 namespace hmi {
 
@@ -16,11 +28,65 @@ TagEngine::TagEngine(const QStringList &expectedTags, const QVariantList &alarmD
       m_daemonAddr(options.daemonHost),
       m_daemonPort(options.daemonPort)
 {
-    Q_UNUSED(expectedTags);
-    // TODO(W1): seed map + aliases, track history, bind socket, start timers,
-    // send the first subscribe.
-    connect(m_alarms, &AlarmEngine::activeAlarmsChanged, this, &TagEngine::activeAlarmsChanged);
-    connect(m_map, &TagMap::qmlWrite, this, &TagEngine::onQmlWrite);
+    // Seed both spellings of every expected tag so no binding starts out
+    // referencing a non-existent property.
+    for (const QString &tag : expectedTags) {
+        QString alias = tag;
+        alias.replace(QLatin1Char('.'), QLatin1Char('_'));
+        m_aliasToTag[alias] = tag;
+        m_map->insert(tag, QVariant());
+        m_map->insert(alias, QVariant());
+    }
+
+    // Mirror the link state into the map.
+    m_map->insert(QStringLiteral("online"), false);
+
+    // Collect alarm tags from definitions and seed them.
+    QStringList alarmTags = m_alarms->alarmTags();
+    for (const QString &tag : alarmTags) {
+        QString alias = QString(tag).replace(QLatin1Char('.'), QLatin1Char('_'));
+        if (!m_aliasToTag.contains(alias)) {
+            m_aliasToTag[alias] = tag;
+        }
+    }
+
+    // Build the complete list of recorded tags = expected + alarm tags.
+    QStringList recordedTags = expectedTags + alarmTags;
+
+    // Initialize ring buffers for all recorded tags.
+    for (const QString &tag : recordedTags) {
+        m_history.track(tag);
+    }
+
+    // Bind the UDP socket.
+    if (!m_socket->bind(QHostAddress("127.0.0.1"), options.rxPort)) {
+        QString firstError = m_socket->errorString();
+        if (options.allowAnyPort && m_socket->bind(QHostAddress("127.0.0.1"), 0)) {
+            qCWarning(lcHmi) << "Telemetry port" << options.rxPort << "is taken ("
+                              << firstError << "); listening on" << m_socket->localPort()
+                              << "instead";
+        } else {
+            qCWarning(lcHmi) << "Could not bind telemetry port" << options.rxPort
+                             << "(" << firstError << "); UI will run offline";
+        }
+    }
+    m_rxPort = m_socket->localPort();
+
+    // Connect signals.
+    connect(m_socket, &QUdpSocket::readyRead, this, &TagEngine::readPendingDatagrams);
+
+    // Watchdog timer: 2500 ms -> onWatchdogTimeout.
+    m_watchdog->setInterval(kWatchdogIntervalMs);
+    connect(m_watchdog, &QTimer::timeout, this, &TagEngine::onWatchdogTimeout);
+    m_watchdog->start();
+
+    // Subscribe timer: 2000 ms -> subscribeToDaemon.
+    m_subTimer->setInterval(kSubscribeIntervalMs);
+    connect(m_subTimer, &QTimer::timeout, this, &TagEngine::subscribeToDaemon);
+    m_subTimer->start();
+
+    // Send the first subscribe immediately.
+    subscribeToDaemon();
 }
 
 TagMap *TagEngine::tagMap() const { return m_map; }
@@ -40,29 +106,260 @@ QString TagEngine::toWireName(const QString &name) const
     return m_aliasToTag.value(name, name);
 }
 
+// ---------------------------------------------------------------- ingress
+
+void TagEngine::readPendingDatagrams()
+{
+    while (m_socket->hasPendingDatagrams()) {
+        qint64 size = m_socket->pendingDatagramSize();
+
+        if (size > kMaxDatagramBytes) {
+            // Oversized: read and discard, count error.
+            QByteArray datagram(size, 0);
+            m_socket->readDatagram(datagram.data(), datagram.size());
+            countRxError();
+            continue;
+        }
+
+        QByteArray datagram(size, 0);
+        m_socket->readDatagram(datagram.data(), datagram.size());
+
+        QJsonParseError err;
+        QJsonDocument doc = QJsonDocument::fromJson(datagram, &err);
+
+        if (err.error != QJsonParseError::NoError) {
+            countRxError();
+            continue;
+        }
+
+        if (!doc.isObject()) {
+            countRxError();
+            continue;
+        }
+
+        QJsonObject obj = doc.object();
+        QString kind = obj.value(QStringLiteral("t")).toString();
+
+        if (kind == QStringLiteral("tags")) {
+            handleTelemetry(obj.toVariantMap());
+        } else if (kind == QStringLiteral("ack")) {
+            handleAck(obj.toVariantMap());
+        } else {
+            countRxError();
+        }
+    }
+}
+
+void TagEngine::handleTelemetry(const QVariantMap &msg)
+{
+    QVariant tagsVar = msg.value(QStringLiteral("tags"));
+
+    if (!tagsVar.canConvert<QVariantMap>()) {
+        countRxError();
+        return;
+    }
+
+    QVariantMap tags = tagsVar.toMap();
+
+    setOnline(true);
+    m_watchdog->start();
+
+    for (auto it = tags.constBegin(); it != tags.constEnd(); ++it) {
+        QString tag = it.key();
+        QVariant value = it.value();
+
+        // Learn alias for undeclared tags (setdefault semantics).
+        QString alias = tag;
+        alias.replace(QLatin1Char('.'), QLatin1Char('_'));
+        if (!m_aliasToTag.contains(alias)) {
+            m_aliasToTag[alias] = tag;
+        }
+
+        // Only write when the value actually moved.
+        // Comparing invalid to invalid yields equality (both are null).
+        if (m_map->value(tag) != value) {
+            m_map->insert(tag, value);
+            m_map->insert(alias, value);
+        }
+    }
+
+    // Record history for tracked tags.
+    for (const QString &tag : m_history.trackedTags()) {
+        QVariant raw = tags.value(tag);
+        if (raw.isNull()) {
+            // null means a failed hardware read; skip.
+            continue;
+        }
+        // bool is converted to 0/1.
+        if (raw.typeId() == QMetaType::Bool) {
+            raw = raw.toBool() ? 1 : 0;
+        }
+        // Only record numeric values.
+        if (raw.typeId() == QMetaType::Double ||
+            raw.typeId() == QMetaType::Float ||
+            raw.typeId() == QMetaType::Int ||
+            raw.typeId() == QMetaType::UInt ||
+            raw.typeId() == QMetaType::LongLong ||
+            raw.typeId() == QMetaType::ULongLong) {
+            m_history.record(tag, raw);
+        }
+    }
+
+    // Evaluate alarms.
+    m_alarms->evaluate(tags);
+
+    // Bump history version.
+    ++m_historyVersion;
+    emit historyVersionChanged();
+}
+
+void TagEngine::handleAck(const QVariantMap &msg)
+{
+    QString id = msg.value(QStringLiteral("id")).toString();
+    if (id.isEmpty()) {
+        id = "";
+    }
+    bool ok = msg.value(QStringLiteral("ok")).toBool();
+    QString err = msg.value(QStringLiteral("err")).toString();
+    QVariant tagsVar = msg.value(QStringLiteral("tags"));
+    QVariantList tagsList;
+    if (tagsVar.canConvert<QVariantList>()) {
+        tagsList = tagsVar.toList();
+    }
+
+    // Fire pending correlation handlers before the general signal.
+    AckHandler handler = m_pendingAcks.take(id);
+    if (handler) {
+        handler(id, ok, err, tagsList);
+    }
+
+    emit ackReceived(id, ok, err);
+}
+
+void TagEngine::onWatchdogTimeout()
+{
+    setOnline(false);
+}
+
+// ---------------------------------------------------------------- egress
+
+void TagEngine::subscribeToDaemon()
+{
+    sendCommand({{QLatin1String("cmd"), QStringLiteral("subscribe")},
+                 {QLatin1String("ttl"), kSubscribeTtlS}});
+}
+
+void TagEngine::sendCommand(const QVariantMap &cmd)
+{
+    QJsonObject obj;
+    for (auto it = cmd.constBegin(); it != cmd.constEnd(); ++it) {
+        QJsonValue val = QJsonValue::fromVariant(it.value());
+        obj.insert(it.key(), val);
+    }
+    QByteArray bytes = QJsonDocument(obj).toJson(QJsonDocument::Compact);
+    m_socket->writeDatagram(bytes, m_daemonAddr, m_daemonPort);
+}
+
 void TagEngine::write(const QString &tag, const QVariant &value)
 {
-    Q_UNUSED(tag);
-    Q_UNUSED(value);   // TODO(W1)
+    sendCommand({{QLatin1String("id"), nextId()},
+                 {QLatin1String("cmd"), QStringLiteral("set")},
+                 {QLatin1String("tag"), toWireName(tag)},
+                 {QLatin1String("value"), value}});
 }
 
 void TagEngine::pulse(const QString &tag, int ms)
 {
-    Q_UNUSED(tag);
-    Q_UNUSED(ms);   // TODO(W1)
+    sendCommand({{QLatin1String("id"), nextId()},
+                 {QLatin1String("cmd"), QStringLiteral("pulse")},
+                 {QLatin1String("tag"), toWireName(tag)},
+                 {QLatin1String("ms"), ms}});
 }
 
-void TagEngine::uart_tx(const QString &data) { Q_UNUSED(data); }   // TODO(W1)
-void TagEngine::ping() {}                                            // TODO(W1)
+void TagEngine::uart_tx(const QString &data)
+{
+    sendCommand({{QLatin1String("id"), nextId()},
+                 {QLatin1String("cmd"), QStringLiteral("uart_tx")},
+                 {QLatin1String("data"), data}});
+}
+
+void TagEngine::ping()
+{
+    sendCommand({{QLatin1String("cmd"), QStringLiteral("ping")},
+                 {QLatin1String("id"), QStringLiteral("qml-ping")}});
+}
 
 QVariant TagEngine::value(const QString &name, const QVariant &fallback)
 {
-    Q_UNUSED(name);
-    return fallback;   // TODO(W1)
+    QVariant val = m_map->value(name);
+    if (val.isNull()) {
+        QString alt = name;
+        alt.replace(QLatin1Char('.'), QLatin1Char('_'));
+        val = m_map->value(alt);
+    }
+    if (val.isNull()) {
+        return fallback;
+    }
+    return val;
 }
 
-QVariantList TagEngine::list_tags() { return {}; }   // TODO(W1)
-void TagEngine::unsubscribe() {}                     // TODO(W1)
+QVariantList TagEngine::list_tags()
+{
+    QEventLoop loop;
+    QVariantList result;
+
+    auto handler = [this, &result, &loop](const QString &, bool ok, const QString &,
+                                          const QVariantList &tags) {
+        if (ok) {
+            result = tags;
+        }
+        loop.quit();
+    };
+
+    QString cid = nextId();
+    m_pendingAcks[cid] = handler;
+    sendCommand({{QLatin1String("cmd"), QStringLiteral("list")},
+                 {QLatin1String("id"), cid}});
+
+    QTimer::singleShot(kBlockingReplyTimeoutMs, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    m_pendingAcks.remove(cid);
+    emit listReceived(result);
+    return result;
+}
+
+void TagEngine::unsubscribe()
+{
+    QEventLoop loop;
+
+    auto handler = [this, &loop](const QString &, bool ok, const QString &,
+                                 const QVariantList &) {
+        if (ok) {
+            emit unsubscribed();
+        }
+        loop.quit();
+    };
+
+    QString cid = nextId();
+    m_pendingAcks[cid] = handler;
+    sendCommand({{QLatin1String("cmd"), QStringLiteral("unsubscribe")},
+                 {QLatin1String("id"), cid}});
+
+    QTimer::singleShot(kBlockingReplyTimeoutMs, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    m_pendingAcks.remove(cid);
+}
+
+QString TagEngine::nextId()
+{
+    ++m_cmdSeq;
+    return QStringLiteral("gui-%1").arg(m_cmdSeq);
+}
+
+// ---------------------------------------------------------------- public slots
+// These are already declared in the header.
 
 QVariantList TagEngine::history(const QString &tag, int n)
 {
@@ -73,10 +370,6 @@ void TagEngine::acknowledge(const QString &tag)
 {
     m_alarms->acknowledge(toWireName(tag));
 }
-
-void TagEngine::readPendingDatagrams() {}   // TODO(W1)
-void TagEngine::onWatchdogTimeout() { setOnline(false); }
-void TagEngine::subscribeToDaemon() {}      // TODO(W1)
 
 void TagEngine::onQmlWrite(const QString &key, const QVariant &value)
 {
@@ -99,10 +392,5 @@ void TagEngine::countRxError()
     ++m_rxErrors;
     emit rxErrorsChanged();
 }
-
-void TagEngine::handleTelemetry(const QVariantMap &msg) { Q_UNUSED(msg); }   // TODO(W1)
-void TagEngine::handleAck(const QVariantMap &msg) { Q_UNUSED(msg); }         // TODO(W1)
-QString TagEngine::nextId() { return QStringLiteral("gui-%1").arg(++m_cmdSeq); }
-void TagEngine::sendCommand(const QVariantMap &cmd) { Q_UNUSED(cmd); }       // TODO(W1)
 
 } // namespace hmi
