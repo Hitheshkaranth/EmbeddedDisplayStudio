@@ -37,14 +37,15 @@ first.</em>
 
 <br /><br />
 
-<img src="docs/assets/screenshot-designer.png" alt="The Designer workspace with the automotive cluster project open: widget library and layer tree, the canvas drawing every widget with its real QML, the cluster gauge selected with its eight resize handles, and the property, binding, actions and chat inspectors" width="900" />
+<img src="docs/assets/screenshot-designer.png" alt="The Designer workspace with the engine-dashboard project open and the Studio connected to the panel: widget library and layer tree, the canvas drawing the cluster with its real QML, the logo image selected with its eight resize handles, and the property, tag-binding, actions and chat inspectors" width="900" />
 
-<em>The automotive cluster preset open in the Studio's own Designer — library
-and layers to the left, the canvas inside a bezel of the real glass with every
-widget drawn by its own QML, the cluster gauge selected with its eight resize
-handles, and the property, tag-binding, actions and chat inspectors to the
-right. The canvas is 1024 × 768 because that is what the panel at the top of
-the window reported.</em>
+<em>The engine dashboard open in the Studio's own Designer, connected to the
+panel at the top of the window — library and layers to the left, the canvas
+inside a bezel of the real glass with every widget drawn by its own QML, the
+logo image selected with its eight resize handles, and the property,
+tag-binding (with its warning and critical thresholds), actions and chat
+inspectors to the right. The canvas is 1024 × 768 because that is what the
+connected panel reported.</em>
 
 </div>
 
