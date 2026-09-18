@@ -43,22 +43,22 @@ void Hmi::markReady()
     QFile file(m_readyFile);
     if (file.open(QIODevice::WriteOnly | QIODevice::Append)) {
         file.close();
-        qCInfo(lcHmi) << "Marked ready at" << m_readyFile;
+        qInfo(lcHmi).noquote() << QString("Marked ready at %1").arg(m_readyFile);
     } else {
-        qCCritical(lcHmi) << "Failed to touch ready file" << m_readyFile
-                          << ":" << file.errorString();
+        qCritical(lcHmi).noquote() << QString("Failed to touch ready file %1: %2")
+                                            .arg(m_readyFile, file.errorString());
     }
 }
 
 void Hmi::restart()
 {
-    qCInfo(lcHmi) << "Restart requested by QML.";
+    qInfo(lcHmi).noquote() << "Restart requested by QML.";
     QCoreApplication::exit(1);
 }
 
 void Hmi::log(const QString &msg)
 {
-    qCInfo(lcHmi) << "App Log:" << msg;
+    qInfo(lcHmi).noquote() << QString("App Log: %1").arg(msg);
 }
 
 } // namespace hmi

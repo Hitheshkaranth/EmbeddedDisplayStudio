@@ -18,7 +18,8 @@ enum Level {
     LevelDebug = 0,
     LevelInfo = 1,
     LevelWarning = 2,
-    LevelError = 3
+    LevelError = 3,
+    LevelFatal = 4
 };
 
 Level parseLevel(const QString &level)
@@ -28,6 +29,18 @@ Level parseLevel(const QString &level)
     if (level == "WARNING") return LevelWarning;
     if (level == "ERROR") return LevelError;
     return LevelInfo; // unknown → INFO
+}
+
+Level msgTypeToLevel(QtMsgType type)
+{
+    switch (type) {
+    case QtDebugMsg: return LevelDebug;
+    case QtInfoMsg: return LevelInfo;
+    case QtWarningMsg: return LevelWarning;
+    case QtCriticalMsg: return LevelError;
+    case QtFatalMsg: return LevelFatal;
+    }
+    return LevelInfo;
 }
 
 QString levelName(QtMsgType type)
@@ -61,8 +74,11 @@ void ourMessageHandler(QtMsgType type, const QMessageLogContext &context, const 
 {
     // Fatal is never dropped and must abort
     if (type == QtFatalMsg) {
+        QString fatalMsg = msg;
+        if (fatalMsg.startsWith('"') && fatalMsg.endsWith('"') && fatalMsg.size() >= 2)
+            fatalMsg = fatalMsg.mid(1, fatalMsg.size() - 2);
         QTextStream out(stdout);
-        out << "CRITICAL - hmi-gui - " << msg << "\n";
+        out << "CRITICAL - hmi-gui - " << fatalMsg << "\n";
         fflush(stdout);
         if (g_oldHandler)
             g_oldHandler(type, {}, msg);
@@ -72,16 +88,21 @@ void ourMessageHandler(QtMsgType type, const QMessageLogContext &context, const 
         return;
     }
 
-    Level lvl = static_cast<Level>(type);
+    Level lvl = msgTypeToLevel(type);
+    // Debug: trace all messages
     if (lvl < g_minLevel)
         return;
 
     QString lvlStr = levelName(type);
+    QString message = msg;
+    // Qt6's qCInfo adds quotes around string messages; strip them for clean output
+    if (message.startsWith('"') && message.endsWith('"') && message.size() >= 2)
+        message = message.mid(1, message.size() - 2);
     QString text;
     if (qstrcmp("hmi-gui", context.category) == 0) {
-        text = QString("%1 - hmi-gui - %2").arg(lvlStr, msg);
+        text = QString("%1 - hmi-gui - %2").arg(lvlStr, message);
     } else {
-        text = QString("%1 - hmi-gui - %2%3").arg(lvlStr, qmlPrefix(type), msg);
+        text = QString("%1 - hmi-gui - %2%3").arg(lvlStr, qmlPrefix(type), message);
     }
     QTextStream out(stdout);
     out << text << "\n";
