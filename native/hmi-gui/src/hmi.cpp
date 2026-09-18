@@ -1,12 +1,25 @@
-// native/hmi-gui/src/hmi.cpp -- STUB. Owner: W3. See hmi.h.
+// native/hmi-gui/src/hmi.cpp
+// Layer: 2 (GUI Loader)
+// Owner: W3. See hmi.h for the contract.
 #include "hmi.h"
+
+#include "log.h"
+
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 
 namespace hmi {
 
-Hmi::Hmi(const Manifest &manifest, const QString &appsDir, const QString &readyFile, QObject *parent)
+Hmi::Hmi(const Manifest &manifest, const QString &appsDir, const QString &readyFile,
+         QObject *parent)
     : QObject(parent), m_manifest(manifest), m_appsDir(appsDir), m_readyFile(readyFile)
 {
-    // TODO(W3): resolve m_entryUrl from appsDir / manifest.entry() when valid.
+    if (m_manifest.valid) {
+        m_entryUrl = QUrl::fromLocalFile(
+            QFileInfo(appsDir + "/" + m_manifest.entry()).absoluteFilePath());
+    }
 }
 
 QString Hmi::appName() const { return m_manifest.name(); }
@@ -24,8 +37,28 @@ void Hmi::setLastError(const QString &error)
     emit lastErrorChanged();
 }
 
-void Hmi::markReady() { /* TODO(W3) */ }
-void Hmi::restart() { /* TODO(W3) */ }
-void Hmi::log(const QString &msg) { Q_UNUSED(msg); /* TODO(W3) */ }
+void Hmi::markReady()
+{
+    QDir().mkpath(QFileInfo(m_readyFile).absolutePath());
+    QFile file(m_readyFile);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Append)) {
+        file.close();
+        qInfo(lcHmi).noquote() << QString("Marked ready at %1").arg(m_readyFile);
+    } else {
+        qCritical(lcHmi).noquote() << QString("Failed to touch ready file %1: %2")
+                                            .arg(m_readyFile, file.errorString());
+    }
+}
+
+void Hmi::restart()
+{
+    qInfo(lcHmi).noquote() << "Restart requested by QML.";
+    QCoreApplication::exit(1);
+}
+
+void Hmi::log(const QString &msg)
+{
+    qInfo(lcHmi).noquote() << QString("App Log: %1").arg(msg);
+}
 
 } // namespace hmi
