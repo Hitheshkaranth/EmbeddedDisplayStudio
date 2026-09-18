@@ -8,7 +8,6 @@
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
-#include <QTextStream>
 
 namespace hmi {
 
@@ -71,10 +70,8 @@ QObject *exposeToQml(QQmlEngine *engine, QQmlContext *context, TagEngine *tagEng
         QString errors;
         for (const QQmlError &e : component.errors())
             errors += (errors.isEmpty() ? QString() : QStringLiteral("; ")) + e.toString();
-        QTextStream out(stdout);
-        out << "ERROR - hmi-gui - Bus shim failed to build; bindings on Bus.value() will not update: "
-            << errors << "\n";
-        fflush(stdout);
+        qCCritical(lcHmi).noquote()
+            << "Bus shim failed to build; bindings on Bus.value() will not update:" << errors;
         bus = tagEngine;
     } else {
         bus->setParent(tagEngine);

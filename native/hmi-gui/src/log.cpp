@@ -74,11 +74,8 @@ void ourMessageHandler(QtMsgType type, const QMessageLogContext &context, const 
 {
     // Fatal is never dropped and must abort
     if (type == QtFatalMsg) {
-        QString fatalMsg = msg;
-        if (fatalMsg.startsWith('"') && fatalMsg.endsWith('"') && fatalMsg.size() >= 2)
-            fatalMsg = fatalMsg.mid(1, fatalMsg.size() - 2);
         QTextStream out(stdout);
-        out << "CRITICAL - hmi-gui - " << fatalMsg << "\n";
+        out << "CRITICAL - hmi-gui - " << msg << "\n";
         fflush(stdout);
         if (g_oldHandler)
             g_oldHandler(type, {}, msg);
@@ -93,11 +90,10 @@ void ourMessageHandler(QtMsgType type, const QMessageLogContext &context, const 
     if (lvl < g_minLevel)
         return;
 
+    // Callers log QStrings with .noquote(); the text is passed through as is,
+    // so an app message that legitimately contains quotes is not mangled.
     QString lvlStr = levelName(type);
-    QString message = msg;
-    // Qt6's qCInfo adds quotes around string messages; strip them for clean output
-    if (message.startsWith('"') && message.endsWith('"') && message.size() >= 2)
-        message = message.mid(1, message.size() - 2);
+    const QString &message = msg;
     QString text;
     if (qstrcmp("hmi-gui", context.category) == 0) {
         text = QString("%1 - hmi-gui - %2").arg(lvlStr, message);
@@ -118,7 +114,11 @@ void installLogging(const QString &level)
         QLoggingCategory::setFilterRules("hmi-gui.debug=true");
     else
         QLoggingCategory::setFilterRules("hmi-gui.debug=false");
-    g_oldHandler = qInstallMessageHandler(ourMessageHandler);
+    // Capture the previous handler once; a second installLogging() must not
+    // make the fatal path call ourselves recursively.
+    QtMessageHandler previous = qInstallMessageHandler(ourMessageHandler);
+    if (previous != ourMessageHandler)
+        g_oldHandler = previous;
 }
 
 QString currentLogLevel()
@@ -128,6 +128,7 @@ QString currentLogLevel()
     case LevelInfo: return "INFO";
     case LevelWarning: return "WARNING";
     case LevelError: return "ERROR";
+    case LevelFatal: return "CRITICAL";
     }
     return "INFO";
 }

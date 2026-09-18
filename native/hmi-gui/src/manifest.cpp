@@ -40,9 +40,9 @@ int Manifest::screenWidth() const
 {
     if (!valid) return 1280;
     QVariant screen = data.value(QStringLiteral("screen"));
-    if (screen.canConvert(QVariant::Map)) {
+    if (screen.canConvert<QVariantMap>()) {
         QVariantMap sm = screen.toMap();
-        if (sm.contains(QStringLiteral("width")) && sm[QStringLiteral("width")].toInt() == sm[QStringLiteral("width")].toUInt()) {
+        if (sm.contains(QStringLiteral("width")) && sm[QStringLiteral("width")].canConvert<int>()) {
             return sm[QStringLiteral("width")].toInt();
         }
     }
@@ -53,9 +53,9 @@ int Manifest::screenHeight() const
 {
     if (!valid) return 800;
     QVariant screen = data.value(QStringLiteral("screen"));
-    if (screen.canConvert(QVariant::Map)) {
+    if (screen.canConvert<QVariantMap>()) {
         QVariantMap sm = screen.toMap();
-        if (sm.contains(QStringLiteral("height")) && sm[QStringLiteral("height")].toInt() == sm[QStringLiteral("height")].toUInt()) {
+        if (sm.contains(QStringLiteral("height")) && sm[QStringLiteral("height")].canConvert<int>()) {
             return sm[QStringLiteral("height")].toInt();
         }
     }
@@ -76,7 +76,7 @@ QStringList Manifest::tagsRequired() const
     QVariantList list = data.value(QStringLiteral("tags_required")).toList();
     QStringList result;
     for (const QVariant &v : list) {
-        if (v.canConvert(QVariant::String))
+        if (v.canConvert<QString>())
             result.append(v.toString());
     }
     return result;
@@ -95,7 +95,7 @@ QStringList Manifest::alarmTags() const
     QStringList result;
     QSet<QString> seen;
     for (const QVariant &v : list) {
-        if (!v.canConvert(QVariant::Map)) continue;
+        if (!v.canConvert<QVariantMap>()) continue;
         QVariantMap am = v.toMap();
         QString tag = am.value(QStringLiteral("tag")).toString();
         if (!tag.isEmpty() && !seen.contains(tag)) {
@@ -227,15 +227,11 @@ Manifest loadManifest(const QString &manifestPath)
         return m;
     }
 
-    // Success — store the whole object as data
-    QVariantMap data;
-    for (auto it = obj.begin(); it != obj.end(); ++it) {
-        data.insert(it.key(), QVariant(it.value()));
-    }
-
+    // Success: the whole object as plain variants (maps, lists, numbers),
+    // the shape AlarmEngine and the accessors below expect.
     m.valid = true;
     m.error = QString();
-    m.data = data;
+    m.data = obj.toVariantMap();
     return m;
 }
 

@@ -62,11 +62,11 @@ TagEngine::TagEngine(const QStringList &expectedTags, const QVariantList &alarmD
     if (!m_socket->bind(QHostAddress("127.0.0.1"), options.rxPort)) {
         QString firstError = m_socket->errorString();
         if (options.allowAnyPort && m_socket->bind(QHostAddress("127.0.0.1"), 0)) {
-            qCWarning(lcHmi) << "Telemetry port" << options.rxPort << "is taken ("
+            qCWarning(lcHmi).noquote() << "Telemetry port" << options.rxPort << "is taken ("
                               << firstError << "); listening on" << m_socket->localPort()
                               << "instead";
         } else {
-            qCCritical(lcHmi) << "Could not bind telemetry port" << options.rxPort
+            qCCritical(lcHmi).noquote() << "Could not bind telemetry port" << options.rxPort
                              << "(" << firstError << "); UI will run offline";
         }
     }
