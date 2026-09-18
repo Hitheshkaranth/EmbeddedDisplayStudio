@@ -250,7 +250,8 @@ class LoaderHarness:
 
     def commands(self, timeout=1.0):
         """Drain all datagrams the loader sent to the fake daemon.
-        Returns a list of parsed JSON dicts."""
+        Returns a list of parsed JSON dicts.  Commands that carry an ``id``
+        field are automatically acknowledged (``ok=True``)."""
         result = []
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -258,7 +259,12 @@ class LoaderHarness:
                 self._daemon.settimeout(0.1)
                 data, _ = self._daemon.recvfrom(8192)
                 try:
-                    result.append(json.loads(data))
+                    cmd = json.loads(data)
+                    result.append(cmd)
+                    # Auto-ack commands that carry an id (ping, set, pulse, etc.)
+                    cid = cmd.get("id")
+                    if cid is not None:
+                        self._auto_ack(str(cid), cmd.get("cmd"))
                 except (json.JSONDecodeError, ValueError):
                     pass
             except (socket.timeout, OSError, ConnectionResetError):
@@ -285,6 +291,13 @@ class LoaderHarness:
                     self._received.append(c)
                 return c
         raise AssertionError(f"Timed out waiting for command '{cmd}'")
+
+    def _auto_ack(self, cid, cmd_name):
+        """Auto-ack a command.  Only ack commands that the harness knows
+        how to handle gracefully; ignore subscribe/ping/list/unsubscribe."""
+        if cmd_name in ("subscribe", "list", "unsubscribe"):
+            return
+        self.ack(cid, ok=True)
 
     # ---- UDP: ack back to the loader ---------------------------------------
 
