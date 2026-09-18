@@ -6,7 +6,8 @@
 #
 # PURPOSE
 #   Detect the Wayland compositor socket, configure the Qt environment
-#   for Wayland rendering, and exec the HMI GUI loader (main.py).
+#   for Wayland rendering, and exec the HMI GUI loader (the native hmi-gui
+#   binary when installed, else main.py).
 #
 #   BSPs differ: weston may run as root (XDG_RUNTIME_DIR=/run/user/0)
 #   or as a dedicated 'weston' user (e.g. /run/user/1000).  This script
@@ -382,10 +383,24 @@ log "INFO" "  QT_QPA_PLATFORM=${QT_QPA_PLATFORM}"
 log "INFO" "  QT_QUICK_BACKEND=${QT_QUICK_BACKEND}"
 log "INFO" "  APPS_DIR=${APPS_DIR}"
 
-# exec replaces this shell process with the Python GUI loader.
+# exec replaces this shell process with the GUI loader.
 # The --apps-dir and --ready-file flags are mandated by CONTRACT section 5.
 # "$@" forwards any extra arguments passed on the command line.
+#
+# The native loader (native/hmi-gui, installed beside main.py as
+# /usr/lib/hmi/gui/hmi-gui) takes the same flags and is preferred when it is
+# present: it needs no Python on the panel. HMI_GUI_NATIVE=0 forces the
+# Python loader for a side-by-side comparison; both can stay installed.
 # shellcheck disable=SC2086
+NATIVE_LOADER="${HMI_ROOT}/usr/lib/hmi/gui/hmi-gui"
+if [ "${HMI_GUI_NATIVE:-1}" != "0" ] && [ -x "$NATIVE_LOADER" ]; then
+    log "INFO" "native loader present: ${NATIVE_LOADER}"
+    exec "$NATIVE_LOADER" \
+        --apps-dir "$APPS_DIR" \
+        --ready-file "$READY_FILE" \
+        $_extra \
+        "$@"
+fi
 exec "$PYTHON" "$GUI_LOADER" \
     --apps-dir "$APPS_DIR" \
     --ready-file "$READY_FILE" \
