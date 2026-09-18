@@ -49,3 +49,6 @@ downloads/
 
 # Swarm worker briefs (copied into worktrees, never committed)
 /.swarm/
+
+# --- Native loader build output (native/hmi-gui/build.sh copies the binary here)
+native/hmi-gui/out/
