@@ -7,8 +7,8 @@ TagMap::TagMap(QObject *parent) : QQmlPropertyMap(this, parent) {}
 
 QVariant TagMap::updateValue(const QString &key, const QVariant &input)
 {
-    Q_UNUSED(input);
-    return value(key);   // TODO(W1): emit qmlWrite(key, input) first.
+    emit qmlWrite(key, input);
+    return value(key);
 }
 
 } // namespace hmi
