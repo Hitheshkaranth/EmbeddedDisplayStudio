@@ -66,7 +66,7 @@ TagEngine::TagEngine(const QStringList &expectedTags, const QVariantList &alarmD
                               << firstError << "); listening on" << m_socket->localPort()
                               << "instead";
         } else {
-            qCWarning(lcHmi) << "Could not bind telemetry port" << options.rxPort
+            qCCritical(lcHmi) << "Could not bind telemetry port" << options.rxPort
                              << "(" << firstError << "); UI will run offline";
         }
     }
@@ -74,6 +74,12 @@ TagEngine::TagEngine(const QStringList &expectedTags, const QVariantList &alarmD
 
     // Connect signals.
     connect(m_socket, &QUdpSocket::readyRead, this, &TagEngine::readPendingDatagrams);
+
+    // Forward the alarm engine's change signal (Bus.alarmCount / activeAlarms
+    // bind to it) and route QML assignments (Tags.do_relay1 = true) into
+    // write-through commands.
+    connect(m_alarms, &AlarmEngine::activeAlarmsChanged, this, &TagEngine::activeAlarmsChanged);
+    connect(m_map, &TagMap::qmlWrite, this, &TagEngine::onQmlWrite);
 
     // Watchdog timer: 2500 ms -> onWatchdogTimeout.
     m_watchdog->setInterval(kWatchdogIntervalMs);

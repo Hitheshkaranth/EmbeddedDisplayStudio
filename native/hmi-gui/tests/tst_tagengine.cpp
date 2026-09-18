@@ -464,38 +464,37 @@ private slots:
     // This test confirms the write() slot itself does NOT modify the tag map.
     void test_write_through_qml()
     {
+        // The README's promise: assigning an underscored alias from QML sends a
+        // `set` command. QQmlPropertyMap::updateValue() is the hook Qt gives
+        // for exactly this; TagMap emits qmlWrite() from it.
         QUdpSocket daemonSock;
         QVERIFY(daemonSock.bind(QHostAddress("127.0.0.1"), 0));
-        quint16 daemonPort = static_cast<quint16>(daemonSock.localPort());
-
         hmi::TagEngine::Options o;
-        o.daemonPort = daemonPort;
+        o.daemonPort = static_cast<quint16>(daemonSock.localPort());
         o.rxPort = 0;
         o.allowAnyPort = true;
         hmi::TagEngine e({QStringLiteral("do.relay1")}, {}, o);
+        receiveOneDatagram(daemonSock);   // drain the subscribe
 
-        // Drain subscribe.
-        receiveOneDatagram(daemonSock);
+        QQmlEngine qml;
+        qml.rootContext()->setContextProperty(QStringLiteral("Tags"), e.tagMap());
+        QQmlComponent component(&qml);
+        component.setData("import QtQuick 2.15\nQtObject { Component.onCompleted: Tags.do_relay1 = true }\n",
+                          QUrl());
+        QObject *obj = component.create();
+        QVERIFY2(obj != nullptr, qPrintable(component.errorString()));
 
-        // Verify tag starts invalid.
-        QVERIFY(e.tagMap()->value(QStringLiteral("do.relay1")).isNull());
-        QVERIFY(e.tagMap()->value(QStringLiteral("do_relay1")).isNull());
-
-        // Call write() which is what QML Bus.write() ultimately calls.
-        e.write(QStringLiteral("do_relay1"), QVariant(true));
-        QTest::qWait(50);
-
-        // The daemon should have received a set command.
         QByteArray datagram = receiveOneDatagram(daemonSock);
-        QVERIFY(!datagram.isEmpty());
-        QJsonObject jo = QJsonDocument::fromJson(datagram).object();
+        QVERIFY2(!datagram.isEmpty(), "no set command reached the daemon");
+        const QJsonObject jo = QJsonDocument::fromJson(datagram).object();
         QCOMPARE(jo.value("cmd").toString(), QStringLiteral("set"));
         QCOMPARE(jo.value("tag").toString(), QStringLiteral("do.relay1"));
+        QCOMPARE(jo.value("value").toBool(), true);
+        QVERIFY(jo.value("id").toString().startsWith(QStringLiteral("gui-")));
 
-        // The map is NOT optimistically updated — write() only sends, does not
-        // insert into Tags. The UI always shows the hardware's read-back.
-        QVERIFY(e.tagMap()->value(QStringLiteral("do.relay1")).isNull());
-        QVERIFY(e.tagMap()->value(QStringLiteral("do_relay1")).isNull());
+        // No optimistic update: the map still shows the (absent) read-back.
+        QVERIFY(!e.tagMap()->value(QStringLiteral("do_relay1")).toBool());
+        delete obj;
     }
 };
 
