@@ -78,6 +78,11 @@ protected:
 private:
     QVariantList m_defs;
     QHash<QString, QVariantMap> m_active;
+    // Activation order, the tie-breaker Python gets for free from dict
+    // insertion order: alarms raised in the same second sort by when they
+    // were raised (and, within one frame, by definition order).
+    QHash<QString, qint64> m_order;
+    qint64 m_seq = 0;
 };
 
 } // namespace hmi

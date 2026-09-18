@@ -3,6 +3,8 @@
 #include "alarmengine.h"
 
 #include <QSignalSpy>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QtTest>
 
 // Shared test fixture with deterministic clock.
@@ -145,6 +147,51 @@ private slots:
         // Absent tag -> invalid value -> clears.
         QVERIFY(e.evaluate(QVariantMap()));
         QCOMPARE(e.alarmCount(), 0);
+    }
+
+    void jsonNullFromWireIsInactive()
+    {
+        // A JSON null parsed by Qt is QVariant(nullptr): valid but null. It
+        // must not be read as 0, or a "< 10" alarm fires on a failed read.
+        QVariantList defs;
+        defs.append(makeAlarmDef("ai.pot", "Pot", "", QVariantMap(),
+            QVariantMap{{"op", QString("<")}, {"value", 10.0}}));
+        hmi::AlarmEngine e(defs);
+        const QVariantMap frame = QJsonDocument::fromJson("{\"ai.pot\": null}").object().toVariantMap();
+        QVERIFY(frame.value("ai.pot").isValid());
+        QVERIFY(frame.value("ai.pot").isNull());
+        QVERIFY(!e.evaluate(frame));
+        QCOMPARE(e.alarmCount(), 0);
+    }
+
+    void thresholdValueMustBeNumeric()
+    {
+        // Python: isinstance(val, (int, float)) -- a bool or a string never fires.
+        QVariantList defs;
+        defs.append(makeAlarmDef("a", "", "", QVariantMap(), QVariantMap{{"op", QString(">")}, {"value", true}}));
+        defs.append(makeAlarmDef("b", "", "", QVariantMap(), QVariantMap{{"op", QString(">")}, {"value", QString("0")}}));
+        defs.append(makeAlarmDef("c", "", "", QVariantMap(), QVariantMap{{"op", QString(">")}, {"value", 0}}));
+        hmi::AlarmEngine e(defs);
+        QVERIFY(e.evaluate(QVariantMap{{"a", 5.0}, {"b", 5.0}, {"c", 5.0}}));
+        QCOMPARE(e.alarmCount(), 1);
+        QCOMPARE(e.activeAlarms().first().toMap().value("tag").toString(), QString("c"));
+    }
+
+    void sameSecondTiesKeepActivationOrder()
+    {
+        // Two alarms raised in one frame share a timestamp; Python keeps
+        // definition order (dict insertion). A later activation with the same
+        // timestamp sorts after them.
+        QVariantList defs;
+        for (const char *t : {"x", "y", "z"})
+            defs.append(makeAlarmDef(t, "", "", QVariantMap(), QVariantMap{{"op", QString(">")}, {"value", 0}}));
+        ClockAlarm e(defs);
+        QVERIFY(e.evaluate(QVariantMap{{"z", 1}, {"x", 1}}));   // frame order irrelevant
+        QVERIFY(e.evaluate(QVariantMap{{"z", 1}, {"x", 1}, {"y", 1}}));
+        QStringList order;
+        for (const QVariant &a : e.activeAlarms())
+            order << a.toMap().value("tag").toString();
+        QCOMPARE(order, (QStringList{"x", "z", "y"}));
     }
 
     void absentValueClearsActiveAlarm()

@@ -10,6 +10,21 @@
 
 namespace hmi {
 
+namespace {
+// Python's isinstance(val, (int, float)): a real number, not a bool or a
+// numeric-looking string.
+bool isNumber(const QVariant &v)
+{
+    switch (v.userType()) {
+    case QMetaType::Int: case QMetaType::UInt: case QMetaType::LongLong:
+    case QMetaType::ULongLong: case QMetaType::Double: case QMetaType::Float:
+        return true;
+    default:
+        return false;
+    }
+}
+} // namespace
+
 AlarmEngine::AlarmEngine(const QVariantList &alarmDefs, QObject *parent)
     : QObject(parent), m_defs(alarmDefs) {}
 
@@ -62,7 +77,9 @@ bool AlarmEngine::evaluate(const QVariantMap &frameTags)
         QVariant value = currentValues.value(tag);
 
         // null value (invalid QVariant) -> alarm inactive, skip.
-        if (!value.isValid())
+        // A JSON null arrives as QVariant(nullptr), which is valid but null:
+        // a failed hardware read makes the alarm inactive, like Python's None.
+        if (!value.isValid() || value.isNull())
             continue;
 
         // Determine severity: critical first, then warning.
@@ -73,7 +90,7 @@ bool AlarmEngine::evaluate(const QVariantMap &frameTags)
             QVariantMap crit = m["critical"].toMap();
             if (crit.contains("op") && crit.contains("value")
                 && crit["op"].canConvert<QString>()
-                && crit["value"].canConvert<double>())
+                && isNumber(crit["value"]))
             {
                 QString op = crit["op"].toString();
                 double thr = crit["value"].toDouble();
@@ -88,7 +105,7 @@ bool AlarmEngine::evaluate(const QVariantMap &frameTags)
             QVariantMap warn = m["warning"].toMap();
             if (warn.contains("op") && warn.contains("value")
                 && warn["op"].canConvert<QString>()
-                && warn["value"].canConvert<double>())
+                && isNumber(warn["value"]))
             {
                 QString op = warn["op"].toString();
                 double thr = warn["value"].toDouble();
@@ -130,6 +147,7 @@ bool AlarmEngine::evaluate(const QVariantMap &frameTags)
             item["timestamp"] = now();
             item["acknowledged"] = false;
             newlyActive[tag] = item;
+            m_order[tag] = ++m_seq;
             changed = true;
         }
     }
@@ -138,6 +156,7 @@ bool AlarmEngine::evaluate(const QVariantMap &frameTags)
     for (const QString &tag : m_active.keys()) {
         if (!newlyActive.contains(tag)) {
             m_active.remove(tag);
+            m_order.remove(tag);
             changed = true;
         }
     }
@@ -163,15 +182,19 @@ QVariantList AlarmEngine::activeAlarms() const
     // newest timestamp first (string compare).
     // Use a stable sort so equal timestamps preserve insertion order.
     std::stable_sort(alarms.begin(), alarms.end(),
-        [](const QVariant &a, const QVariant &b) {
+        [this](const QVariant &a, const QVariant &b) {
             QString sevA = a.toMap().value("severity").toString();
             QString sevB = b.toMap().value("severity").toString();
             if (sevA != sevB) {
                 return sevA == "critical"; // critical before warning
             }
             // Within same severity, newest first (descending timestamp).
-            return a.toMap().value("timestamp", QString()).toString()
-                 > b.toMap().value("timestamp", QString()).toString();
+            const QString tsA = a.toMap().value("timestamp").toString();
+            const QString tsB = b.toMap().value("timestamp").toString();
+            if (tsA != tsB)
+                return tsA > tsB;   // newest first
+            return m_order.value(a.toMap().value("tag").toString())
+                 < m_order.value(b.toMap().value("tag").toString());
         });
 
     return alarms;
