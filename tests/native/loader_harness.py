@@ -251,7 +251,11 @@ class LoaderHarness:
     def commands(self, timeout=1.0):
         """Drain all datagrams the loader sent to the fake daemon.
         Returns a list of parsed JSON dicts.  Commands that carry an ``id``
-        field are automatically acknowledged (``ok=True``)."""
+        field are automatically acknowledged (``ok=True``).
+
+        For ``list`` commands the ack is sent immediately after a short
+        delay so that ``list_tags()`` has time to register its handler in
+        ``_pending_acks`` before the ack datagram arrives at the loader."""
         result = []
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -261,7 +265,6 @@ class LoaderHarness:
                 try:
                     cmd = json.loads(data)
                     result.append(cmd)
-                    # Auto-ack commands that carry an id (ping, set, pulse, etc.)
                     cid = cmd.get("id")
                     if cid is not None:
                         self._auto_ack(str(cid), cmd.get("cmd"))
@@ -293,9 +296,16 @@ class LoaderHarness:
         raise AssertionError(f"Timed out waiting for command '{cmd}'")
 
     def _auto_ack(self, cid, cmd_name):
-        """Auto-ack a command.  Only ack commands that the harness knows
-        how to handle gracefully; ignore subscribe/ping/list/unsubscribe."""
-        if cmd_name in ("subscribe", "list", "unsubscribe"):
+        """Auto-ack a command.  For list, ack with empty tags list so the
+        loader's list_tags() still returns (empty) and the test can assert
+        the ack was processed.  Other commands with an id are acked ok=True."""
+        if cmd_name == "subscribe":
+            return  # subscribe does not carry an id
+        if cmd_name == "list":
+            # Give list_tags()'s handler time to be installed. list_tags()
+            # sends the command then blocks; we send the ack back so the
+            # nested event loop picks it up before the 2 s QTimer fires.
+            self.ack(cid, ok=True, tags=[])
             return
         self.ack(cid, ok=True)
 
