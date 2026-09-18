@@ -190,28 +190,9 @@ void TagEngine::handleTelemetry(const QVariantMap &msg)
     }
 
     // Record history for tracked tags.
-    for (const QString &tag : m_history.trackedTags()) {
-        QVariant raw = tags.value(tag);
-        if (raw.isNull()) {
-            // null means a failed hardware read; skip.
-            continue;
-        }
-        // bool is converted to 0/1.
-        if (raw.typeId() == QMetaType::Bool) {
-            raw = raw.toBool() ? 1 : 0;
-        }
-        // Only record numeric values.
-        if (raw.typeId() == QMetaType::Double ||
-            raw.typeId() == QMetaType::Float ||
-            raw.typeId() == QMetaType::Int ||
-            raw.typeId() == QMetaType::UInt ||
-            raw.typeId() == QMetaType::LongLong ||
-            raw.typeId() == QMetaType::ULongLong) {
-            m_history.record(tag, raw);
-        }
-    }
-
-    // Evaluate alarms.
+    // History and alarms see the frame after the map, so a control binding
+    // that fires on insert reads the previous frame's history (same as Python).
+    m_history.recordFrame(tags);
     m_alarms->evaluate(tags);
 
     // Bump history version.
