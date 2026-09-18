@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "name": "probe-app",
+  "version": "1.0.0",
+  "entry": "main.qml",
+  "screen": {"width": 640, "height": 480},
+  "theme": "light",
+  "tags_required": ["ai.pot", "di.estop", "do.relay1"],
+  "alarms": [
+    {"tag": "ai.pot", "label": "Pot", "unit": "V",
+     "warning": {"op": ">", "value": 2.5},
+     "critical": {"op": ">", "value": 3.0}}
+  ],
+  "qt": ">=6.5"
+}
