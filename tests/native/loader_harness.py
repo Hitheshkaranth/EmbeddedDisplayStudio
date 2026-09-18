@@ -250,12 +250,8 @@ class LoaderHarness:
 
     def commands(self, timeout=1.0):
         """Drain all datagrams the loader sent to the fake daemon.
-        Returns a list of parsed JSON dicts.  Commands that carry an ``id``
-        field are automatically acknowledged (``ok=True``).
-
-        For ``list`` commands the ack is sent immediately after a short
-        delay so that ``list_tags()`` has time to register its handler in
-        ``_pending_acks`` before the ack datagram arrives at the loader."""
+        Returns a list of parsed JSON dicts. Nothing is acknowledged here:
+        the test plays the daemon and answers with ack() when it means to."""
         result = []
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -263,11 +259,7 @@ class LoaderHarness:
                 self._daemon.settimeout(0.1)
                 data, _ = self._daemon.recvfrom(8192)
                 try:
-                    cmd = json.loads(data)
-                    result.append(cmd)
-                    cid = cmd.get("id")
-                    if cid is not None:
-                        self._auto_ack(str(cid), cmd.get("cmd"))
+                    result.append(json.loads(data))
                 except (json.JSONDecodeError, ValueError):
                     pass
             except (socket.timeout, OSError, ConnectionResetError):
@@ -279,35 +271,22 @@ class LoaderHarness:
     def wait_command(self, cmd, timeout=3.0):
         """Block until the first received command has ``cmd`` == *cmd*.
         Returns the dict (earlier commands are kept in ``.received``)."""
+        # Drain the socket while waiting: a caller that must answer a
+        # blocking command (list_tags() waits at most 2 s) needs the command
+        # the moment it lands, not after the timeout.
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+        consumed = 0
+        while True:
             with self._lock:
-                for c in self._received:
-                    if c.get("cmd") == cmd:
-                        return c
-            time.sleep(0.05)
-        # Not found in .received — try draining fresh datagrams
-        fresh = self.commands(timeout=timeout)
-        for c in fresh:
-            if c.get("cmd") == cmd:
-                with self._lock:
-                    self._received.append(c)
-                return c
+                pending = self._received[consumed:]
+            for c in pending:
+                consumed += 1
+                if c.get("cmd") == cmd:
+                    return c
+            if time.monotonic() >= deadline:
+                break
+            self.commands(timeout=0.1)
         raise AssertionError(f"Timed out waiting for command '{cmd}'")
-
-    def _auto_ack(self, cid, cmd_name):
-        """Auto-ack a command.  For list, ack with empty tags list so the
-        loader's list_tags() still returns (empty) and the test can assert
-        the ack was processed.  Other commands with an id are acked ok=True."""
-        if cmd_name == "subscribe":
-            return  # subscribe does not carry an id
-        if cmd_name == "list":
-            # Give list_tags()'s handler time to be installed. list_tags()
-            # sends the command then blocks; we send the ack back so the
-            # nested event loop picks it up before the 2 s QTimer fires.
-            self.ack(cid, ok=True, tags=[])
-            return
-        self.ack(cid, ok=True)
 
     # ---- UDP: ack back to the loader ---------------------------------------
 

@@ -54,11 +54,8 @@ class TestConformanceTags(unittest.TestCase):
     def test_undeclared_tag_drives_control(self):
         """An undeclared tag (ctl.ping) triggers the Bus.ping() control."""
         self.h.frame({"ctl.ping": 1})
-        self.h.commands(timeout=1.0)  # drains + auto-acks
-        time.sleep(0.5)
-        pl = self.h.probe_lines()
-        text = "\n".join(pl)
-        self.assertIn("ack id=qml-ping ok=true err=", text)
+        cmd = self.h.wait_command("ping", timeout=3)
+        self.assertEqual(cmd["id"], "qml-ping")
 
     def test_online_falls_offline(self):
         """No frames for 4 s after one frame → online=false."""

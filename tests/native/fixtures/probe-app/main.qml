@@ -93,8 +93,17 @@ Rectangle {
     property var ctlPing: Bus.value("ctl.ping", 0)
     onCtlPingChanged: if (ctlPing > 0) Bus.ping()
 
+    // list_tags() blocks for its reply. Called straight from a telemetry-driven
+    // binding it would run inside the socket's readyRead handler, where Qt
+    // cannot deliver the reply (readyRead is not re-entrant) -- in either
+    // loader. A real app calls it from a click; the probe defers one turn.
     property var ctlList: Bus.value("ctl.list", 0)
-    onCtlListChanged: if (ctlList > 0) Hmi.log("PROBE list=" + Bus.list_tags().join(","))
+    onCtlListChanged: if (ctlList > 0) listTimer.start()
+    Timer {
+        id: listTimer
+        interval: 20
+        onTriggered: Hmi.log("PROBE list=" + Bus.list_tags().join(","))
+    }
 
     property var ctlHist: Bus.value("ctl.hist", 0)
     onCtlHistChanged: if (ctlHist > 0) Hmi.log("PROBE hist=" + Bus.history("ai.pot", 5).join(","))

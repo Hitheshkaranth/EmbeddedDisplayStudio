@@ -50,49 +50,28 @@ class TestConformanceCommands(unittest.TestCase):
     def test_ping_acked(self):
         """ctl.ping=1 → ping command; ack(id=qml-ping, ok=True) → ack log."""
         self.h.frame({"ctl.ping": 1})
-        self.h.commands(timeout=1.0)  # drains + auto-acks ping
-        import time
-        time.sleep(0.5)
-        text = "\n".join(self.h.probe_lines())
-        self.assertIn("ack id=qml-ping ok=true err=", text)
+        cmd = self.h.wait_command("ping", timeout=3)
+        self.assertEqual(cmd["id"], "qml-ping")
+        self.h.ack("qml-ping", ok=True)
+        self.h.wait_for(r"PROBE ack id=qml-ping ok=true err=$", timeout=3)
 
     def test_nack_logged(self):
         """Answer a set with ok=False, err='not_writable' → ack log."""
         # First, get the set command
         self.h.frame({"ctl.write": 1})
-        cmds = self.h.commands(timeout=1.0)  # auto-ack sends ok=True
-        set_cmd = [c for c in cmds if c.get("cmd") == "set"]
-        self.assertTrue(bool(set_cmd), "No set command received")
-        set_id = set_cmd[0]["id"]
-
-        # Now manually send a nack
+        set_id = self.h.wait_command("set", timeout=3)["id"]
         self.h.ack(set_id, ok=False, err="not_writable")
-        import time
-        time.sleep(0.5)
-        text = "\n".join(self.h.probe_lines())
-        self.assertIn("ok=false", text)
-        self.assertIn("err=not_writable", text)
+        self.h.wait_for(r"PROBE ack id=" + re.escape(set_id) + r" ok=false err=not_writable$", timeout=3)
 
     def test_list(self):
-        """ctl.list=1 → list command; ack with tags → list=A,B log.
+        """ctl.list=1 -> list command; ack with tags -> the app sees them.
 
-        NOTE: Due to PySide6's nested event loop not processing UDP
-        socket signals during QEventLoop.exec(), list_tags() may return
-        empty even when the ack arrives. We verify the list command was
-        sent and the ack was received."""
-        import time
-
+        list_tags() blocks in a nested event loop for up to 2 s, so the ack
+        must be answered promptly; the result appears as `list=a,b`."""
         self.h.frame({"ctl.list": 1})
-        cmds = self.h.commands(timeout=3.0)
-        list_cmds = [c for c in cmds if c.get("cmd") == "list"]
-        self.assertTrue(bool(list_cmds), "No list command sent by loader")
-        list_id = list_cmds[0]["id"]
-
-        # Answer with tag list and wait for ack log to confirm loader processed it
+        list_id = self.h.wait_command("list", timeout=3)["id"]
         self.h.ack(list_id, ok=True, tags=["a", "b"])
-        time.sleep(1)
-        text = "\n".join(self.h.probe_lines())
-        self.assertIn("ack id=" + list_id + " ok=true err=", text)
+        self.h.wait_for(r"PROBE list=a,b$", timeout=4)
 
     @unittest.skipUnless(is_native(), "write-through needs the native loader")
     def test_write_through(self):
@@ -105,14 +84,14 @@ class TestConformanceCommands(unittest.TestCase):
 
     def test_ids_increasing(self):
         """After write then pulse, the pulse id number > write id number."""
-        self.h.frame({"ctl.write": 1, "ctl.pulse": 1})
-        cmds = self.h.commands(timeout=1.0)
-        set_cmds = [c for c in cmds if c.get("cmd") == "set"]
-        pulse_cmds = [c for c in cmds if c.get("cmd") == "pulse"]
-        self.assertTrue(bool(set_cmds), "No set command")
-        self.assertTrue(bool(pulse_cmds), "No pulse command")
-        write_id = int(re.search(r"\d+", set_cmds[0]["id"]).group())
-        pulse_id = int(re.search(r"\d+", pulse_cmds[0]["id"]).group())
+        # Two frames: the order in which one frame's tags are applied is not
+        # part of the contract (a JSON object is unordered; Qt sorts keys).
+        self.h.frame({"ctl.write": 1})
+        set_cmd = self.h.wait_command("set", timeout=3)
+        self.h.frame({"ctl.pulse": 1})
+        pulse_cmd = self.h.wait_command("pulse", timeout=3)
+        write_id = int(re.search(r"\d+", set_cmd["id"]).group())
+        pulse_id = int(re.search(r"\d+", pulse_cmd["id"]).group())
         self.assertGreater(pulse_id, write_id, "Pulse id not greater than write id")
 
 

@@ -48,6 +48,11 @@ ShSwitch {
 }
 ```
 
+> **`Bus.list_tags()` and `Bus.unsubscribe()` block for their reply** (up to
+> 2 s). Call them from a user event such as a click. Called from a binding
+> that a telemetry frame just re-evaluated, they run inside the socket's own
+> read handler, where the reply cannot be delivered, and return empty.
+
 You can also explicitly pulse a tag:
 ```qml
 ShButton {

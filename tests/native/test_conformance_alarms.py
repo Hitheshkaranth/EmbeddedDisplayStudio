@@ -29,21 +29,21 @@ class TestConformanceAlarms(unittest.TestCase):
     def test_alarm_acknowledged(self):
         """{ai.pot:3.2, ctl.ack:1} -> top=critical:Pot 3.2V:true."""
         self.h.frame({"ai.pot": 3.2})
-        self.h.frame({"ctl.ack": 1})
-        self.h.commands(timeout=1.0)
-        time.sleep(0.5)
-        text = "\n".join(self.h.probe_lines())
-        self.assertIn("alarms=1 top=critical:Pot 3.2V:true", text)
+        self.h.wait_for(r"PROBE alarms=1 top=critical:Pot 3.2V:false$", timeout=3)
+        # ai.pot stays in the frame: a frame without it would clear the alarm.
+        self.h.frame({"ai.pot": 3.2, "ctl.ack": 1})
+        self.h.wait_for(r"PROBE alarms=1 top=critical:Pot 3.2V:true$", timeout=3)
 
     def test_escalation_down_keeps_alarm(self):
-        """{ai.pot:2.7} -> top=warning:Pot 2.7V:true, alarmCount stays 1."""
+        """An acknowledged critical that drops to warning keeps the ack."""
         self.h.frame({"ai.pot": 3.2})
-        time.sleep(0.3)
+        self.h.wait_for(r"PROBE alarmCount=1$", timeout=3)
+        self.h.frame({"ai.pot": 3.2, "ctl.ack": 1})
+        self.h.wait_for(r"PROBE alarms=1 top=critical:Pot 3.2V:true$", timeout=3)
         self.h.frame({"ai.pot": 2.7})
-        time.sleep(0.3)
-        text = "\n".join(self.h.probe_lines())
-        self.assertIn("alarms=1 top=warning:Pot 2.7V:false", text)
-        self.assertIn("alarmCount=1", text)
+        self.h.wait_for(r"PROBE alarms=1 top=warning:Pot 2.7V:true$", timeout=3)
+        counts = [l for l in self.h.probe_lines() if l.startswith("alarmCount=")]
+        self.assertEqual(counts, ["alarmCount=1"])
 
     def test_alarm_clears(self):
         """{ai.pot:1.0} -> alarms=0 top=none and alarmCount=0."""
