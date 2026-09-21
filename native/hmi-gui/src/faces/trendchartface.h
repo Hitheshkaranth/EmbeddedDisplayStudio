@@ -16,9 +16,6 @@ class TrendChartFace : public FaceItem
 public:
     using FaceItem::FaceItem;
 
-    // TODO(W4): delete this override once paintFace() is complete.
-    bool implemented() const override { return false; }
-
 protected:
     void paintFace(QPainter *painter, const QVariantMap &spec) override;
 };
