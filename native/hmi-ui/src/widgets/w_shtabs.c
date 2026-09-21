@@ -124,8 +124,7 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
         lv_obj_set_style_text_color(tabText, hmi_colour("mutedForeground"), 0);
         lv_obj_set_style_text_align(tabText, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_text(tabText, st->tabs[i]);
-        lv_obj_set_pos(tabText, 0, 0);
-        lv_obj_set_size(tabText, tabW - 8, tabH);
+        lv_obj_set_size(tabText, tabW - 8, LV_SIZE_CONTENT);   // one line, centred in the pill
         lv_obj_center(tabText);
 
         st->tabBg[i] = tabBg;
@@ -195,8 +194,7 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
             lv_obj_set_style_text_color(tabText, hmi_colour("mutedForeground"), 0);
             lv_obj_set_style_text_align(tabText, LV_TEXT_ALIGN_CENTER, 0);
             lv_label_set_text(tabText, st->tabs[i]);
-            lv_obj_set_pos(tabText, 0, 0);
-            lv_obj_set_size(tabText, tabW - 8, tabH);
+            lv_obj_set_size(tabText, tabW - 8, LV_SIZE_CONTENT);   // one line, centred in the pill
             lv_obj_center(tabText);
 
             st->tabBg[i] = tabBg;

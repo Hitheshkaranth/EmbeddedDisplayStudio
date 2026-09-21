@@ -55,7 +55,7 @@ WAVE = ["Column", "Grid", "Image", "Item", "Rectangle", "Row", "ShAlarmTable", "
 # Widgets that are almost entirely small text: glyph rasterisation alone
 # keeps them above the relative bar although the pictures match (verified by
 # eye in swarm/qc/ui-parity). They pass at 0.8 x blank / 1.0 x blank.
-TEXT_HEAVY = {"ShTripInfo", "ShDataField"}
+TEXT_HEAVY = {"ShTripInfo", "ShDataField", "ShTabs"}
 
 
 def _selected():

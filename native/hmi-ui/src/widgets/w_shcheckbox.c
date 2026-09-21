@@ -50,7 +50,9 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     lv_obj_set_flex_flow(bg, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_all(bg, 4, 0);  // anchors.leftMargin/rightMargin: Theme.spacing4
     lv_obj_set_style_pad_gap(bg, 8, 0);  // spacing: Theme.spacing8
-    lv_obj_set_style_flex_main_place(bg, LV_FLEX_ALIGN_CENTER, 0);
+    lv_obj_set_style_flex_main_place(bg, LV_FLEX_ALIGN_START, 0);
+    lv_obj_set_style_flex_cross_place(bg, LV_FLEX_ALIGN_CENTER, 0);   // Row: anchors.verticalCenter
+    lv_obj_set_style_flex_track_place(bg, LV_FLEX_ALIGN_CENTER, 0);
 
     // Box: 20x20, radiusSm
     lv_obj_t *box = lv_obj_create(bg);
