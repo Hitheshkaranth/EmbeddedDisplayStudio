@@ -187,7 +187,9 @@ class ParityTests(unittest.TestCase):
                 self._triptych(qml, ui, diff, os.path.join(OUT_DIR, f"{type_name}.png"))
                 # Relative criterion, with an absolute floor for tiny text-only
                 # widgets where glyph rasterisation alone exceeds half the blank.
-                passed = (mean <= blank_mean * 0.5 and frac <= blank_frac * 0.5) or (mean <= 10.0 and frac <= 0.06)
+                # The absolute floor is for glyph antialiasing on text-heavy
+                # pictures; a nearly blank QML picture (blank mean < 4) gets no floor.
+                passed = (mean <= blank_mean * 0.5 and frac <= blank_frac * 0.5) or                          (blank_mean >= 4.0 and mean <= 10.0 and frac <= 0.06)
                 if type_name in TEXT_HEAVY:
                     passed = mean <= blank_mean * 0.65 and frac <= blank_frac * 1.0
                 verdict = "STUB" if stub else ("ok" if passed else "FAIL")
