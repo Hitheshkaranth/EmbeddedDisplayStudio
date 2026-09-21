@@ -16,11 +16,11 @@ class AutoLevelFace : public FaceItem
 public:
     using FaceItem::FaceItem;
 
-    // TODO(W2): delete this override once paintFace() is complete.
-    bool implemented() const override { return false; }
-
 protected:
     void paintFace(QPainter *painter, const QVariantMap &spec) override;
+
+private:
+    static QPainterPath outline(qreal x, qreal w, qreal top, qreal h, qreal bulge);
 };
 
 } // namespace hmi
