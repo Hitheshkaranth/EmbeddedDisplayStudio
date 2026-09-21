@@ -52,13 +52,17 @@ echo "== install"
     cat > /etc/systemd/system/hmi-ui.service <<"UNIT"
 [Unit]
 Description=HMI GUI (Qt-free runtime, DRM/KMS)
-After=network.target hmi-hwd.service
+# Conflicts= stops the compositor and the Qt loader; After= makes systemd
+# wait for those stops to finish, so the first DRM modeset never races
+# Weston for the device (a race left the screen blank once).
+After=network.target hmi-hwd.service weston.service hmi-gui.service
 Conflicts=weston.service hmi-gui.service
 
 [Service]
 Type=simple
 EnvironmentFile=-/etc/default/hmi-gui
 ExecStartPre=/bin/mkdir -p /run/hmi
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 50); do systemctl is-active -q weston.service || exit 0; sleep 0.1; done; exit 0'
 ExecStart=/usr/lib/hmi/ui/hmi-ui --apps-dir /opt/hmi_apps/current --display /dev/dri/card1 --ready-file /run/hmi/gui-ready
 Restart=on-failure
 RestartSec=2
