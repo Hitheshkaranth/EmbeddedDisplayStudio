@@ -76,3 +76,28 @@ the Theme colours; the two painters must produce the same pixels.
   through both painters and compares them; `HMI_FACES=Name1,Name2` restricts
   the run, `HMI_FACES_OUT=<dir>` writes `-canvas.png`, `-native.png` and
   `-diff.png` per case.
+
+## Panel build (aarch64) and provisioning
+
+The panel has no Qt 6 and no package feed, so until the image is rebuilt the
+loader ships with a private Qt 6.4 runtime, the way `provision_pyside2.sh`
+ships Qt 5. The build is a *native* aarch64 build inside a Debian bookworm
+arm64 root under qemu-user (no cross toolchain, no host-Qt version pairing):
+
+```
+# WSL Ubuntu, as root -- one-time root (~10 min), then build + package
+bash native/hmi-gui/arm64/chroot.sh
+bash native/hmi-gui/arm64/build.sh [--test]     # -> out/aarch64/hmi-gui
+bash native/hmi-gui/arm64/runtime.sh            # -> out/aarch64/hmi-qt6-runtime.tar.gz
+# or all three plus the install:
+bash deploy/provision_native.sh --host <panel-ip> --key ~/.ssh/id_ed25519
+bash deploy/provision_native.sh --host <panel-ip> --remove   # back to the Python loader
+```
+
+On the panel this lands `/usr/lib/hmi/gui/hmi-gui` (a wrapper setting
+`LD_LIBRARY_PATH`/`QT_PLUGIN_PATH`/`QML_IMPORT_PATH`), `hmi-gui.bin` and
+`/usr/lib/hmi/qt6/{lib,plugins,qml}` (~96 MB). `hmi-gui-launch` prefers the
+wrapper when present; `HMI_GUI_NATIVE=0` forces the Python loader. The
+conformance suite runs on the panel itself: copy `tests/native` under a
+`tests/` package and run it with `HMI_GUI_CMD=/usr/lib/hmi/gui/hmi-gui` and
+`/opt/hmi-python/bin/python3` (38/38 on 2026-09-21).
