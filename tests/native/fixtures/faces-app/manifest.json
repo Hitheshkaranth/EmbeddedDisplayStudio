@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "name": "faces-app",
+  "version": "1.0.0",
+  "entry": "main.qml",
+  "screen": {"width": 640, "height": 480},
+  "theme": "light",
+  "tags_required": ["ai.pot"],
+  "qt": ">=6.5"
+}
