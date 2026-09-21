@@ -105,6 +105,8 @@ void hmi_widget_apply_common(hmi_widget_t *w)
         lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
     else
         lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
-    // Page children are laid out by absolute coordinates; nothing scrolls.
+    // Page children are laid out by absolute coordinates; nothing scrolls,
+    // and -- as QML Items -- nothing clips its children to its own bounds.
     lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 }
