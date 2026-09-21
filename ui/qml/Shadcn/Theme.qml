@@ -188,7 +188,19 @@ NativeProbe {}", root, "NativeProbe");
     /** @property {real} spacing48 */
     readonly property real spacing48: 48
 
+    // The kit ships its own face (fonts/Inter-*.ttf, SIL OFL) so the Studio
+    // canvas, the live preview, both loaders and the panel lay text out with
+    // the same glyph metrics. Before this, every host picked whatever it had
+    // (Segoe UI, DejaVu Sans, a Bahnschrift substitute) and a readout that
+    // fit on the canvas overflowed on the glass.
+    readonly property FontLoader _fontRegular: FontLoader { source: Qt.resolvedUrl("fonts/Inter-Regular.ttf") }
+    readonly property FontLoader _fontMedium: FontLoader { source: Qt.resolvedUrl("fonts/Inter-Medium.ttf") }
+    readonly property FontLoader _fontSemibold: FontLoader { source: Qt.resolvedUrl("fonts/Inter-SemiBold.ttf") }
+    readonly property FontLoader _fontBold: FontLoader { source: Qt.resolvedUrl("fonts/Inter-Bold.ttf") }
+
     function resolveFontFamily() {
+        if (_fontRegular.status === FontLoader.Ready)
+            return _fontRegular.name
         var available = Qt.fontFamilies()
         var preferred = ["Inter", "Noto Sans", "DejaVu Sans", "Segoe UI", "Arial"]
         for (var i = 0; i < preferred.length; ++i) {
@@ -199,8 +211,8 @@ NativeProbe {}", root, "NativeProbe");
         return fallback || "Sans Serif"
     }
 
-    /** @property {string} fontFamily */
-    readonly property string fontFamily: resolveFontFamily()
+    /** @property {string} fontFamily -- "Inter" once the bundled face has loaded. */
+    readonly property string fontFamily: _fontRegular.status === FontLoader.Ready ? _fontRegular.name : resolveFontFamily()
     /** @property {int} fontSizeXs */
     readonly property int fontSizeXs: 12
     /** @property {int} fontSizeSm */

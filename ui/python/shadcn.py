@@ -4,6 +4,7 @@ Provides helpers for the Qt Widgets side, loading ui/tokens.json.
 """
 
 import json
+import os
 import logging
 from pathlib import Path
 from typing import Dict, Union, Any
@@ -22,6 +23,25 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 FONT_STACK = ('Inter', 'Noto Sans', 'DejaVu Sans', 'sans-serif')
+
+# The kit ships Inter (ui/qml/Shadcn/fonts, SIL OFL) and Theme.qml loads it
+# with FontLoader, so the QML previews and the panel render with it. The
+# Studio registers the same files so its canvas painters and chrome match
+# instead of substituting whatever the host has.
+_KIT_FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "qml", "Shadcn", "fonts")
+_KIT_FONTS_LOADED = False
+
+
+def _load_kit_fonts():
+    global _KIT_FONTS_LOADED
+    if _KIT_FONTS_LOADED:
+        return
+    _KIT_FONTS_LOADED = True
+    from PySide6.QtGui import QFontDatabase
+    for name in ("Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-SemiBold.ttf", "Inter-Bold.ttf"):
+        path = os.path.join(_KIT_FONT_DIR, name)
+        if os.path.exists(path) and QFontDatabase.addApplicationFont(path) < 0:
+            logger.warning("Could not register kit font %s", path)
 
 _tokens_cache = None
 
@@ -838,6 +858,7 @@ def apply(app: QApplication, theme: str = 'light') -> None:
     _ACTIVE_THEME = theme
     app.setStyleSheet(qss(theme))
     
+    _load_kit_fonts()
     font = QFont()
     font.setFamilies(list(FONT_STACK))
     t = load_tokens()
