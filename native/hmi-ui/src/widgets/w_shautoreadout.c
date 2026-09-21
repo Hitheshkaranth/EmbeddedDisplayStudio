@@ -9,12 +9,13 @@
 #include <string.h>
 
 #include "draw_util.h"
+#include "icons.h"
 #include "registry.h"
 
 typedef struct {
     double value, warnBelow, warnAbove;
     int decimals;
-    lv_obj_t *face, *caption, *number, *unit;
+    lv_obj_t *face, *caption, *number, *unit, *icon;
 } state_t;
 
 static void layout(hmi_widget_t *w)
@@ -25,6 +26,9 @@ static void layout(hmi_widget_t *w)
     const char *icon = hmi_widget_str(w, "icon", "");
     bool iconLeft = strcmp(hmi_widget_str(w, "iconSide", "right"), "left") == 0;
     int iconSlot = icon[0] ? (int)(round(H * 0.6) + round(H * 0.15)) : 0;
+    int glyph = (int)round(H * 0.6);
+    hmi_icon_set(st->icon, icon, glyph, warns ? hmi_colour("autoRed") : hmi_colour("autoLine"));
+    lv_obj_set_pos(st->icon, iconLeft ? 0 : (int)W - glyph, (int)round(H / 2 - glyph / 2.0));
     int blockX = iconLeft ? iconSlot : 0;
     int blockW = (int)fmax(1, W - iconSlot);
 
@@ -78,6 +82,7 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     st->caption = hmi_make_label(face, 12, 400, hmi_colour("autoMuted"), "");
     st->number = hmi_make_label(face, 20, 600, hmi_colour("autoText"), "");
     st->unit = hmi_make_label(face, 12, 400, hmi_colour("autoMuted"), "");
+    st->icon = hmi_icon_create(face, "", 16, hmi_colour("autoLine"));
     read_model(w);
     layout(w);
     return face;

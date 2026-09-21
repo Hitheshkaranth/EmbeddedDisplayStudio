@@ -42,6 +42,8 @@ add_library(hmi-ui-core STATIC
     src/registry.c
     src/runtime.c
     src/display.c
+    src/icons.c
+    src/alarms.c
     src/tags.c
     src/bind.c
     src/gen/kit_schema.c

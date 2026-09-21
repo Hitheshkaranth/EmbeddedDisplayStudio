@@ -104,6 +104,7 @@ int main(int argc, char **argv)
 {
     const char *apps_dir = "/opt/hmi_apps/current";
     const char *display = "/dev/dri/card1";
+    const char *touch = getenv("HMI_UI_TOUCH");   // /dev/input/eventN; unset = none
     const char *headless = NULL;
     const char *ready_file = NULL;
     const char *kit = NULL;
@@ -120,6 +121,7 @@ int main(int argc, char **argv)
         {"ready-file", 1, 0, 'f'}, {"exit-after", 1, 0, 'e'}, {"log-level", 1, 0, 'l'},
         {"kit", 1, 0, 'k'}, {"theme", 1, 0, 't'}, {"render-widget", 1, 0, 'W'},
         {"size", 1, 0, 's'}, {"props", 1, 0, 'P'}, {"windowed", 0, 0, 'w'}, {"shell", 1, 0, 'S'},
+        {"touch", 1, 0, 'T'},
         {0, 0, 0, 0}};
     int c;
     while ((c = getopt_long(argc, argv, "", opts, NULL)) != -1) {
@@ -138,6 +140,7 @@ int main(int argc, char **argv)
         case 'W': render_widget = optarg; break;
         case 's': sscanf(optarg, "%dx%d", &size_w, &size_h); break;
         case 'P': props = optarg; break;
+        case 'T': touch = optarg; break;
         case 'w': case 'S': break;   // accepted for flag compatibility with hmi-gui; no effect
         default: fprintf(stderr, "usage: see main.c\n"); return 2;
         }
@@ -173,6 +176,11 @@ int main(int argc, char **argv)
         disp = hmi_display_headless(w, h);
     } else {
         disp = hmi_display_drm(display);
+        if (touch && *touch) {
+            lv_indev_t *indev = lv_evdev_create(LV_INDEV_TYPE_POINTER, touch);
+            if (indev) { lv_indev_set_display(indev, disp); hmi_log(HMI_LOG_INFO, "touch input %s", touch); }
+            else hmi_log(HMI_LOG_WARNING, "cannot open touch device %s", touch);
+        }
     }
     lv_obj_t *screen = lv_screen_active();
     lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
@@ -183,7 +191,7 @@ int main(int argc, char **argv)
     if (!headless) {
         tags = hmi_tags_create(&topt);
     }
-    hmi_runtime_t *rt = hmi_runtime_create(project, screen, tags);
+    hmi_runtime_t *rt = hmi_runtime_create(project, screen, tags, render_widget ? NULL : apps_dir);
     cbs.rt = rt;
     if (tags)
         hmi_tags_set_callbacks(tags, on_tag, on_online, on_ack, &cbs);

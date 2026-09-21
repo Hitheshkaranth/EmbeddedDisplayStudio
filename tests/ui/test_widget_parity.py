@@ -48,11 +48,8 @@ OUT_DIR = os.environ.get("HMI_UI_QC_DIR") or _qc_dir()
 BIN = os.environ.get("HMI_UI_BIN", os.path.join(ROOT, "native", "hmi-ui", "out", "hmi-ui"))
 BACKGROUND = "#101318"
 
-# Wave 1: everything the engine-dashboard demo needs, plus the faces with
-# exact drawing specs. Wave 2 adds the rest of the 46 types.
-WAVE = ["Text", "Image", "Rectangle", "ShButton", "ShStatDot", "ShSegmentBar", "ShTripInfo",
-        "ShAutoReadout", "ShNumDisplay", "ShValueTile", "ShCard", "ShProgress",
-        "ShClusterGauge", "ShAutoLevel", "ShEngineGauge", "ShGauge"]
+# Every Designer type (kit_schema.json); stubs report as skips.
+WAVE = ["Column", "Grid", "Image", "Item", "Rectangle", "Row", "ShAlarmTable", "ShAlert", "ShAnalogDisplay", "ShAnnunciator", "ShAttitude", "ShAutoLevel", "ShAutoReadout", "ShButton", "ShCard", "ShCheckbox", "ShClusterGauge", "ShCompass", "ShDataField", "ShDriveMode", "ShEngineBar", "ShEngineGauge", "ShFlightDirector", "ShFuelQuantity", "ShGauge", "ShGearIndicator", "ShIconTile", "ShInput", "ShNumDisplay", "ShNumInput", "ShProgress", "ShSegmentBar", "ShSelect", "ShSlider", "ShStatDot", "ShTabs", "ShTape", "ShTelltale", "ShToggle", "ShTrendChart", "ShTripInfo", "ShTurnCoordinator", "ShVSI", "ShValueTile", "ShVehicleStatus", "Text"]
 
 
 # Widgets that are almost entirely small text: glyph rasterisation alone

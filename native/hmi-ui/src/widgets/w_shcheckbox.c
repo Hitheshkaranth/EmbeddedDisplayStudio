@@ -3,7 +3,7 @@
 // Spec: ui/qml/Shadcn/ShCheckbox.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): checked, label, enabled, opacity, visible.
 // Default size 160x32. Signals: checkedChanged.
-// Owner: wave 2. Until implemented, create() returns NULL and the runtime
+// Owner: W3 (wave 2). Until implemented, create() returns NULL and the runtime
 // draws a labelled placeholder.
 #include "registry.h"
 #include "theme.h"
@@ -11,12 +11,12 @@
 static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
 {
     (void)w; (void)parent;
-    return NULL;   // TODO(wave 2): build the LVGL objects
+    return NULL;   // TODO(W3): build the LVGL objects
 }
 
 static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value)
 {
-    (void)w; (void)prop; (void)value;   // TODO(wave 2): live property updates
+    (void)w; (void)prop; (void)value;   // TODO(W3): live property updates
 }
 
 const hmi_widget_ops_t hmi_widget_shcheckbox = {"ShCheckbox", create, set_prop, NULL};

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "alarms.h"
 #include "log.h"
 #include "registry.h"
 #include "theme.h"
@@ -16,7 +17,26 @@ struct hmi_runtime {
     hmi_page_t *page;
     lv_obj_t *page_obj;     // container for the page's widgets
     hmi_page_t *pending;    // navigation requested, applied by hmi_runtime_tick
+    hmi_alarms_t *alarms;
 };
+
+// Deliver the active alarm list to every ShAlarmTable of the current page.
+static void deliver_alarms_cb(hmi_widget_t *w, void *user)
+{
+    hmi_runtime_t *rt = user;
+    if (strcmp(w->type, "ShAlarmTable") != 0 || !w->native) return;
+    const hmi_widget_ops_t *ops = hmi_registry_find(w->type);
+    if (!ops || !ops->set_prop) return;
+    hmi_value_t list = hmi_alarms_active_value(rt->alarms);
+    ops->set_prop(w, "alarms", &list);
+    hmi_value_free(&list);
+}
+
+static void alarms_changed(void *user)
+{
+    hmi_runtime_t *rt = user;
+    if (rt->page) hmi_page_visit(rt->page, deliver_alarms_cb, rt);
+}
 
 // Every widget carries a pointer back to its runtime in state[0]? No: the
 // model's `state` belongs to the widget implementation. The runtime keeps a
@@ -145,6 +165,7 @@ static bool show_page(hmi_runtime_t *rt, hmi_page_t *page)
     for (size_t i = 0; i < page->nwidgets; ++i)
         build_widget(rt, page->widgets[i], rt->page_obj);
     hmi_bind_page(rt->bind, page);
+    hmi_page_visit(page, deliver_alarms_cb, rt);
     // Re-deliver every known tag so bound widgets start from live values.
     // (The bind engine asks the tag map through hmi_bind_page's fallbacks;
     // the values already received arrive through on_tag as they change.)
@@ -152,13 +173,15 @@ static bool show_page(hmi_runtime_t *rt, hmi_page_t *page)
     return true;
 }
 
-hmi_runtime_t *hmi_runtime_create(hmi_project_t *project, lv_obj_t *screen, hmi_tags_t *tags)
+hmi_runtime_t *hmi_runtime_create(hmi_project_t *project, lv_obj_t *screen, hmi_tags_t *tags, const char *apps_dir)
 {
     hmi_runtime_t *rt = calloc(1, sizeof *rt);
     rt->project = project;
     rt->screen = screen;
     rt->tags = tags;
     rt->bind = hmi_bind_create(bind_apply, rt);
+    rt->alarms = hmi_alarms_create(apps_dir);
+    hmi_alarms_set_callback(rt->alarms, alarms_changed, rt);
     hmi_theme_set_dark(strcmp(project->theme, "light") != 0);
     show_page(rt, project->pages[0]);
     return rt;
@@ -169,6 +192,7 @@ void hmi_runtime_destroy(hmi_runtime_t *rt)
     if (!rt) return;
     teardown_page(rt);
     hmi_bind_destroy(rt->bind);
+    hmi_alarms_destroy(rt->alarms);
     free(rt);
 }
 
@@ -198,6 +222,8 @@ const char *hmi_runtime_current_page(const hmi_runtime_t *rt) { return rt->page 
 void hmi_runtime_on_tag(hmi_runtime_t *rt, const char *tag, const hmi_value_t *value)
 {
     hmi_bind_on_tag(rt->bind, tag, value);
+    const char *tags[1] = {tag};
+    hmi_alarms_evaluate(rt->alarms, tags, value, 1);   // fires alarms_changed when the set changes
 }
 
 void hmi_runtime_on_online(hmi_runtime_t *rt, bool online)
@@ -215,6 +241,10 @@ void hmi_runtime_signal(hmi_widget_t *w, const char *signal, const hmi_value_t *
         if (strcmp(a->signal, signal) != 0) continue;
         if (strcmp(a->kind, "navigate") == 0) {
             hmi_runtime_navigate(rt, a->page);
+        } else if (strcmp(signal, "alarmActivated") == 0) {
+            // The table hands over the alarm tag; any action here means "acknowledge".
+            if (hmi_alarms_acknowledge(rt->alarms, hmi_value_as_str(arg, "")))
+                alarms_changed(rt);
         } else if (!rt->tags) {
             hmi_log(HMI_LOG_DEBUG, "action %s on %s ignored (no daemon link)", a->kind, w->id);
         } else if (strcmp(a->kind, "pulse") == 0) {
