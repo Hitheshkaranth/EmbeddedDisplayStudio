@@ -98,7 +98,8 @@ void hmi_widget_emit(hmi_widget_t *w, const char *signal, const hmi_value_t *arg
 // "ext draw size"; QML never clips, so every widget root claims a margin.
 static void ext_draw_cb(lv_event_t *e)
 {
-    lv_event_set_ext_draw_size(e, LV_MAX(lv_event_get_ext_draw_size(e), 96));
+    int32_t *cur = lv_event_get_param(e);   // the size computed so far
+    if (cur && *cur < 96) *cur = 96;
 }
 
 void hmi_widget_apply_common(hmi_widget_t *w)
