@@ -1,0 +1,213 @@
+{
+ "version": 1,
+ "name": "probe-app",
+ "screen": {
+  "width": 640,
+  "height": 480,
+  "background": "#101418",
+  "theme": "dark"
+ },
+ "pages": [
+  {
+   "id": "main",
+   "name": "Main",
+   "widgets": [
+    {
+     "type": "HmiProbe",
+     "id": "watchPot",
+     "geometry": {
+      "x": 0,
+      "y": 0,
+      "width": 10,
+      "height": 10
+     },
+     "properties": {},
+     "bindings": {
+      "value": {
+       "tag": "ai.pot",
+       "format": "",
+       "multiplier": 1.0,
+       "offset": 0.0,
+       "unit": "V",
+       "warning": "",
+       "critical": ""
+      }
+     },
+     "children": [],
+     "locked": false,
+     "z": 0
+    },
+    {
+     "type": "HmiProbe",
+     "id": "watchEstop",
+     "geometry": {
+      "x": 0,
+      "y": 0,
+      "width": 10,
+      "height": 10
+     },
+     "properties": {},
+     "bindings": {
+      "value": {
+       "tag": "di.estop",
+       "format": "",
+       "multiplier": 1.0,
+       "offset": 0.0,
+       "unit": "",
+       "warning": "",
+       "critical": ""
+      }
+     },
+     "children": [],
+     "locked": false,
+     "z": 0
+    },
+    {
+     "type": "HmiProbe",
+     "id": "ctlWrite",
+     "geometry": {
+      "x": 0,
+      "y": 0,
+      "width": 10,
+      "height": 10
+     },
+     "properties": {},
+     "bindings": {
+      "trigger": {
+       "tag": "ctl.write",
+       "format": "",
+       "multiplier": 1.0,
+       "offset": 0.0,
+       "unit": "",
+       "warning": "",
+       "critical": ""
+      }
+     },
+     "actions": {
+      "changed": {
+       "kind": "write",
+       "tag": "do.relay1",
+       "value": true
+      }
+     },
+     "children": [],
+     "locked": false,
+     "z": 0
+    },
+    {
+     "type": "HmiProbe",
+     "id": "ctlPulse",
+     "geometry": {
+      "x": 0,
+      "y": 0,
+      "width": 10,
+      "height": 10
+     },
+     "properties": {},
+     "bindings": {
+      "trigger": {
+       "tag": "ctl.pulse",
+       "format": "",
+       "multiplier": 1.0,
+       "offset": 0.0,
+       "unit": "",
+       "warning": "",
+       "critical": ""
+      }
+     },
+     "actions": {
+      "changed": {
+       "kind": "pulse",
+       "tag": "do.relay1",
+       "ms": 250
+      }
+     },
+     "children": [],
+     "locked": false,
+     "z": 0
+    },
+    {
+     "type": "HmiProbe",
+     "id": "ctlNav",
+     "geometry": {
+      "x": 0,
+      "y": 0,
+      "width": 10,
+      "height": 10
+     },
+     "properties": {},
+     "bindings": {
+      "trigger": {
+       "tag": "ctl.nav",
+       "format": "",
+       "multiplier": 1.0,
+       "offset": 0.0,
+       "unit": "",
+       "warning": "",
+       "critical": ""
+      }
+     },
+     "actions": {
+      "changed": {
+       "kind": "navigate",
+       "page": "second"
+      }
+     },
+     "children": [],
+     "locked": false,
+     "z": 0
+    },
+    {
+     "type": "Text",
+     "id": "title",
+     "geometry": {
+      "x": 20,
+      "y": 20,
+      "width": 300,
+      "height": 40
+     },
+     "properties": {
+      "text": "probe-app",
+      "fontSize": 24,
+      "color": "#ffffff"
+     },
+     "bindings": {},
+     "children": [],
+     "locked": false,
+     "z": 0
+    }
+   ]
+  },
+  {
+   "id": "second",
+   "name": "Second",
+   "widgets": [
+    {
+     "type": "HmiProbe",
+     "id": "onSecond",
+     "geometry": {
+      "x": 0,
+      "y": 0,
+      "width": 10,
+      "height": 10
+     },
+     "properties": {},
+     "bindings": {
+      "value": {
+       "tag": "ai.pot",
+       "format": "%1 V",
+       "multiplier": 2.0,
+       "offset": 1.0,
+       "unit": "",
+       "warning": "",
+       "critical": ""
+      }
+     },
+     "children": [],
+     "locked": false,
+     "z": 0
+    }
+   ]
+  }
+ ]
+}

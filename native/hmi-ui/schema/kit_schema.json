@@ -1,0 +1,2668 @@
+{
+ "_generated_by": "native/hmi-ui/schema/gen_schema.py -- do not edit",
+ "types": {
+  "Column": {
+   "qml": "Column",
+   "category": "Containers",
+   "display_name": "Column",
+   "default_width": 180,
+   "default_height": 260,
+   "container": true,
+   "state_property": "",
+   "properties": {
+    "spacing": {
+     "kind": "int",
+     "default": 8
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "Grid": {
+   "qml": "Grid",
+   "category": "Containers",
+   "display_name": "Grid",
+   "default_width": 320,
+   "default_height": 220,
+   "container": true,
+   "state_property": "",
+   "properties": {
+    "columns": {
+     "kind": "int",
+     "default": 2
+    },
+    "rows": {
+     "kind": "int",
+     "default": 0
+    },
+    "spacing": {
+     "kind": "int",
+     "default": 8
+    },
+    "flow": {
+     "kind": "str",
+     "default": "Grid.LeftToRight"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [],
+   "signals": [],
+   "choices": {
+    "flow": [
+     "Grid.LeftToRight",
+     "Grid.TopToBottom"
+    ]
+   },
+   "assets": []
+  },
+  "Image": {
+   "qml": "Image",
+   "category": "Basic",
+   "display_name": "Image",
+   "default_width": 160,
+   "default_height": 120,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "source": {
+     "kind": "str",
+     "default": ""
+    },
+    "fillMode": {
+     "kind": "str",
+     "default": "Image.PreserveAspectFit"
+    },
+    "smooth": {
+     "kind": "bool",
+     "default": true
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [],
+   "signals": [],
+   "choices": {
+    "fillMode": [
+     "Image.PreserveAspectFit",
+     "Image.PreserveAspectCrop",
+     "Image.Stretch",
+     "Image.Tile"
+    ]
+   },
+   "assets": [
+    "source"
+   ]
+  },
+  "Item": {
+   "qml": "Item",
+   "category": "Navigation",
+   "display_name": "Page",
+   "default_width": 320,
+   "default_height": 240,
+   "container": true,
+   "state_property": "",
+   "properties": {
+    "clip": {
+     "kind": "bool",
+     "default": false
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "Rectangle": {
+   "qml": "Rectangle",
+   "category": "Basic",
+   "display_name": "Rectangle",
+   "default_width": 140,
+   "default_height": 90,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "color": {
+     "kind": "color",
+     "default": "#27272a"
+    },
+    "borderColor": {
+     "kind": "color",
+     "default": "#52525b"
+    },
+    "borderWidth": {
+     "kind": "int",
+     "default": 0
+    },
+    "radius": {
+     "kind": "int",
+     "default": 6
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "Row": {
+   "qml": "Row",
+   "category": "Containers",
+   "display_name": "Row",
+   "default_width": 300,
+   "default_height": 80,
+   "container": true,
+   "state_property": "",
+   "properties": {
+    "spacing": {
+     "kind": "int",
+     "default": 8
+    },
+    "layoutDirection": {
+     "kind": "str",
+     "default": "Qt.LeftToRight"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [],
+   "signals": [],
+   "choices": {
+    "layoutDirection": [
+     "Qt.LeftToRight",
+     "Qt.RightToLeft"
+    ]
+   },
+   "assets": []
+  },
+  "ShAlarmTable": {
+   "qml": "ShAlarmTable",
+   "category": "Industrial",
+   "display_name": "Alarm Table",
+   "default_width": 350,
+   "default_height": 216,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "maxVisible": {
+     "kind": "int",
+     "default": 6
+    },
+    "title": {
+     "kind": "str",
+     "default": "Active Alarms"
+    },
+    "showTimestamp": {
+     "kind": "bool",
+     "default": true
+    },
+    "rowHeight": {
+     "kind": "float",
+     "default": 30.0
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "alarms"
+   ],
+   "signals": [
+    "alarmActivated"
+   ],
+   "choices": {},
+   "assets": []
+  },
+  "ShAlert": {
+   "qml": "ShAlert",
+   "category": "Industrial",
+   "display_name": "Alarm Indicator",
+   "default_width": 260,
+   "default_height": 90,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "title": {
+     "kind": "str",
+     "default": "Alarm"
+    },
+    "description": {
+     "kind": "str",
+     "default": ""
+    },
+    "variant": {
+     "kind": "str",
+     "default": "destructive"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "visible"
+   ],
+   "signals": [],
+   "choices": {
+    "variant": [
+     "default",
+     "destructive"
+    ]
+   },
+   "assets": []
+  },
+  "ShAnalogDisplay": {
+   "qml": "ShAnalogDisplay",
+   "category": "Industrial",
+   "display_name": "Analog Display",
+   "default_width": 240,
+   "default_height": 64,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "value": {
+     "kind": "float",
+     "default": 50.0
+    },
+    "minValue": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "maxValue": {
+     "kind": "float",
+     "default": 100.0
+    },
+    "label": {
+     "kind": "str",
+     "default": ""
+    },
+    "unit": {
+     "kind": "str",
+     "default": ""
+    },
+    "normLow": {
+     "kind": "float",
+     "default": 20.0
+    },
+    "normHigh": {
+     "kind": "float",
+     "default": 80.0
+    },
+    "warnLow": {
+     "kind": "float",
+     "default": 10.0
+    },
+    "warnHigh": {
+     "kind": "float",
+     "default": 90.0
+    },
+    "normalColor": {
+     "kind": "color",
+     "default": "#22c55e"
+    },
+    "warnColor": {
+     "kind": "color",
+     "default": "#f59e0b"
+    },
+    "faultColor": {
+     "kind": "color",
+     "default": "#ef4444"
+    },
+    "trackColor": {
+     "kind": "color",
+     "default": "#27272a"
+    },
+    "vertical": {
+     "kind": "bool",
+     "default": false
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShAnnunciator": {
+   "qml": "ShAnnunciator",
+   "category": "Avionics",
+   "display_name": "Annunciator",
+   "default_width": 140,
+   "default_height": 38,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "text": {
+     "kind": "str",
+     "default": "LOW FUEL"
+    },
+    "severity": {
+     "kind": "str",
+     "default": "caution"
+    },
+    "lit": {
+     "kind": "bool",
+     "default": true
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "lit",
+    "severity"
+   ],
+   "signals": [],
+   "choices": {
+    "severity": [
+     "advisory",
+     "caution",
+     "warning"
+    ]
+   },
+   "assets": []
+  },
+  "ShAttitude": {
+   "qml": "ShAttitude",
+   "category": "Avionics",
+   "display_name": "Attitude Indicator",
+   "default_width": 220,
+   "default_height": 220,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "pitch": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "roll": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "pixelsPerDegree": {
+     "kind": "float",
+     "default": 4.0
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "pitch",
+    "roll"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShAutoLevel": {
+   "qml": "ShAutoLevel",
+   "category": "Automotive",
+   "display_name": "Level Bar",
+   "default_width": 90,
+   "default_height": 220,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "value": {
+     "kind": "float",
+     "default": 55.0
+    },
+    "minimumValue": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "maximumValue": {
+     "kind": "float",
+     "default": 100.0
+    },
+    "topLabel": {
+     "kind": "str",
+     "default": "F"
+    },
+    "midLabel": {
+     "kind": "str",
+     "default": "1/2"
+    },
+    "bottomLabel": {
+     "kind": "str",
+     "default": "E"
+    },
+    "redZone": {
+     "kind": "str",
+     "default": "low"
+    },
+    "redZoneSpan": {
+     "kind": "float",
+     "default": 12.0
+    },
+    "icon": {
+     "kind": "str",
+     "default": "gas-station"
+    },
+    "curved": {
+     "kind": "bool",
+     "default": true
+    },
+    "showTicks": {
+     "kind": "bool",
+     "default": true
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [],
+   "choices": {
+    "redZone": [
+     "low",
+     "high",
+     "none"
+    ]
+   },
+   "assets": []
+  },
+  "ShAutoReadout": {
+   "qml": "ShAutoReadout",
+   "category": "Automotive",
+   "display_name": "Readout",
+   "default_width": 150,
+   "default_height": 56,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "value": {
+     "kind": "float",
+     "default": 90.0
+    },
+    "unit": {
+     "kind": "str",
+     "default": "\u00b0C"
+    },
+    "icon": {
+     "kind": "str",
+     "default": "temperature"
+    },
+    "iconSide": {
+     "kind": "str",
+     "default": "right"
+    },
+    "decimals": {
+     "kind": "int",
+     "default": 0
+    },
+    "label": {
+     "kind": "str",
+     "default": ""
+    },
+    "warnBelow": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "warnAbove": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [],
+   "choices": {
+    "iconSide": [
+     "left",
+     "right"
+    ]
+   },
+   "assets": []
+  },
+  "ShButton": {
+   "qml": "ShButton",
+   "category": "Basic",
+   "display_name": "Button",
+   "default_width": 120,
+   "default_height": 40,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "text": {
+     "kind": "str",
+     "default": "Button"
+    },
+    "variant": {
+     "kind": "str",
+     "default": "default"
+    },
+    "size": {
+     "kind": "str",
+     "default": "default"
+    },
+    "enabled": {
+     "kind": "bool",
+     "default": true
+    },
+    "backgroundColor": {
+     "kind": "color",
+     "default": ""
+    },
+    "textColor": {
+     "kind": "color",
+     "default": ""
+    },
+    "borderColor": {
+     "kind": "color",
+     "default": ""
+    },
+    "borderWidth": {
+     "kind": "int",
+     "default": 0
+    },
+    "cornerRadius": {
+     "kind": "int",
+     "default": 6
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [],
+   "signals": [
+    "clicked"
+   ],
+   "choices": {
+    "variant": [
+     "default",
+     "secondary",
+     "destructive",
+     "outline",
+     "ghost",
+     "link"
+    ],
+    "size": [
+     "default",
+     "sm",
+     "lg",
+     "icon"
+    ]
+   },
+   "assets": []
+  },
+  "ShCard": {
+   "qml": "ShCard",
+   "category": "Containers",
+   "display_name": "Card",
+   "default_width": 260,
+   "default_height": 180,
+   "container": true,
+   "state_property": "",
+   "properties": {
+    "color": {
+     "kind": "color",
+     "default": "#18181b"
+    },
+    "borderColor": {
+     "kind": "color",
+     "default": "#27272a"
+    },
+    "borderWidth": {
+     "kind": "int",
+     "default": 1
+    },
+    "radius": {
+     "kind": "int",
+     "default": 10
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShCheckbox": {
+   "qml": "ShCheckbox",
+   "category": "Industrial",
+   "display_name": "Checkbox",
+   "default_width": 160,
+   "default_height": 32,
+   "container": false,
+   "state_property": "checked",
+   "properties": {
+    "checked": {
+     "kind": "bool",
+     "default": false
+    },
+    "label": {
+     "kind": "str",
+     "default": ""
+    },
+    "enabled": {
+     "kind": "bool",
+     "default": true
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "checked"
+   ],
+   "signals": [
+    "checkedChanged"
+   ],
+   "choices": {},
+   "assets": []
+  },
+  "ShClusterGauge": {
+   "qml": "ShClusterGauge",
+   "category": "Automotive",
+   "display_name": "Cluster Gauge",
+   "default_width": 240,
+   "default_height": 240,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "value": {
+     "kind": "float",
+     "default": 4.2
+    },
+    "minimumValue": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "maximumValue": {
+     "kind": "float",
+     "default": 8.0
+    },
+    "majorStep": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "redlineFrom": {
+     "kind": "float",
+     "default": 7.0
+    },
+    "sweep": {
+     "kind": "float",
+     "default": 240.0
+    },
+    "readout": {
+     "kind": "str",
+     "default": "137"
+    },
+    "readoutUnit": {
+     "kind": "str",
+     "default": "km/h"
+    },
+    "caption": {
+     "kind": "str",
+     "default": ""
+    },
+    "label": {
+     "kind": "str",
+     "default": "x1000 RPM"
+    },
+    "decimals": {
+     "kind": "int",
+     "default": 0
+    },
+    "showInnerDial": {
+     "kind": "bool",
+     "default": true
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value",
+    "readout",
+    "caption"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShCompass": {
+   "qml": "ShCompass",
+   "category": "Avionics",
+   "display_name": "Heading Compass",
+   "default_width": 220,
+   "default_height": 220,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "heading": {
+     "kind": "float",
+     "default": 359.0
+    },
+    "headingBug": {
+     "kind": "float",
+     "default": 45.0
+    },
+    "course": {
+     "kind": "float",
+     "default": -1.0
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "heading",
+    "headingBug"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShDataField": {
+   "qml": "ShDataField",
+   "category": "Avionics",
+   "display_name": "Data Field",
+   "default_width": 150,
+   "default_height": 46,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "label": {
+     "kind": "str",
+     "default": "GROUND SPEED"
+    },
+    "value": {
+     "kind": "str",
+     "default": "130"
+    },
+    "units": {
+     "kind": "str",
+     "default": "KTS"
+    },
+    "severity": {
+     "kind": "str",
+     "default": "advisory"
+    },
+    "stacked": {
+     "kind": "bool",
+     "default": true
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value",
+    "severity"
+   ],
+   "signals": [],
+   "choices": {
+    "severity": [
+     "advisory",
+     "caution",
+     "warning"
+    ]
+   },
+   "assets": []
+  },
+  "ShDriveMode": {
+   "qml": "ShDriveMode",
+   "category": "Automotive",
+   "display_name": "Drive Mode",
+   "default_width": 180,
+   "default_height": 56,
+   "container": false,
+   "state_property": "currentIndex",
+   "properties": {
+    "label": {
+     "kind": "str",
+     "default": "Drive mode"
+    },
+    "modes": {
+     "kind": "str",
+     "default": "ECO,COMFORT,SPORT"
+    },
+    "currentIndex": {
+     "kind": "int",
+     "default": 2
+    },
+    "enabled": {
+     "kind": "bool",
+     "default": true
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "currentIndex"
+   ],
+   "signals": [
+    "activated"
+   ],
+   "choices": {},
+   "assets": []
+  },
+  "ShEngineBar": {
+   "qml": "ShEngineBar",
+   "category": "Avionics",
+   "display_name": "Engine Bar",
+   "default_width": 76,
+   "default_height": 190,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "value": {
+     "kind": "float",
+     "default": 68.0
+    },
+    "minimumValue": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "maximumValue": {
+     "kind": "float",
+     "default": 100.0
+    },
+    "cautionValue": {
+     "kind": "float",
+     "default": 80.0
+    },
+    "warningValue": {
+     "kind": "float",
+     "default": 90.0
+    },
+    "label": {
+     "kind": "str",
+     "default": "N1"
+    },
+    "units": {
+     "kind": "str",
+     "default": "%"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShEngineGauge": {
+   "qml": "ShEngineGauge",
+   "category": "Avionics",
+   "display_name": "Engine Gauge",
+   "default_width": 140,
+   "default_height": 140,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "value": {
+     "kind": "float",
+     "default": 55.0
+    },
+    "minimumValue": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "maximumValue": {
+     "kind": "float",
+     "default": 100.0
+    },
+    "greenLow": {
+     "kind": "float",
+     "default": 20.0
+    },
+    "greenHigh": {
+     "kind": "float",
+     "default": 70.0
+    },
+    "cautionHigh": {
+     "kind": "float",
+     "default": 85.0
+    },
+    "label": {
+     "kind": "str",
+     "default": "OIL PRESS"
+    },
+    "units": {
+     "kind": "str",
+     "default": "PSI"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShFlightDirector": {
+   "qml": "ShFlightDirector",
+   "category": "Avionics",
+   "display_name": "Flight Director",
+   "default_width": 180,
+   "default_height": 120,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "pitchCommand": {
+     "kind": "float",
+     "default": 3.0
+    },
+    "rollCommand": {
+     "kind": "float",
+     "default": -5.0
+    },
+    "pitchLimit": {
+     "kind": "float",
+     "default": 15.0
+    },
+    "rollLimit": {
+     "kind": "float",
+     "default": 30.0
+    },
+    "active": {
+     "kind": "bool",
+     "default": true
+    },
+    "mode": {
+     "kind": "str",
+     "default": "FD"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "pitchCommand",
+    "rollCommand",
+    "active",
+    "mode"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShFuelQuantity": {
+   "qml": "ShFuelQuantity",
+   "category": "Avionics",
+   "display_name": "Fuel Quantity",
+   "default_width": 190,
+   "default_height": 130,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "leftValue": {
+     "kind": "float",
+     "default": 64.0
+    },
+    "rightValue": {
+     "kind": "float",
+     "default": 61.0
+    },
+    "capacity": {
+     "kind": "float",
+     "default": 100.0
+    },
+    "lowLevel": {
+     "kind": "float",
+     "default": 15.0
+    },
+    "units": {
+     "kind": "str",
+     "default": "KG"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "leftValue",
+    "rightValue"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShGauge": {
+   "qml": "ShGauge",
+   "category": "Industrial",
+   "display_name": "Gauge",
+   "default_width": 180,
+   "default_height": 180,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "minimum": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "maximum": {
+     "kind": "float",
+     "default": 100.0
+    },
+    "value": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "unit": {
+     "kind": "str",
+     "default": ""
+    },
+    "label": {
+     "kind": "str",
+     "default": "Gauge"
+    },
+    "thresholdWarning": {
+     "kind": "float",
+     "default": 70.0
+    },
+    "thresholdFault": {
+     "kind": "float",
+     "default": 90.0
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShGearIndicator": {
+   "qml": "ShGearIndicator",
+   "category": "Automotive",
+   "display_name": "Gear Indicator",
+   "default_width": 120,
+   "default_height": 70,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "gears": {
+     "kind": "str",
+     "default": "P,R,N,D"
+    },
+    "gear": {
+     "kind": "str",
+     "default": "D"
+    },
+    "modeNumber": {
+     "kind": "int",
+     "default": 4
+    },
+    "showAll": {
+     "kind": "bool",
+     "default": true
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "gear",
+    "modeNumber"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShIconTile": {
+   "qml": "ShIconTile",
+   "category": "Automotive",
+   "display_name": "Icon Tile",
+   "default_width": 100,
+   "default_height": 110,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "icon": {
+     "kind": "str",
+     "default": "phone"
+    },
+    "label": {
+     "kind": "str",
+     "default": "BT"
+    },
+    "enabled": {
+     "kind": "bool",
+     "default": true
+    },
+    "active": {
+     "kind": "bool",
+     "default": false
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "active"
+   ],
+   "signals": [
+    "clicked"
+   ],
+   "choices": {},
+   "assets": []
+  },
+  "ShInput": {
+   "qml": "ShInput",
+   "category": "Basic",
+   "display_name": "Input Field",
+   "default_width": 180,
+   "default_height": 40,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "placeholderText": {
+     "kind": "str",
+     "default": "Enter value"
+    },
+    "text": {
+     "kind": "str",
+     "default": ""
+    },
+    "enabled": {
+     "kind": "bool",
+     "default": true
+    },
+    "readOnly": {
+     "kind": "bool",
+     "default": false
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "text"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShNumDisplay": {
+   "qml": "ShNumDisplay",
+   "category": "Industrial",
+   "display_name": "Numeric Display",
+   "default_width": 180,
+   "default_height": 80,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "value": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "unit": {
+     "kind": "str",
+     "default": ""
+    },
+    "label": {
+     "kind": "str",
+     "default": ""
+    },
+    "decimalPlaces": {
+     "kind": "int",
+     "default": 2
+    },
+    "warningLow": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "warningHigh": {
+     "kind": "float",
+     "default": 100.0
+    },
+    "faultLow": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "faultHigh": {
+     "kind": "float",
+     "default": 1000.0
+    },
+    "normalColor": {
+     "kind": "color",
+     "default": "#22c55e"
+    },
+    "warningColor": {
+     "kind": "color",
+     "default": "#f59e0b"
+    },
+    "faultColor": {
+     "kind": "color",
+     "default": "#ef4444"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShNumInput": {
+   "qml": "ShNumInput",
+   "category": "Industrial",
+   "display_name": "Numeric Input",
+   "default_width": 240,
+   "default_height": 64,
+   "container": false,
+   "state_property": "value",
+   "properties": {
+    "value": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "minValue": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "maxValue": {
+     "kind": "float",
+     "default": 1000.0
+    },
+    "step": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "unit": {
+     "kind": "str",
+     "default": ""
+    },
+    "label": {
+     "kind": "str",
+     "default": ""
+    },
+    "enabled": {
+     "kind": "bool",
+     "default": true
+    },
+    "decimalPlaces": {
+     "kind": "int",
+     "default": 0
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [
+    "valueChanged"
+   ],
+   "choices": {},
+   "assets": []
+  },
+  "ShProgress": {
+   "qml": "ShProgress",
+   "category": "Industrial",
+   "display_name": "Progress Bar",
+   "default_width": 200,
+   "default_height": 24,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "value": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "indeterminate": {
+     "kind": "bool",
+     "default": false
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShSegmentBar": {
+   "qml": "ShSegmentBar",
+   "category": "Automotive",
+   "display_name": "Segment Bar",
+   "default_width": 320,
+   "default_height": 36,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "value": {
+     "kind": "float",
+     "default": 60.0
+    },
+    "minimumValue": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "maximumValue": {
+     "kind": "float",
+     "default": 100.0
+    },
+    "segments": {
+     "kind": "int",
+     "default": 12
+    },
+    "label": {
+     "kind": "str",
+     "default": "SOC"
+    },
+    "showPercent": {
+     "kind": "bool",
+     "default": true
+    },
+    "lowLevel": {
+     "kind": "float",
+     "default": 20.0
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShSelect": {
+   "qml": "ShSelect",
+   "category": "Industrial",
+   "display_name": "Dropdown",
+   "default_width": 200,
+   "default_height": 56,
+   "container": false,
+   "state_property": "currentIndex",
+   "properties": {
+    "currentIndex": {
+     "kind": "int",
+     "default": 0
+    },
+    "placeholder": {
+     "kind": "str",
+     "default": "Select..."
+    },
+    "label": {
+     "kind": "str",
+     "default": ""
+    },
+    "options": {
+     "kind": "str",
+     "default": "Auto, Manual, Service"
+    },
+    "enabled": {
+     "kind": "bool",
+     "default": true
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "currentIndex"
+   ],
+   "signals": [
+    "activated"
+   ],
+   "choices": {},
+   "assets": []
+  },
+  "ShSlider": {
+   "qml": "ShSlider",
+   "category": "Industrial",
+   "display_name": "Slider",
+   "default_width": 250,
+   "default_height": 64,
+   "container": false,
+   "state_property": "value",
+   "properties": {
+    "value": {
+     "kind": "float",
+     "default": 50.0
+    },
+    "minValue": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "maxValue": {
+     "kind": "float",
+     "default": 100.0
+    },
+    "step": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "label": {
+     "kind": "str",
+     "default": ""
+    },
+    "unit": {
+     "kind": "str",
+     "default": ""
+    },
+    "valueWarning": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "valueFault": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "enabled": {
+     "kind": "bool",
+     "default": true
+    },
+    "showTicks": {
+     "kind": "bool",
+     "default": true
+    },
+    "tickCount": {
+     "kind": "int",
+     "default": 5
+    },
+    "showValue": {
+     "kind": "bool",
+     "default": true
+    },
+    "handleRadius": {
+     "kind": "float",
+     "default": 12
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [
+    "valueChanged"
+   ],
+   "choices": {},
+   "assets": []
+  },
+  "ShStatDot": {
+   "qml": "ShStatDot",
+   "category": "Industrial",
+   "display_name": "Status Indicator",
+   "default_width": 36,
+   "default_height": 36,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "state": {
+     "kind": "str",
+     "default": "idle"
+    },
+    "size": {
+     "kind": "int",
+     "default": 12
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "state"
+   ],
+   "signals": [],
+   "choices": {
+    "state": [
+     "idle",
+     "ok",
+     "warn",
+     "fault"
+    ]
+   },
+   "assets": []
+  },
+  "ShTabs": {
+   "qml": "ShTabs",
+   "category": "Navigation",
+   "display_name": "Tab Container",
+   "default_width": 360,
+   "default_height": 240,
+   "container": true,
+   "state_property": "",
+   "properties": {
+    "tabs": {
+     "kind": "str",
+     "default": "Overview, Details"
+    },
+    "currentIndex": {
+     "kind": "int",
+     "default": 0
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShTape": {
+   "qml": "ShTape",
+   "category": "Avionics",
+   "display_name": "Airspeed / Altitude Tape",
+   "default_width": 80,
+   "default_height": 260,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "value": {
+     "kind": "float",
+     "default": 127.0
+    },
+    "minimumValue": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "maximumValue": {
+     "kind": "float",
+     "default": 250.0
+    },
+    "step": {
+     "kind": "float",
+     "default": 10.0
+    },
+    "span": {
+     "kind": "float",
+     "default": 60.0
+    },
+    "label": {
+     "kind": "str",
+     "default": "IAS"
+    },
+    "units": {
+     "kind": "str",
+     "default": "KTS"
+    },
+    "side": {
+     "kind": "str",
+     "default": "left"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [],
+   "choices": {
+    "side": [
+     "left",
+     "right"
+    ]
+   },
+   "assets": []
+  },
+  "ShTelltale": {
+   "qml": "ShTelltale",
+   "category": "Automotive",
+   "display_name": "Telltale",
+   "default_width": 48,
+   "default_height": 48,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "icon": {
+     "kind": "str",
+     "default": "bulb"
+    },
+    "color": {
+     "kind": "str",
+     "default": "amber"
+    },
+    "lit": {
+     "kind": "bool",
+     "default": true
+    },
+    "blink": {
+     "kind": "bool",
+     "default": false
+    },
+    "label": {
+     "kind": "str",
+     "default": ""
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "lit",
+    "blink",
+    "color"
+   ],
+   "signals": [],
+   "choices": {
+    "color": [
+     "amber",
+     "green",
+     "red",
+     "blue",
+     "white"
+    ]
+   },
+   "assets": []
+  },
+  "ShToggle": {
+   "qml": "ShToggle",
+   "category": "Industrial",
+   "display_name": "Toggle",
+   "default_width": 160,
+   "default_height": 40,
+   "container": false,
+   "state_property": "checked",
+   "properties": {
+    "checked": {
+     "kind": "bool",
+     "default": false
+    },
+    "label": {
+     "kind": "str",
+     "default": ""
+    },
+    "onLabel": {
+     "kind": "str",
+     "default": "ON"
+    },
+    "offLabel": {
+     "kind": "str",
+     "default": "OFF"
+    },
+    "enabled": {
+     "kind": "bool",
+     "default": true
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "checked"
+   ],
+   "signals": [
+    "toggled"
+   ],
+   "choices": {},
+   "assets": []
+  },
+  "ShTrendChart": {
+   "qml": "ShTrendChart",
+   "category": "Industrial",
+   "display_name": "Trend Chart",
+   "default_width": 300,
+   "default_height": 180,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "minValue": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "maxValue": {
+     "kind": "float",
+     "default": 100.0
+    },
+    "warningLow": {
+     "kind": "float",
+     "default": 20.0
+    },
+    "warningHigh": {
+     "kind": "float",
+     "default": 80.0
+    },
+    "maxPoints": {
+     "kind": "int",
+     "default": 100
+    },
+    "label": {
+     "kind": "str",
+     "default": ""
+    },
+    "unit": {
+     "kind": "str",
+     "default": ""
+    },
+    "lineColor": {
+     "kind": "color",
+     "default": "#006fee"
+    },
+    "fillColor": {
+     "kind": "color",
+     "default": "#006fee"
+    },
+    "lineWidth": {
+     "kind": "float",
+     "default": 2.0
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "data"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShTripInfo": {
+   "qml": "ShTripInfo",
+   "category": "Automotive",
+   "display_name": "Trip Info",
+   "default_width": 200,
+   "default_height": 110,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "title": {
+     "kind": "str",
+     "default": "Distance"
+    },
+    "row1Label": {
+     "kind": "str",
+     "default": "Day"
+    },
+    "row1Value": {
+     "kind": "str",
+     "default": "352"
+    },
+    "row1Unit": {
+     "kind": "str",
+     "default": "km"
+    },
+    "row2Label": {
+     "kind": "str",
+     "default": "Total"
+    },
+    "row2Value": {
+     "kind": "str",
+     "default": "110 593"
+    },
+    "row2Unit": {
+     "kind": "str",
+     "default": "km"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "row1Value",
+    "row2Value"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShTurnCoordinator": {
+   "qml": "ShTurnCoordinator",
+   "category": "Avionics",
+   "display_name": "Turn Coordinator",
+   "default_width": 180,
+   "default_height": 110,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "turnRate": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "slip": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "standardRate": {
+     "kind": "float",
+     "default": 3.0
+    },
+    "slipLimit": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "turnRate",
+    "slip"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShVSI": {
+   "qml": "ShVSI",
+   "category": "Avionics",
+   "display_name": "Vertical Speed",
+   "default_width": 72,
+   "default_height": 220,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "value": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "range": {
+     "kind": "float",
+     "default": 2000.0
+    },
+    "units": {
+     "kind": "str",
+     "default": "FPM"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShValueTile": {
+   "qml": "ShValueTile",
+   "category": "Industrial",
+   "display_name": "Value Tile",
+   "default_width": 220,
+   "default_height": 110,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "title": {
+     "kind": "str",
+     "default": "Value"
+    },
+    "value": {
+     "kind": "str",
+     "default": "0.0"
+    },
+    "unit": {
+     "kind": "str",
+     "default": ""
+    },
+    "state": {
+     "kind": "str",
+     "default": "idle"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [],
+   "choices": {
+    "state": [
+     "idle",
+     "ok",
+     "warn",
+     "fault"
+    ]
+   },
+   "assets": []
+  },
+  "ShVehicleStatus": {
+   "qml": "ShVehicleStatus",
+   "category": "Automotive",
+   "display_name": "Vehicle Status",
+   "default_width": 150,
+   "default_height": 190,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "frontLeft": {
+     "kind": "float",
+     "default": 2.6
+    },
+    "frontRight": {
+     "kind": "float",
+     "default": 2.5
+    },
+    "rearLeft": {
+     "kind": "float",
+     "default": 1.6
+    },
+    "rearRight": {
+     "kind": "float",
+     "default": 2.2
+    },
+    "unit": {
+     "kind": "str",
+     "default": "bar"
+    },
+    "warnBelow": {
+     "kind": "float",
+     "default": 1.8
+    },
+    "decimals": {
+     "kind": "int",
+     "default": 1
+    },
+    "label": {
+     "kind": "str",
+     "default": "TPMS"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "frontLeft",
+    "frontRight",
+    "rearLeft",
+    "rearRight"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "Text": {
+   "qml": "Text",
+   "category": "Basic",
+   "display_name": "Text",
+   "default_width": 140,
+   "default_height": 32,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "text": {
+     "kind": "str",
+     "default": "Text"
+    },
+    "fontSize": {
+     "kind": "int",
+     "default": 18
+    },
+    "bold": {
+     "kind": "bool",
+     "default": false
+    },
+    "color": {
+     "kind": "color",
+     "default": "#f4f4f5"
+    },
+    "horizontalAlignment": {
+     "kind": "str",
+     "default": "Text.AlignLeft"
+    },
+    "verticalAlignment": {
+     "kind": "str",
+     "default": "Text.AlignTop"
+    },
+    "wrapMode": {
+     "kind": "str",
+     "default": "Text.NoWrap"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "text"
+   ],
+   "signals": [],
+   "choices": {
+    "wrapMode": [
+     "Text.NoWrap",
+     "Text.WordWrap",
+     "Text.WrapAnywhere",
+     "Text.Wrap"
+    ],
+    "horizontalAlignment": [
+     "Text.AlignLeft",
+     "Text.AlignHCenter",
+     "Text.AlignRight",
+     "Text.AlignJustify"
+    ],
+    "verticalAlignment": [
+     "Text.AlignTop",
+     "Text.AlignVCenter",
+     "Text.AlignBottom"
+    ]
+   },
+   "assets": []
+  }
+ },
+ "positioners": [
+  "Row",
+  "Column",
+  "Grid"
+ ],
+ "series_properties": [
+  [
+   "ShAlarmTable",
+   "alarms"
+  ],
+  [
+   "ShTrendChart",
+   "data"
+  ]
+ ],
+ "state_properties": {
+  "ShValueTile": {
+   "property": "state",
+   "levels": [
+    "ok",
+    "warn",
+    "fault"
+   ]
+  },
+  "ShStatDot": {
+   "property": "state",
+   "levels": [
+    "ok",
+    "warn",
+    "fault"
+   ]
+  },
+  "ShDataField": {
+   "property": "severity",
+   "levels": [
+    "advisory",
+    "caution",
+    "warning"
+   ]
+  },
+  "ShAnnunciator": {
+   "property": "severity",
+   "levels": [
+    "advisory",
+    "caution",
+    "warning"
+   ]
+  }
+ },
+ "threshold_properties": {
+  "ShGauge": {
+   "warning": {
+    ">": "thresholdWarning",
+    ">=": "thresholdWarning"
+   },
+   "critical": {
+    ">": "thresholdFault",
+    ">=": "thresholdFault"
+   }
+  },
+  "ShEngineGauge": {
+   "warning": {
+    ">": "cautionHigh",
+    ">=": "cautionHigh"
+   }
+  },
+  "ShEngineBar": {
+   "warning": {
+    ">": "cautionValue",
+    ">=": "cautionValue"
+   },
+   "critical": {
+    ">": "warningValue",
+    ">=": "warningValue"
+   }
+  },
+  "ShNumDisplay": {
+   "warning": {
+    ">": "warningHigh",
+    ">=": "warningHigh",
+    "<": "warningLow",
+    "<=": "warningLow"
+   },
+   "critical": {
+    ">": "faultHigh",
+    ">=": "faultHigh",
+    "<": "faultLow",
+    "<=": "faultLow"
+   }
+  }
+ },
+ "sim_tags": [
+  "sim.altitude",
+  "sim.baro",
+  "sim.car.ambient_c",
+  "sim.car.batt_a",
+  "sim.car.batt_v",
+  "sim.car.check_engine",
+  "sim.car.coolant_c",
+  "sim.car.drive_mode",
+  "sim.car.fuel_l",
+  "sim.car.fuel_pct",
+  "sim.car.gear",
+  "sim.car.gear_step",
+  "sim.car.high_beam",
+  "sim.car.low_beam",
+  "sim.car.odo_mi",
+  "sim.car.oil_warn",
+  "sim.car.range_km",
+  "sim.car.rpm",
+  "sim.car.rpm_k",
+  "sim.car.soc_pct",
+  "sim.car.speed",
+  "sim.car.tp_fl",
+  "sim.car.tp_fr",
+  "sim.car.tp_rl",
+  "sim.car.tp_rr",
+  "sim.car.trip_km",
+  "sim.car.trip_mi",
+  "sim.car.turn_left",
+  "sim.car.turn_right",
+  "sim.fd_pitch",
+  "sim.fd_roll",
+  "sim.fuel2_left",
+  "sim.fuel2_right",
+  "sim.fuel_left",
+  "sim.fuel_right",
+  "sim.ground_speed",
+  "sim.heading",
+  "sim.heading_bug",
+  "sim.ias",
+  "sim.low_fuel",
+  "sim.n1_eng1",
+  "sim.n1_eng2",
+  "sim.oat",
+  "sim.oil_press_eng1",
+  "sim.oil_press_eng2",
+  "sim.oil_temp_eng1",
+  "sim.oil_temp_eng2",
+  "sim.pitch",
+  "sim.roll",
+  "sim.slip",
+  "sim.turn_rate",
+  "sim.vsi",
+  "sim.wind_speed"
+ ],
+ "theme": {
+  "background": {
+   "light": "#ffffff",
+   "dark": "#09090b"
+  },
+  "foreground": {
+   "light": "#020817",
+   "dark": "#ecedee"
+  },
+  "card": {
+   "light": "#ffffff",
+   "dark": "#18181b"
+  },
+  "cardForeground": {
+   "light": "#020817",
+   "dark": "#ecedee"
+  },
+  "popover": {
+   "light": "#ffffff",
+   "dark": "#18181b"
+  },
+  "popoverForeground": {
+   "light": "#020817",
+   "dark": "#ecedee"
+  },
+  "primary": {
+   "light": "#0f172a",
+   "dark": "#006fee"
+  },
+  "primaryForeground": {
+   "light": "#f8fafc",
+   "dark": "#ffffff"
+  },
+  "secondary": {
+   "light": "#f1f5f9",
+   "dark": "#27272a"
+  },
+  "secondaryForeground": {
+   "light": "#0f172a",
+   "dark": "#ecedee"
+  },
+  "muted": {
+   "light": "#f1f5f9",
+   "dark": "#27272a"
+  },
+  "mutedForeground": {
+   "light": "#64748b",
+   "dark": "#a1a1aa"
+  },
+  "accent": {
+   "light": "#f1f5f9",
+   "dark": "#3f3f46"
+  },
+  "accentForeground": {
+   "light": "#0f172a",
+   "dark": "#ffffff"
+  },
+  "destructive": {
+   "light": "#ef4444",
+   "dark": "#f31260"
+  },
+  "destructiveForeground": {
+   "light": "#f8fafc",
+   "dark": "#ffffff"
+  },
+  "border": {
+   "light": "#e2e8f0",
+   "dark": "#303036"
+  },
+  "input": {
+   "light": "#e2e8f0",
+   "dark": "#27272a"
+  },
+  "ring": {
+   "light": "#020817",
+   "dark": "#006fee"
+  },
+  "success": {
+   "light": "#22c55e",
+   "dark": "#17c964"
+  },
+  "successForeground": {
+   "light": "#f8fafc",
+   "dark": "#f8fafc"
+  },
+  "warning": {
+   "light": "#f59e0b",
+   "dark": "#f5a524"
+  },
+  "warningForeground": {
+   "light": "#f8fafc",
+   "dark": "#f8fafc"
+  },
+  "brand": {
+   "light": "#006fee",
+   "dark": "#006fee"
+  },
+  "brandForeground": {
+   "light": "#ffffff",
+   "dark": "#ffffff"
+  },
+  "info": {
+   "light": "#3b82f6",
+   "dark": "#006fee"
+  },
+  "infoForeground": {
+   "light": "#f8fafc",
+   "dark": "#f8fafc"
+  },
+  "efisSky": {
+   "light": "#2b6fb5",
+   "dark": "#2b6fb5"
+  },
+  "efisGround": {
+   "light": "#7a5230",
+   "dark": "#7a5230"
+  },
+  "efisPanel": {
+   "light": "#05070a",
+   "dark": "#05070a"
+  },
+  "efisLine": {
+   "light": "#ffffff",
+   "dark": "#ffffff"
+  },
+  "efisText": {
+   "light": "#ffffff",
+   "dark": "#ffffff"
+  },
+  "efisAircraft": {
+   "light": "#ffd400",
+   "dark": "#ffd400"
+  },
+  "efisNormal": {
+   "light": "#12b32a",
+   "dark": "#12b32a"
+  },
+  "efisCaution": {
+   "light": "#ffb000",
+   "dark": "#ffb000"
+  },
+  "efisWarning": {
+   "light": "#e01b24",
+   "dark": "#e01b24"
+  },
+  "efisNav": {
+   "light": "#ff31d3",
+   "dark": "#ff31d3"
+  },
+  "efisBug": {
+   "light": "#00d4ff",
+   "dark": "#00d4ff"
+  },
+  "autoPanel": {
+   "light": "#0b0f16",
+   "dark": "#0b0f16"
+  },
+  "autoTrack": {
+   "light": "#1a222e",
+   "dark": "#1a222e"
+  },
+  "autoAccent": {
+   "light": "#22a8ff",
+   "dark": "#22a8ff"
+  },
+  "autoAccentDeep": {
+   "light": "#0a4f8a",
+   "dark": "#0a4f8a"
+  },
+  "autoGlow": {
+   "light": "#7fd4ff",
+   "dark": "#7fd4ff"
+  },
+  "autoRedline": {
+   "light": "#ff2d55",
+   "dark": "#ff2d55"
+  },
+  "autoText": {
+   "light": "#ffffff",
+   "dark": "#ffffff"
+  },
+  "autoMuted": {
+   "light": "#8a97a8",
+   "dark": "#8a97a8"
+  },
+  "autoLine": {
+   "light": "#c9d3df",
+   "dark": "#c9d3df"
+  },
+  "autoAmber": {
+   "light": "#ffb000",
+   "dark": "#ffb000"
+  },
+  "autoGreen": {
+   "light": "#2fe07f",
+   "dark": "#2fe07f"
+  },
+  "autoRed": {
+   "light": "#ff3b3b",
+   "dark": "#ff3b3b"
+  },
+  "autoBlue": {
+   "light": "#4f9dff",
+   "dark": "#4f9dff"
+  },
+  "autoTileBg": {
+   "light": "#141c28",
+   "dark": "#141c28"
+  },
+  "autoTileBorder": {
+   "light": "#22304a",
+   "dark": "#22304a"
+  }
+ }
+}

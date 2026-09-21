@@ -1,0 +1,17 @@
+{
+ "schema": 1,
+ "name": "probe-app",
+ "version": "1.0.0",
+ "entry": "project.edsui",
+ "runtime": "edsui",
+ "screen": {
+  "width": 640,
+  "height": 480
+ },
+ "theme": "dark",
+ "tags_required": [
+  "ai.pot",
+  "di.estop",
+  "do.relay1"
+ ]
+}
