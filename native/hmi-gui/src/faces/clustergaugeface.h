@@ -16,9 +16,6 @@ class ClusterGaugeFace : public FaceItem
 public:
     using FaceItem::FaceItem;
 
-    // TODO(W1): delete this override once paintFace() is complete.
-    bool implemented() const override { return false; }
-
 protected:
     void paintFace(QPainter *painter, const QVariantMap &spec) override;
 };
