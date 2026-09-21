@@ -1,0 +1,28 @@
+{
+  "sizes": [
+    [
+      220,
+      220
+    ],
+    [
+      300,
+      200
+    ],
+    [
+      140,
+      140
+    ]
+  ],
+  "maxDiffFraction": 0.02,
+  "maxMeanDiff": 1.5,
+  "cases": {
+    "default": {
+      "line": "#ffffff",
+      "aircraft": "#ffd400"
+    },
+    "tinted": {
+      "line": "#c9d3df",
+      "aircraft": "#ff31d3"
+    }
+  }
+}

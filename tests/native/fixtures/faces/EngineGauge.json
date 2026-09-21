@@ -1,0 +1,68 @@
+{
+  "sizes": [
+    [
+      130,
+      130
+    ],
+    [
+      200,
+      120
+    ],
+    [
+      64,
+      64
+    ]
+  ],
+  "maxDiffFraction": 0.02,
+  "maxMeanDiff": 1.5,
+  "cases": {
+    "default": {
+      "value": 62.0,
+      "minimumValue": 0.0,
+      "maximumValue": 100.0,
+      "greenLow": 20.0,
+      "greenHigh": 70.0,
+      "cautionHigh": 85.0,
+      "caution": "#ffb000",
+      "normal": "#12b32a",
+      "warning": "#e01b24",
+      "line": "#ffffff"
+    },
+    "hot": {
+      "value": 95.0,
+      "minimumValue": 0.0,
+      "maximumValue": 100.0,
+      "greenLow": 20.0,
+      "greenHigh": 70.0,
+      "cautionHigh": 85.0,
+      "caution": "#ffb000",
+      "normal": "#12b32a",
+      "warning": "#e01b24",
+      "line": "#ffffff"
+    },
+    "belowMin": {
+      "value": -5.0,
+      "minimumValue": 0.0,
+      "maximumValue": 100.0,
+      "greenLow": 20.0,
+      "greenHigh": 70.0,
+      "cautionHigh": 85.0,
+      "caution": "#ffb000",
+      "normal": "#12b32a",
+      "warning": "#e01b24",
+      "line": "#ffffff"
+    },
+    "offsetRange": {
+      "value": 100.0,
+      "minimumValue": 50.0,
+      "maximumValue": 150.0,
+      "greenLow": 80.0,
+      "greenHigh": 120.0,
+      "cautionHigh": 135.0,
+      "caution": "#ffb000",
+      "normal": "#12b32a",
+      "warning": "#e01b24",
+      "line": "#ffffff"
+    }
+  }
+}

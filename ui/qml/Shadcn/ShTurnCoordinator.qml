@@ -10,15 +10,11 @@ Item {
     implicitHeight: 110
 
     Rectangle { anchors.fill: parent; color: Theme.efisPanel; radius: Theme.radiusSm }
-    Canvas {
+    readonly property var _spec: ({ line: Theme.efisLine })
+    Loader {
         id: face; anchors.fill: parent
-        onPaint: {
-            var c=getContext("2d"); c.reset(); var cx=width/2, cy=height*.43, r=Math.min(width*.38,height*.38);
-            c.strokeStyle=Theme.efisLine; c.lineWidth=2;
-            c.beginPath(); c.arc(cx,cy,r,Math.PI,2*Math.PI); c.stroke();
-            for (var i=-2;i<=2;i++) { var x=cx+i*r/2; c.beginPath(); c.moveTo(x,cy-r); c.lineTo(x,cy-r+8); c.stroke(); }
-        }
-        Component.onCompleted: requestPaint(); onWidthChanged: requestPaint(); onHeightChanged: requestPaint()
+        source: Theme.face("TurnCoordinator")
+        onLoaded: item.spec = Qt.binding(function() { return root._spec })
     }
     Item {
         width: parent.width*.42; height: 26; anchors.horizontalCenter: parent.horizontalCenter

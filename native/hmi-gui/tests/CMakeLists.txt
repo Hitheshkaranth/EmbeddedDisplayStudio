@@ -11,13 +11,19 @@ set(HMI_GUI_TESTS
     tst_alarms
     tst_manifest
     tst_tagengine
+    tst_faces
 )
+
+# tst_faces renders the kit's Canvas painters next to the native ones, so it
+# needs the checkout (ui/qml) and the fixtures (tests/native/fixtures/faces).
+get_filename_component(HMI_REPO_ROOT "${CMAKE_SOURCE_DIR}/../.." ABSOLUTE)
 
 foreach(name IN LISTS HMI_GUI_TESTS)
     add_executable(${name} ${name}.cpp)
     target_link_libraries(${name} PRIVATE hmi-gui-core Qt6::Test)
     add_test(NAME ${name} COMMAND ${name})
     set_tests_properties(${name} PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-        TIMEOUT 120)
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+        TIMEOUT 300)
 endforeach()
+target_compile_definitions(tst_faces PRIVATE HMI_REPO_ROOT="${HMI_REPO_ROOT}")
