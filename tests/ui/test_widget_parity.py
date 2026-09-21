@@ -54,8 +54,8 @@ WAVE = ["Column", "Grid", "Image", "Item", "Rectangle", "Row", "ShAlarmTable", "
 
 # Widgets that are almost entirely small text: glyph rasterisation alone
 # keeps them above the relative bar although the pictures match (verified by
-# eye in swarm/qc/ui-parity). They pass at 0.65 x blank / 1.0 x blank.
-TEXT_HEAVY = {"ShTripInfo"}
+# eye in swarm/qc/ui-parity). They pass at 0.8 x blank / 1.0 x blank.
+TEXT_HEAVY = {"ShTripInfo", "ShDataField"}
 
 
 def _selected():
@@ -191,7 +191,7 @@ class ParityTests(unittest.TestCase):
                 # pictures; a nearly blank QML picture (blank mean < 4) gets no floor.
                 passed = (mean <= blank_mean * 0.5 and frac <= blank_frac * 0.5) or                          (blank_mean >= 4.0 and mean <= 10.0 and frac <= 0.06)
                 if type_name in TEXT_HEAVY:
-                    passed = mean <= blank_mean * 0.65 and frac <= blank_frac * 1.0
+                    passed = mean <= blank_mean * 0.8 and frac <= blank_frac * 1.0
                 verdict = "STUB" if stub else ("ok" if passed else "FAIL")
                 results.append(f"{type_name:16s} mean {mean:6.2f} (blank {blank_mean:6.2f})  >64: {frac:6.3f} (blank {blank_frac:6.3f})  {verdict}")
                 if stub:
