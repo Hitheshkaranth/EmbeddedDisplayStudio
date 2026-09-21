@@ -73,6 +73,14 @@ static void build_widget(hmi_runtime_t *rt, hmi_widget_t *w, lv_obj_t *parent)
     }
     w->native = obj;
     hmi_widget_apply_common(w);
+    // Belt and braces for contract C1: after create, every property the
+    // model declares is also pushed through set_prop, so a widget whose
+    // create() only built the tree still shows the model's values.
+    if (ops && ops->set_prop) {
+        for (size_t i = 0; i < w->nprops; ++i)
+            if (w->props[i].value.kind != HMI_V_NULL)
+                ops->set_prop(w, w->props[i].name, &w->props[i].value);
+    }
     // Children of a plain container are placed by the container's own
     // implementation when it is a positioner (Row/Column/Grid); otherwise
     // they are absolute inside the parent.
