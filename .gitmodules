@@ -1,0 +1,4 @@
+[submodule "native/hmi-ui/lvgl"]
+	path = native/hmi-ui/lvgl
+	url = https://github.com/lvgl/lvgl.git
+	branch = release/v9.3
