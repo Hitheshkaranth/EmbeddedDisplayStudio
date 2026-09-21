@@ -32,7 +32,19 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
-OUT_DIR = os.path.join(ROOT, "..", "swarm", "qc", "ui-parity")
+# swarm/qc/ui-parity next to the main checkout (a worktree lives one level
+# deeper, under swarm/, so walk up until a sibling "swarm" directory exists).
+def _qc_dir():
+    here = ROOT
+    for _ in range(4):
+        parent = os.path.dirname(here)
+        if os.path.isdir(os.path.join(parent, "swarm")):
+            return os.path.join(parent, "swarm", "qc", "ui-parity")
+        here = parent
+    return os.path.join(ROOT, "..", "swarm", "qc", "ui-parity")
+
+
+OUT_DIR = os.environ.get("HMI_UI_QC_DIR") or _qc_dir()
 BIN = os.environ.get("HMI_UI_BIN", os.path.join(ROOT, "native", "hmi-ui", "out", "hmi-ui"))
 BACKGROUND = "#101318"
 
