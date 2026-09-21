@@ -38,96 +38,25 @@ Item {
     readonly property real _barH: root._h * 0.78
     readonly property real _bulge: root.curved ? root._w * 0.18 : 0
 
-    Canvas {
+    // Everything the face painter needs, geometry and colours alike; the
+    // painter (faces/canvas or faces/native) never reads Theme itself.
+    readonly property var _spec: ({
+        fraction: root._fraction, redZone: root.redZone, redZoneSpan: root.redZoneSpan,
+        showTicks: root.showTicks,
+        barX: root._barX, barW: root._barW, barTop: root._barTop, barH: root._barH,
+        bulge: root._bulge, tickMajor: root._w * 0.12, tickMinor: root._w * 0.06,
+        track: Theme.autoTrack, zone: Qt.rgba(1.0, 0.176, 0.333, 0.85),   // Theme.autoRedline at 85 %
+        redline: Theme.autoRedline, accentDeep: Theme.autoAccentDeep, accent: Theme.autoAccent,
+        glow: Theme.autoGlow, line: Theme.autoLine
+    })
+
+    // Face painter: faces/canvas/AutoLevelFace.qml, or the C++ twin when
+    // the loader registered Shadcn.Native (Theme.nativeFaces).
+    Loader {
         id: face
         anchors.fill: parent
-        onPaint: {
-            var ctx = getContext("2d");
-            ctx.reset();
-            var x = root._barX, w = root._barW, top = root._barTop, h = root._barH;
-            var bottom = top + h, midY = top + h / 2, r = w / 2;
-
-            // The bar outline: two quadratic edges bulging left by _bulge.
-            function outline() {
-                ctx.beginPath();
-                ctx.moveTo(x, top + r);
-                ctx.arc(x + r, top + r, r, Math.PI, 0);
-                ctx.quadraticCurveTo(x + w - root._bulge, midY, x + w, bottom - r);
-                ctx.arc(x + r, bottom - r, r, 0, Math.PI);
-                ctx.quadraticCurveTo(x - root._bulge, midY, x, top + r);
-                ctx.closePath();
-            }
-
-            ctx.save();
-            outline();
-            ctx.clip();
-
-            // Track.
-            ctx.fillStyle = Theme.autoTrack;
-            ctx.fillRect(x - root._bulge - 1, top - 1, w + root._bulge + 2, h + 2);
-
-            // Red zone: a slice of the track at the low or high end.
-            var zone = Math.max(0, Math.min(1, root.redZoneSpan / 100)) * h;
-            var zoneTop = -1, zoneBottom = -1;
-            if (root.redZone === "low") { zoneTop = bottom - zone; zoneBottom = bottom; }
-            else if (root.redZone === "high") { zoneTop = top; zoneBottom = top + zone; }
-            if (zoneTop >= 0) {
-                ctx.fillStyle = Qt.rgba(1.0, 0.176, 0.333, 0.85);   // Theme.autoRedline
-                ctx.fillRect(x - root._bulge - 1, zoneTop, w + root._bulge + 2, zoneBottom - zoneTop);
-            }
-
-            // Fill from the bottom to the value.
-            var fillTop = bottom - h * root._fraction;
-            if (root._fraction > 0) {
-                var grad = ctx.createLinearGradient(0, bottom, 0, fillTop);
-                grad.addColorStop(0, Theme.autoAccentDeep);
-                grad.addColorStop(1, Theme.autoAccent);
-                ctx.fillStyle = grad;
-                ctx.fillRect(x - root._bulge - 1, fillTop, w + root._bulge + 2, bottom - fillTop);
-                // Fill inside the red zone reads as red, not blue.
-                if (zoneTop >= 0) {
-                    var rt = Math.max(zoneTop, fillTop), rb = Math.min(zoneBottom, bottom);
-                    if (rb > rt) {
-                        ctx.fillStyle = Theme.autoRedline;
-                        ctx.fillRect(x - root._bulge - 1, rt, w + root._bulge + 2, rb - rt);
-                    }
-                }
-                ctx.fillStyle = Theme.autoGlow;
-                ctx.fillRect(x - root._bulge - 1, fillTop, w + root._bulge + 2, 2);
-            }
-            ctx.restore();
-
-            // Ticks along the left edge of the bar.
-            if (root.showTicks) {
-                ctx.strokeStyle = Theme.autoLine;
-                for (var i = 0; i <= 10; ++i) {
-                    var f = i / 10;
-                    var y = bottom - h * f;
-                    // Left edge of the curve at this height.
-                    var t = 1 - Math.abs(f - 0.5) * 2;      // 0 at the ends, 1 mid
-                    var edge = x - root._bulge * (1 - (1 - t) * (1 - t)) * 0.5;
-                    var len = (i % 5 === 0) ? root._w * 0.12 : root._w * 0.06;
-                    ctx.lineWidth = (i % 5 === 0) ? 1.5 : 1;
-                    ctx.beginPath();
-                    ctx.moveTo(edge - 2, y);
-                    ctx.lineTo(edge - 2 - len, y);
-                    ctx.stroke();
-                }
-            }
-        }
-        Component.onCompleted: requestPaint()
-        Connections {
-            target: root
-            function onValueChanged() { face.requestPaint() }
-            function onMinimumValueChanged() { face.requestPaint() }
-            function onMaximumValueChanged() { face.requestPaint() }
-            function onRedZoneChanged() { face.requestPaint() }
-            function onRedZoneSpanChanged() { face.requestPaint() }
-            function onCurvedChanged() { face.requestPaint() }
-            function onShowTicksChanged() { face.requestPaint() }
-        }
-        onWidthChanged: requestPaint()
-        onHeightChanged: requestPaint()
+        source: Theme.face("AutoLevel")
+        onLoaded: item.spec = Qt.binding(function() { return root._spec })
     }
 
     // Labels at 100 / 50 / 0 %, left of the ticks.

@@ -29,41 +29,18 @@ Item {
         border.width: 1
     }
 
-    Canvas {
+    // Colours the card painter needs; it never reads Theme itself.
+    readonly property var _spec: ({ line: Theme.efisLine, text: Theme.efisText })
+
+    // Card painter: faces/canvas/CompassFace.qml, or the C++ twin when the
+    // loader registered Shadcn.Native (Theme.nativeFaces). The card rotates
+    // as a whole; the painting does not depend on the heading.
+    Loader {
         id: card
         anchors.fill: parent
         rotation: -root.heading
-        onPaint: {
-            var ctx = getContext("2d");
-            ctx.reset();
-            var cx = width / 2, cy = height / 2, r = Math.min(width, height) / 2 - 4;
-            ctx.strokeStyle = Theme.efisLine;
-            ctx.fillStyle = Theme.efisText;
-            ctx.textAlign = "center";
-            for (var deg = 0; deg < 360; deg += 5) {
-                var a = (deg - 90) * Math.PI / 180;
-                var major = deg % 30 === 0;
-                var inner = r - (major ? 14 : 7);
-                ctx.lineWidth = major ? 2 : 1;
-                ctx.beginPath();
-                ctx.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
-                ctx.lineTo(cx + Math.cos(a) * inner, cy + Math.sin(a) * inner);
-                ctx.stroke();
-                if (major) {
-                    var text = deg === 0 ? "N" : deg === 90 ? "E"
-                             : deg === 180 ? "S" : deg === 270 ? "W" : (deg / 10);
-                    ctx.save();
-                    ctx.translate(cx + Math.cos(a) * (r - 28), cy + Math.sin(a) * (r - 28));
-                    ctx.rotate((deg) * Math.PI / 180);
-                    ctx.font = "13px sans-serif";
-                    ctx.fillText(text, 0, 5);
-                    ctx.restore();
-                }
-            }
-        }
-        Component.onCompleted: requestPaint()
-        onWidthChanged: requestPaint()
-        onHeightChanged: requestPaint()
+        source: Theme.face("Compass")
+        onLoaded: item.spec = Qt.binding(function() { return root._spec })
     }
 
     // Course needle, rotating with the card.

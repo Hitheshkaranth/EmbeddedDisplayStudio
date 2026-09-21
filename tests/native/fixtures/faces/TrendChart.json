@@ -1,0 +1,161 @@
+{
+  "sizes": [
+    [
+      296,
+      176
+    ],
+    [
+      200,
+      100
+    ]
+  ],
+  "maxDiffFraction": 0.02,
+  "maxMeanDiff": 1.5,
+  "cases": {
+    "default": {
+      "data": [
+        10,
+        30,
+        25,
+        60,
+        80,
+        55,
+        40,
+        70,
+        90,
+        65,
+        30,
+        20
+      ],
+      "minValue": 0.0,
+      "maxValue": 100.0,
+      "maxPoints": 12,
+      "lineWidth": 2.0,
+      "lineColor": "#006fee",
+      "fillColor": "#006fee",
+      "background": "#09090b"
+    },
+    "sparse": {
+      "data": [
+        20,
+        40,
+        35,
+        50,
+        45
+      ],
+      "minValue": 0.0,
+      "maxValue": 100.0,
+      "maxPoints": 100,
+      "lineWidth": 2.0,
+      "lineColor": "#006fee",
+      "fillColor": "#006fee",
+      "background": "#09090b"
+    },
+    "window": {
+      "data": [
+        0,
+        3,
+        6,
+        9,
+        12,
+        15,
+        18,
+        21,
+        24,
+        27,
+        30,
+        33,
+        36,
+        39,
+        42,
+        45,
+        48,
+        51,
+        54,
+        57,
+        60,
+        63,
+        66,
+        69,
+        72,
+        75,
+        78,
+        81,
+        84,
+        87,
+        90,
+        93,
+        96,
+        99
+      ],
+      "minValue": 0.0,
+      "maxValue": 100.0,
+      "maxPoints": 10,
+      "lineWidth": 2.0,
+      "lineColor": "#006fee",
+      "fillColor": "#006fee",
+      "background": "#09090b"
+    },
+    "single": {
+      "data": [
+        50
+      ],
+      "minValue": 0.0,
+      "maxValue": 100.0,
+      "maxPoints": 12,
+      "lineWidth": 2.0,
+      "lineColor": "#006fee",
+      "fillColor": "#006fee",
+      "background": "#09090b"
+    },
+    "empty": {
+      "data": [],
+      "minValue": 0.0,
+      "maxValue": 100.0,
+      "maxPoints": 12,
+      "lineWidth": 2.0,
+      "lineColor": "#006fee",
+      "fillColor": "#006fee",
+      "background": "#09090b"
+    },
+    "outOfRange": {
+      "data": [
+        -20,
+        50,
+        130,
+        60,
+        40
+      ],
+      "minValue": 0.0,
+      "maxValue": 100.0,
+      "maxPoints": 5,
+      "lineWidth": 3.5,
+      "lineColor": "#f5a524",
+      "fillColor": "#f5a524",
+      "background": "#09090b"
+    },
+    "flatRange": {
+      "data": [
+        10,
+        30,
+        25,
+        60,
+        80,
+        55,
+        40,
+        70,
+        90,
+        65,
+        30,
+        20
+      ],
+      "minValue": 50.0,
+      "maxValue": 50.0,
+      "maxPoints": 12,
+      "lineWidth": 2.0,
+      "lineColor": "#006fee",
+      "fillColor": "#006fee",
+      "background": "#09090b"
+    }
+  }
+}

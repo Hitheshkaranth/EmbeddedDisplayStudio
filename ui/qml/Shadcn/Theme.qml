@@ -15,6 +15,34 @@ QtObject {
      */
     property string mode: "light"
 
+    /**
+     * @property {bool} nativeFaces
+     * True when the host registered the C++ face painters (QML module
+     * Shadcn.Native, compiled into the native hmi-gui loader). The Python
+     * loader and the Designer have no such module and use the Canvas
+     * painters under faces/canvas/. Probed once per engine; HMI_NATIVE_FACES=0
+     * on the loader keeps the module unregistered.
+     */
+    readonly property bool nativeFaces: {
+        try {
+            var probe = Qt.createQmlObject("import Shadcn.Native 1.0
+NativeProbe {}", root, "NativeProbe");
+            probe.destroy();
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * URL of the face painter for a widget: faces/native/<name>Face.qml when
+     * the C++ module is present, faces/canvas/<name>Face.qml otherwise. Both
+     * expose a single `spec` property and draw only from it.
+     */
+    function face(name) {
+        return Qt.resolvedUrl((nativeFaces ? "faces/native/" : "faces/canvas/") + name + "Face.qml");
+    }
+
     /** @property {color} background */
     readonly property color background: mode === "light" ? "#ffffff" : "#09090b"
     /** @property {color} foreground */

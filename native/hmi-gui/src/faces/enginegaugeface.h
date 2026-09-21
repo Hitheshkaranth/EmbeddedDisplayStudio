@@ -1,0 +1,26 @@
+// faces/enginegaugeface.h -- native twin of ui/qml/Shadcn/faces/canvas/EngineGaugeFace.qml.
+//
+// Paints: four coloured arc bands, needle and hub.
+// The Canvas file is the drawing specification; the spec keys are listed in
+// its header comment. Owner: W1 (swarm/briefs/faces/W1-*.md).
+#pragma once
+
+#include "faceitem.h"
+
+namespace hmi {
+
+class EngineGaugeFace : public FaceItem
+{
+    Q_OBJECT
+
+public:
+    using FaceItem::FaceItem;
+
+    // TODO(W1): delete this override once paintFace() is complete.
+    bool implemented() const override { return false; }
+
+protected:
+    void paintFace(QPainter *painter, const QVariantMap &spec) override;
+};
+
+} // namespace hmi

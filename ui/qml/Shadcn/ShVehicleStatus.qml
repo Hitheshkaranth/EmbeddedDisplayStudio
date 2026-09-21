@@ -34,69 +34,27 @@ Item {
     readonly property real _wheelW: root._w * 0.09
     readonly property real _wheelH: root._h * 0.14
 
-    Canvas {
+    // Everything the face painter needs, geometry and colours alike; the
+    // painter (faces/canvas or faces/native) never reads Theme itself.
+    readonly property var _spec: ({
+        bodyX: root._bodyX, bodyY: root._bodyY, bodyW: root._bodyW, bodyH: root._bodyH,
+        bodyRadius: Math.min(root._w * 0.16, root._bodyW / 2, root._bodyH / 2),
+        wheelW: root._wheelW, wheelH: root._wheelH,
+        frontLeftLow: root.low(root.frontLeft), frontRightLow: root.low(root.frontRight),
+        rearLeftLow: root.low(root.rearLeft), rearRightLow: root.low(root.rearRight),
+        wheel: Qt.rgba(0.788, 0.827, 0.875, 0.7), wheelLow: Theme.autoAmber,
+        bodyFill: Qt.rgba(0.039, 0.31, 0.541, 0.25),   // Theme.autoAccentDeep at 25 %
+        bodyLine: Theme.autoAccent,
+        glass: Qt.rgba(0.133, 0.659, 1.0, 0.6)         // Theme.autoAccent at 60 %
+    })
+
+    // Face painter: faces/canvas/VehicleStatusFace.qml, or the C++ twin when
+    // the loader registered Shadcn.Native (Theme.nativeFaces).
+    Loader {
         id: car
         anchors.fill: parent
-        onPaint: {
-            var ctx = getContext("2d");
-            ctx.reset();
-            var x = root._bodyX, y = root._bodyY, w = root._bodyW, h = root._bodyH;
-            var r = Math.min(root._w * 0.16, w / 2, h / 2);
-
-            function roundedRect(rx, ry, rw, rh, rr) {
-                ctx.beginPath();
-                ctx.moveTo(rx + rr, ry);
-                ctx.lineTo(rx + rw - rr, ry);
-                ctx.arcTo(rx + rw, ry, rx + rw, ry + rr, rr);
-                ctx.lineTo(rx + rw, ry + rh - rr);
-                ctx.arcTo(rx + rw, ry + rh, rx + rw - rr, ry + rh, rr);
-                ctx.lineTo(rx + rr, ry + rh);
-                ctx.arcTo(rx, ry + rh, rx, ry + rh - rr, rr);
-                ctx.lineTo(rx, ry + rr);
-                ctx.arcTo(rx, ry, rx + rr, ry, rr);
-                ctx.closePath();
-            }
-
-            // Wheels first, so the body's edge sits over them.
-            var wheels = [
-                [x - root._wheelW * 0.6, y + h * 0.12, root.frontLeft],
-                [x + w - root._wheelW * 0.4, y + h * 0.12, root.frontRight],
-                [x - root._wheelW * 0.6, y + h * 0.88 - root._wheelH, root.rearLeft],
-                [x + w - root._wheelW * 0.4, y + h * 0.88 - root._wheelH, root.rearRight]];
-            for (var i = 0; i < wheels.length; ++i) {
-                ctx.fillStyle = root.low(wheels[i][2]) ? Theme.autoAmber : Qt.rgba(0.788, 0.827, 0.875, 0.7);
-                roundedRect(wheels[i][0], wheels[i][1], root._wheelW, root._wheelH, root._wheelW * 0.3);
-                ctx.fill();
-            }
-
-            // Body.
-            ctx.fillStyle = Qt.rgba(0.039, 0.31, 0.541, 0.25);   // Theme.autoAccentDeep at 25 %
-            ctx.strokeStyle = Theme.autoAccent;
-            ctx.lineWidth = 1.5;
-            roundedRect(x, y, w, h, r);
-            ctx.fill();
-            ctx.stroke();
-
-            // Windscreen and rear window.
-            ctx.strokeStyle = Qt.rgba(0.133, 0.659, 1.0, 0.6);   // Theme.autoAccent at 60 %
-            ctx.lineWidth = 1.2;
-            var inset = w * 0.12;
-            ctx.beginPath();
-            ctx.moveTo(x + inset, y + h * 0.28); ctx.lineTo(x + w - inset, y + h * 0.28);
-            ctx.moveTo(x + inset, y + h * 0.72); ctx.lineTo(x + w - inset, y + h * 0.72);
-            ctx.stroke();
-        }
-        Component.onCompleted: requestPaint()
-        Connections {
-            target: root
-            function onFrontLeftChanged() { car.requestPaint() }
-            function onFrontRightChanged() { car.requestPaint() }
-            function onRearLeftChanged() { car.requestPaint() }
-            function onRearRightChanged() { car.requestPaint() }
-            function onWarnBelowChanged() { car.requestPaint() }
-        }
-        onWidthChanged: requestPaint()
-        onHeightChanged: requestPaint()
+        source: Theme.face("VehicleStatus")
+        onLoaded: item.spec = Qt.binding(function() { return root._spec })
     }
 
     Repeater {

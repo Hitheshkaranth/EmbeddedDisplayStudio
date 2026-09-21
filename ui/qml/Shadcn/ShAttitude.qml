@@ -81,38 +81,15 @@ Item {
         }
     }
 
-    // Bank pointer, fixed to the case.
-    Canvas {
+    // Colours the bank-scale painter needs; it never reads Theme itself.
+    readonly property var _spec: ({ line: Theme.efisLine, aircraft: Theme.efisAircraft })
+
+    // Bank pointer and aircraft symbol, fixed to the case:
+    // faces/canvas/AttitudeFace.qml, or the C++ twin when the loader
+    // registered Shadcn.Native (Theme.nativeFaces).
+    Loader {
         anchors.fill: parent
-        onPaint: {
-            var ctx = getContext("2d");
-            ctx.reset();
-            ctx.strokeStyle = Theme.efisLine;
-            ctx.fillStyle = Theme.efisAircraft;
-            ctx.lineWidth = 2;
-            var cx = width / 2, cy = height / 2, r = Math.min(width, height) * 0.44;
-            var marks = [-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60];
-            for (var i = 0; i < marks.length; i++) {
-                var a = (marks[i] - 90) * Math.PI / 180;
-                var inner = marks[i] % 30 === 0 ? r - 12 : r - 7;
-                ctx.beginPath();
-                ctx.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
-                ctx.lineTo(cx + Math.cos(a) * inner, cy + Math.sin(a) * inner);
-                ctx.stroke();
-            }
-            // Fixed aircraft symbol: wings and a centre dot.
-            ctx.strokeStyle = Theme.efisAircraft;
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.moveTo(cx - 46, cy); ctx.lineTo(cx - 16, cy);
-            ctx.moveTo(cx + 16, cy); ctx.lineTo(cx + 46, cy);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.arc(cx, cy, 3, 0, Math.PI * 2);
-            ctx.fill();
-        }
-        Component.onCompleted: requestPaint()
-        onWidthChanged: requestPaint()
-        onHeightChanged: requestPaint()
+        source: Theme.face("Attitude")
+        onLoaded: item.spec = Qt.binding(function() { return root._spec })
     }
 }

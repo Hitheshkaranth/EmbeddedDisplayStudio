@@ -5,7 +5,8 @@
 # install path (/usr/lib/hmi/gui/hmi-gui beside the Python files it retires).
 # The QML shell and the Shadcn kit are still loaded from the filesystem at the
 # CONTRACT section 3 paths, so bundles, the Designer and the AI generator are
-# untouched by this port.
+# untouched by this port. Phase 2 (src/faces/) adds the QML module
+# Shadcn.Native: C++ twins of the kit's Canvas painters, compiled in.
 #
 # Build (WSL / Linux):   native/hmi-gui/build.sh --test
 # Build (Windows host):  powershell -File native/hmi-gui/build.ps1 --test
@@ -31,6 +32,16 @@ add_library(hmi-gui-core STATIC
     src/tagengine.cpp
     src/history.cpp
     src/alarmengine.cpp
+    src/faces/faceitem.cpp
+    src/faces/nativefaces.cpp
+    src/faces/clustergaugeface.cpp
+    src/faces/enginegaugeface.cpp
+    src/faces/autolevelface.cpp
+    src/faces/vehiclestatusface.cpp
+    src/faces/compassface.cpp
+    src/faces/turncoordinatorface.cpp
+    src/faces/attitudeface.cpp
+    src/faces/trendchartface.cpp
 )
 target_include_directories(hmi-gui-core PUBLIC src)
 target_link_libraries(hmi-gui-core PUBLIC

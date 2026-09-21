@@ -50,169 +50,25 @@ Item {
     readonly property real _clamped:
         Math.max(root.minimumValue, Math.min(root.maximumValue, root.value))
 
-    Canvas {
+    // Everything the face painter needs, values and colours alike; the
+    // painter (faces/canvas or faces/native) never reads Theme itself.
+    readonly property var _spec: ({
+        value: root.value, minimumValue: root.minimumValue, maximumValue: root.maximumValue,
+        majorStep: root.majorStep, redlineFrom: root.redlineFrom, sweep: root.sweep,
+        showInnerDial: root.showInnerDial,
+        track: Theme.autoTrack, redline: Theme.autoRedline,
+        accentDeep: Theme.autoAccentDeep, accent: Theme.autoAccent, glow: Theme.autoGlow,
+        line: Theme.autoLine, muted: Theme.autoMuted, panel: Theme.autoPanel,
+        tileBorder: Theme.autoTileBorder, dialTint: Qt.rgba(10 / 255, 79 / 255, 138 / 255, 0.20)
+    })
+
+    // Face painter: faces/canvas/ClusterGaugeFace.qml, or the C++ twin when
+    // the loader registered Shadcn.Native (Theme.nativeFaces).
+    Loader {
         id: face
         anchors.fill: parent
-        anchors.margins: 0
-
-        onPaint: {
-            var ctx = getContext("2d");
-            ctx.reset();
-            var cx = width / 2, cy = height / 2;
-            var d = Math.min(width, height);
-
-            // -- 1. Scale track --
-            var startAngle = 90 + (360 - root.sweep) / 2;
-            var arcR = 0.38 * d;
-            var strokeW = 0.05 * d;
-
-            // Track (unfilled scale)
-            ctx.beginPath();
-            ctx.arc(cx, cy, arcR,
-                    startAngle * Math.PI / 180,
-                    (startAngle + root.sweep) * Math.PI / 180);
-            ctx.lineWidth = strokeW;
-            ctx.strokeStyle = Theme.autoTrack;
-            ctx.stroke();
-
-            // -- 2. Redline band (always visible) --
-            if (root.redlineFrom < root.maximumValue) {
-                var redStartFrac = (root.redlineFrom - root.minimumValue) / root._span;
-                var redEndFrac = 1.0;
-                var redStartAngle = startAngle + root.sweep * redStartFrac;
-                ctx.beginPath();
-                ctx.arc(cx, cy, arcR,
-                        redStartAngle * Math.PI / 180,
-                        (startAngle + root.sweep) * Math.PI / 180);
-                ctx.lineWidth = strokeW;
-                ctx.strokeStyle = Theme.autoRedline;
-                ctx.stroke();
-            }
-
-            // -- 3. Value arc --
-            var frac = (_clamped - root.minimumValue) / root._span;
-            var valueAngle = startAngle + root.sweep * frac;
-
-            // Gradient for the value arc
-            var grad = ctx.createLinearGradient(
-                    cx - arcR, cy, cx + arcR, cy);
-            grad.addColorStop(0, Theme.autoAccentDeep);
-            grad.addColorStop(1, Theme.autoAccent);
-
-            ctx.beginPath();
-            ctx.arc(cx, cy, arcR,
-                    startAngle * Math.PI / 180,
-                    valueAngle * Math.PI / 180);
-            ctx.lineWidth = strokeW;
-            ctx.strokeStyle = grad;
-            ctx.stroke();
-
-            // 2 px glow line on the outer edge of the value arc
-            ctx.beginPath();
-            ctx.arc(cx, cy, arcR + strokeW * 0.35,
-                    startAngle * Math.PI / 180,
-                    valueAngle * Math.PI / 180);
-            ctx.lineWidth = 2;
-            ctx.strokeStyle = Theme.autoGlow;
-            ctx.stroke();
-
-            // Redline portion of value arc (past redlineFrom)
-            if (_clamped > root.redlineFrom && root.redlineFrom < root.maximumValue) {
-                var redStartFrac2 = (root.redlineFrom - root.minimumValue) / root._span;
-                var redStartAngle2 = startAngle + root.sweep * redStartFrac2;
-                ctx.beginPath();
-                ctx.arc(cx, cy, arcR,
-                        redStartAngle2 * Math.PI / 180,
-                        valueAngle * Math.PI / 180);
-                ctx.lineWidth = strokeW;
-                ctx.strokeStyle = Theme.autoRedline;
-                ctx.stroke();
-            }
-
-            // -- 4. Major ticks and labels --
-            var tickLen = 0.035 * d;
-            var labelR = 0.47 * d;
-            for (var mv = root.minimumValue; mv <= root.maximumValue + 0.0001; mv += root.majorStep) {
-                var mvFrac = (mv - root.minimumValue) / root._span;
-                var a = (startAngle + root.sweep * mvFrac) * Math.PI / 180;
-                var tx1 = cx + (arcR + tickLen) * Math.cos(a);
-                var ty1 = cy + (arcR + tickLen) * Math.sin(a);
-                var tx2 = cx + arcR * Math.cos(a);
-                var ty2 = cy + arcR * Math.sin(a);
-                ctx.beginPath();
-                ctx.moveTo(tx1, ty1);
-                ctx.lineTo(tx2, ty2);
-                ctx.lineWidth = 2;
-                var isRedline = mv >= root.redlineFrom;
-                ctx.strokeStyle = isRedline ? Theme.autoRedline : Theme.autoLine;
-                ctx.stroke();
-
-            }
-
-            // -- 5. Minor ticks --
-            var minorLen = tickLen * 0.5;
-            var steps = Math.round(root._span / root.majorStep);
-            for (var s = 0; s < steps; s++) {
-                var baseVal = root.minimumValue + s * root.majorStep;
-                for (var m = 1; m < 5; m++) {
-                    var mVal = baseVal + m * (root.majorStep / 5);
-                    if (mVal > root.maximumValue + 0.0001) break;
-                    var mFrac = (mVal - root.minimumValue) / root._span;
-                    var ma = (startAngle + root.sweep * mFrac) * Math.PI / 180;
-                    var mx1 = cx + (arcR + minorLen) * Math.cos(ma);
-                    var my1 = cy + (arcR + minorLen) * Math.sin(ma);
-                    var mx2 = cx + arcR * Math.cos(ma);
-                    var my2 = cy + arcR * Math.sin(ma);
-                    ctx.beginPath();
-                    ctx.moveTo(mx1, my1);
-                    ctx.lineTo(mx2, my2);
-                    ctx.lineWidth = 1.2;
-                    ctx.strokeStyle = Theme.autoMuted;
-                    ctx.stroke();
-                }
-            }
-
-            // -- 6. Inner dial --
-            if (root.showInnerDial) {
-                var innerR = 0.28 * d;
-                ctx.beginPath();
-                ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
-                ctx.fillStyle = Theme.autoPanel;
-                ctx.fill();
-
-                // Radial gradient overlay
-                var radGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, innerR);
-                radGrad.addColorStop(0, "rgba(10,79,138,0.20)");
-                radGrad.addColorStop(1, "rgba(10,79,138,0.00)");
-                ctx.beginPath();
-                ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
-                ctx.fillStyle = radGrad;
-                ctx.fill();
-
-                // Ring
-                ctx.beginPath();
-                ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
-                ctx.lineWidth = 1.5;
-                ctx.strokeStyle = Theme.autoTileBorder;
-                ctx.stroke();
-            }
-        }
-
-        Component.onCompleted: requestPaint()
-
-        Connections {
-            target: root
-            function onValueChanged()    { face.requestPaint() }
-            function onMinimumValueChanged() { face.requestPaint() }
-            function onMaximumValueChanged() { face.requestPaint() }
-            function onMajorStepChanged() { face.requestPaint() }
-            function onRedlineFromChanged() { face.requestPaint() }
-            function onSweepChanged()     { face.requestPaint() }
-            function onShowInnerDialChanged() { face.requestPaint() }
-        }
-
-        onWidthChanged: requestPaint()
-        onHeightChanged: requestPaint()
+        source: Theme.face("ClusterGauge")
+        onLoaded: item.spec = Qt.binding(function() { return root._spec })
     }
 
     // -- 4b. Scale labels, as Text so they stay crisp at any size --

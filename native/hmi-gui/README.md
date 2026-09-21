@@ -59,3 +59,20 @@ QML/Qt messages: `WARNING - hmi-gui - QML Warning: ...`
 Unit tests (QTest, ctest): `bash native/hmi-gui/build.sh --test`
 
 Conformance suite (Python): `python -m unittest discover -s tests/native -t . -v`
+## Native widget faces (`Shadcn.Native`)
+
+The Shadcn kit's Canvas-painted instrument faces (ClusterGauge, EngineGauge,
+AutoLevel, VehicleStatus, TrendChart, Compass, TurnCoordinator, Attitude)
+have C++ twins under `src/faces/`, registered as the QML module
+`Shadcn.Native 1.0` and compiled into this binary. `Theme.nativeFaces` in the
+kit probes the module once; `Theme.face(name)` then points each widget's
+`Loader` at `faces/native/<Name>Face.qml` (C++) or `faces/canvas/<Name>Face.qml`
+(Canvas, used by the Python loader and the Designer). A face is a pure
+function of one `spec` map the wrapper widget builds from its properties and
+the Theme colours; the two painters must produce the same pixels.
+
+- `HMI_NATIVE_FACES=0` leaves the module unregistered (A/B testing).
+- `tests/tst_faces` renders every case in `tests/native/fixtures/faces/*.json`
+  through both painters and compares them; `HMI_FACES=Name1,Name2` restricts
+  the run, `HMI_FACES_OUT=<dir>` writes `-canvas.png`, `-native.png` and
+  `-diff.png` per case.

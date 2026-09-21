@@ -40,6 +40,22 @@ Item {
     readonly property color _gridColor: Theme.border
     readonly property color _warnZoneColor: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.08)
 
+    // Everything the face painter needs, values and colours alike; the
+    // painter (faces/canvas or faces/native) never reads Theme itself.
+    readonly property var _spec: ({
+        data: root.data, minValue: root.minValue, maxValue: root.maxValue,
+        maxPoints: root.maxPoints, lineWidth: root.lineWidth,
+        lineColor: root.lineColor, fillColor: root.fillColor, background: Theme.background
+    })
+
+    // `data` (public API: the sample array) shadows Item's default property
+    // of the same name, so children declared in the body would be assigned
+    // to the array and never become visual children. The visual tree is
+    // therefore held by a named property and parented explicitly.
+    property Item _body: Item {
+        parent: root
+        anchors.fill: parent   // re-evaluated once parent is set
+
     Column {
         anchors.fill: parent
         spacing: 0
@@ -105,75 +121,13 @@ Item {
                 }
             }
 
-            // Trend line path
-            Canvas {
+            // Trend line path: faces/canvas/TrendChartFace.qml, or the C++
+            // twin when the loader registered Shadcn.Native (Theme.nativeFaces).
+            Loader {
                 anchors.fill: parent
                 anchors.margins: 2
-
-                onPaint: {
-                    var ctx = getContext("2d");
-                    ctx.reset();
-
-                    var pts = root.data.slice(-root.maxPoints);
-                    if (pts.length < 2) return;
-
-                    var w = width;
-                    var h = height;
-                    var stepX = w / (root.maxPoints - 1);
-
-                    // Fill area
-                    ctx.beginPath();
-                    ctx.moveTo(0, h);
-                    for (var i = 0; i < pts.length; i++) {
-                        var x = i * stepX;
-                        var y = h - (pts[i] - root.minValue) * root._yScale * h;
-                        if (i === 0) ctx.lineTo(x, y);
-                        else ctx.lineTo(x, y);
-                    }
-                    ctx.lineTo((pts.length - 1) * stepX, h);
-                    ctx.closePath();
-
-                    var grad = ctx.createLinearGradient(0, 0, 0, h);
-                    grad.addColorStop(0, Qt.rgba(root.fillColor.r, root.fillColor.g, root.fillColor.b, 0.2));
-                    grad.addColorStop(1, Qt.rgba(root.fillColor.r, root.fillColor.g, root.fillColor.b, 0.02));
-                    ctx.fillStyle = grad;
-                    ctx.fill();
-
-                    // Line
-                    ctx.beginPath();
-                    for (var i = 0; i < pts.length; i++) {
-                        var x = i * stepX;
-                        var y = h - (pts[i] - root.minValue) * root._yScale * h;
-                        if (i === 0) ctx.moveTo(x, y);
-                        else ctx.lineTo(x, y);
-                    }
-                    ctx.strokeStyle = root.lineColor;
-                    ctx.lineWidth = root.lineWidth;
-                    ctx.lineJoin = "round";
-                    ctx.stroke();
-
-                    // Current value dot
-                    if (pts.length > 0) {
-                        var lastX = (pts.length - 1) * stepX;
-                        var lastY = h - (pts[pts.length - 1] - root.minValue) * root._yScale * h;
-                        ctx.beginPath();
-                        ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
-                        ctx.fillStyle = root.fillColor;
-                        ctx.fill();
-                        ctx.beginPath();
-                        ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
-                        ctx.fillStyle = Theme.background;
-                        ctx.fill();
-                    }
-                }
-
-                Component.onCompleted: requestPaint()
-                onWidthChanged: requestPaint()
-
-                Connections {
-                    target: root
-                    function onDataChanged() { requestPaint() }
-                }
+                source: Theme.face("TrendChart")
+                onLoaded: item.spec = Qt.binding(function() { return root._spec })
             }
 
             // Unit label
@@ -188,5 +142,6 @@ Item {
                 visible: root.unit !== ""
             }
         }
+    }
     }
 }

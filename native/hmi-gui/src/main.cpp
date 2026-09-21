@@ -16,6 +16,9 @@
 //   --exit-after MS     hidden; quit after MS milliseconds (smoke tests)
 //   --log-level L       DEBUG|INFO|WARNING|ERROR    (default INFO)
 //
+// Environment: HMI_NATIVE_FACES=0 leaves the Shadcn.Native module
+// unregistered so the kit falls back to its Canvas painters (A/B testing).
+//
 // Path resolution (CONTRACT section 3), mirroring main.py:
 //   QML import paths: <repo>/ui/qml when running from a checkout (found by
 //   walking up from the executable looking for ui/qml/Shadcn/qmldir), and
@@ -25,6 +28,7 @@
 // Owner: W3. The flag set is frozen; the body may be refined.
 
 #include "busshim.h"
+#include "faces/nativefaces.h"
 #include "hmi.h"
 #include "log.h"
 #include "manifest.h"
@@ -99,6 +103,11 @@ int main(int argc, char *argv[])
 
     const QString exeDir = QCoreApplication::applicationDirPath();
     const QString repoRoot = findRepoRoot(exeDir);
+
+    // Phase 2: the C++ widget faces. Registered before the engine loads
+    // anything so Theme.nativeFaces sees the module on its first evaluation.
+    if (qEnvironmentVariable("HMI_NATIVE_FACES") != QStringLiteral("0"))
+        hmi::registerNativeFaces();
 
     QQmlApplicationEngine engine;
     if (!repoRoot.isEmpty())

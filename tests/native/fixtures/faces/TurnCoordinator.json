@@ -1,0 +1,26 @@
+{
+  "sizes": [
+    [
+      180,
+      110
+    ],
+    [
+      240,
+      140
+    ],
+    [
+      120,
+      80
+    ]
+  ],
+  "maxDiffFraction": 0.02,
+  "maxMeanDiff": 1.5,
+  "cases": {
+    "default": {
+      "line": "#ffffff"
+    },
+    "tinted": {
+      "line": "#c9d3df"
+    }
+  }
+}

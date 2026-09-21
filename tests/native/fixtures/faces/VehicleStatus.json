@@ -1,0 +1,88 @@
+{
+  "sizes": [
+    [
+      150,
+      190
+    ]
+  ],
+  "maxDiffFraction": 0.02,
+  "maxMeanDiff": 1.5,
+  "cases": {
+    "default": {
+      "frontLeftLow": false,
+      "frontRightLow": false,
+      "rearLeftLow": true,
+      "rearRightLow": false,
+      "bodyW": 63.0,
+      "bodyH": 133.0,
+      "bodyX": 43.5,
+      "bodyY": 28.5,
+      "bodyRadius": 24.0,
+      "wheelW": 13.5,
+      "wheelH": 26.6,
+      "wheel": "#b2c9d3df",
+      "wheelLow": "#ffb000",
+      "bodyFill": "#400a4f8a",
+      "bodyLine": "#22a8ff",
+      "glass": "#9922a8ff"
+    },
+    "allGood": {
+      "frontLeftLow": false,
+      "frontRightLow": false,
+      "rearLeftLow": false,
+      "rearRightLow": false,
+      "bodyW": 63.0,
+      "bodyH": 133.0,
+      "bodyX": 43.5,
+      "bodyY": 28.5,
+      "bodyRadius": 24.0,
+      "wheelW": 13.5,
+      "wheelH": 26.6,
+      "wheel": "#b2c9d3df",
+      "wheelLow": "#ffb000",
+      "bodyFill": "#400a4f8a",
+      "bodyLine": "#22a8ff",
+      "glass": "#9922a8ff"
+    },
+    "allLow": {
+      "frontLeftLow": true,
+      "frontRightLow": true,
+      "rearLeftLow": true,
+      "rearRightLow": true,
+      "bodyW": 63.0,
+      "bodyH": 133.0,
+      "bodyX": 43.5,
+      "bodyY": 28.5,
+      "bodyRadius": 24.0,
+      "wheelW": 13.5,
+      "wheelH": 26.6,
+      "wheel": "#b2c9d3df",
+      "wheelLow": "#ffb000",
+      "bodyFill": "#400a4f8a",
+      "bodyLine": "#22a8ff",
+      "glass": "#9922a8ff"
+    },
+    "large": {
+      "frontLeftLow": false,
+      "frontRightLow": false,
+      "rearLeftLow": true,
+      "rearRightLow": false,
+      "bodyW": 92.39999999999999,
+      "bodyH": 182.0,
+      "bodyX": 63.800000000000004,
+      "bodyY": 39.0,
+      "bodyRadius": 35.2,
+      "wheelW": 19.8,
+      "wheelH": 36.400000000000006,
+      "wheel": "#b2c9d3df",
+      "wheelLow": "#ffb000",
+      "bodyFill": "#400a4f8a",
+      "bodyLine": "#22a8ff",
+      "glass": "#9922a8ff",
+      "size": [
+        220,
+        260
+      ]
+    }
+  }
+}
