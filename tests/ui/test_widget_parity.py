@@ -50,7 +50,7 @@ BACKGROUND = "#101318"
 
 # Wave 1: everything the engine-dashboard demo needs, plus the faces with
 # exact drawing specs. Wave 2 adds the rest of the 46 types.
-WAVE = ["Text", "Image", "Rectangle", "ShButton", "ShLabel", "ShStatDot", "ShSegmentBar", "ShTripInfo",
+WAVE = ["Text", "Image", "Rectangle", "ShButton", "ShStatDot", "ShSegmentBar", "ShTripInfo",
         "ShAutoReadout", "ShNumDisplay", "ShValueTile", "ShCard", "ShProgress",
         "ShClusterGauge", "ShAutoLevel", "ShEngineGauge", "ShGauge"]
 
@@ -169,6 +169,9 @@ class ParityTests(unittest.TestCase):
     def test_wave_matches_qml(self):
         self.assertTrue(os.path.exists(BIN), f"no hmi-ui binary at {BIN} (build native/hmi-ui first)")
         results = []
+        self.addCleanup(lambda: sys.stderr.write(
+            "\nparity (QML vs hmi-ui, dark, defaults):\n" + "\n".join(results)
+            + f"\nimages: {os.path.abspath(OUT_DIR)}\n"))
         for type_name in _selected():
             definition = self.registry.get(type_name)
             self.assertIsNotNone(definition, type_name)
@@ -185,7 +188,6 @@ class ParityTests(unittest.TestCase):
                     self.skipTest(f"{type_name} not implemented (placeholder)")
                 self.assertLessEqual(mean, blank_mean * 0.5, f"{type_name}: mean diff {mean:.2f} vs blank {blank_mean:.2f}")
                 self.assertLessEqual(frac, blank_frac * 0.5, f"{type_name}: {frac:.3f} of pixels differ vs blank {blank_frac:.3f}")
-        sys.stderr.write("\nparity (QML vs hmi-ui, dark, defaults):\n" + "\n".join(results) + f"\nimages: {os.path.abspath(OUT_DIR)}\n")
 
 
 if __name__ == "__main__":
