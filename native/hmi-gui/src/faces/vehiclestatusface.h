@@ -16,11 +16,11 @@ class VehicleStatusFace : public FaceItem
 public:
     using FaceItem::FaceItem;
 
-    // TODO(W2): delete this override once paintFace() is complete.
-    bool implemented() const override { return false; }
-
 protected:
     void paintFace(QPainter *painter, const QVariantMap &spec) override;
+
+private:
+    static QPainterPath roundedRect(qreal rx, qreal ry, qreal rw, qreal rh, qreal rr);
 };
 
 } // namespace hmi
