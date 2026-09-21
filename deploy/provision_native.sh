@@ -64,7 +64,7 @@ if [ "$REMOVE" = 1 ]; then
     exit 0
 fi
 
-[ -x "$OUT/hmi-gui" ] || { echo "no binary at $OUT/hmi-gui" >&2; exit 1; }
+[ -f "$OUT/hmi-gui" ] || { echo "no binary at $OUT/hmi-gui" >&2; exit 1; }   # -f: an ELF has no exec bit under Git Bash
 [ -f "$OUT/hmi-qt6-runtime.tar.gz" ] || { echo "no runtime tarball in $OUT" >&2; exit 1; }
 
 echo "== survey $HOST"

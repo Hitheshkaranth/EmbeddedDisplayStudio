@@ -10,9 +10,11 @@
 # LD_LIBRARY_PATH / QT_PLUGIN_PATH / QML_IMPORT_PATH at it.
 #
 # Deliberately NOT shipped (the panel's own are newer and must win): the glibc
-# family, libstdc++/libgcc, and the GL/EGL/wayland client libraries (glvnd is
-# already installed for PySide6; the loader runs the software scene graph
-# anyway, so no GL call is ever made).
+# family, libstdc++/libgcc, and the GL/EGL/wayland client libraries (glvnd's
+# libGL/libGLX/libGLdispatch are already installed for PySide6; the loader
+# runs the software scene graph anyway, so no GL call is ever made). glvnd's
+# libOpenGL.so.0 IS shipped: the panel lacks it and it is only a dispatch
+# stub over libGLdispatch.
 #
 # USAGE (WSL Ubuntu, as root; after build.sh)
 #   bash native/hmi-gui/arm64/runtime.sh [OUT.tar.gz]
@@ -47,9 +49,8 @@ done
 for m in QtQml QtQuick; do
     cp -a "$ROOT/$QTBASE/qml/$m" "$P/qml/"
 done
-# The Basic style is the one the shell imports; the others only add size.
-find "$P/qml/QtQuick/Controls" -mindepth 1 -maxdepth 1 -type d \
-    ! -name Basic ! -name impl -exec rm -rf {} +
+# All Controls styles stay: Qt picks Fusion by default on Linux and a bundle
+# that imports QtQuick.Controls fails to load when that style is missing.
 
 # 2. Shared-library closure of the binary, the plugins and the QML modules,
 #    resolved inside the root (ldd there sees the arm64 libraries).
@@ -69,7 +70,7 @@ chroot "$ROOT" /bin/bash -c '
 ' < "$STAGE/roots.txt" | sort -u > "$NEEDED"
 
 # 3. Copy the closure, minus what must come from the panel itself.
-SKIP='^(libc|libm|libdl|libpthread|librt|libresolv|libutil|ld-linux|libstdc\+\+|libgcc_s|libGL|libGLX|libEGL|libOpenGL|libGLdispatch|libwayland-client|libwayland-egl|libwayland-cursor|libxkbcommon)([.-]|$)'
+SKIP='^(libc|libm|libdl|libpthread|librt|libresolv|libutil|ld-linux|libstdc\+\+|libgcc_s|libGL|libGLX|libEGL|libGLdispatch|libwayland-client|libwayland-egl|libwayland-cursor|libxkbcommon)([.-]|$)'
 while read -r lib; do
     base="$(basename "$lib")"
     if echo "$base" | grep -Eq "$SKIP"; then continue; fi
