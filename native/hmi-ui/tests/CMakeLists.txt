@@ -6,6 +6,7 @@ get_filename_component(HMI_REPO_ROOT "${CMAKE_SOURCE_DIR}/../.." ABSOLUTE)
 set(HMI_UI_TESTS
     test_model
     test_bind
+    test_alarms
 )
 
 foreach(name IN LISTS HMI_UI_TESTS)

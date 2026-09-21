@@ -25,6 +25,8 @@ static void deliver_alarms_cb(hmi_widget_t *w, void *user)
 {
     hmi_runtime_t *rt = user;
     if (strcmp(w->type, "ShAlarmTable") != 0 || !w->native) return;
+    // No definitions: the engine has nothing to say; the model's own list stands.
+    if (hmi_alarms_tag_count(rt->alarms) == 0) return;
     const hmi_widget_ops_t *ops = hmi_registry_find(w->type);
     if (!ops || !ops->set_prop) return;
     hmi_value_t list = hmi_alarms_active_value(rt->alarms);

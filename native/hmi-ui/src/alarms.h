@@ -44,16 +44,25 @@ typedef void (*hmi_alarms_changed_cb)(void *user);
 // Load the definitions from <apps_dir>/manifest.json (missing file or no
 // "alarms": an engine with no definitions). Never fails.
 hmi_alarms_t *hmi_alarms_create(const char *apps_dir);
+// The same from the "alarms" array's JSON text (tests; malformed: no definitions).
+hmi_alarms_t *hmi_alarms_create_from_json(const char *alarms_json);
 void hmi_alarms_destroy(hmi_alarms_t *a);
 void hmi_alarms_set_callback(hmi_alarms_t *a, hmi_alarms_changed_cb cb, void *user);
+// Test hook: replaces the local-time clock used for activation timestamps
+// (returns "YYYY-MM-DDTHH:MM:SS"). NULL restores the real clock.
+typedef const char *(*hmi_alarms_clock_fn)(void *user);
+void hmi_alarms_set_clock(hmi_alarms_t *a, hmi_alarms_clock_fn now, void *user);
 
 // The tags the definitions reference (for the runtime's interest list).
 size_t hmi_alarms_tag_count(const hmi_alarms_t *a);
 const char *hmi_alarms_tag(const hmi_alarms_t *a, size_t i);
 
-// One telemetry frame: `tags`/`values` are the frame's entries (the tag
-// engine passes each changed tag; pass the full frame when available).
-// Returns true (and fires the callback) when the active set changed.
+// One telemetry update: `tags`/`values` are the entries that arrived (the
+// runtime passes each changed tag on its own; a full frame is fine too).
+// The engine remembers the last value of every alarm tag, so a tag absent
+// from this call keeps its previous value; one never seen, or delivered as
+// HMI_V_NULL (a failed read), makes its alarms inactive. Returns true (and
+// fires the callback) when the active set changed.
 bool hmi_alarms_evaluate(hmi_alarms_t *a, const char *const *tags, const hmi_value_t *values, size_t n);
 
 // Sorted active alarms; the array is valid until the next evaluate/acknowledge.
