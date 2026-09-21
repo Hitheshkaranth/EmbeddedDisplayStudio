@@ -78,18 +78,24 @@ class TestUiConformance(unittest.TestCase):
 
     def test_command_ids_count_up(self):
         self.h.frame({"ctl.write": 1})
-        first = self.h.wait_command("set", timeout=3)
+        self.h.wait_command("set", timeout=3)
         self.h.frame({"ctl.write": 2})
-        second = self.h.wait_command("set", timeout=3)
-        self.assertEqual(int(second["id"].split("-")[1]), int(first["id"].split("-")[1]) + 1)
+        deadline = time.monotonic() + 3
+        sets = []
+        while time.monotonic() < deadline and len(sets) < 2:
+            sets = [c for c in self.h.commands(timeout=0.3) + [] if c.get("cmd") == "set"]
+            sets = [c for c in self.h._received if c.get("cmd") == "set"]
+        self.assertGreaterEqual(len(sets), 2, sets)
+        self.assertEqual(int(sets[-1]["id"].split("-")[1]), int(sets[-2]["id"].split("-")[1]) + 1)
 
     def test_navigate_action_switches_page_and_scaled_binding(self):
         self.h.frame({"ctl.nav": 1})
         self.h.wait_for(r"navigate to page second", timeout=3)
         # The second page's probe binds ai.pot with *2 + 1 and format "%1 V".
         self.h.frame({"ai.pot": 2.0})
-        line = self.h.wait_for(r"PROBE value=", timeout=5)
-        self.assertIn('PROBE value="5 V"', line)
+        # (the new page first logs its fallback, value=0; then the frame lands)
+        line = self.h.wait_for(r'PROBE value="5 V"', timeout=5)
+        self.assertIn('App Log: PROBE value="5 V"', line)
 
     def test_oversize_datagram_is_ignored(self):
         """> 8192 bytes: dropped; the next good frame still arrives."""

@@ -9,12 +9,13 @@
 //     be driven from the fake daemon by changing a ctl.* tag.
 // The "App Log:" prefix matches Hmi.log() in the QML loaders, so
 // tests/native/loader_harness.py's probe_lines() reads these unchanged.
+#include <stdbool.h>
 #include <string.h>
 
 #include "log.h"
 #include "registry.h"
 
-typedef struct { hmi_value_t trigger; } probe_state_t;
+typedef struct { hmi_value_t trigger; bool primed; } probe_state_t;
 
 static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
 {
@@ -32,12 +33,16 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
     hmi_log(HMI_LOG_INFO, "App Log: PROBE %s=%s", prop, hmi_value_debug(value));
     if (strcmp(prop, "trigger") == 0) {
         probe_state_t *st = w->state;
+        // The first delivery is the baseline (the binding fallback, or the
+        // first frame); only a later change is an event -- as the QML
+        // probe's "once per new N" logic behaves.
         if (!hmi_value_equal(&st->trigger, value)) {
             hmi_value_free(&st->trigger);
             st->trigger = hmi_value_copy(value);
-            if (value->kind != HMI_V_NULL)
+            if (st->primed && value->kind != HMI_V_NULL)
                 hmi_widget_emit(w, "changed", value);
         }
+        st->primed = true;
     }
 }
 

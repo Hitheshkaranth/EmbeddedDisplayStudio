@@ -442,13 +442,14 @@ static void apply_tag_value(hmi_widget_t *widget, void *user)
                 hmi_value_free(&sv);
             } else {
                 if (bd->multiplier == 1.0 && bd->offset == 0.0 && !bd->format[0]) {
+                    // Unscaled, unformatted: a str-typed property, and any
+                    // non-numeric tag value (a bool, a string), pass through
+                    // unchanged -- as Bus.value() hands QML the raw value.
                     const hmi_type_schema_t *ts = hmi_kit_find(wtype);
-                    if (ts) {
-                        const hmi_prop_schema_t *ps = hmi_kit_find_prop(ts, bd->prop);
-                        if (ps && ps->kind == HMI_KIND_STR) {
-                            b->apply(w2, bd->prop, c->value, b->user);
-                            continue;
-                        }
+                    const hmi_prop_schema_t *ps = ts ? hmi_kit_find_prop(ts, bd->prop) : NULL;
+                    if ((ps && ps->kind == HMI_KIND_STR) || c->value->kind != HMI_V_NUM) {
+                        b->apply(w2, bd->prop, c->value, b->user);
+                        continue;
                     }
                 }
                 hmi_value_t nv = hmi_value_num(display);
@@ -463,7 +464,9 @@ void hmi_bind_on_tag(hmi_bind_t *b, const char *tag, const hmi_value_t *value)
 {
     if (!b->idx) return;
     page_ctx_t c = {b, tag, value, 0};
-    hmi_page_visit(b->page, apply_tag_value, &c);
+    // apply_tag_value walks the whole index, so run it once, not once per
+    // widget of the page (that delivered every binding N times).
+    apply_tag_value(NULL, &c);
 }
 
 void hmi_bind_destroy(hmi_bind_t *b)

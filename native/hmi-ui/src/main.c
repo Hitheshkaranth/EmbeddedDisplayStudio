@@ -198,6 +198,7 @@ int main(int argc, char **argv)
         for (;;) {
             lv_timer_handler();
             if (tags) hmi_tags_poll(tags);
+            hmi_runtime_tick(rt);
             if (g_stop) break;
             if (exit_after > 0 && now_ms() - t0 >= (uint32_t)exit_after) break;
             usleep(4000);

@@ -15,6 +15,7 @@ struct hmi_runtime {
     hmi_bind_t *bind;
     hmi_page_t *page;
     lv_obj_t *page_obj;     // container for the page's widgets
+    hmi_page_t *pending;    // navigation requested, applied by hmi_runtime_tick
 };
 
 // Every widget carries a pointer back to its runtime in state[0]? No: the
@@ -180,7 +181,16 @@ bool hmi_runtime_navigate(hmi_runtime_t *rt, const char *id)
     }
     if (page == rt->page) return true;
     hmi_log(HMI_LOG_INFO, "navigate to page %s", id);
-    return show_page(rt, page);
+    rt->pending = page;   // a binding delivery or a widget event may be on the stack
+    return true;
+}
+
+void hmi_runtime_tick(hmi_runtime_t *rt)
+{
+    if (!rt || !rt->pending) return;
+    hmi_page_t *page = rt->pending;
+    rt->pending = NULL;
+    if (page != rt->page) show_page(rt, page);
 }
 
 const char *hmi_runtime_current_page(const hmi_runtime_t *rt) { return rt->page ? rt->page->id : ""; }

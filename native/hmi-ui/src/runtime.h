@@ -19,8 +19,11 @@ typedef struct hmi_runtime hmi_runtime_t;
 hmi_runtime_t *hmi_runtime_create(hmi_project_t *project, lv_obj_t *screen, hmi_tags_t *tags);
 void hmi_runtime_destroy(hmi_runtime_t *rt);
 
-// Show page `id` (tears down the current one). false when unknown.
+// Request page `id`; the switch happens on the next hmi_runtime_tick()
+// (never inside a binding delivery or a widget event). false when unknown.
 bool hmi_runtime_navigate(hmi_runtime_t *rt, const char *id);
+// Main-loop hook: applies a pending navigation. Call every loop iteration.
+void hmi_runtime_tick(hmi_runtime_t *rt);
 const char *hmi_runtime_current_page(const hmi_runtime_t *rt);
 
 // Called by the tag engine callbacks (main.c wires them).
