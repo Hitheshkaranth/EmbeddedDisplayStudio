@@ -94,6 +94,13 @@ void hmi_widget_emit(hmi_widget_t *w, const char *signal, const hmi_value_t *arg
     hmi_runtime_signal(w, signal, arg);
 }
 
+// LVGL only shows children outside their parent's box within the parent's
+// "ext draw size"; QML never clips, so every widget root claims a margin.
+static void ext_draw_cb(lv_event_t *e)
+{
+    lv_event_set_ext_draw_size(e, LV_MAX(lv_event_get_ext_draw_size(e), 96));
+}
+
 void hmi_widget_apply_common(hmi_widget_t *w)
 {
     lv_obj_t *obj = (lv_obj_t *)w->native;
@@ -109,4 +116,6 @@ void hmi_widget_apply_common(hmi_widget_t *w)
     // and -- as QML Items -- nothing clips its children to its own bounds.
     lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(obj, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    lv_obj_add_event_cb(obj, ext_draw_cb, LV_EVENT_REFR_EXT_DRAW_SIZE, NULL);
+    lv_obj_refresh_ext_draw_size(obj);
 }

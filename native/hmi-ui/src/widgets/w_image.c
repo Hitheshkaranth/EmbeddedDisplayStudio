@@ -34,11 +34,17 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
         int ih = lv_image_get_src_height(img);
         int ow = (int)w->width, oh = (int)w->height;
         if (iw > 0 && ih > 0 && ow > 0 && oh > 0) {
-            if (strcmp(fill, "Image.PreserveAspectFit") == 0 || strcmp(fill, "Image.PreserveAspectCrop") == 0) {
-                int scale = 256 * ((ow < oh ? ow : oh) * 256) / (iw < ih ? iw : ih);
-                lv_image_set_scale(img, scale < 256 ? 256 : scale);
-            }
+            // QML fillMode: PreserveAspectFit scales by min(ow/iw, oh/ih),
+            // PreserveAspectCrop by max(...), Stretch to both, Pad not at all.
+            double sx = (double)ow / iw, sy = (double)oh / ih;
+            double s = 1.0;
+            if (strcmp(fill, "Image.PreserveAspectCrop") == 0) s = sx > sy ? sx : sy;
+            else if (strcmp(fill, "Image.Stretch") == 0) s = sx;   // LVGL scales uniformly; width wins
+            else if (strcmp(fill, "Image.Pad") == 0) s = 1.0;
+            else s = sx < sy ? sx : sy;
+            lv_image_set_scale(img, (uint32_t)(256.0 * s + 0.5));
             lv_image_set_inner_align(img, LV_IMAGE_ALIGN_CENTER);
+            lv_obj_set_size(img, ow, oh);
         }
     }
 
