@@ -11,13 +11,14 @@
 #include <string.h>
 
 #include "draw_util.h"
+#include "icons.h"
 #include "registry.h"
 
 typedef struct {
     double value, minimumValue, maximumValue, redZoneSpan;
     char redZone[16];
     bool curved, showTicks;
-    lv_obj_t *face, *labels[3];
+    lv_obj_t *face, *labels[3], *icon;
 } state_t;
 
 static void draw_cb(lv_event_t *e)
@@ -103,6 +104,12 @@ static void layout(hmi_widget_t *w)
     int fs = hmi_px_min(W * 0.14, 7);
     int lh = lv_font_get_line_height(hmi_font(fs, 600));
     int width = (int)fmax(4, barX - bulge - W * 0.16);
+    // ShIcon under the bar: size round(w*0.3), centred under the bar.
+    int iconSize = (int)round(W * 0.3);
+    double barW = W * 0.22, barH2 = H * 0.78;
+    hmi_icon_set(st->icon, hmi_widget_str(w, "icon", ""), iconSize, hmi_colour("autoLine"));
+    lv_obj_set_pos(st->icon, hmi_px(barX + barW / 2 - iconSize / 2.0),
+                   hmi_px(barTop + barH2 + (H - barTop - barH2 - iconSize) / 2));
     const char *keys[3] = {"topLabel", "midLabel", "bottomLabel"};
     const double fr[3] = {1.0, 0.5, 0.0};
     for (int i = 0; i < 3; ++i) {
@@ -140,6 +147,7 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     st->face = face;
     for (int i = 0; i < 3; ++i)
         st->labels[i] = hmi_make_label(face, 12, 600, hmi_colour("autoLine"), "");
+    st->icon = hmi_icon_create(face, "", 16, hmi_colour("autoLine"));
     lv_obj_add_event_cb(face, draw_cb, LV_EVENT_DRAW_MAIN, w);
     read_model(w);
     layout(w);
@@ -157,6 +165,7 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
     else if (strcmp(prop, "redZone") == 0) snprintf(st->redZone, sizeof st->redZone, "%s", hmi_value_as_str(value, st->redZone));
     else if (strcmp(prop, "curved") == 0) { st->curved = hmi_value_as_bool(value, st->curved); layout(w); }
     else if (strcmp(prop, "showTicks") == 0) st->showTicks = hmi_value_as_bool(value, st->showTicks);
+    else if (strcmp(prop, "icon") == 0) { layout(w); return; }
     else if (strcmp(prop, "topLabel") == 0 || strcmp(prop, "midLabel") == 0 || strcmp(prop, "bottomLabel") == 0) {
         int i = prop[0] == 't' ? 0 : prop[0] == 'm' ? 1 : 2;
         const char *s = hmi_value_as_str(value, "");

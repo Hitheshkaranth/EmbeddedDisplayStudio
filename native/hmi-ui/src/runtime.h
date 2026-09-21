@@ -16,7 +16,8 @@
 typedef struct hmi_runtime hmi_runtime_t;
 
 // Builds the first page on `screen`. `tags` may be NULL (headless renders).
-hmi_runtime_t *hmi_runtime_create(hmi_project_t *project, lv_obj_t *screen, hmi_tags_t *tags);
+// `apps_dir` locates manifest.json for the alarm definitions (may be NULL).
+hmi_runtime_t *hmi_runtime_create(hmi_project_t *project, lv_obj_t *screen, hmi_tags_t *tags, const char *apps_dir);
 void hmi_runtime_destroy(hmi_runtime_t *rt);
 
 // Request page `id`; the switch happens on the next hmi_runtime_tick()
