@@ -16,7 +16,7 @@ class AttitudeFace : public FaceItem
 public:
     using FaceItem::FaceItem;
 
-    protected:
+protected:
     void paintFace(QPainter *painter, const QVariantMap &spec) override;
 };
 
