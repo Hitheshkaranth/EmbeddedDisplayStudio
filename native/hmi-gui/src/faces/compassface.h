@@ -16,10 +16,7 @@ class CompassFace : public FaceItem
 public:
     using FaceItem::FaceItem;
 
-    // TODO(W3): delete this override once paintFace() is complete.
-    bool implemented() const override { return false; }
-
-protected:
+    protected:
     void paintFace(QPainter *painter, const QVariantMap &spec) override;
 };
 
