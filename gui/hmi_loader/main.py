@@ -247,13 +247,16 @@ def main():
     # Resolve QML import path for the shadcn/ui kit.
     # The production installed path is /usr/lib/hmi/qml (CONTRACT 3).
     # When running from source, the path is ../../ui/qml relative to this script.
-    # We add both to support both environments seamlessly.
+    # Exactly one of them is added: with both, a machine that has an installed
+    # kit as well as a checkout sees two "Shadcn 1.0" modules and Qt resolves
+    # a random type from the wrong copy ("ShX is not a type").
     prod_qml_path = Path("/usr/lib/hmi/qml")
     src_qml_path = Path(__file__).parent.parent.parent / "ui" / "qml"
     
     if src_qml_path.exists():
         engine.addImportPath(str(src_qml_path.resolve()))
-    engine.addImportPath(str(prod_qml_path))
+    else:
+        engine.addImportPath(str(prod_qml_path))
     
     apps_dir = Path(args.apps_dir).resolve()
     manifest_path = apps_dir / "manifest.json"

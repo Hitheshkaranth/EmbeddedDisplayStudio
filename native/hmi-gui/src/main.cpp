@@ -109,10 +109,14 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariable("HMI_NATIVE_FACES") != QStringLiteral("0"))
         hmi::registerNativeFaces();
 
+    // One kit only: the checkout's when running from one, the installed one
+    // otherwise. Offering both makes two "Shadcn 1.0" modules visible and Qt
+    // then resolves a random type from the wrong copy ("ShX is not a type").
     QQmlApplicationEngine engine;
     if (!repoRoot.isEmpty())
         engine.addImportPath(QDir(repoRoot).filePath(QStringLiteral("ui/qml")));
-    engine.addImportPath(QStringLiteral("/usr/lib/hmi/qml"));
+    else
+        engine.addImportPath(QStringLiteral("/usr/lib/hmi/qml"));
 
     const QString appsDir = QFileInfo(parser.value(optAppsDir)).absoluteFilePath();
     const hmi::Manifest manifest = hmi::loadManifest(QDir(appsDir).filePath(QStringLiteral("manifest.json")));
