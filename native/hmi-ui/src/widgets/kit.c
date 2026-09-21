@@ -1,0 +1,103 @@
+// widgets/kit.c -- GENERATED list of every kit widget (see
+// schema/gen_schema.py's type list); each lives in w_<type>.c. Also registers
+// the runtime's own HmiProbe (probe.c).
+#include "registry.h"
+
+extern const hmi_widget_ops_t hmi_widget_column;
+extern const hmi_widget_ops_t hmi_widget_grid;
+extern const hmi_widget_ops_t hmi_widget_image;
+extern const hmi_widget_ops_t hmi_widget_item;
+extern const hmi_widget_ops_t hmi_widget_rectangle;
+extern const hmi_widget_ops_t hmi_widget_row;
+extern const hmi_widget_ops_t hmi_widget_shalarmtable;
+extern const hmi_widget_ops_t hmi_widget_shalert;
+extern const hmi_widget_ops_t hmi_widget_shanalogdisplay;
+extern const hmi_widget_ops_t hmi_widget_shannunciator;
+extern const hmi_widget_ops_t hmi_widget_shattitude;
+extern const hmi_widget_ops_t hmi_widget_shautolevel;
+extern const hmi_widget_ops_t hmi_widget_shautoreadout;
+extern const hmi_widget_ops_t hmi_widget_shbutton;
+extern const hmi_widget_ops_t hmi_widget_shcard;
+extern const hmi_widget_ops_t hmi_widget_shcheckbox;
+extern const hmi_widget_ops_t hmi_widget_shclustergauge;
+extern const hmi_widget_ops_t hmi_widget_shcompass;
+extern const hmi_widget_ops_t hmi_widget_shdatafield;
+extern const hmi_widget_ops_t hmi_widget_shdrivemode;
+extern const hmi_widget_ops_t hmi_widget_shenginebar;
+extern const hmi_widget_ops_t hmi_widget_shenginegauge;
+extern const hmi_widget_ops_t hmi_widget_shflightdirector;
+extern const hmi_widget_ops_t hmi_widget_shfuelquantity;
+extern const hmi_widget_ops_t hmi_widget_shgauge;
+extern const hmi_widget_ops_t hmi_widget_shgearindicator;
+extern const hmi_widget_ops_t hmi_widget_shicontile;
+extern const hmi_widget_ops_t hmi_widget_shinput;
+extern const hmi_widget_ops_t hmi_widget_shnumdisplay;
+extern const hmi_widget_ops_t hmi_widget_shnuminput;
+extern const hmi_widget_ops_t hmi_widget_shprogress;
+extern const hmi_widget_ops_t hmi_widget_shsegmentbar;
+extern const hmi_widget_ops_t hmi_widget_shselect;
+extern const hmi_widget_ops_t hmi_widget_shslider;
+extern const hmi_widget_ops_t hmi_widget_shstatdot;
+extern const hmi_widget_ops_t hmi_widget_shtabs;
+extern const hmi_widget_ops_t hmi_widget_shtape;
+extern const hmi_widget_ops_t hmi_widget_shtelltale;
+extern const hmi_widget_ops_t hmi_widget_shtoggle;
+extern const hmi_widget_ops_t hmi_widget_shtrendchart;
+extern const hmi_widget_ops_t hmi_widget_shtripinfo;
+extern const hmi_widget_ops_t hmi_widget_shturncoordinator;
+extern const hmi_widget_ops_t hmi_widget_shvsi;
+extern const hmi_widget_ops_t hmi_widget_shvaluetile;
+extern const hmi_widget_ops_t hmi_widget_shvehiclestatus;
+extern const hmi_widget_ops_t hmi_widget_text;
+extern const hmi_widget_ops_t hmi_widget_probe;
+
+void hmi_kit_register_all(void)
+{
+    hmi_registry_register(&hmi_widget_column);
+    hmi_registry_register(&hmi_widget_grid);
+    hmi_registry_register(&hmi_widget_image);
+    hmi_registry_register(&hmi_widget_item);
+    hmi_registry_register(&hmi_widget_rectangle);
+    hmi_registry_register(&hmi_widget_row);
+    hmi_registry_register(&hmi_widget_shalarmtable);
+    hmi_registry_register(&hmi_widget_shalert);
+    hmi_registry_register(&hmi_widget_shanalogdisplay);
+    hmi_registry_register(&hmi_widget_shannunciator);
+    hmi_registry_register(&hmi_widget_shattitude);
+    hmi_registry_register(&hmi_widget_shautolevel);
+    hmi_registry_register(&hmi_widget_shautoreadout);
+    hmi_registry_register(&hmi_widget_shbutton);
+    hmi_registry_register(&hmi_widget_shcard);
+    hmi_registry_register(&hmi_widget_shcheckbox);
+    hmi_registry_register(&hmi_widget_shclustergauge);
+    hmi_registry_register(&hmi_widget_shcompass);
+    hmi_registry_register(&hmi_widget_shdatafield);
+    hmi_registry_register(&hmi_widget_shdrivemode);
+    hmi_registry_register(&hmi_widget_shenginebar);
+    hmi_registry_register(&hmi_widget_shenginegauge);
+    hmi_registry_register(&hmi_widget_shflightdirector);
+    hmi_registry_register(&hmi_widget_shfuelquantity);
+    hmi_registry_register(&hmi_widget_shgauge);
+    hmi_registry_register(&hmi_widget_shgearindicator);
+    hmi_registry_register(&hmi_widget_shicontile);
+    hmi_registry_register(&hmi_widget_shinput);
+    hmi_registry_register(&hmi_widget_shnumdisplay);
+    hmi_registry_register(&hmi_widget_shnuminput);
+    hmi_registry_register(&hmi_widget_shprogress);
+    hmi_registry_register(&hmi_widget_shsegmentbar);
+    hmi_registry_register(&hmi_widget_shselect);
+    hmi_registry_register(&hmi_widget_shslider);
+    hmi_registry_register(&hmi_widget_shstatdot);
+    hmi_registry_register(&hmi_widget_shtabs);
+    hmi_registry_register(&hmi_widget_shtape);
+    hmi_registry_register(&hmi_widget_shtelltale);
+    hmi_registry_register(&hmi_widget_shtoggle);
+    hmi_registry_register(&hmi_widget_shtrendchart);
+    hmi_registry_register(&hmi_widget_shtripinfo);
+    hmi_registry_register(&hmi_widget_shturncoordinator);
+    hmi_registry_register(&hmi_widget_shvsi);
+    hmi_registry_register(&hmi_widget_shvaluetile);
+    hmi_registry_register(&hmi_widget_shvehiclestatus);
+    hmi_registry_register(&hmi_widget_text);
+    hmi_registry_register(&hmi_widget_probe);
+}

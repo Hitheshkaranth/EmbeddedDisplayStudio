@@ -1,0 +1,435 @@
+{
+  "version": 1,
+  "name": "engine-dashboard",
+  "screen": {
+    "width": 1024,
+    "height": 768,
+    "background": "#101418",
+    "theme": "dark"
+  },
+  "pages": [
+    {
+      "id": "main",
+      "name": "Main",
+      "widgets": [
+        {
+          "type": "ShClusterGauge",
+          "id": "rpmGauge",
+          "geometry": {
+            "x": 260,
+            "y": 30,
+            "width": 520,
+            "height": 520
+          },
+          "properties": {
+            "label": "RPM",
+            "readout": "3200",
+            "readoutUnit": "RPM",
+            "caption": "",
+            "value": 3.5,
+            "minimumValue": 0.0,
+            "maximumValue": 8.0,
+            "redlineFrom": 7.0,
+            "sweep": 240.0,
+            "decimals": 0,
+            "showInnerDial": true
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.rpm",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "RPM",
+              "warning": "> 6.5",
+              "critical": "> 7.5"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShAutoLevel",
+          "id": "coolantGauge",
+          "geometry": {
+            "x": 80,
+            "y": 80,
+            "width": 120,
+            "height": 220
+          },
+          "properties": {
+            "value": 85.0,
+            "minimumValue": 0.0,
+            "maximumValue": 120.0,
+            "topLabel": "HOT",
+            "midLabel": "NORM",
+            "bottomLabel": "COLD",
+            "redZone": "high",
+            "redZoneSpan": 15.0,
+            "icon": "temperature",
+            "curved": false,
+            "showTicks": true
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.coolant_c",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "°C",
+              "warning": "> 95",
+              "critical": "> 105"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShAutoLevel",
+          "id": "oilGauge",
+          "geometry": {
+            "x": 50,
+            "y": 340,
+            "width": 160,
+            "height": 255
+          },
+          "properties": {
+            "value": 45.0,
+            "minimumValue": 0.0,
+            "maximumValue": 120.0,
+            "topLabel": "HOT",
+            "midLabel": "NORM",
+            "bottomLabel": "COLD",
+            "redZone": "high",
+            "redZoneSpan": 15.0,
+            "icon": "droplet",
+            "curved": false,
+            "showTicks": true
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.oil_c",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "°C",
+              "warning": "> 100",
+              "critical": "> 115"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShAutoLevel",
+          "id": "fuelGauge",
+          "geometry": {
+            "x": 830,
+            "y": 160,
+            "width": 116,
+            "height": 390
+          },
+          "properties": {
+            "value": 60.0,
+            "minimumValue": 0.0,
+            "maximumValue": 100.0,
+            "topLabel": "FULL",
+            "midLabel": "1/2",
+            "bottomLabel": "EMPTY",
+            "redZone": "low",
+            "redZoneSpan": 10.0,
+            "icon": "gas-station",
+            "curved": false,
+            "showTicks": true
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.fuel_pct",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "%",
+              "warning": "< 20",
+              "critical": "< 10"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShButton",
+          "id": "btnStart",
+          "geometry": {
+            "x": 340,
+            "y": 545,
+            "width": 140,
+            "height": 60
+          },
+          "properties": {
+            "text": "START"
+          },
+          "bindings": {},
+          "children": [],
+          "locked": false,
+          "z": 0,
+          "actions": {
+            "clicked": {
+              "kind": "write",
+              "tag": "do.engine_start",
+              "value": true
+            }
+          }
+        },
+        {
+          "type": "ShButton",
+          "id": "btnStop",
+          "geometry": {
+            "x": 540,
+            "y": 545,
+            "width": 140,
+            "height": 60
+          },
+          "properties": {
+            "text": "STOP"
+          },
+          "bindings": {},
+          "children": [],
+          "locked": false,
+          "z": 0,
+          "actions": {
+            "clicked": {
+              "kind": "write",
+              "tag": "do.engine_stop",
+              "value": true
+            }
+          }
+        },
+        {
+          "type": "Text",
+          "id": "statusText",
+          "geometry": {
+            "x": 120,
+            "y": 629,
+            "width": 350,
+            "height": 40
+          },
+          "properties": {
+            "text": "ENGINE STATUS: IDLE",
+            "fontSize": 18,
+            "color": "#ffffff"
+          },
+          "bindings": {},
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShStatDot",
+          "id": "statusDot",
+          "geometry": {
+            "x": 80,
+            "y": 634,
+            "width": 30,
+            "height": 30
+          },
+          "properties": {},
+          "bindings": {
+            "state": {
+              "tag": "eng.status_ok",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShSegmentBar",
+          "id": "batteryBar",
+          "geometry": {
+            "x": 72,
+            "y": 660,
+            "width": 160,
+            "height": 40
+          },
+          "properties": {
+            "label": "BATTERY",
+            "segments": 10
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.battery_soc",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "%",
+              "warning": "< 20",
+              "critical": "< 10"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShTripInfo",
+          "id": "tripInfoA",
+          "geometry": {
+            "x": 252,
+            "y": 660,
+            "width": 160,
+            "height": 40
+          },
+          "properties": {},
+          "bindings": {
+            "value": {
+              "tag": "trip.a_dist",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "km",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShTripInfo",
+          "id": "tripInfoB",
+          "geometry": {
+            "x": 432,
+            "y": 660,
+            "width": 160,
+            "height": 40
+          },
+          "properties": {},
+          "bindings": {
+            "value": {
+              "tag": "trip.b_time",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "h",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShAutoReadout",
+          "id": "avgFuel",
+          "geometry": {
+            "x": 612,
+            "y": 660,
+            "width": 160,
+            "height": 40
+          },
+          "properties": {
+            "unit": "l/100km",
+            "icon": "gas-station",
+            "decimals": 1,
+            "label": "AVG CONS"
+          },
+          "bindings": {
+            "value": {
+              "tag": "avg.fuel_l100",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "l/100km",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShNumDisplay",
+          "id": "odoDisplay",
+          "geometry": {
+            "x": 792,
+            "y": 660,
+            "width": 160,
+            "height": 40
+          },
+          "properties": {
+            "label": "ODOMETER"
+          },
+          "bindings": {
+            "value": {
+              "tag": "main.odometer",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "km",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "Image",
+          "id": "image",
+          "geometry": {
+            "x": 740,
+            "y": 520,
+            "width": 90.84453837895876,
+            "height": 92.84460547504025
+          },
+          "properties": {
+            "source": "assets/EmbeddedDisplay_Studio Logo.png",
+            "fillMode": "Image.PreserveAspectFit",
+            "smooth": true,
+            "opacity": 1.0,
+            "visible": true
+          },
+          "bindings": {},
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "Image",
+          "id": "image2",
+          "geometry": {
+            "x": 220,
+            "y": 530,
+            "width": 106.98718464841656,
+            "height": 67.46256038647334
+          },
+          "properties": {
+            "source": "assets/flyvi_transparent_black_to_white.png",
+            "fillMode": "Image.PreserveAspectFit",
+            "smooth": true,
+            "opacity": 1.0,
+            "visible": true
+          },
+          "bindings": {},
+          "children": [],
+          "locked": false,
+          "z": 0
+        }
+      ]
+    }
+  ]
+}
