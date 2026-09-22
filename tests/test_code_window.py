@@ -184,40 +184,98 @@ class WorkspaceCodeIntegrationTests(unittest.TestCase):
         self.assertGreaterEqual(len(pages), 1)
 
 
-# ---------------------------------------------------------------------------
-# STAND-IN, removed at integration (W4). CodeWindow.__init__ raises
-# NotImplementedError until W3 lands, so the workspace gate runs against a
-# minimal window with the frozen constructor and the two members the
-# workspace touches (apply_theme and the "Code" title). It subclasses the
-# frozen class so the gate's isinstance check holds, and skips its __init__.
-# Delete everything from here to "END STAND-IN" once W3 is merged; the W4
-# tests below it use only the frozen API and stay.
-# ---------------------------------------------------------------------------
-from PySide6.QtWidgets import QMainWindow  # noqa: E402
 
-import designer.ui.code_window as _code_window_module  # noqa: E402
+# =============================================================================
+# W3's own tests (below the frozen ones).
+# =============================================================================
+class CodeWindowMoreTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication(sys.argv)
+
+    def setUp(self):
+        self.workspace = _workspace()
+        self.addCleanup(self.workspace.close)
+        self.window = CodeWindow(self.workspace)
+        self.addCleanup(self.window.close)
+
+    def _select(self, widget_id):
+        self.workspace.scene.clearSelection()
+        self.workspace.scene.item_for_id(widget_id).setSelected(True)
+        self.app.processEvents()
+
+    def test_close_hides(self):
+        self.window.show()
+        self.window.close()
+        self.assertFalse(self.window.isVisible())
+
+    def test_section_changed_and_combos_follow(self):
+        seen = []
+        self.window.sectionChanged.connect(lambda s, f: seen.append((s, f)))
+        self.window.show_section("page", "edsui")
+        self.assertEqual(seen, [("page", "edsui")])
+        self.assertEqual(self.window._scope_box.currentText(), "Whole screen")
+        self.assertEqual(self.window._fmt_box.currentText(), "Design JSON")
+        self.window._fmt_box.setCurrentIndex(0)
+        self.assertEqual((self.window.scope, self.window.fmt), ("page", "qml"))
+        with self.assertRaises(ValueError):
+            self.window.show_section("nope", "qml")
+
+    def test_edit_survives_refresh_and_keep_stays(self):
+        gauge_id, button_id = _ids(self.workspace)
+        self._select(gauge_id)
+        self.window.show_section("widget", "edsui")
+        edited = self.window.editor.code().replace('"width": 180', '"width": 200')
+        self.window.editor.set_code(edited, keep_scroll=False)
+        self.window.editor.codeEdited.emit()
+        self._select(button_id)                       # selection moves; the edit stays
+        self.assertEqual(self.window.editor.code(), edited)
+        self.assertTrue(self.window._title.text().endswith(" *"))
+        self.window._confirm_discard = lambda: False  # Keep
+        self.window.show_section("widget", "qml")
+        self.assertEqual((self.window.scope, self.window.fmt), ("widget", "edsui"))
+        self.assertEqual(self.window.editor.code(), edited)
+        self.window._confirm_discard = lambda: True   # Discard
+        self.window.show_section("widget", "qml")
+        self.assertEqual(self.window.fmt, "qml")
+        self.assertIn(f"id: {button_id}", self.window.editor.code())
+
+    def test_apply_page_json(self):
+        self.window.show_section("page", "edsui")
+        text = self.window.editor.code().replace('"name": "Main"', '"name": "Renamed"')
+        self.window.editor.set_code(text, keep_scroll=False)
+        self.window.editor.codeEdited.emit()
+        self.assertTrue(self.window.apply())
+        self.assertEqual(self.workspace.current_page.name, "Renamed")
+        self.assertFalse(self.window.is_edited())
+
+    def test_error_line_moves_cursor(self):
+        gauge_id, _ = _ids(self.workspace)
+        self._select(gauge_id)
+        self.window.show_section("widget", "edsui")
+        lines = self.window.editor.code().splitlines()
+        lines[2] = lines[2].rstrip(",") + " oops,"
+        self.window.editor.set_code("\n".join(lines), keep_scroll=False)
+        self.window.editor.codeEdited.emit()
+        self.assertFalse(self.window.apply())
+        self.assertIn("line 3", self.window.status_text())
+        self.assertEqual(self.window.editor.textCursor().blockNumber(), 2)
+
+    def test_preview_messages(self):
+        self.workspace.scene.clearSelection(); self.app.processEvents()
+        self.window.set_preview_visible(True)
+        self.assertIn("Nothing selected", self.window.preview._label.text())
+        self.workspace.scene.qml_previews.enabled = False
+        self.window.refresh()
+        self.assertIn("previews are off", self.window.preview._label.text())
+        self.workspace.scene.qml_previews.enabled = True
+        self.window.show_section("page", "qml")
+        self.window.show(); QTest.qWait(600)
+        pane = self.window.preview
+        self.assertTrue(pane._image is not None or pane._label.text() in ("Rendering...", "This section did not render"))
 
 
-class _StandInCodeWindow(CodeWindow):
-    def __init__(self, workspace, parent=None):
-        QMainWindow.__init__(self, parent)
-        self.workspace = workspace
-        self.themes = []
-        self.setWindowTitle("Code")
-
-    def apply_theme(self, theme):
-        self.themes.append(theme)
-
-
-def setUpModule():
-    _code_window_module.CodeWindow = _StandInCodeWindow
-
-
-def tearDownModule():
-    _code_window_module.CodeWindow = CodeWindow
-# ---------------------------------------------------------------- END STAND-IN
-
-
+# ---------------------------------------------------------------- W4 extras
 class WorkspaceCodeIntegrationExtraTests(unittest.TestCase):
     """W4: what the brief asks for beyond the frozen minimum."""
 
@@ -250,13 +308,6 @@ class WorkspaceCodeIntegrationExtraTests(unittest.TestCase):
         self.assertEqual(self.workspace._designer_icon_names[action], "terminal-2")
         keys = [s.key().toString() for s in self.workspace.findChildren(QShortcut)]
         self.assertIn(QKeySequence("Ctrl+Shift+K").toString(), keys)
-
-    def test_theme_is_forwarded_once_the_window_exists(self):
-        self.workspace.apply_theme("light")             # no window yet: nothing to forward to
-        window = self.workspace.open_code_window()
-        self.assertEqual(window.themes, ["light"])      # caught up on open
-        self.workspace.apply_theme("dark")
-        self.assertEqual(window.themes, ["light", "dark"])
 
     def test_replace_widget_reaches_a_nested_child(self):
         self.workspace.add_widget("ShCard")
