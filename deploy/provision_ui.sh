@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # deploy/provision_ui.sh -- install the Qt-free runtime (native/hmi-ui) on a panel.
 #
-# Ships the aarch64 binary to /usr/lib/hmi/ui/hmi-ui and installs
-# hmi-ui.service, which draws straight to DRM/KMS: it conflicts with
+# Ships the aarch64 binary to /usr/lib/hmi/ui/hmi-ui, the kit icons to
+# /usr/lib/hmi/qml/Shadcn/icons and installs hmi-ui.service, which draws straight to DRM/KMS: it conflicts with
 # weston.service and hmi-gui.service and takes their place. The kit
 # (fonts) and the deployed bundle are the ones already on the panel
 # (/usr/lib/hmi/qml/Shadcn, /opt/hmi_apps/current); hmi-ui reads the
@@ -44,6 +44,10 @@ fi
 
 echo "== upload"
 "${SCP[@]}" "$BIN" "$T:/tmp/hmi-ui"
+# The kit icons (schema/gen_icons.py output) live beside the fonts on the
+# panel; hmi-gui never needed them, so older panels do not have them.
+"${SSH[@]}" "$T" 'install -d /usr/lib/hmi/qml/Shadcn/icons'
+"${SCP[@]}" "$REPO"/ui/qml/Shadcn/icons/*.png "$T:/usr/lib/hmi/qml/Shadcn/icons/"
 echo "== install"
 "${SSH[@]}" "$T" 'set -e
     install -d /usr/lib/hmi/ui
