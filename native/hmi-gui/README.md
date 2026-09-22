@@ -1,5 +1,11 @@
 # hmi-gui — Native Qt 6 GUI Loader
 
+> **Legacy.** The panel GUI is now `native/hmi-ui` (C + LVGL, Qt-free); this
+> loader is kept for existing Qt bundles (`runtime: qml` / `python`) and is not
+> provisioned by `deploy/provision_panel.py`. Its systemd unit, launcher and
+> `/etc/default/hmi-gui` moved to `native/hmi-gui/target/`; install it with
+> `deploy/provision_native.sh` on a panel that still carries Weston.
+
 Panel GUI loader (Layer 2) replacing the Python/PySide6 `gui/hmi_loader`.
 
 ## Build

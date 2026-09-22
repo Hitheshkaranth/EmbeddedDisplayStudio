@@ -1,0 +1,33 @@
+# /etc/default/hmi-ui
+# Environment overrides for hmi-ui.service (the Qt-free panel runtime).
+#
+# Loaded by systemd through EnvironmentFile=-/etc/default/hmi-ui; the
+# leading dash means a missing file is fine. Every variable is optional;
+# the defaults shown are what the unit uses when a variable is unset.
+# Uncomment and change only what you need, then `systemctl restart hmi-ui`.
+
+# HMI_UI_DISPLAY -- the DRM/KMS device hmi-ui draws to. On the Verdin
+# i.MX8M Plus the HDMI output is imx-drm on card1; a display over the
+# LVDS/DSI bridge may enumerate as card0. `ls /dev/dri` lists the cards,
+# `journalctl -u hmi-ui` shows which connector was used.
+# Default: /dev/dri/card1
+#HMI_UI_DISPLAY=/dev/dri/card1
+
+# HMI_UI_TOUCH -- the evdev node of the touch controller, when the panel
+# has one (`ls /dev/input/by-path`). Unset: no pointer input.
+# Default: unset
+#HMI_UI_TOUCH=/dev/input/event0
+
+# HMI_LOG_LEVEL -- DEBUG, INFO, WARNING, ERROR or CRITICAL.
+# Default: INFO
+#HMI_LOG_LEVEL=INFO
+
+# HMI_UI_KIT -- where the fonts/ and icons/ directories live. Only needed
+# when the kit is somewhere other than /usr/lib/hmi/kit.
+# Default: unset (auto-detected)
+#HMI_UI_KIT=/usr/lib/hmi/kit
+
+# HMI_UI_EXTRA_ARGS -- appended to the hmi-ui command line, for example
+# "--theme light" to override the deployed project's theme.
+# Default: empty
+#HMI_UI_EXTRA_ARGS=

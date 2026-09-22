@@ -1,25 +1,19 @@
 # recipes-hmi/hmi-ui-kit/hmi-ui-kit_1.0.bb
 #
-# Packages the Shadcn-derived QML component kit, the design-system token
-# file, and the vendored Tabler icon registry so that BYOA application
-# packages can declare:
+# Packages what the panel GUI (hmi-ui) renders with: the Inter fonts and
+# the Tabler icons rasterised to PNG by native/hmi-ui/schema/gen_icons.py.
+# Both come from ui/qml/Shadcn/{fonts,icons} in the repository; the QML
+# components beside them are the Studio's preview and the parity spec for
+# the C widgets, and never reach the panel.
 #
-#     import Shadcn 1.0
+# Target path (CONTRACT section 3):
+#   /usr/lib/hmi/kit/fonts/   Inter-*.ttf + LICENSE.inter
+#   /usr/lib/hmi/kit/icons/   <name>.png (96 px, white on transparent)
 #
-# without depending on the HMI loader itself.  This is a deliberately
-# separate package because customer application .opk/.rpm packages list
-# hmi-ui-kit in their own RDEPENDS; they do not need to carry hmi-gui as a
-# dependency (some integrators run a C++ loader that still uses this QML
-# kit).
-#
-# Target paths (CONTRACT section 3 and section 11):
-#   /usr/lib/hmi/qml/Shadcn/    QML module directory (all .qml + qmldir)
-#   /usr/lib/hmi/qml/Shadcn/tokens.json
-#                               design-system colour/spacing tokens
-#   /usr/lib/hmi/qml/Shadcn/LICENSE.tabler
-#                               MIT license for Tabler icons
+# Separate from hmi-ui so the assets can be updated without a rebuild of
+# the runtime, and so a design's icon additions ship as data.
 
-DESCRIPTION = "BYOA HMI Shadcn QML component kit and Tabler icon registry"
+DESCRIPTION = "HMI kit runtime assets for hmi-ui: the Inter fonts and the rasterised Tabler icons"
 HOMEPAGE = "https://example.com/byoa-hmi"
 SECTION = "hmi"
 
@@ -40,8 +34,8 @@ LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda
 # repo tag.
 # ---------------------------------------------------------------------------
 SRC_URI = " \
-    file://Shadcn \
-    file://tokens.json \
+    file://fonts \
+    file://icons \
     file://LICENSE.tabler \
 "
 
@@ -49,79 +43,20 @@ SRC_URI = " \
 S:styhead = "${UNPACKDIR}"
 S         = "${WORKDIR}"
 
-# ---------------------------------------------------------------------------
-# Architecture decision: inherit allarch.
-#
-# hmi-ui-kit contains only QML source files, JSON, and JS/PATH DATA. There
-# are no compiled binaries and no arch-specific RDEPENDS.  allarch tells
-# bitbake to produce a single PACKAGE_ARCH=all package that can be shared
-# across all target architectures in a multi-arch build farm, saving
-# storage and CI time.
-# ---------------------------------------------------------------------------
+# Fonts and PNGs: no architecture, no runtime dependency. The QML components
+# the kit is generated from stay on the desktop (the Studio's preview and the
+# parity spec); the panel never loads QML.
 inherit allarch
 
-# ---------------------------------------------------------------------------
-# RDEPENDS
-#
-# qtdeclarative-qmlplugins  - the QML engine must be present to load the
-#                             Shadcn module; this is the arch-specific
-#                             runtime package.  Note: declaring an
-#                             arch-specific RDEPENDS on an allarch recipe
-#                             is correct - it does NOT make the package
-#                             itself arch-specific.
-# qt6-fonts-noto            - Shadcn components reference "Noto Sans" by
-#                             name in their style properties; without the
-#                             font package the text falls back to an
-#                             undefined system font.  Replace with your
-#                             brand font package if needed.
-# ---------------------------------------------------------------------------
-RDEPENDS:${PN} = " \
-    qtdeclarative-qmlplugins \
-    qt6-fonts-noto \
-"
-
-# ---------------------------------------------------------------------------
-# FILES
-#
-# /usr/lib/hmi/qml/ is under ${nonarch_libdir}/hmi/ which is inside the default
-# packaging path.  We add an explicit glob anyway so that any future split
-# into -dev or -staticdev does not accidentally absorb the files.
-# ---------------------------------------------------------------------------
-FILES:${PN} += "${nonarch_libdir}/hmi/qml/Shadcn"
+FILES:${PN} += "${nonarch_libdir}/hmi/kit"
 
 do_install() {
-    # -----------------------------------------------------------------------
-    # Create the module directory.
-    # /usr/lib/hmi/qml/Shadcn is the import path registered with the QML
-    # engine by hmi-gui. (The GUI loader adds it via engine.addImportPath).
-    # The directory name must match the module name in the qmldir file.
-    # -----------------------------------------------------------------------
-    install -d ${D}${nonarch_libdir}/hmi/qml/Shadcn
-
-    # -----------------------------------------------------------------------
-    # Install all QML component files from the copied Shadcn source tree.
-    # We use `cp -r` rather than individual `install` calls because the
-    # component kit may have subdirectories.
-    # The trailing /. on the source copies directory contents, not the
-    # directory itself.
-    # -----------------------------------------------------------------------
-    cp -r ${S}/Shadcn/. ${D}${nonarch_libdir}/hmi/qml/Shadcn/
-
-    # -----------------------------------------------------------------------
-    # Install the design-system token file alongside the QML components.
-    #
-    # Nothing reads it at runtime: Theme.qml carries the literal values, and
-    # ui/tests/test_tokens.py fails if the two ever drift.  It is shipped so
-    # that an integrator reading the module on the target has the single
-    # source of truth beside the components it generated, and so a field
-    # engineer can diff a panel's kit against a known release.
-    # -----------------------------------------------------------------------
-    install -m 0644 ${S}/tokens.json ${D}${nonarch_libdir}/hmi/qml/Shadcn/tokens.json
-
-    # -----------------------------------------------------------------------
-    # Install the Tabler icon license.
-    # The icons are vendored as PATH DATA within TablerIcons.js, not as SVGs.
-    # Only the JS registry is needed on the target, along with its MIT notice.
-    # -----------------------------------------------------------------------
-    install -m 0644 ${S}/LICENSE.tabler ${D}${nonarch_libdir}/hmi/qml/Shadcn/LICENSE.tabler
+    # /usr/lib/hmi/kit is where hmi-ui looks for fonts/ and icons/ on a panel
+    # (native/hmi-ui/src/theme.c); provision_panel.py installs the same tree.
+    install -d ${D}${nonarch_libdir}/hmi/kit/fonts
+    install -d ${D}${nonarch_libdir}/hmi/kit/icons
+    install -m 0644 ${S}/fonts/*.ttf      ${D}${nonarch_libdir}/hmi/kit/fonts/
+    install -m 0644 ${S}/fonts/LICENSE.inter ${D}${nonarch_libdir}/hmi/kit/fonts/
+    install -m 0644 ${S}/icons/*.png      ${D}${nonarch_libdir}/hmi/kit/icons/
+    install -m 0644 ${S}/LICENSE.tabler   ${D}${nonarch_libdir}/hmi/kit/LICENSE.tabler
 }

@@ -1,9 +1,9 @@
 # recipes-hmi/packagegroups/packagegroup-hmi.bb
 #
-# Aggregates the core HMI components, GUI loader, UI component kit,
-# and runtime utilities required by the BYOA deployment pipeline
-# for Toradex Verdin i.MX8M Plus running the native Toradex Reference
-# Multimedia Image (Wayland/Weston, systemd).
+# Aggregates the core HMI components, the Qt-free GUI runtime, its kit,
+# and runtime utilities required by the deployment pipeline for Toradex
+# Verdin i.MX8M Plus (systemd; the GUI draws to DRM/KMS itself, so no
+# compositor is part of the stack).
 #
 # Implements CONTRACT.md section 3 (filesystem layout) and section 6
 # (deployment pipeline requirements).
@@ -26,55 +26,33 @@ inherit packagegroup
 # ---------------------------------------------------------------------------
 # RDEPENDS:${PN} - runtime package aggregation
 #
-# Every package listed below is required for the full on-target BYOA experience.
-# Explanations for each group:
+# 1. HMI packages (meta-hmi):
+#    - hmi-core: hardware daemon (hmi_hwd.py), config (hwd.json), installer
+#      (/usr/bin/hmi-install), launcher (/usr/bin/hmi-hwd-launch), systemd
+#      units (hmi-hwd.service, hmi-ui.service), tmpfiles config.
+#    - hmi-ui: the panel GUI (native/hmi-ui, C + LVGL on DRM/KMS).
+#    - hmi-ui-kit: the fonts and icon PNGs hmi-ui renders with.
 #
-# 1. BYOA HMI Core Packages (meta-hmi):
-#    - hmi-core: Hardware abstraction daemon (hmi_hwd.py), config (hwd.json),
-#      installer (/usr/bin/hmi-install), launcher (/usr/bin/hmi-gui-launch),
-#      systemd units (hmi-hwd.service, hmi-gui.service), and tmpfiles config.
-#    - hmi-gui: PySide6/Qt6 GUI application loader and shell.
-#    - hmi-ui-kit: Shadcn QML component kit, token definitions, and Tabler icons.
+# 2. Host-to-target deployment pipeline:
+#    - openssh-sftp-server: sftp subsystem for scp uploads to /tmp/hmi_upload.
+#    - util-linux: the standalone 'flock' hmi-install serialises installs with.
+#    - coreutils: sha256sum, realpath, install.
 #
-# 2. Host-to-Target Deployment Pipeline Dependencies:
-#    - openssh-sftp-server: Enables sftp subsystem required by modern OpenSSH scp
-#      implementations during bundle upload. (Note: The base Toradex Reference
-#      Multimedia image includes ssh-server-dropbear by default, which lacks full
-#      sftp; including openssh-sftp-server or switching to ssh-server-openssh
-#      ensures scp transfers to /tmp/hmi_upload succeed reliably).
-#    - util-linux: Provides the standalone 'flock' binary used by /usr/bin/hmi-install
-#      to serialize concurrent deployments on /run/hmi/install.lock.
-#    - coreutils: Provides standard POSIX file utilities, sha256sum, and realpath
-#      used during package verification and atomic symlink validation.
+# 3. Graphics: libdrm only. There is no compositor, no Wayland and no Qt in
+#    this stack; the reference image's weston may stay installed but
+#    hmi-ui.service declares Conflicts=weston.service and takes the display.
 #
-# 3. Compositor and Windowing Infrastructure:
-#    - weston: Wayland reference compositor; native graphical display server.
-#      Already provided by tdx-reference-multimedia-image, but declared here to
-#      formally bind the dependency.
-#    - weston-init: Systemd service scripts and configuration for Weston startup.
-#    - wayland: Core Wayland protocol libraries and display server interface.
-#
-# 4. Python3 Runtime Extensions:
-#    - python3-core: Python 3 base runtime interpreter.
-#    - python3-json: JSON parsing and serialization for hwd.json, telemetry, and manifest.json.
-#    - python3-logging: Logging library used by hmi_hwd.py and the GUI loader
-#      (gui/hmi_loader/main.py, installed as /usr/lib/hmi/gui/main.py).
-#    - python3-threading: Background reader thread support for UART.
-#    - python3-subprocess: Process invocation support for launcher and diagnostics.
-#    - python3-pathlib: Object-oriented filesystem path manipulation.
-#    - python3-signal: POSIX signal handling for clean SIGTERM/SIGINT shutdown.
-#    - python3-fcntl: File control and locking primitives.
+# 4. Python3 runtime for the daemon and the installer (see hmi-core for the
+#    full closure of stdlib subpackages).
 # ---------------------------------------------------------------------------
 RDEPENDS:${PN} = " \
     hmi-core \
-    hmi-gui \
+    hmi-ui \
     hmi-ui-kit \
     openssh-sftp-server \
     util-linux \
     coreutils \
-    weston \
-    weston-init \
-    wayland \
+    libdrm \
     python3-core \
     python3-json \
     python3-logging \

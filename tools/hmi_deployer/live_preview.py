@@ -20,6 +20,8 @@ from PySide6.QtQuickWidgets import QQuickWidget
 from PySide6.QtQml import QQmlComponent
 from PySide6.QtWidgets import QComboBox, QLabel, QMainWindow, QScrollArea, QSizePolicy, QToolBar, QWidget
 
+from schema.manifest import preview_entry
+
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ZOOMS = ((0.5, "50 %"), (0.75, "75 %"), (1.0, "100 %"), (1.5, "150 %"))
 
@@ -114,7 +116,7 @@ class LivePreviewWindow(QMainWindow):
         screen = manifest.get("screen", {})
         width = int(screen.get("width", 1280))
         height = int(screen.get("height", 800))
-        self._entry = os.path.join(bundle_dir, manifest.get("entry", "generated/App.qml"))
+        self._entry = os.path.join(bundle_dir, preview_entry(manifest))
         self._tag_engine = tag_engine
         name = manifest.get("name") or os.path.basename(bundle_dir)
         self.title.setText(f"<b>{name}</b> &nbsp; {width}×{height}")

@@ -516,7 +516,7 @@ def build_upload_cmd(host: str, user: str, port: int, key_path: str, dest: str) 
 
 
 # Resolves the interpreter a bundle will actually run under, in the panel's own
-# shell. The order matches hmi-gui-launch exactly -- $HMI_PYTHON, then the
+# shell. The order matches hmi-install and hmi-hwd-launch exactly -- $HMI_PYTHON, then the
 # provisioned /opt/hmi-python, then whatever is on PATH -- because a package
 # installed into a different interpreter from the one that will import it is
 # indistinguishable, from the console, from not installing it at all.
@@ -527,7 +527,7 @@ _RESOLVE_PYTHON = (
 )
 
 # A PySide2 bundle runs under the separate Qt5 runtime, which has its own
-# site-packages. See the runtime-selection section of hmi-gui-launch.
+# site-packages. See the runtime-selection section of hmi-hwd-launch.
 _RESOLVE_PYTHON_QT5 = (
     'P=/opt/hmi-python-qt5/bin/python3; '
     '[ -x "$P" ] || P="${HMI_PYTHON:-}"; '
@@ -681,7 +681,7 @@ def build_activate_command(release: str) -> str:
 # application, and the daemon that owns the hardware. A fault in either is
 # something the operator needs to see, and neither writes anywhere but the
 # journal.
-LOG_UNITS = ("hmi-gui", "hmi-hwd")
+LOG_UNITS = ("hmi-ui", "hmi-hwd")
 
 
 def build_logs_command(lines: int = 200, follow: bool = True) -> str:

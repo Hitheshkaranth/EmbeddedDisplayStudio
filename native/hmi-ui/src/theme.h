@@ -12,7 +12,8 @@
 
 // Locates the kit: <kit_dir>/fonts/Inter-*.ttf and <kit_dir>/icons/*.png.
 // Order: $HMI_UI_KIT, <exe>/../../../../ui/qml/Shadcn (a checkout),
-// /usr/lib/hmi/qml/Shadcn (the panel). Returns the directory used.
+// /usr/lib/hmi/kit (a provisioned panel), /usr/lib/hmi/qml/Shadcn (a panel
+// provisioned for the Qt loader). Returns the directory used.
 const char *hmi_theme_init(const char *kit_dir_override, bool dark);
 const char *hmi_theme_kit_dir(void);
 bool hmi_theme_is_dark(void);

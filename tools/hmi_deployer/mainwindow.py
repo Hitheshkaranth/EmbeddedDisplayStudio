@@ -1981,7 +1981,9 @@ class MainWindow(QMainWindow):
             self.lbl_resolution.setText(self.device_panel.resolution_text())
 
             runtime = manifest.get("runtime", "qml")
-            if runtime == "qml":
+            if runtime == "edsui":
+                kind = "Studio design"
+            elif runtime == "qml":
                 kind = "QML"
             else:
                 # Name the binding: it decides which runtime the panel starts,
@@ -1997,7 +1999,7 @@ class MainWindow(QMainWindow):
             )
             self.val_label.setStyleSheet("color: #22c55e;")  # success
             self.btn_deploy.setEnabled(True)
-            self.btn_live_preview.setEnabled(manifest.get("runtime", "qml") == "qml")
+            self.btn_live_preview.setEnabled(manifest.get("runtime", "qml") in ("qml", "edsui"))
 
             if self._right_tabs.currentWidget() in (self.designer_workspace, self._ai_tab):
                 # Loading the last bundle happens after the initial tab-change
@@ -2060,8 +2062,8 @@ class MainWindow(QMainWindow):
             except (OSError, ValueError) as exc:
                 self.log(f"Live preview: cannot read manifest: {exc}")
                 return
-        if manifest.get("runtime", "qml") != "qml":
-            self.log("Live preview: only QML bundles run in the live preview window.")
+        if manifest.get("runtime", "qml") not in ("qml", "edsui"):
+            self.log("Live preview: only QML and Studio bundles run in the live preview window.")
             return
         tag_engine = panel.ensure_tag_engine(manifest.get("tags_required", []))
         if self._live_preview is None:
@@ -3396,7 +3398,7 @@ class MainWindow(QMainWindow):
         host = self.inp_host.text().strip()
         user = self.inp_user.text().strip()
         key = self.inp_key.text().strip()
-        cmd = build_ssh_cmd(host, user, self.ssh_port(), key, "systemctl restart hmi-gui.service")
+        cmd = build_ssh_cmd(host, user, self.ssh_port(), key, "systemctl restart hmi-ui.service")
         self.run_ssh_worker(cmd, "Restart GUI", timeout_s=SSH_SHORT_TIMEOUT_S)
 
     def _shutdown_transport(self) -> None:

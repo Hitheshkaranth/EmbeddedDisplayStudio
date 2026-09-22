@@ -9,7 +9,7 @@
 # systemd considers the service "activating" and dependents that use
 # After= on this unit will wait.
 #
-# The unit is ordered Before=hmi-gui.service so that hardware state is
+# The unit is ordered Before=hmi-ui.service so that hardware state is
 # typically available when the GUI starts, but the GUI declares only
 # Wants= (not Requires=) on this unit so it can survive the daemon
 # being absent or crashing.
@@ -21,8 +21,8 @@ Description=HMI Hardware Daemon (GPIO / IIO / UART)
 
 # Ensure the daemon is fully started before the GUI service attempts
 # to connect.  This is an ordering dependency only; the GUI does not
-# hard-require this unit (see hmi-gui.service).
-Before=hmi-gui.service
+# hard-require this unit (see hmi-ui.service).
+Before=hmi-ui.service
 
 # If the daemon fails to start, do not drag multi-user.target down;
 # the rest of the system should remain operational.
@@ -46,7 +46,7 @@ Type=notify
 # Started through hmi-hwd-launch rather than naming an interpreter here:
 # /usr/bin/python3 on a Yocto image can be python3-core alone, with no json
 # and no asyncio, and the daemon cannot run on it.  The launcher applies the
-# same resolution order as hmi-install and hmi-gui-launch ($HMI_PYTHON, then
+# same resolution order as hmi-install ($HMI_PYTHON, then
 # /opt/hmi-python, then /usr/bin/python3) and fails with a diagnosable message
 # instead of an ImportError traceback.
 EnvironmentFile=-/etc/default/hmi-hwd

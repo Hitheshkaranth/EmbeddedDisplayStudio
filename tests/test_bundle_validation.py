@@ -293,6 +293,23 @@ class TestBundleValidation(unittest.TestCase):
         b = self._create_bundle("runtime_mismatch", manifest)
         self._assert_all(b, False)
 
+    def test_edsui_runtime_accepted_everywhere(self):
+        """A Studio bundle: the design file is the entry, no QML ships."""
+        manifest = {
+            "schema": 1, "name": "app", "version": "1.0.0",
+            "entry": "project.edsui", "runtime": "edsui",
+        }
+        b = self._create_bundle("edsui_ok", manifest)
+        self._assert_all(b, True)
+
+    def test_edsui_runtime_needs_edsui_entry(self):
+        manifest = {
+            "schema": 1, "name": "app", "version": "1.0.0",
+            "entry": "main.qml", "runtime": "edsui",
+        }
+        b = self._create_bundle("edsui_mismatch", manifest)
+        self._assert_all(b, False)
+
     def test_unknown_runtime_rejected_everywhere(self):
         manifest = {
             "schema": 1, "name": "app", "version": "1.0.0",

@@ -1,8 +1,9 @@
 # meta-hmi
 
-Yocto/OpenEmbedded layer that packages the BYOA (Bring Your Own App) HMI
-stack for Toradex Verdin i.MX8M Plus targets running the **native** Toradex
-Yocto Reference Multimedia Image (Wayland/Weston, systemd).
+Yocto/OpenEmbedded layer that packages the HMI stack for Toradex Verdin
+i.MX8M Plus targets running the **native** Toradex Yocto Reference
+Multimedia Image (systemd). The GUI draws to DRM/KMS itself: no Qt, no
+compositor.
 
 This layer is NOT for Torizon OS or any container-based deployment.
 
@@ -11,8 +12,8 @@ This layer is NOT for Torizon OS or any container-based deployment.
 | Recipe | Package | Purpose |
 |---|---|---|
 | recipes-hmi/hmi-core | hmi-core | Hardware daemon, installer, systemd units |
-| recipes-hmi/hmi-gui | hmi-gui | Python/PySide6 GUI loader and shell QML |
-| recipes-hmi/hmi-ui-kit | hmi-ui-kit | Shadcn QML component kit, icon registry |
+| recipes-hmi/hmi-ui | hmi-ui | The panel GUI runtime (native/hmi-ui: C + LVGL on DRM/KMS) |
+| recipes-hmi/hmi-ui-kit | hmi-ui-kit | Inter fonts and Tabler icon PNGs hmi-ui renders with |
 | recipes-hmi/packagegroups | packagegroup-hmi | Aggregates the three packages + runtime extras |
 | recipes-images | tdx-reference-multimedia-image.bbappend | Adds packagegroup-hmi to the image |
 
@@ -20,8 +21,6 @@ This layer is NOT for Torizon OS or any container-based deployment.
 
 - `core` (meta)
 - `openembedded-layer` (meta-openembedded/meta-oe)
-- `qt6-layer` (meta-qt6) - required for hmi-gui; see the integrator guide in
-  `yocto/README.md` for the exact branch and fetch instructions.
 
 ## Compatibility
 

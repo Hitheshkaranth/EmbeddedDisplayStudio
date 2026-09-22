@@ -13,10 +13,14 @@ Per CONTRACT section 3, the files in this directory are packaged into the root f
 | Repository Source File | Target Filesystem Destination | Permissions | Owner | Purpose |
 |---|---|---|---|---|
 | `target/bin/hmi-install` | `/usr/bin/hmi-install` | `0755` (`rwxr-xr-x`) | `root:root` | Target-side atomic installer, validator, and self-rollback engine. |
-| `target/bin/hmi-gui-launch` | `/usr/bin/hmi-gui-launch` | `0755` (`rwxr-xr-x`) | `root:root` | Wayland environment detection wrapper and GUI loader exec script. |
 | `target/systemd/hmi-hwd.service` | `/usr/lib/systemd/system/hmi-hwd.service` | `0644` (`rw-r--r--`) | `root:root` | Systemd service unit managing Layer 1 hardware abstraction daemon (`Type=notify`). |
-| `target/systemd/hmi-gui.service` | `/usr/lib/systemd/system/hmi-gui.service` | `0644` (`rw-r--r--`) | `root:root` | Systemd service unit managing Layer 2 GUI loader (`Type=simple`). |
-| `target/etc/default/hmi-gui` | `/etc/default/hmi-gui` | `0644` (`rw-r--r--`) | `root:root` | Environment overrides for the GUI launcher (`XDG_RUNTIME_DIR`, `QT_SCALE_FACTOR`, etc.). |
+| `target/systemd/hmi-ui.service` | `/usr/lib/systemd/system/hmi-ui.service` | `0644` (`rw-r--r--`) | `root:root` | Systemd service unit running the Layer 2 GUI runtime `hmi-ui` (`Type=simple`, draws to DRM/KMS, `Conflicts=weston.service`). |
+| `target/etc/default/hmi-ui` | `/etc/default/hmi-ui` | `0644` (`rw-r--r--`) | `root:root` | Environment overrides for the GUI runtime (`HMI_UI_DISPLAY`, `HMI_UI_TOUCH`, `HMI_LOG_LEVEL`, `HMI_UI_EXTRA_ARGS`). |
+
+The GUI binary itself, `/usr/lib/hmi/ui/hmi-ui`, is built from `native/hmi-ui`
+(`native/hmi-ui/arm64/build.sh`) and installed by `deploy/provision_panel.py`
+or the `hmi-ui` bitbake recipe; its fonts and icons go to `/usr/lib/hmi/kit`.
+The retired Qt loader's unit and launcher live under `native/hmi-gui/target/`.
 | `target/tmpfiles/hmi.conf` | `/usr/lib/tmpfiles.d/hmi.conf` | `0644` (`rw-r--r--`) | `root:root` | Systemd-tmpfiles rules to create `/run/hmi` and `/tmp/hmi_upload` on tmpfs at boot. |
 
 ### Target Runtime Directory Structure
@@ -52,7 +56,7 @@ Host deployment tools (`deploy_to_hmi.sh` and `HMI App Studio`) parse these line
 | `restart-gui` | `ok` / `fail` | Removes `/run/hmi/gui-ready`, executes `HMI_RESTART_CMD`, and polls for the readiness sentinel up to 25 seconds (`GUI_READY_TIMEOUT`). |
 | `auto-rollback-start` | `ok` | Emitted when `restart-gui` fails or times out, immediately prior to restoring the previous release. |
 | `rollback` | `ok` / `fail` | Restores `/opt/hmi_apps/current` to point at the target of `/opt/hmi_apps/previous` and restarts the GUI service. |
-| `enable-boot` | `ok` / `fail` | Runs `HMI_ENABLE_CMD` (`systemctl enable hmi-gui.service`) so the installed release is the application the panel starts at boot, then confirms the result with `HMI_ENABLE_CHECK_CMD` (`systemctl is-enabled hmi-gui.service`) -- a command that reports success without linking the unit is treated as a failure, and the `ok` detail says `(confirmed)`. Emitted only after readiness has been verified. A `fail` does **not** trigger rollback: the release is installed and running, but will not come back after a power cycle until the unit is enabled by hand. It does set the install's exit status to `4` (see 3.2), so an unattended caller can tell the case apart without parsing this line. |
+| `enable-boot` | `ok` / `fail` | Runs `HMI_ENABLE_CMD` (`systemctl enable hmi-ui.service`) so the installed release is the application the panel starts at boot, then confirms the result with `HMI_ENABLE_CHECK_CMD` (`systemctl is-enabled hmi-ui.service`) -- a command that reports success without linking the unit is treated as a failure, and the `ok` detail says `(confirmed)`. Emitted only after readiness has been verified. A `fail` does **not** trigger rollback: the release is installed and running, but will not come back after a power cycle until the unit is enabled by hand. It does set the install's exit status to `4` (see 3.2), so an unattended caller can tell the case apart without parsing this line. |
 | `prune` | `ok` | Removes older releases from `/opt/hmi_apps/releases/`, retaining the 3 newest releases plus `current` and `previous`. Detail contains count of pruned releases. |
 | `install-complete` | `ok` / `fail` | Terminal step of deployment. Success reports the active release path; failure indicates deployment failed and rolled back. Stays `ok` when only `enable-boot` failed -- the install itself succeeded -- but the detail then reads `deployed and running, autostart NOT configured: <path>` and the exit status is `4`. |
 | `rollback-start` | `ok` | Emitted at the start of manual `cmd_rollback`. |
@@ -84,18 +88,18 @@ Host deployment tools (`deploy_to_hmi.sh` and `HMI App Studio`) parse these line
 * `1`: General validation or runtime failure (e.g. SHA-256 mismatch, invalid manifest, GUI timeout).
 * `2`: Command-line usage or syntax error.
 * `3`: Lock contention (`flock` failed because another installation is in progress).
-* `4`: Installed, running and verified, but **not** made the boot default — `HMI_ENABLE_CMD` failed. This is not a failed deployment: the release is live and was deliberately *not* rolled back, because replacing a working UI with an older one is worse than the problem. It will not come back after a power cycle until `systemctl enable hmi-gui.service` is run on the panel. Callers that treat any non-zero status as "roll back and page someone" must special-case this one.
+* `4`: Installed, running and verified, but **not** made the boot default — `HMI_ENABLE_CMD` failed. This is not a failed deployment: the release is live and was deliberately *not* rolled back, because replacing a working UI with an older one is worse than the problem. It will not come back after a power cycle until `systemctl enable hmi-ui.service` is run on the panel. Callers that treat any non-zero status as "roll back and page someone" must special-case this one.
 
 ### 3.3 Environment Overrides
 
-`hmi-install` and `hmi-gui-launch` support these environment variables, for developer testing and for images whose stock tooling is not sufficient:
+`hmi-install` and `hmi-hwd-launch` support these environment variables, for developer testing and for images whose stock tooling is not sufficient:
 
 | Variable | Default Value | Purpose |
 |---|---|---|
 | `HMI_ROOT` | *(empty)* | Filesystem path prefix prepended to all paths (`${HMI_ROOT}/opt/hmi_apps`, `${HMI_ROOT}/run/hmi`, etc.). Enables running the installer inside a temporary directory on a dev host. |
-| `HMI_RESTART_CMD` | `systemctl restart hmi-gui.service` | Shell command executed to restart the user interface. Can be overridden with a mock command (e.g. `true` or a test script) when systemd is unavailable. |
-| `HMI_ENABLE_CMD` | `systemctl enable hmi-gui.service` | Command run after a verified install to make the release the panel's boot default. See the `enable-boot` step. |
-| `HMI_ENABLE_CHECK_CMD` | `systemctl is-enabled hmi-gui.service` | Command that confirms `HMI_ENABLE_CMD` took effect. Exit 0 means enabled; anything else is treated as not enabled, whatever the enable command reported. |
+| `HMI_RESTART_CMD` | `systemctl restart hmi-ui.service` | Shell command executed to restart the user interface. Can be overridden with a mock command (e.g. `true` or a test script) when systemd is unavailable. |
+| `HMI_ENABLE_CMD` | `systemctl enable hmi-ui.service` | Command run after a verified install to make the release the panel's boot default. See the `enable-boot` step. |
+| `HMI_ENABLE_CHECK_CMD` | `systemctl is-enabled hmi-ui.service` | Command that confirms `HMI_ENABLE_CMD` took effect. Exit 0 means enabled; anything else is treated as not enabled, whatever the enable command reported. |
 | `HMI_SKIP_GUI_WAIT` | `0` | When set to `"1"`, skips executing `HMI_RESTART_CMD`, skips waiting for `/run/hmi/gui-ready`, and skips `HMI_ENABLE_CMD`. |
 | `HMI_PYTHON` | *(auto)* | Python interpreter used by both scripts. See below. |
 
@@ -119,8 +123,8 @@ Both scripts therefore resolve an interpreter in this order:
    images whose own Python is not usable.
 3. `/usr/bin/python3` (`python3` on `PATH` for `hmi-install`).
 
-`hmi-gui-launch` logs which one it chose, and re-resolves after sourcing
-`/etc/default/hmi-gui`, so `HMI_PYTHON` can be set there.
+`hmi-hwd-launch` logs which one it chose, and re-resolves after sourcing
+`/etc/default/hmi-hwd`, so `HMI_PYTHON` can be set there.
 
 ### 3.4 Internal Constants
 
@@ -189,21 +193,21 @@ When a deployment fails and triggers an automatic rollback, diagnose the root ca
 ### 6.1 Inspecting Service Logs
 ```bash
 # View combined logs for the GUI and hardware daemon
-journalctl -u hmi-gui -u hmi-hwd -n 100 --no-pager
+journalctl -u hmi-ui -u hmi-hwd -n 100 --no-pager
 
 # Follow logs live during a deployment
-journalctl -u hmi-gui -u hmi-hwd -f
+journalctl -u hmi-ui -u hmi-hwd -f
 ```
 
 ### 6.2 Common Failure Signatures
 
-1. **QML Syntax or Missing Module Error (`hmi-gui.service`):**
-   * *Log symptom:* `QQmlApplicationEngine failed to load component`, `module "Shadcn" is not installed`, or `SyntaxError: Unexpected token`.
-   * *Outcome:* GUI loader crashes before creating `/run/hmi/gui-ready`. After 25 seconds, `hmi-install` times out, rolls back `/opt/hmi_apps/current` to the previous release, and restarts the GUI.
+1. **Bundle the runtime cannot load (`hmi-ui.service`):**
+   * *Log symptom:* `ERROR - hmi-ui - cannot load /opt/hmi_apps/current/project.edsui: ...` (missing file, invalid JSON, unknown schema) followed by the fallback screen.
+   * *Outcome:* the runtime stays up on its fallback screen and never creates `/run/hmi/gui-ready` for that release. After 25 seconds, `hmi-install` times out, rolls back `/opt/hmi_apps/current` to the previous release, and restarts the GUI.
 
-2. **Missing Wayland Socket (`hmi-gui-launch`):**
-   * *Log symptom:* `[hmi-gui-launch] ERROR: no Wayland socket found under /run/user/*/wayland-* after 30s -- is weston running?`
-   * *Remedy:* Check compositor status via `systemctl status weston.service`.
+2. **No display (`hmi-ui.service`):**
+   * *Log symptom:* `cannot open /dev/dri/card1` or `no connected connector on /dev/dri/card1`.
+   * *Remedy:* `ls /dev/dri`, then set `HMI_UI_DISPLAY` in `/etc/default/hmi-ui` to the card with the connected output; if a compositor is holding the device, `systemctl status weston.service` (the unit's `Conflicts=` normally stops it).
 
 3. **Lock Contention:**
    * *Log symptom:* `[hmi-install] ERROR: another hmi-install is already running (lock: /run/hmi/install.lock)`
@@ -224,5 +228,5 @@ journalctl -u hmi-gui -u hmi-hwd -f
 2. **Staging Directory Path:**
    * *Contract Section 6* states extraction goes to `releases/.stage.$$` before renaming to `releases/<id>`.
    * *Code Implementation (`target/bin/hmi-install` line 308):* Extracts directly to `releases/<release_name>` (derived from tarball name), cleaning up any previous stale directory before extraction.
-3. **GUI Loader Path in Launcher Script:**
-   * `target/bin/hmi-gui-launch` defaults `GUI_LOADER` to `/usr/lib/hmi/gui/main.py`. When packaging via BitBake (`hmi-gui_1.0.bb`), ensure the installed entrypoint matches or is symlinked.
+3. **GUI binary path:**
+   * `target/systemd/hmi-ui.service` execs `/usr/lib/hmi/ui/hmi-ui`. When packaging via BitBake (`hmi-ui_1.0.bb`), the CMake install prefix is pinned to `/usr` so the path matches.

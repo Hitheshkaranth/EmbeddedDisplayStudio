@@ -42,8 +42,12 @@ class DesignerDeployTests(unittest.TestCase):
                 manifest = json.load(handle)
             self.assertEqual(manifest["name"], "designer-app")
             self.assertEqual(workspace.project.name, "designer-app")
-            self.assertEqual(manifest["runtime"], "qml")
+            # The panel runs the design file (hmi-ui); the generated QML stays
+            # on the desktop for the Studio's own preview.
+            self.assertEqual(manifest["runtime"], "edsui")
+            self.assertEqual(manifest["entry"], "project.edsui")
             self.assertTrue(os.path.isfile(os.path.join(bundle, *manifest["entry"].split("/"))))
+            self.assertTrue(os.path.isfile(os.path.join(bundle, *manifest["preview"].split("/"))))
 
             output = os.path.join(root, "package")
             os.makedirs(output)
@@ -52,8 +56,10 @@ class DesignerDeployTests(unittest.TestCase):
             with tarfile.open(archive, "r:gz") as packaged:
                 names = set(packaged.getnames())
             self.assertIn("manifest.json", names)
-            self.assertIn(manifest["entry"], names)
             self.assertIn("project.edsui", names)
+            # No QML travels to a Qt-free panel.
+            self.assertNotIn(manifest["preview"], names)
+            self.assertFalse([n for n in names if n.startswith("generated/")], names)
 
     def test_project_name_is_used_for_design_deployment(self):
         with tempfile.TemporaryDirectory() as root:

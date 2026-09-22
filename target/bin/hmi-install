@@ -33,11 +33,11 @@
 #
 # ENVIRONMENT
 #   HMI_ROOT          -- path prefix for all fs paths (empty in prod)
-#   HMI_RESTART_CMD   -- override for `systemctl restart hmi-gui.service`
+#   HMI_RESTART_CMD   -- override for `systemctl restart hmi-ui.service`
 #                        (for off-target testing without systemd)
-#   HMI_ENABLE_CMD    -- override for `systemctl enable hmi-gui.service`,
+#   HMI_ENABLE_CMD    -- override for `systemctl enable hmi-ui.service`,
 #                        the step that makes the app the boot default
-#   HMI_ENABLE_CHECK_CMD -- override for `systemctl is-enabled hmi-gui.service`,
+#   HMI_ENABLE_CHECK_CMD -- override for `systemctl is-enabled hmi-ui.service`,
 #                        which confirms HMI_ENABLE_CMD actually took effect
 #   HMI_SKIP_GUI_WAIT -- if set to "1", skip waiting for gui-ready and
 #                        skip enabling autostart (for off-target testing)
@@ -109,7 +109,7 @@ MAX_BUNDLE_SIZE=524288000
 
 # Command used to restart the GUI service.  Overridable for off-target
 # testing where systemd is unavailable.
-HMI_RESTART_CMD="${HMI_RESTART_CMD:-systemctl restart hmi-gui.service}"
+HMI_RESTART_CMD="${HMI_RESTART_CMD:-systemctl restart hmi-ui.service}"
 
 # Command that makes the GUI start at boot.  A deploy that only restarts the
 # service leaves a panel that shows the application now and nothing at all
@@ -117,7 +117,7 @@ HMI_RESTART_CMD="${HMI_RESTART_CMD:-systemctl restart hmi-gui.service}"
 # rather than shut down is the only state that matters.  `systemctl enable` is
 # idempotent, so running it on every install costs nothing and removes the
 # assumption that somebody enabled the unit by hand once.
-HMI_ENABLE_CMD="${HMI_ENABLE_CMD:-systemctl enable hmi-gui.service}"
+HMI_ENABLE_CMD="${HMI_ENABLE_CMD:-systemctl enable hmi-ui.service}"
 
 # How the result of HMI_ENABLE_CMD is confirmed.  The enable command's exit
 # status is not evidence on its own: it is documented as overridable, and any
@@ -127,7 +127,7 @@ HMI_ENABLE_CMD="${HMI_ENABLE_CMD:-systemctl enable hmi-gui.service}"
 # and costs one cheap call on a path that already runs systemctl twice.
 # `systemctl is-enabled` exits 0 only for an enabled unit; disabled, masked and
 # static all exit non-zero, which is the answer we want in each of those cases.
-HMI_ENABLE_CHECK_CMD="${HMI_ENABLE_CHECK_CMD:-systemctl is-enabled hmi-gui.service}"
+HMI_ENABLE_CHECK_CMD="${HMI_ENABLE_CHECK_CMD:-systemctl is-enabled hmi-ui.service}"
 
 # When set to "1", skip waiting for the gui-ready file and skip
 # restarting the GUI.  Used only in off-target testing.
@@ -828,11 +828,11 @@ restart_gui() {
 #
 # Installing a release sets `current` and restarts the GUI, which covers
 # "running now".  It does not cover "running after the next boot": that needs
-# hmi-gui.service to be enabled, and on a panel where it never was, the
+# hmi-ui.service to be enabled, and on a panel where it never was, the
 # operator sees a working HMI that comes up blank the next morning.
 #
 # The symlink itself is already persistent -- it lives on flash -- so enabling
-# the unit is the only missing piece.  Enabling hmi-gui.service also pulls in
+# the unit is the only missing piece.  Enabling hmi-ui.service also pulls in
 # weston.service at boot through the unit's Requires=, so the whole display
 # chain follows from this one call.
 #
@@ -867,7 +867,7 @@ enable_boot() {
     log "INFO" "enabling GUI at boot via: ${HMI_ENABLE_CMD}"
     # 9>&- for the same reason as restart_gui: never leak the install lock.
     if ! eval "$HMI_ENABLE_CMD" 9>&- >/dev/null 2>&1; then
-        step "enable-boot" "fail" "could not enable hmi-gui.service; the app runs now but will NOT start after a reboot"
+        step "enable-boot" "fail" "could not enable hmi-ui.service; the app runs now but will NOT start after a reboot"
         log "WARN" "autostart could not be configured -- run '${HMI_ENABLE_CMD}' on the panel"
         return 1
     fi
@@ -876,13 +876,13 @@ enable_boot() {
     # the two answers can differ and only this one is checked at power-on.
     log "INFO" "confirming autostart via: ${HMI_ENABLE_CHECK_CMD}"
     if eval "$HMI_ENABLE_CHECK_CMD" 9>&- >/dev/null 2>&1; then
-        step "enable-boot" "ok" "hmi-gui.service will start at boot (confirmed)"
+        step "enable-boot" "ok" "hmi-ui.service will start at boot (confirmed)"
         return 0
     fi
 
     # The worst of the three cases, and the reason the check exists: the deploy
     # would otherwise report a clean success on a panel that comes up blank.
-    step "enable-boot" "fail" "enable reported success but hmi-gui.service is still not enabled; the app runs now but will NOT start after a reboot"
+    step "enable-boot" "fail" "enable reported success but hmi-ui.service is still not enabled; the app runs now but will NOT start after a reboot"
     log "WARN" "autostart is unconfirmed -- check '${HMI_ENABLE_CHECK_CMD}' on the panel"
     return 1
 }
@@ -1307,7 +1307,7 @@ ENVIRONMENT
   HMI_GUI_READY_TIMEOUT  Seconds to wait for gui-ready (default 25)
 
 NOTES
-  A successful `install` also enables hmi-gui.service, so the release becomes
+  A successful `install` also enables hmi-ui.service, so the release becomes
   the application the panel starts at boot.  If that step reports "fail" the
   app is running but will not survive a power cycle, and `install` exits 4
   rather than 0.  Exit 4 is not a failed deploy: the release is live and is

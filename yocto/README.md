@@ -1,21 +1,21 @@
 # Yocto Integrator Guide (meta-hmi)
 
-Comprehensive integration guide for building the BYOA HMI stack into the native Toradex Yocto Reference Multimedia Image for the **Toradex Verdin i.MX8M Plus** System on Module (SoM).
+Comprehensive integration guide for building the HMI stack into the native Toradex Yocto Reference Multimedia Image for the **Toradex Verdin i.MX8M Plus** System on Module (SoM). The stack is Qt-free: the panel GUI is `native/hmi-ui` (C + LVGL) drawing to DRM/KMS with no compositor.
 
 ---
 
 ## 1. Overview and Architecture
 
-The `meta-hmi` layer integrates the three BYOA layers directly into the native root filesystem of the Toradex Reference Multimedia Image:
+The `meta-hmi` layer integrates the HMI layers directly into the native root filesystem of the Toradex Reference Multimedia Image:
 
-* **Layer 1 (`hmi-core`):** Hardware daemon (`hmi_hwd.py`), pin mapping (`hwd.json`), atomic installer (`hmi-install`), launcher wrappers (`hmi-gui-launch`, `hmi-hwd-launch`), systemd units (`hmi-hwd.service`, `hmi-gui.service`), and tmpfiles configuration.
-* **Layer 2 (`hmi-gui`):** Python/PySide6 Qt6 GUI application loader and top-level QML shell.
-* **Layer 3 (`hmi-ui-kit`):** Standalone Shadcn-derived QML component library, token definitions, and Tabler icon registry.
-* **Packagegroup (`packagegroup-hmi`):** Aggregates all HMI components plus deployment utilities (`openssh-sftp-server`, `util-linux` for `flock`, `coreutils`, `weston`).
+* **Layer 1 (`hmi-core`):** Hardware daemon (`hmi_hwd.py`), pin mapping (`hwd.json`), atomic installer (`hmi-install`), the daemon launcher (`hmi-hwd-launch`), systemd units (`hmi-hwd.service`, `hmi-ui.service`), `/etc/default/hmi-ui` and tmpfiles configuration.
+* **Layer 2 (`hmi-ui`):** The panel GUI runtime — `native/hmi-ui`, C11 + LVGL 9.3, drawing straight to DRM/KMS. It interprets the deployed bundle's `project.edsui`; no QML, no Qt, no compositor on the panel.
+* **Kit (`hmi-ui-kit`):** The Inter fonts and the Tabler icons rasterised to PNG, installed to `/usr/lib/hmi/kit`.
+* **Packagegroup (`packagegroup-hmi`):** Aggregates the packages above plus deployment utilities (`openssh-sftp-server`, `util-linux` for `flock`, `coreutils`) and `libdrm`.
 * **Image Append (`tdx-reference-multimedia-image.bbappend`):** Automatically injects `packagegroup-hmi` into the multimedia image.
 
 > [!IMPORTANT]
-> This integration targets the **native Toradex Yocto Reference Multimedia Image** (Wayland/Weston display server, systemd, running on bare metal). It is **not** for Torizon OS, Docker, or containerized runtime environments.
+> This integration targets the **native Toradex Yocto Reference Multimedia Image** (systemd, running on bare metal). The image's Weston is not used: `hmi-ui.service` declares `Conflicts=weston.service` and owns the display. It is **not** for Torizon OS, Docker, or containerized runtime environments.
 
 ---
 
@@ -32,10 +32,9 @@ Ensure your Yocto build environment includes the following layers in `bblayers.c
 | `meta-freescale` | `git://git.yoctoproject.org/meta-freescale` | NXP i.MX8M Plus BSP and hardware acceleration support. |
 | `meta-toradex-bsp-common` | `git://git.toradex.com/meta-toradex-bsp-common.git` | Toradex base hardware abstraction layer. |
 | `meta-toradex-nxp` | `git://git.toradex.com/meta-toradex-nxp.git` | Toradex NXP-specific machine definitions and kernel recipes. |
-| `meta-qt6` | `git://code.qt.io/yocto/meta-qt6.git` | Qt 6 and PySide6 bindings (required for `hmi-gui`). |
 | `meta-hmi` | *(this repository)*: `yocto/meta-hmi` | BYOA HMI recipes, packagegroups, and image appends. |
 
-### 2.2 Branch Compatibility and the PySide6 / meta-qt6 Caveat
+### 2.2 Branch Compatibility
 
 The `meta-hmi` layer supports the following Yocto release codenames (mapped to Toradex BSP releases):
 
@@ -43,13 +42,7 @@ The `meta-hmi` layer supports the following Yocto release codenames (mapped to T
 * **Yocto 4.2 / 4.3 (`mickledore` / `nanbield`):** Toradex BSP 6.x.
 * **Yocto 4.0 (`kirkstone`):** Toradex BSP 5.x LTS.
 
-#### The PySide6 Branch Caveat
-`hmi-gui_1.0.bb` depends on `python3-pyside6` provided by `meta-qt6`.
-1. Clone `meta-qt6` matching your exact Yocto branch:
-   ```bash
-   git clone -b scarthgap git://code.qt.io/yocto/meta-qt6.git layers/meta-qt6
-   ```
-2. **Alternative for C++ Integrators:** If your organization cannot deploy Python/PySide6 due to image footprint or licensing constraints, you can replace `/usr/lib/hmi/gui/main.py` with a compiled C++ Qt Quick executable (`QQmlApplicationEngine`). The install paths and `import Shadcn 1.0` QML interface remain identical.
+`hmi-ui` needs only `libdrm` (in every Toradex reference image) and a C11 toolchain; there is no Qt layer to match to a branch.
 
 ---
 
@@ -61,9 +54,8 @@ Add the required layers to your active build environment:
 # Initialize the build environment
 source setup-environment build
 
-# Add meta-oe, meta-qt6, and meta-hmi
+# Add meta-oe and meta-hmi
 bitbake-layers add-layer ../layers/meta-openembedded/meta-oe
-bitbake-layers add-layer ../layers/meta-qt6
 bitbake-layers add-layer /path/to/EmbeddedDisplay/yocto/meta-hmi
 
 # Verify that all layers are registered
@@ -76,7 +68,7 @@ bitbake-layers show-layers
 
 During local development and testing, recipes fetch files directly from their local `files/` subdirectories via `file://` URIs.
 
-Below are the exact shell commands to populate the `files/` directories from the repository source trees (`daemon/`, `target/`, `gui/`, `ui/`):
+Below are the exact shell commands to populate the `files/` directories from the repository source trees (`daemon/`, `target/`, `native/hmi-ui/`, `ui/`):
 
 ### 4.1 Recipe: `hmi-core`
 ```bash
@@ -92,41 +84,35 @@ cp daemon/hwd.json              "${CORE_FILES}/hwd.json"
 
 # Link or copy Layer 3 target scripts and units
 cp target/bin/hmi-install       "${CORE_FILES}/hmi-install"
-cp target/bin/hmi-gui-launch    "${CORE_FILES}/hmi-gui-launch"
 cp target/bin/hmi-hwd-launch    "${CORE_FILES}/hmi-hwd-launch"
-cp target/etc/default/hmi-gui   "${CORE_FILES}/hmi-gui.default"
+cp target/etc/default/hmi-ui    "${CORE_FILES}/hmi-ui.default"
 cp target/tmpfiles/hmi.conf     "${CORE_FILES}/hmi.conf"
 cp target/systemd/hmi-hwd.service "${CORE_FILES}/hmi-hwd.service"
-cp target/systemd/hmi-gui.service "${CORE_FILES}/hmi-gui.service"
+cp target/systemd/hmi-ui.service  "${CORE_FILES}/hmi-ui.service"
 ```
 
-### 4.2 Recipe: hmi-gui
+### 4.2 Recipe: hmi-ui
 ```bash
-# Path to hmi-gui recipe files directory
-GUI_FILES="yocto/meta-hmi/recipes-hmi/hmi-gui/files"
-mkdir -p "${GUI_FILES}"
+# Path to hmi-ui recipe files directory
+UI_SRC="yocto/meta-hmi/recipes-hmi/hmi-ui/files"
+mkdir -p "${UI_SRC}"
 
-# Copy GUI loader, tag engine, and shell QML screens
-cp gui/hmi_loader/main.py       "${GUI_FILES}/main.py"
-cp gui/hmi_loader/tagengine.py  "${GUI_FILES}/tagengine.py"
-cp gui/shell/Shell.qml          "${GUI_FILES}/Shell.qml"
-cp gui/shell/Fallback.qml       "${GUI_FILES}/Fallback.qml"
+# The runtime's source tree, with its pinned LVGL submodule checked out.
+git submodule update --init native/hmi-ui/lvgl
+rsync -a --exclude out --exclude '.cache' native/hmi-ui/ "${UI_SRC}/hmi-ui/"
 ```
 
 ### 4.3 Recipe: hmi-ui-kit
 ```bash
 # Path to hmi-ui-kit recipe files directory
-UI_FILES="yocto/meta-hmi/recipes-hmi/hmi-ui-kit/files"
-mkdir -p "${UI_FILES}"
+KIT_FILES="yocto/meta-hmi/recipes-hmi/hmi-ui-kit/files"
+mkdir -p "${KIT_FILES}"
 
-# Copy the Shadcn QML component directory
-cp -r ui/qml/Shadcn "${UI_FILES}/Shadcn"
-
-# Copy tokens.json
-cp ui/tokens.json "${UI_FILES}/tokens.json"
-
-# Copy Tabler icon license
-cp ui/icons/LICENSE.tabler "${UI_FILES}/LICENSE.tabler"
+# The fonts and the rasterised icons (regenerate with
+# python native/hmi-ui/schema/gen_icons.py when TablerIcons.js changes)
+cp -r ui/qml/Shadcn/fonts "${KIT_FILES}/fonts"
+cp -r ui/qml/Shadcn/icons "${KIT_FILES}/icons"
+cp ui/icons/LICENSE.tabler "${KIT_FILES}/LICENSE.tabler"
 ```
 
 ---
@@ -151,18 +137,17 @@ do_install() {
 
     install -d ${D}${bindir}
     install -m 0755 ${S}/target/bin/hmi-install     ${D}${bindir}/hmi-install
-    install -m 0755 ${S}/target/bin/hmi-gui-launch  ${D}${bindir}/hmi-gui-launch
     install -m 0755 ${S}/target/bin/hmi-hwd-launch  ${D}${bindir}/hmi-hwd-launch
 
     install -d ${D}${sysconfdir}/default
-    install -m 0644 ${S}/target/etc/default/hmi-gui ${D}${sysconfdir}/default/hmi-gui
+    install -m 0644 ${S}/target/etc/default/hmi-ui  ${D}${sysconfdir}/default/hmi-ui
 
     install -d ${D}${nonarch_libdir}/tmpfiles.d
     install -m 0644 ${S}/target/tmpfiles/hmi.conf   ${D}${nonarch_libdir}/tmpfiles.d/hmi.conf
 
     install -d ${D}${systemd_unitdir}/system
     install -m 0644 ${S}/target/systemd/hmi-hwd.service ${D}${systemd_unitdir}/system/hmi-hwd.service
-    install -m 0644 ${S}/target/systemd/hmi-gui.service ${D}${systemd_unitdir}/system/hmi-gui.service
+    install -m 0644 ${S}/target/systemd/hmi-ui.service  ${D}${systemd_unitdir}/system/hmi-ui.service
 
     install -d ${D}/opt/hmi_apps
     install -d ${D}/opt/hmi_apps/releases
@@ -179,8 +164,8 @@ Add the following settings to your `build/conf/local.conf`:
 # 1. Target Machine Architecture
 MACHINE = "verdin-imx8mp"
 
-# 2. Systemd and Wayland Distro Features
-DISTRO_FEATURES:append = " systemd wayland pam"
+# 2. Systemd Distro Features (the reference image also has wayland; harmless)
+DISTRO_FEATURES:append = " systemd pam"
 DISTRO_FEATURES_BACKFILL_CONSIDERED += "sysvinit"
 VIRTUAL-RUNTIME_init_manager = "systemd"
 VIRTUAL-RUNTIME_initscripts = "systemd-compat-units"
@@ -214,7 +199,7 @@ bitbake tdx-reference-multimedia-image
 # Alternatively, build only the HMI packagegroup or individual components
 bitbake packagegroup-hmi
 bitbake hmi-core
-bitbake hmi-gui
+bitbake hmi-ui
 bitbake hmi-ui-kit
 ```
 
@@ -232,14 +217,14 @@ Once the image is flashed onto the Toradex Verdin i.MX8M Plus, verify the subsys
 # Verify Layer 1 Hardware Daemon
 systemctl status hmi-hwd.service
 
-# Verify Layer 2 GUI Launcher
-systemctl status hmi-gui.service
+# Verify Layer 2 GUI runtime
+systemctl status hmi-ui.service
 ```
 
 ### 8.2 Live Journal Logging
 ```bash
 # Follow logs for both units
-journalctl -u hmi-hwd -u hmi-gui -f
+journalctl -u hmi-hwd -u hmi-ui -f
 ```
 
 ### 8.3 Application Directory and Symlink Verification

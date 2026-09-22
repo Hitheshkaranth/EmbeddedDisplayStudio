@@ -1731,7 +1731,10 @@ class DesignerWorkspace(QWidget):
         project_name = self.project.name or self._bundle_project_name(manifest)
         self.project.name = project_name
         manifest.update({"schema": 1, "name": project_name, "version": manifest.get("version", "1.0.0"),
-                         "entry": entry.replace(os.sep, "/"), "runtime": "qml",
+                         # The panel runs the design file itself (hmi-ui); the QML
+                         # generated beside it is for this desktop's preview only.
+                         "entry": "project.edsui", "runtime": "edsui",
+                         "preview": entry.replace(os.sep, "/"),
                          "screen": {"width": self.project.screen.width, "height": self.project.screen.height},
                          "theme": self.project.screen.theme,
                          "tags_required": self.project.required_tags()})

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # provision_pyside2.sh — install the PySide2/Qt5 application runtime on a panel
 #
+# LEGACY: only for a panel that keeps the retired Qt loader (see
+# provision_native.sh). A Qt-free panel provisioned by provision_panel.py has
+# no use for a PySide2 runtime.
+#
 # CONTRACT reference: sections 4.1 (runtime kinds), 6 (deployment pipeline),
 #   7.1 (code standards).
 #

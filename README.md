@@ -59,7 +59,7 @@ it to the panel with one button or one command. The app never touches a GPIO
 line, an ADC node or a serial port: it binds to **tags** that arrive over a
 loopback socket, and the platform does the rest.
 
-<img src="docs/assets/architecture.svg" alt="Studio and CLI deploy over SSH to hmi-gui on the panel; hmi-hwd feeds it tags over a loopback socket" width="900" />
+<img src="docs/assets/architecture.svg" alt="Studio and CLI deploy over SSH to hmi-ui on the panel; hmi-hwd feeds it tags over a loopback socket" width="900" />
 
 <sub>Source: <a href="docs/assets/architecture.mmd"><code>docs/assets/architecture.mmd</code></a></sub>
 
@@ -68,8 +68,17 @@ Three layers, deliberately decoupled:
 | | Layer | Owns | Knows nothing about |
 |---|---|---|---|
 | **1** | `hmi-hwd` — hardware abstraction daemon | GPIO, ADC, UART, safe states | pixels |
-| **2** | `hmi-gui` — app loader + tag engine | QML, bindings, the customer bundle | hardware |
+| **2** | `hmi-ui` — the panel GUI runtime | the design file, bindings, alarms, pixels on DRM/KMS | hardware |
 | **3** | deployment | atomic install, health check, rollback | either of the above |
+
+The panel is **Qt-free**. `hmi-ui` (`native/hmi-ui`) is C11 + LVGL: it opens
+the DRM device itself, interprets the deployed `project.edsui` directly and
+renders the same widget kit the Studio shows, at parity with the Studio's QML
+preview (`tests/ui/test_widget_parity.py`). No compositor, no Qt libraries and
+no generated code run on the panel; the Studio on the desktop is still a Qt
+application. The Qt loaders of earlier phases (`gui/hmi_loader`,
+`native/hmi-gui`) remain in the repository as a legacy path for existing Qt
+bundles and are no longer provisioned.
 
 ---
 
@@ -84,7 +93,7 @@ the bundle comes to exist.
 |---|---|---|---|
 | **Describe it** — [AI Design](#ai-design) | A sentence: *"engine data summary with RPM, coolant and oil gauges, fuel quantity and start/stop"* | Sends the brief to a local or cloud model with a system prompt built from the widget library, streams the answer, parses it into widgets in sections, and puts them on the canvas with the live preview refreshed | Tune in the Designer, bind to tags, **Deploy** |
 | **Draw it** — [Visual Designer](#visual-designer) | An empty canvas the size of the panel's glass | Library, layers, inspector, tag bindings, undo; generates the QML and the manifest for you | **Preview**, **Deploy** |
-| **Bring your own** — [Writing an app](#writing-an-app) | An existing Qt Quick or Qt Widgets application, Qt5 or Qt6 | Detects the entry point and Qt binding, proposes the manifest, previews the real app live, checks its imports against the panel | **Deploy** |
+| **Bring your own** — [Writing an app](#writing-an-app) | An existing Qt Quick or Qt Widgets application, Qt5 or Qt6 (*legacy: needs a panel provisioned with the Qt loader, `deploy/provision_native.sh`*) | Detects the entry point and Qt binding, proposes the manifest, previews the real app live, checks its imports against the panel | **Deploy** |
 
 The three are not silos. A described screen is a Designer project the moment
 it lands; a drawn screen is an ordinary bundle the moment it is generated; an
@@ -150,9 +159,9 @@ ssh-copy-id root@<panel-ip>
 
 | | |
 |---|---|
-| **A 64-bit Linux image** | Yocto or similar, with **systemd**, and **Wayland/Weston** for the display |
+| **A 64-bit Linux image** | Yocto or similar, with **systemd** and a **DRM/KMS** display device (`/dev/dri/card*`, `libdrm`); no compositor is needed or used |
 | **A complete Python 3** | Read this twice: a Yocto image can ship `python3-core` alone — no `json`, `socket`, `hashlib` or `ctypes` — and the installer itself cannot run on that. `provision_panel.py` puts a self-contained interpreter at `/opt/hmi-python`, which every target script prefers |
-| **A Qt runtime** | PySide6 for a Qt6 application; PySide2 at `/opt/hmi-python-qt5` for a Qt5 one. A panel can carry both |
+| **A Qt runtime** | *Only for legacy Qt bundles:* PySide6 for a Qt6 application; PySide2 at `/opt/hmi-python-qt5` for a Qt5 one. Studio designs need neither |
 | **coreutils** | `flock`, `tar` and `sha256sum` — `hmi-install` serialises on the first and verifies with the last |
 | **libgpiod, IIO, pyserial** | Only for real I/O. Each is optional: `hmi-hwd` disables the feature it cannot reach rather than refusing to start |
 
@@ -271,7 +280,7 @@ is restored. The window is one header — target address, port, **Connect** /
 | **AI Design** | Describe the screen; the model builds it in sections onto the same canvas, with the run log and panel canvas side by side |
 | **Display Console** | Target details, the bundle's verdict, **Deploy to Target**, **Rollback**, **Restart GUI**, and the releases the panel still holds |
 | **Tag Lab** | Inject signals into any tag the app declares — sine, square, ramp, noise, constant — before the I/O exists |
-| **Panel Logs** | Follow the journal from `hmi-gui` and `hmi-hwd` live, which is where a fault an hour after a good deploy shows up |
+| **Panel Logs** | Follow the journal from `hmi-ui` and `hmi-hwd` live, which is where a fault an hour after a good deploy shows up |
 | **System Profile** | What the live release costs the board: package, footprint, filesystem split, free RAM |
 
 ### Sharing the deploy key
@@ -368,7 +377,7 @@ previous release and the command exits non-zero. A bad deploy cannot leave a
 machine without a UI.
 
 A successful deploy also makes the app the panel's **boot default**: once the
-release has been proven to render, `hmi-gui.service` is enabled, so a power
+release has been proven to render, `hmi-ui.service` is enabled, so a power
 cycle brings the same application back with no further action. Deploying is the
 only step — there is nothing to enable by hand afterwards.
 
@@ -694,7 +703,7 @@ Everything below is about the panel that header points at.
 * **Tag Lab** — drive any declared tag with a deterministic waveform, pin a
   sensor, flip an interlock; the bound tags of the open bundle are wired up
   automatically.
-* **Panel Logs** — the journal from `hmi-gui` and `hmi-hwd`, followed live.
+* **Panel Logs** — the journal from `hmi-ui` and `hmi-hwd`, followed live.
 * **System Profile** — the active release, its footprint on flash, the
   filesystem split and the RAM left over, read back over SSH.
 * **Ships as one file** — `EmbeddedDisplayStudio.exe` carries its own Python,
@@ -900,9 +909,9 @@ bitbake-layers add-layer /path/to/meta-hmi
 bitbake <your-bsp-reference-image>
 ```
 
-`yocto/README.md` covers prerequisite layers (including the meta-qt6 caveat for
-PySide6), how each recipe's `files/` directory maps onto this repository, and how
-to verify on the target.
+`yocto/README.md` covers prerequisite layers (no Qt layer is needed), how each
+recipe's `files/` directory maps onto this repository, and how to verify on the
+target.
 
 ### Why no containers
 

@@ -24,7 +24,9 @@ const char *hmi_theme_init(const char *override, bool dark)
     g_dark = dark;
     g_kit_dir[0] = '\0';
     const char *env = getenv("HMI_UI_KIT");
-    const char *candidates[4] = {override, env, NULL, "/usr/lib/hmi/qml/Shadcn"};
+    // /usr/lib/hmi/kit is where provisioning puts fonts/ and icons/ on a panel;
+    // /usr/lib/hmi/qml/Shadcn is where a panel provisioned for the Qt loader had them.
+    const char *candidates[5] = {override, env, NULL, "/usr/lib/hmi/kit", "/usr/lib/hmi/qml/Shadcn"};
     char from_exe[600] = "";
     char exe[512];
     ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
@@ -39,7 +41,7 @@ const char *hmi_theme_init(const char *override, bool dark)
         }
     }
     candidates[2] = from_exe[0] ? from_exe : NULL;
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 5; ++i) {
         if (candidates[i] && *candidates[i] && has_fonts(candidates[i])) {
             snprintf(g_kit_dir, sizeof g_kit_dir, "%s", candidates[i]);
             break;

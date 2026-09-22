@@ -1,5 +1,10 @@
 # gui/ -- HMI GUI Loader (Layer 2)
 
+> **Legacy.** The PySide6 loader here was the panel GUI before `native/hmi-gui`
+> (C++/Qt) and then `native/hmi-ui` (C + LVGL, Qt-free, the current platform).
+> It is no longer provisioned or packaged; `gui/hmi_loader/tagengine.py` is
+> still imported by the desktop Studio for its live previews.
+
 **Layer:** 2 (GUI Loader)
 **Owner:** W2
 

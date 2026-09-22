@@ -10,12 +10,11 @@
 #   /usr/lib/hmi/manifest.py         shared CONTRACT section 4 validator
 #   /etc/hmi/hwd.json                runtime pin/bus configuration
 #   /usr/bin/hmi-install             application installer helper
-#   /usr/bin/hmi-gui-launch          GUI launcher wrapper
 #   /usr/bin/hmi-hwd-launch          daemon launcher wrapper
-#   /etc/default/hmi-gui             GUI launcher environment defaults
+#   /etc/default/hmi-ui              GUI runtime environment defaults
 #   /usr/lib/tmpfiles.d/hmi.conf     tmpfiles.d fragment
 #   ${systemd_unitdir}/system/hmi-hwd.service
-#   ${systemd_unitdir}/system/hmi-gui.service
+#   ${systemd_unitdir}/system/hmi-ui.service   (the binary comes from hmi-ui)
 #   /opt/hmi_apps/                   runtime app root (created by tmpfiles)
 #   /opt/hmi_apps/releases/          versioned app slots
 
@@ -47,12 +46,11 @@ SRC_URI = " \
     file://modbus.py \
     file://hwd.json \
     file://hmi-install \
-    file://hmi-gui-launch \
     file://hmi-hwd-launch \
-    file://hmi-gui.default \
+    file://hmi-ui.default \
     file://hmi.conf \
     file://hmi-hwd.service \
-    file://hmi-gui.service \
+    file://hmi-ui.service \
 "
 
 # S = "${WORKDIR}" is correct for file:// sources up to and including
@@ -92,12 +90,12 @@ REQUIRED_DISTRO_FEATURES = "systemd"
 
 # List both managed units.  The systemd bbclass wires these into
 # pkg_postinst / pkg_prerm automatically.
-SYSTEMD_SERVICE:${PN} = "hmi-hwd.service hmi-gui.service"
+SYSTEMD_SERVICE:${PN} = "hmi-hwd.service hmi-ui.service"
 
 # Enable both units at image-build time (equivalent to `systemctl enable`).
 #
 # This is not in tension with hmi-install's enable_boot step, which enables
-# hmi-gui.service only after a release has been proven to render: `systemctl
+# hmi-ui.service only after a release has been proven to render: `systemctl
 # enable` is idempotent, and the two paths exist for different starting
 # points.  An image built from this layer has the unit enabled from the
 # factory; a stock image onboarded with deploy/provision_panel.py does not,
@@ -175,7 +173,7 @@ FILES:${PN} += " \
 # silently resetting the integrator's pin map.
 CONFFILES:${PN} = " \
     ${sysconfdir}/hmi/hwd.json \
-    ${sysconfdir}/default/hmi-gui \
+    ${sysconfdir}/default/hmi-ui \
 "
 
 # ---------------------------------------------------------------------------
@@ -185,10 +183,10 @@ do_install() {
     # -----------------------------------------------------------------------
     # /usr/lib/hmi/ - private library directory for HMI Python modules.
     # ${nonarch_libdir} always resolves to /usr/lib, which is what CONTRACT
-    # section 3 fixes these paths at, and what hmi-gui.service and
-    # hmi-gui-launch hard-code.  ${libdir} was wrong here: under multilib it
-    # becomes /usr/lib64, which would put the daemon somewhere its own unit
-    # file does not look and split this tree from hmi-gui's half of it.
+    # section 3 fixes these paths at, and what hmi-ui.service hard-codes.
+    # ${libdir} was wrong here: under multilib it becomes /usr/lib64, which
+    # would put the daemon somewhere its own unit file does not look and
+    # split this tree from hmi-ui's half of it.
     # -----------------------------------------------------------------------
     install -d ${D}${nonarch_libdir}/hmi
 
@@ -222,17 +220,15 @@ do_install() {
     # -----------------------------------------------------------------------
     install -d ${D}${bindir}
     install -m 0755 ${S}/hmi-install     ${D}${bindir}/hmi-install
-    install -m 0755 ${S}/hmi-gui-launch  ${D}${bindir}/hmi-gui-launch
     install -m 0755 ${S}/hmi-hwd-launch  ${D}${bindir}/hmi-hwd-launch
 
     # -----------------------------------------------------------------------
-    # /etc/default/hmi-gui - environment defaults for the GUI launcher.
-    # Installed under ${sysconfdir}/default/ (the Debian/systemd convention
-    # for EnvironmentFile= entries) with mode 0644 so non-root users can
-    # read it (the GUI may run as a dedicated hmi user).
+    # /etc/default/hmi-ui - environment defaults for hmi-ui.service (DRM
+    # device, touch node, log level). Installed under ${sysconfdir}/default/
+    # (the Debian/systemd convention for EnvironmentFile= entries).
     # -----------------------------------------------------------------------
     install -d ${D}${sysconfdir}/default
-    install -m 0644 ${S}/hmi-gui.default ${D}${sysconfdir}/default/hmi-gui
+    install -m 0644 ${S}/hmi-ui.default ${D}${sysconfdir}/default/hmi-ui
 
     # -----------------------------------------------------------------------
     # /usr/lib/tmpfiles.d/hmi.conf - tmpfiles.d fragment.
@@ -256,7 +252,7 @@ do_install() {
     # -----------------------------------------------------------------------
     install -d ${D}${systemd_unitdir}/system
     install -m 0644 ${S}/hmi-hwd.service ${D}${systemd_unitdir}/system/hmi-hwd.service
-    install -m 0644 ${S}/hmi-gui.service ${D}${systemd_unitdir}/system/hmi-gui.service
+    install -m 0644 ${S}/hmi-ui.service  ${D}${systemd_unitdir}/system/hmi-ui.service
 
     # -----------------------------------------------------------------------
     # /opt/hmi_apps/ and /opt/hmi_apps/releases/ - application root.

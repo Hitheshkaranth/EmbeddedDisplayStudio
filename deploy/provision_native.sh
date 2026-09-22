@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # deploy/provision_native.sh -- install the native hmi-gui loader on a panel.
 #
+# LEGACY. The platform GUI is now native/hmi-ui (Qt-free), installed by
+# deploy/provision_panel.py, which removes what this script installs. Keep
+# this only for a panel that must run an existing Qt bundle (runtime qml/
+# python); its unit and launcher live under native/hmi-gui/target/.
+#
 # WHY THIS EXISTS
 #   The native loader (native/hmi-gui, C++/Qt 6) replaces the PySide6 loader
 #   on the panel, but the Toradex image carries only a GLES Qt 5.15 and has no

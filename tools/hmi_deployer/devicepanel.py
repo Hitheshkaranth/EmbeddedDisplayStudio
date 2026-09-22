@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QApplication
 from PySide6.QtQuickWidgets import QQuickWidget
 from PySide6.QtQml import QQmlComponent, QQmlContext
 
-from schema.manifest import theme_of
+from schema.manifest import preview_entry, theme_of
 from .native_preview import NativePreview
 from .bezel import BEZEL_MARGIN_PCT, bezel_logo, paint_device_bezel
 
@@ -374,7 +374,7 @@ class DevicePanel(QWidget):
         # live in the bezel as it is on the glass.
         expose_to_qml(self.quick_widget.engine(), ctx, self.tag_engine)
         
-        entry = manifest.get("entry", "main.qml")
+        entry = preview_entry(manifest)
         runtime = manifest.get("runtime", "qml")
 
         if runtime == "python":

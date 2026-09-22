@@ -2,7 +2,7 @@
 
 Layer 3 host-side command-line deployment tool for the BYOA HMI system.
 
-`deploy/deploy_to_hmi.sh` automates the validation, packaging, cryptographic verification, transport, installation, verification, and monitoring of Qt/QML application bundles targeted at a Toradex Verdin i.MX8M Plus panel.
+`deploy/deploy_to_hmi.sh` automates the validation, packaging, cryptographic verification, transport, installation, verification, and monitoring of application bundles (Studio designs, `runtime: edsui`) targeted at a Toradex Verdin i.MX8M Plus panel.
 
 > **Deploying to a board that has never seen this platform?** `deploy_to_hmi.sh`
 > and Studio both assume `/usr/bin/hmi-install` and the systemd units are
@@ -14,10 +14,19 @@ Layer 3 host-side command-line deployment tool for the BYOA HMI system.
 
 ## 0. Provisioning a panel (`provision_panel.py`)
 
-Installs the platform itself — Layer 1 daemon, Layer 2 loader and shell, the
-atomic installer, the shared QML kit and the systemd units — onto a panel that
-is already running Linux, at the paths CONTRACT section 3 specifies. No image
-rebuild, no reflash.
+Installs the platform itself — Layer 1 daemon, the Layer 2 GUI runtime
+`hmi-ui` (C + LVGL on DRM/KMS: no Qt, no compositor), its fonts and icons, the
+atomic installer and the systemd units — onto a panel that is already running
+Linux, at the paths CONTRACT section 3 specifies. No image rebuild, no reflash.
+The `hmi-ui` binary must have been built first (`bash native/hmi-ui/arm64/build.sh`
+from WSL; it lands in `native/hmi-ui/out/aarch64/`).
+
+A panel provisioned by an earlier version for the Qt loader is converted in
+place: `hmi-ui.service` takes the display, and the loader, its private Qt6
+runtime and the Weston background configuration are removed (`--keep-qt`
+leaves them on disk, disabled). For a quick binary-only update of a panel
+that is already provisioned, `deploy/provision_ui.sh --host <ip>` builds and
+ships just `hmi-ui`, the kit and its unit.
 
 ```bash
 # survey the board and write nothing
@@ -27,7 +36,14 @@ python deploy/provision_panel.py --host 192.168.1.50 --check
 python deploy/provision_panel.py --host 192.168.1.50 -i ~/.ssh/id_ed25519
 ```
 
-### Hosting PySide2 (Qt5) applications (`provision_pyside2.sh`)
+### Legacy: the Qt loaders (`provision_native.sh`, `provision_pyside2.sh`)
+
+These two scripts belong to the retired Qt path (`native/hmi-gui`, the
+PySide6 loader and its Qt5 sibling). They still work against a panel that was
+provisioned for that path, and `provision_panel.py` removes what they installed
+when it converts a panel to `hmi-ui`. New panels never need them.
+
+#### Hosting PySide2 (Qt5) applications (`provision_pyside2.sh`)
 
 The platform's own runtime is CPython 3.12 + PySide6. A large share of existing
 industrial Qt code is PySide2, which cannot share that interpreter: PySide2 is
@@ -57,9 +73,10 @@ Without this runtime, deploying a `qt_binding: pyside2` bundle fails at launch
 with a named error in the journal rather than a silent crash loop.
 
 The survey runs first on every invocation and reports what the board is: OS,
-python3 and PySide6 versions, whether systemd is running, whether a
-`weston.service` exists, whether the rootfs is writable, and whether a container
-runtime is present. Anything that makes the board unable to host the platform is
+python3 version, whether systemd is running, which DRM cards exist and whether
+`libdrm` is installed, whether a `weston.service` or the Qt loader is still
+present, whether the rootfs is writable, and whether a container runtime is
+present. Anything that makes the board unable to host the platform is
 printed as a **BLOCKER** and provisioning refuses to start; anything that will
 bite later is printed as a **WARNING**.
 
@@ -67,56 +84,48 @@ bite later is printed as a **WARNING**.
 |---|---|
 | `--check` | Survey only. Exits non-zero if there are blockers. |
 | `--force` | Provision despite blockers. |
-| `--force-config` | Replace `/etc/hmi/hwd.json` and `/etc/default/hmi-gui`. Without it, existing config is left alone — those files are how a board is matched to its carrier. |
+| `--force-config` | Replace `/etc/hmi/hwd.json` and `/etc/default/hmi-ui`. Without it, existing config is left alone — those files are how a board is matched to its carrier. |
+| `--keep-qt` | Leave the Qt loader, its private Qt6 runtime and Weston on the panel (disabled) instead of removing them. |
 | `--enable-hwd` | Enable and start `hmi-hwd.service`. **Off by default:** the daemon drives real GPIO outputs from a pin map, and the shipped `hwd.json` is a Dahlia carrier default. Confirm it against your carrier before turning this on. |
 
-Provisioning enables `hmi-gui.service` but does not start it — there is no
-application installed yet, and starting it would put the unit in a restart loop
-against an empty `current`. The first deploy starts it.
+Provisioning enables and starts `hmi-ui.service`. With no application
+installed it shows the runtime's built-in fallback screen; a panel that already
+has an application picks up the new runtime immediately.
 
 Re-running is safe: files are replaced through a rename, so provisioning can
 update a panel in place, including replacing `hmi-install` while it exists.
 
-### What a minimal image is still missing
+### What a minimal image is still missing: a complete Python
 
-Provisioning installs *this platform*. It does not install a Python or Qt
-runtime, and a stock Toradex image may not have a usable one. Verified on a
-Verdin i.MX8M Plus running **TDX Wayland 7.7.0** (the base image, not
-`tdx-reference-multimedia-image`):
+Provisioning installs the platform and, on request, the interpreter it runs
+on. A stock Toradex image may not have a usable one. Verified on a Verdin
+i.MX8M Plus running **TDX Wayland 7.7.0**:
 
 * **The system Python is unusable.** Yocto splits the stdlib into subpackages
   and that image ships `python3-core` + `python3-compression` only — no `json`,
-  `logging`, `socket`, `hashlib`, `ctypes` or `datetime`. `lib-dynload` holds 16
-  modules against a normal ~50, so the compiled extensions are genuinely absent
-  and copying `.py` files cannot fix it. `hmi-install` itself cannot run on that
-  interpreter.
-* **No Qt, and no package feed to get one.** `/etc/opkg/opkg.conf` has no `src`
-  entry, so `opkg install` has nothing to install from.
+  `logging`, `socket`, `hashlib`, `ctypes` or `datetime`. `hmi-install` and
+  `hmi-hwd` cannot run on it. The survey reports this as `python3_stdlib partial`.
+* **No package feed** to get one from (`/etc/opkg/opkg.conf` has no `src`).
 
-The fix that worked, and what the scripts now expect:
+The fix, which the scripts expect: a self-contained CPython at
+**`/opt/hmi-python`**, which `hmi-install` and `hmi-hwd-launch` prefer
+automatically (*Interpreter resolution* in `target/README.md`). Ship it with
+provisioning:
 
-1. Install a self-contained CPython at **`/opt/hmi-python`** (e.g. a
-   `python-build-standalone` aarch64 `install_only` build). Both target scripts
-   prefer it automatically — see `target/README.md`, *Interpreter resolution*.
-   The system `python3` is left untouched.
-2. `pip install PySide6-Essentials` into it. Match the wheel to the board: the
-   aarch64 wheels are tagged `manylinux_2_39_aarch64` and need glibc ≥ 2.39.
-   Fetch wheels on the host — a Yocto `wget` typically does not validate TLS
-   certificates.
-3. Supply the libraries the wheels link against but the image lacks. On
-   i.MX8M Plus that is **desktop OpenGL** — the SoC is Vivante GLES-only, while
-   the PySide6 wheels link `libQt6Gui` against `libGL.so.1`/`libGLX.so.0` — plus
-   `libbrotlidec.so.1` for QtNetwork. Qt Widgets renders through the raster
-   engine and never issues a desktop GL call, so satisfying the *link* is
-   sufficient; `libglvnd` and `libbrotli1` from Debian arm64 into
-   `/usr/local/lib` followed by `ldconfig` is enough.
+```bash
+# a python-build-standalone aarch64 install_only build (CPython 3.12)
+curl -LO https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.12.14%2B20260901-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz
+python deploy/provision_panel.py --host 192.168.1.50 --key ~/.ssh/id_ed25519     --python cpython-3.12.14+20260901-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz
+```
 
-Unresolved `libcups`, `libmysqlclient`, `libodbc`, `libpq`, `libxcb-*` and
-`libQt6Pdf`/`WebEngine`/`VirtualKeyboard`/`Quick3D` sonames belong to plugins a
-typical HMI never loads and can be ignored.
+It is installed only when the panel has no `/opt/hmi-python` (`--force-python`
+replaces one). The daemon's optional packages (`gpiod` for libgpiod v2,
+`pyserial`) are fetched as aarch64 wheels on the host with `pip download` and
+installed into it offline. Nothing Qt goes in: a panel converted from the Qt
+loader keeps its interpreter but loses the PySide6 packages inside it.
 
-The durable alternative to all of the above is to build the image with
-`yocto/meta-hmi` and `meta-qt6`, which is what a production panel should ship.
+The durable alternative is to build the image with `yocto/meta-hmi`, whose
+`hmi-core` recipe pulls in the stdlib subpackages the daemon needs.
 Provisioning exists for boards already on a bench.
 
 ---
@@ -135,7 +144,7 @@ deploy_to_hmi.sh [ACTION] -H HOST [OPTIONS] [-b BUNDLE]
 | `rollback` | Instructs the target to revert `/opt/hmi_apps/current` to the previous release generation and restart the GUI. |
 | `list` | Lists all installed application release directories on the target, marking `[current]` and `[previous]`. |
 | `status` | Displays the current and previous release paths and the live GUI readiness status (`ready` / `not ready`). |
-| `logs` | Tails `journalctl` entries for both `hmi-gui` and `hmi-hwd` units live over SSH (`Ctrl-C` exits cleanly). |
+| `logs` | Tails `journalctl` entries for both `hmi-ui` and `hmi-hwd` units live over SSH (`Ctrl-C` exits cleanly). |
 | `check` | Verifies target readiness (TCP reachability, SSH login, `hmi-install` presence, and systemd units) without deploying anything. |
 
 ---
@@ -156,7 +165,7 @@ deploy_to_hmi.sh [ACTION] -H HOST [OPTIONS] [-b BUNDLE]
 
 * **`-b, --bundle PATH`**: Path to the application bundle. Accepts either a directory containing `manifest.json` or a pre-packaged `.tar.gz` archive.
 * **`--name NAME`**: Overrides the `name` attribute declared in `manifest.json` during packaging and directory creation.
-* **`--no-restart`**: Passed to `hmi-install` to skip restarting `hmi-gui.service` after a successful install.
+* **`--no-restart`**: Passed to `hmi-install` to skip restarting `hmi-ui.service` after a successful install.
 * **`--keep N`**: Passed to `hmi-install` to retain the `N` newest release generations (default: 3), pruning older unreferenced releases.
 
 ### 2.3 General Flags
@@ -208,7 +217,7 @@ Run pre-flight checks before scheduling automated deployments:
   [PASS] TCP port 22 reachable
   [PASS] SSH login as root
   [PASS] hmi-install at /usr/bin/hmi-install
-  [PASS] hmi-gui.service unit
+  [PASS] hmi-ui.service unit
   [PASS] hmi-hwd.service unit
 [OK] Target is ready for deployment.
 ```
@@ -271,14 +280,14 @@ In industrial HMI panels, a failed software update must **never leave the screen
                                                8. Update 'previous' symlink
                                                9. Atomic rename(2) -> 'current'
                                               10. rm /run/hmi/gui-ready
-                                              11. systemctl restart hmi-gui.service
+                                              11. systemctl restart hmi-ui.service
                                               12. Poll /run/hmi/gui-ready (<=25s)
                                                     |
                        +----------------------------+----------------------------+
                        | (Success)                                               | (Failure / Timeout)
                        v                                                         v
              Wipe /tmp/hmi_upload                                      Restore 'previous' symlink
-             Prune old releases                                        Restart hmi-gui.service
+             Prune old releases                                        Restart hmi-ui.service
              Exit 0                                                    Wipe /tmp/hmi_upload
                                                                        Exit 1 (Non-zero)
 ```
@@ -287,7 +296,7 @@ In industrial HMI panels, a failed software update must **never leave the screen
 1. **Tmpfs Landing Zone (`/tmp/hmi_upload`):** Bundles are written to RAM disk. Network disconnects or partial uploads never write incomplete data to persistent flash.
 2. **Deterministic Validation:** `manifest.json` is validated twice: once on the host before upload, and once on the target before the symlink is modified.
 3. **Atomic Symlink Swap (`os.replace` / `rename(2)`):** The script never executes `rm current && ln -s ...` (which leaves a window where no UI exists). Instead, a temporary symlink (`.current_swap_XXXX`) is created and atomically swapped over `/opt/hmi_apps/current` using POSIX `rename(2)`.
-4. **Health Check & Self-Rollback:** After restarting `hmi-gui.service`, `hmi-install` monitors `/run/hmi/gui-ready` for up to 25 seconds. If the application crashes on boot, throws a QML error, or fails to render, `hmi-install` automatically swaps the symlink back to `/opt/hmi_apps/previous`, restarts the GUI with the known-good release, and exits with code 1.
+4. **Health Check & Self-Rollback:** After restarting `hmi-ui.service`, `hmi-install` monitors `/run/hmi/gui-ready` for up to 25 seconds. If the runtime crashes on the new bundle or fails to put its first page on screen, `hmi-install` automatically swaps the symlink back to `/opt/hmi_apps/previous`, restarts the GUI with the known-good release, and exits with code 1.
 
 #### Readiness for native (`runtime: python`) applications
 

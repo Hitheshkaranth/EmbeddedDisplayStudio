@@ -1,0 +1,52 @@
+# /etc/systemd/system/hmi-ui.service
+# =====================================================================
+# HMI GUI -- the Qt-free panel runtime (native/hmi-ui: C + LVGL).
+#
+# hmi-ui opens the DRM/KMS device itself and draws straight to the
+# scanout buffer: there is no compositor and no display server in the
+# chain. It loads /opt/hmi_apps/current/project.edsui (the bundle the
+# Studio deployed), talks to hmi-hwd over the CONTRACT section 2 UDP
+# protocol, and touches /run/hmi/gui-ready once the first page is on
+# screen (hmi-install waits for that file to confirm a deploy).
+#
+# Ordering:
+#   After=hmi-hwd.service  -- prefer HW data to be ready, not mandatory.
+#   Wants=hmi-hwd.service  -- start the daemon, survive its absence.
+#   Conflicts=weston.service hmi-gui.service
+#                          -- a panel provisioned before the Qt-free
+#                             runtime may still carry the compositor and
+#                             the Qt loader; they cannot share the DRM
+#                             device, so this unit takes their place.
+#                             After= makes systemd finish stopping them
+#                             before the first modeset.
+# =====================================================================
+
+[Unit]
+Description=HMI GUI (Qt-free runtime, DRM/KMS)
+After=network.target hmi-hwd.service weston.service hmi-gui.service
+Wants=hmi-hwd.service
+Conflicts=weston.service hmi-gui.service
+
+[Service]
+Type=simple
+
+# Operators set HMI_UI_DISPLAY, HMI_UI_TOUCH, HMI_LOG_LEVEL and
+# HMI_UI_EXTRA_ARGS there without editing this unit; a missing file
+# leaves the defaults below.
+EnvironmentFile=-/etc/default/hmi-ui
+Environment=HMI_UI_DISPLAY=/dev/dri/card1
+Environment=HMI_LOG_LEVEL=INFO
+Environment=HMI_UI_EXTRA_ARGS=
+
+ExecStartPre=/bin/mkdir -p /run/hmi
+# A leftover compositor releases the DRM master a moment after its unit
+# reports stopped; wait for it (at most 5 s) so the modeset never races.
+ExecStartPre=/bin/sh -c "for i in $$(seq 50); do systemctl is-active -q weston.service || exit 0; sleep 0.1; done; exit 0"
+ExecStart=/usr/lib/hmi/ui/hmi-ui --apps-dir /opt/hmi_apps/current --display ${HMI_UI_DISPLAY} --log-level ${HMI_LOG_LEVEL} --ready-file /run/hmi/gui-ready $HMI_UI_EXTRA_ARGS
+
+# Never leave a dead panel: restart on any exit.
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

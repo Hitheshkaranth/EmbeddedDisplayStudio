@@ -9,7 +9,7 @@
 #   rollback           — revert to the previous generation on the target
 #   list               — list installed applications and their generations
 #   status             — show the currently running application
-#   logs               — tail hmi-gui and hmi-hwd journal entries
+#   logs               — tail hmi-ui and hmi-hwd journal entries
 #   check              — verify target readiness (sshd, hmi-install, units)
 #
 # Portability: runs under bash 4+ on Linux, macOS, and Git Bash for Windows.
@@ -47,7 +47,7 @@ readonly REMOTE_INSTALLER="/usr/bin/hmi-install"
 readonly EXIT_NOT_BOOT_DEFAULT=4
 
 # Journald units whose logs are retrieved by the "logs" action.
-readonly LOG_UNITS=("hmi-gui" "hmi-hwd")
+readonly LOG_UNITS=("hmi-ui" "hmi-hwd")
 
 # Number of journal lines fetched before following (CONTRACT section 6).
 readonly LOG_LINES=200
@@ -285,7 +285,7 @@ OPT_PORT="22"           # -p/--port
 OPT_IDENTITY=""         # -i/--identity (path to SSH private key, optional)
 OPT_BUNDLE=""           # -b/--bundle (directory or .tar.gz, required for deploy)
 OPT_NAME_OVERRIDE=""    # --name (overrides manifest name)
-OPT_NO_RESTART=0        # --no-restart: skip hmi-gui restart after install
+OPT_NO_RESTART=0        # --no-restart: skip hmi-ui restart after install
 OPT_KEEP=""             # --keep <n>: number of generations to retain
 OPT_DRY_RUN=0           # --dry-run: print commands, do not execute
 OPT_INSECURE=0          # --insecure: skip host-key verification (with warning)
@@ -307,7 +307,7 @@ ACTIONS (default: deploy)
   rollback   Revert to the previous installed generation on the target.
   list       List installed applications and available generations.
   status     Show the name and generation of the currently running application.
-  logs       Tail hmi-gui and hmi-hwd journal entries (Ctrl-C to stop).
+  logs       Tail hmi-ui and hmi-hwd journal entries (Ctrl-C to stop).
   check      Verify target readiness and print a readiness report.
 
 CONNECTION FLAGS (required for all network actions)
@@ -322,7 +322,7 @@ BUNDLE FLAGS (deploy only)
   -b, --bundle PATH     Path to the application bundle.  Either a directory
                         containing manifest.json, or a .tar.gz archive.
       --name NAME       Override the application name from manifest.json.
-      --no-restart      Do not restart hmi-gui after successful installation.
+      --no-restart      Do not restart hmi-ui after successful installation.
       --keep N          Retain the N most recent generations; prune older ones.
 
 GENERAL FLAGS
@@ -335,7 +335,7 @@ EXIT CODES
   1  Local validation, packaging or usage error.
   4  Deployed and running, but not made the boot default.  The release was
      verified and deliberately left live; it will not start after a reboot
-     until `systemctl enable hmi-gui.service` is run on the panel.
+     until `systemctl enable hmi-ui.service` is run on the panel.
   *  Any other code is passed through from hmi-install on the target.
 
 EXAMPLES
@@ -1026,8 +1026,8 @@ action_status() {
 # ---------------------------------------------------------------------------
 
 action_logs() {
-    # Purpose: tail the hmi-gui and hmi-hwd journal entries on the target
-    #          by running `journalctl -u hmi-gui -u hmi-hwd -n <n> -f`
+    # Purpose: tail the hmi-ui and hmi-hwd journal entries on the target
+    #          by running `journalctl -u hmi-ui -u hmi-hwd -n <n> -f`
     #          over SSH.  Follows the log in real time until Ctrl-C.
     # Args:    none (uses OPT_* globals).
     # Returns: 0 on Ctrl-C (SIGINT); journalctl exit code otherwise.
@@ -1070,7 +1070,7 @@ action_check() {
     #            1. TCP reachability of the SSH port.
     #            2. SSH login succeeds (sshd is accepting connections).
     #            3. hmi-install is present at REMOTE_INSTALLER and is executable.
-    #            4. hmi-gui.service unit file exists.
+    #            4. hmi-ui.service unit file exists.
     #            5. hmi-hwd.service unit file exists.
     #          Prints a short readiness table summarising all results.
     # Args:    none (uses OPT_* globals).
@@ -1121,10 +1121,10 @@ action_check() {
         _check_print "hmi-install at ${REMOTE_INSTALLER}" "${installer_ok}"
         [[ "${installer_ok}" -eq 0 ]] && all_ok=0
 
-        # Check hmi-gui unit.
-        ssh_run "systemctl cat hmi-gui.service >/dev/null 2>&1" 2>/dev/null \
+        # Check hmi-ui unit.
+        ssh_run "systemctl cat hmi-ui.service >/dev/null 2>&1" 2>/dev/null \
             && gui_unit_ok=1 || true
-        _check_print "hmi-gui.service unit" "${gui_unit_ok}"
+        _check_print "hmi-ui.service unit" "${gui_unit_ok}"
         [[ "${gui_unit_ok}" -eq 0 ]] && all_ok=0
 
         # Check hmi-hwd unit.
@@ -1136,7 +1136,7 @@ action_check() {
         # Dry-run mode: print what we would check.
         printf '%s[DRY-RUN]%s Check hmi-install executable\n' \
             "${C_YELLOW}" "${C_RESET}"
-        printf '%s[DRY-RUN]%s Check hmi-gui.service unit\n' \
+        printf '%s[DRY-RUN]%s Check hmi-ui.service unit\n' \
             "${C_YELLOW}" "${C_RESET}"
         printf '%s[DRY-RUN]%s Check hmi-hwd.service unit\n' \
             "${C_YELLOW}" "${C_RESET}"
@@ -1260,7 +1260,7 @@ main() {
                 log_warn "The application is installed and running on ${OPT_HOST}, but it \
 was NOT made the boot default and will not start after a reboot."
                 log_warn "Run this on the panel to fix it: \
-systemctl enable hmi-gui.service"
+systemctl enable hmi-ui.service"
             fi
             ;;
         rollback)

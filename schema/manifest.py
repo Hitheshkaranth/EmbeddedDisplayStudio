@@ -37,7 +37,7 @@ other. One copy with three callers cannot disagree at all.
 REQUIRED VS OPTIONAL (settles the ambiguity CONTRACT 4 left open)
 -----------------------------------------------------------------
 Required: schema, name, version, entry.
-Optional, with the defaults below: runtime ("qml"), screen (1280x800),
+Optional, with the defaults below: runtime ("qml"; the Studio writes "edsui"), screen (1280x800),
 tags_required ([]), qt (unconstrained), qt_binding ("pyside6").
 
 Optional fields are still type-checked when present: a 'screen' that is a
@@ -85,7 +85,13 @@ VERSION_RE = re.compile(
 # Runtime kinds and the entry extension each one requires (CONTRACT 4.1).
 # A mismatch is rejected here rather than on the panel, where it would surface
 # as a blank screen after a successful-looking deploy.
-RUNTIME_ENTRY_SUFFIX = {"qml": ".qml", "python": ".py"}
+#
+# "edsui" is what the Studio writes and what the Qt-free panel runtime
+# (native/hmi-ui) runs: the entry is the design file itself, interpreted on the
+# panel with no generated code. "qml" and "python" are the two kinds the Qt
+# loaders ran; the validator still accepts them so old bundles stay valid, but
+# a panel provisioned without Qt cannot start them.
+RUNTIME_ENTRY_SUFFIX = {"edsui": ".edsui", "qml": ".qml", "python": ".py"}
 
 # Qt bindings a native Python app may declare (CONTRACT 4.1). The two cannot
 # share an interpreter, so the value decides which runtime is started.
@@ -244,6 +250,15 @@ def load_excludes(bundle_dir):
         DEFAULT_EXCLUDES plus any patterns from the bundle's .hmiignore.
     """
     patterns = list(DEFAULT_EXCLUDES)
+    # An "edsui" bundle is run from its design file; the QML the Studio
+    # generated beside it exists for the desktop preview alone and would only
+    # cost the panel flash and upload time.
+    try:
+        with open(os.path.join(bundle_dir, "manifest.json"), "r", encoding="utf-8") as handle:
+            if json.load(handle).get("runtime") == "edsui":
+                patterns.append("generated")
+    except (OSError, ValueError, AttributeError):
+        pass
     ignore_path = os.path.join(bundle_dir, HMIIGNORE)
     if os.path.isfile(ignore_path):
         with open(ignore_path, "r", encoding="utf-8") as handle:
@@ -533,7 +548,9 @@ def validate_bundle(bundle_dir):
     if errors:
         return False, errors
 
-    if runtime == "qml":
+    if runtime == "edsui":
+        kind = "Studio design (hmi-ui)"
+    elif runtime == "qml":
         kind = "Qt Quick (QML)"
     else:
         effective = manifest.get("qt_binding") or detect_qt_binding(bundle_dir, entry)
@@ -541,6 +558,19 @@ def validate_bundle(bundle_dir):
             "PySide2/Qt5" if effective == "pyside2" else "PySide6/Qt6"
         )
     return True, ["Bundle is valid - %s." % kind]
+
+
+def preview_entry(manifest):
+    """The QML file the desktop tool renders for a bundle.
+
+    A "qml" bundle's entry is QML already. An "edsui" bundle ships no code the
+    desktop can load, so the Studio records the host QML it generated for its
+    own preview under "preview" (kept out of the tarball by schema/bundle.py);
+    "generated/App.qml" is where it has always been.
+    """
+    if manifest.get("runtime", "qml") == "edsui":
+        return manifest.get("preview") or "generated/App.qml"
+    return manifest.get("entry", "main.qml")
 
 
 def screen_of(manifest):
