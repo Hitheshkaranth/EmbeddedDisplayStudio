@@ -294,6 +294,12 @@ class AIDesignGenerator:
     def __init__(self, registry: Optional[WidgetRegistry] = None):
         self.registry = registry or WidgetRegistry()
         self.progress = GeneratorProgress()
+        # FROZEN CONTRACT (AI beauty swarm, 2026-09-22; owner W4): every
+        # parsed section goes through designer.layout.polish before it is
+        # returned, so what reaches the canvas is composed, not a draft.
+        # False (tests, a caller that polishes itself) returns it raw.
+        self.polish_enabled = True
+        self.last_polish = None      # the PolishReport of the last generate()
 
     def generate(self, ai_output: str, screen_width: int = 1280, screen_height: int = 800) -> Optional[DesignerProject]:
         """Generate a DesignerProject from AI output.

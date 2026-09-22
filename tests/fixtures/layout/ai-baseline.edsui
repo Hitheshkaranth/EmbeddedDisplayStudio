@@ -1,0 +1,204 @@
+{
+  "version": 1,
+  "name": "Engine Data Summary",
+  "screen": {
+    "width": 1024,
+    "height": 768,
+    "background": "#101418",
+    "theme": "dark"
+  },
+  "pages": [
+    {
+      "id": "main",
+      "name": "Main",
+      "widgets": [
+        {
+          "type": "Text",
+          "id": "title",
+          "geometry": {
+            "x": 32,
+            "y": 24,
+            "width": 240,
+            "height": 32
+          },
+          "properties": {
+            "text": "ENGINE DATA",
+            "fontSize": 18,
+            "color": "#ffffff"
+          },
+          "bindings": {},
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShClusterGauge",
+          "id": "rpmGauge",
+          "geometry": {
+            "x": 312,
+            "y": 184,
+            "width": 400,
+            "height": 400
+          },
+          "properties": {
+            "label": "RPM",
+            "readout": "4500",
+            "readoutUnit": "x1000",
+            "caption": "High Efficiency",
+            "value": 4.5,
+            "minimumValue": 0.0,
+            "maximumValue": 8.0,
+            "redlineFrom": 7.0,
+            "sweep": 270.0,
+            "decimals": 0,
+            "showInnerDial": true
+          },
+          "bindings": {
+            "value": {
+              "tag": "engine.rpm",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "RPM",
+              "warning": "> 6.0",
+              "critical": "> 7.0"
+            },
+            "readout": {
+              "tag": "engine.rpm",
+              "format": "%d",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShAutoLevel",
+          "id": "coolantTemp",
+          "geometry": {
+            "x": 40,
+            "y": 200,
+            "width": 120,
+            "height": 320
+          },
+          "properties": {
+            "value": 75.0,
+            "minimumValue": 0.0,
+            "maximumValue": 120.0,
+            "topLabel": "H",
+            "bottomLabel": "C",
+            "redZone": "high",
+            "redZoneSpan": 20.0,
+            "icon": "temperature",
+            "curved": true,
+            "showTicks": true
+          },
+          "bindings": {
+            "value": {
+              "tag": "engine.coolant_temp",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "°C",
+              "warning": "> 90",
+              "critical": "> 105"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShAutoLevel",
+          "id": "oilPressure",
+          "geometry": {
+            "x": 864,
+            "y": 200,
+            "width": 120,
+            "height": 320
+          },
+          "properties": {
+            "value": 60.0,
+            "minimumValue": 0.0,
+            "maximumValue": 100.0,
+            "topLabel": "HIGH",
+            "bottomLabel": "LOW",
+            "redZone": "low",
+            "redZoneSpan": 15.0,
+            "icon": "droplet",
+            "curved": true,
+            "showTicks": true
+          },
+          "bindings": {
+            "value": {
+              "tag": "engine.oil_pressure",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "bar",
+              "warning": "< 10",
+              "critical": "< 5"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShFuelQuantity",
+          "id": "fuelQty",
+          "geometry": {
+            "x": 80,
+            "y": 610,
+            "width": 864,
+            "height": 100
+          },
+          "properties": {},
+          "bindings": {
+            "value": {
+              "tag": "fuel.quantity",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "L",
+              "warning": "< 10",
+              "critical": "< 5"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShButton",
+          "id": "startStopBtn",
+          "geometry": {
+            "x": 864,
+            "y": 560,
+            "width": 120,
+            "height": 120
+          },
+          "properties": {
+            "text": "START /\nSTOP"
+          },
+          "bindings": {},
+          "children": [],
+          "locked": false,
+          "z": 0,
+          "actions": {
+            "clicked": {
+              "kind": "write",
+              "tag": "do.engine_start",
+              "value": true
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
