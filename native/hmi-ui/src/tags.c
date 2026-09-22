@@ -3,19 +3,19 @@
 // detection, a 2 s subscribe timer, a 2.5 s watchdog, "gui-N" command ids.
 #include "tags.h"
 
-#include <arpa/inet.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include "cJSON.h"
+#include "compat.h"
 #include "log.h"
 #include "lvgl/lvgl.h"
+
+// compat.h's hmi_udp_open cannot report the port the kernel picked for
+// rx_port 0, which hmi_tags_rx_port promises; compat.c provides this extra.
+unsigned short hmi_udp_bound_port(hmi_udp_t s);
 
 #define MAX_DATAGRAM 8192
 #define SUBSCRIBE_MS 2000
@@ -32,9 +32,8 @@ typedef struct {
 
 struct hmi_tags {
     hmi_tags_options_t opt;
-    int fd;
+    hmi_udp_t fd;
     uint16_t bound_port;
-    struct sockaddr_in daemon;
     bool online;
     uint32_t last_frame_ms;
     uint32_t last_subscribe_ms;
@@ -79,8 +78,8 @@ static bool send_json(hmi_tags_t *t, cJSON *obj)
     char *text = cJSON_PrintUnformatted(obj);
     cJSON_Delete(obj);
     if (!text) return false;
-    bool ok = t->fd >= 0 &&
-              sendto(t->fd, text, strlen(text), 0, (struct sockaddr *)&t->daemon, sizeof t->daemon) >= 0;
+    bool ok = t->fd != HMI_UDP_INVALID &&
+              hmi_udp_send(t->fd, t->opt.daemon_host, t->opt.daemon_port, text, strlen(text)) >= 0;
     if (!ok) hmi_log(HMI_LOG_DEBUG, "send failed: %s", strerror(errno));
     else hmi_log(HMI_LOG_DEBUG, "tx %s", text);
     free(text);
@@ -158,10 +157,9 @@ static void drain(hmi_tags_t *t)
     // Bounded so a flooding sender cannot starve the LVGL loop: whatever is
     // left waits for the next poll (a few ms away).
     for (int i = 0; i < 64; ++i) {
-        ssize_t n = recvfrom(t->fd, buf, sizeof buf, 0, NULL, NULL);
-        if (n < 0) {
-            if (errno != EAGAIN && errno != EWOULDBLOCK)
-                hmi_log(HMI_LOG_DEBUG, "recv failed: %s", strerror(errno));
+        int n = hmi_udp_recv(t->fd, buf, sizeof buf);
+        if (n <= 0) {
+            if (n < 0) hmi_log(HMI_LOG_DEBUG, "recv failed: %s", strerror(errno));
             return;
         }
         if (n > MAX_DATAGRAM) { ++t->rx_errors; continue; }
@@ -183,49 +181,28 @@ hmi_tags_t *hmi_tags_create(const hmi_tags_options_t *opt)
 {
     hmi_tags_t *t = calloc(1, sizeof *t);
     t->opt = *opt;
-    t->fd = -1;
     t->next_id = 1;
-    t->daemon.sin_family = AF_INET;
-    t->daemon.sin_port = htons(opt->daemon_port);
-    if (inet_pton(AF_INET, opt->daemon_host ? opt->daemon_host : "127.0.0.1", &t->daemon.sin_addr) != 1)
-        inet_pton(AF_INET, "127.0.0.1", &t->daemon.sin_addr);
-
-    int fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd >= 0) {
-        struct sockaddr_in addr;
-        memset(&addr, 0, sizeof addr);
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(opt->rx_port);
-        inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
-        if (bind(fd, (struct sockaddr *)&addr, sizeof addr) == 0) {
-            socklen_t len = sizeof addr;
-            getsockname(fd, (struct sockaddr *)&addr, &len);
-            t->bound_port = ntohs(addr.sin_port);
-            fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
-            t->fd = fd;
-            hmi_log(HMI_LOG_DEBUG, "telemetry socket bound to 127.0.0.1:%u", t->bound_port);
-        } else {
-            hmi_log(HMI_LOG_ERROR, "Could not bind telemetry port %u (%s); UI will run offline",
-                    opt->rx_port, strerror(errno));
-            close(fd);
-        }
+    t->fd = hmi_udp_open(opt->rx_port);
+    if (t->fd != HMI_UDP_INVALID) {
+        t->bound_port = hmi_udp_bound_port(t->fd);
+        hmi_log(HMI_LOG_DEBUG, "telemetry socket bound to 127.0.0.1:%u", t->bound_port);
+        send_subscribe(t);
     } else {
         hmi_log(HMI_LOG_ERROR, "Could not bind telemetry port %u (%s); UI will run offline",
                 opt->rx_port, strerror(errno));
     }
-    if (t->fd >= 0) send_subscribe(t);
     return t;
 }
 
 void hmi_tags_destroy(hmi_tags_t *t)
 {
     if (!t) return;
-    if (t->fd >= 0) {
+    if (t->fd != HMI_UDP_INVALID) {
         cJSON *o = cJSON_CreateObject();
         cJSON_AddStringToObject(o, "cmd", "unsubscribe");
         cJSON_AddStringToObject(o, "id", next_id(t));
         send_json(t, o);
-        close(t->fd);
+        hmi_udp_close(t->fd);
     }
     for (size_t i = 0; i < t->ntags; ++i) { free(t->tags[i].name); hmi_value_free(&t->tags[i].value); }
     free(t->tags);
@@ -240,7 +217,7 @@ void hmi_tags_set_callbacks(hmi_tags_t *t, hmi_tag_change_cb on_tag, hmi_online_
 
 void hmi_tags_poll(hmi_tags_t *t)
 {
-    if (t->fd < 0) return;
+    if (t->fd == HMI_UDP_INVALID) return;
     drain(t);
     uint32_t now = now_ms();
     if (!t->subscribed_once || now - t->last_subscribe_ms >= SUBSCRIBE_MS)
@@ -285,7 +262,7 @@ static cJSON *command(hmi_tags_t *t, const char *cmd)
 
 const char *hmi_tags_write(hmi_tags_t *t, const char *tag, const hmi_value_t *value)
 {
-    if (t->fd < 0) return "";
+    if (t->fd == HMI_UDP_INVALID) return "";
     cJSON *o = command(t, "set");
     cJSON_AddStringToObject(o, "tag", tag);
     cJSON_AddItemToObject(o, "value", hmi_value_to_json(value));
@@ -294,7 +271,7 @@ const char *hmi_tags_write(hmi_tags_t *t, const char *tag, const hmi_value_t *va
 
 const char *hmi_tags_pulse(hmi_tags_t *t, const char *tag, int ms)
 {
-    if (t->fd < 0) return "";
+    if (t->fd == HMI_UDP_INVALID) return "";
     cJSON *o = command(t, "pulse");
     cJSON_AddStringToObject(o, "tag", tag);
     cJSON_AddNumberToObject(o, "ms", ms);
@@ -303,7 +280,7 @@ const char *hmi_tags_pulse(hmi_tags_t *t, const char *tag, int ms)
 
 const char *hmi_tags_uart_tx(hmi_tags_t *t, const char *data)
 {
-    if (t->fd < 0) return "";
+    if (t->fd == HMI_UDP_INVALID) return "";
     cJSON *o = command(t, "uart_tx");
     cJSON_AddStringToObject(o, "data", data);
     return send_json(t, o) ? t->last_id : "";
@@ -311,13 +288,13 @@ const char *hmi_tags_uart_tx(hmi_tags_t *t, const char *data)
 
 const char *hmi_tags_list(hmi_tags_t *t)
 {
-    if (t->fd < 0) return "";
+    if (t->fd == HMI_UDP_INVALID) return "";
     return send_json(t, command(t, "list")) ? t->last_id : "";
 }
 
 void hmi_tags_ping(hmi_tags_t *t)
 {
-    if (t->fd < 0) return;
+    if (t->fd == HMI_UDP_INVALID) return;
     cJSON *o = cJSON_CreateObject();
     cJSON_AddStringToObject(o, "cmd", "ping");
     cJSON_AddStringToObject(o, "id", "qml-ping");
