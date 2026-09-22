@@ -985,12 +985,27 @@ Studio's live preview. **Deploy** confirms the deployment name, does the same,
 validates, and hands the bundle to the same pipeline an imported application
 uses.
 
+**What the previews are drawn with.** The canvas widgets, the bezel in the
+Display Console and the Code section's preview pane are rendered by `hmi-ui`
+itself -- the panel's own C + LVGL runtime, run headless on the desktop -- so
+what the Studio shows is what the glass will draw, pixel for pixel. The
+**Live preview** toggle on the canvas bar turns those renders on and off
+(its tooltip names the renderer in use). The binary is looked for at
+`$HMI_UI_BIN`, in a packaged Studio's `hmi-ui/` folder, and at
+`native/hmi-ui/out/win64/hmi-ui.exe` (Windows) or `native/hmi-ui/out/hmi-ui`
+(Linux) in a checkout; without it the Studio falls back to the Qt/QML renders
+it used before. **Open Live Preview (desktop QML)** is the one exception: it
+runs the generated QML in a window on the desktop's Qt so the design can be
+operated against the Studio's tag feed.
+
 **The Code section.** **Code** sits beside Designer and AI Design in the
 Studio's sections; the **Code** action on the Designer's file/edit row (or
 `Ctrl+Shift+K`) switches to it. It shows the code behind what is selected on
-the canvas and follows the selection as it changes: the generated QML of the
-selected widget or of the whole screen, and the design JSON of the same, with
-an optional live preview of that section beside the text. The QML is read-only
+the canvas and follows the selection as it changes: the design (.edsui JSON)
+of the selected widget or of the whole screen -- what the panel runs, and the
+view it opens on -- and the QML the desktop preview is generated from, with
+an optional preview of that section beside the text, drawn by `hmi-ui` (a
+whole screen is rendered as the panel renders the page). The QML is read-only
 — it is what the generator produces, not a second source. The design JSON can
 be edited and applied back: an Apply replaces that widget or page in the model
 as one undo step, so `Ctrl+Z` in the Designer takes the whole edit back at

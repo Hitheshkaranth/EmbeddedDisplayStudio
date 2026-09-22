@@ -724,8 +724,7 @@ class DesignerWorkspace(QWidget):
         canvas_bar.addSeparator()
         self.grid_action = action(canvas_bar, "Grid", self.toggle_grid, "grid-dots", checkable=True, compact=True); self.grid_action.setChecked(True)
         self.snap_action = action(canvas_bar, "Snap", self.toggle_snap, "magnet", checkable=True, compact=True); self.snap_action.setChecked(True)
-        self.live_action = action(canvas_bar, "Live QML", self.toggle_live_previews, "eye", checkable=True, compact=True); self.live_action.setChecked(True)
-        self.live_action.setToolTip("Draw each widget with its real QML instead of the canvas sketch")
+        self.live_action = action(canvas_bar, "Live preview", self.toggle_live_previews, "eye", checkable=True, compact=True); self.live_action.setChecked(True)
         canvas_bar.addSeparator()
         # Ten align actions as separate buttons is more than any row can hold
         # at the width this pane actually gets inside the Studio, and Qt hides
@@ -854,8 +853,12 @@ class DesignerWorkspace(QWidget):
         # else this Qt/QML fallback; `preview_renderer_name` says which
         # ("hmi-ui" / "qml"). Its `background` follows the design's screen.
         self.preview_renderer_name = "qml"
-        self.scene.qml_previews = QmlPreviewRenderer(self.generator, self)
+        self.scene.qml_previews = self._make_preview_renderer()
         self.scene.qml_previews.ready.connect(lambda _key: self.scene.update())
+        # The toggle's tooltip names the renderer, which is only known now.
+        self.live_action.setToolTip("Rendered by hmi-ui (the panel's own renderer)"
+                                    if self.preview_renderer_name == "hmi-ui"
+                                    else "Rendered by Qt/QML (hmi-ui not found)")
         self.view.setFrameShape(QFrame.NoFrame)
         split.addWidget(self.view)
 
@@ -894,6 +897,39 @@ class DesignerWorkspace(QWidget):
         # whose purpose only becomes clear after the first click.
         self.properties.set_widget(None)
         self.bindings.set_widget(None)
+
+    def _make_preview_renderer(self):
+        """The panel's own renderer when its binary is at hand, else Qt/QML.
+
+        Looked up here, not at import: the Studio must open without the
+        binary (a checkout that never built it, a Windows build without the
+        port), and a broken lookup must never stop the Designer opening.
+        """
+        binary = None
+        try:
+            from designer.preview import NativeRenderer, find_hmi_ui
+            binary = find_hmi_ui()
+        except Exception:      # noqa: BLE001 -- no renderer is worth the Designer
+            binary = None
+        if binary:
+            renderer = NativeRenderer(binary, parent=self)
+            self.preview_renderer_name = "hmi-ui"
+        else:
+            renderer = QmlPreviewRenderer(self.generator, self)
+            self.preview_renderer_name = "qml"
+        return renderer
+
+    def _sync_preview_background(self):
+        """The design's screen colour is what hmi-ui draws behind a widget;
+        the QML renderer draws on transparency and has no such setting. A
+        widget's cache key does not carry the background, so a change
+        drops the renders made over the old one."""
+        renderer = self.scene.qml_previews
+        if self.preview_renderer_name != "hmi-ui" or renderer is None:
+            return
+        if getattr(renderer, "background", None) != self.project.screen.background:
+            renderer.background = self.project.screen.background
+            renderer.clear()
 
     def apply_theme(self, theme: str) -> None:
         """Re-render Designer icons and chrome for the active theme.
@@ -1513,6 +1549,7 @@ class DesignerWorkspace(QWidget):
         self.current_page_index = min(self.current_page_index, len(self.project.pages)-1)
         self.pages.blockSignals(True); self.pages.clear(); self.pages.addItems([p.name for p in self.project.pages]); self.pages.setCurrentIndex(self.current_page_index); self.pages.blockSignals(False)
         self.actions.set_pages(self.project.pages)
+        self._sync_preview_background()
         self.scene.load_page(self.project, self.current_page); self._refresh_tree()
         # Loading a page clears the selection without emitting a selection
         # change, so the alignment buttons would stay enabled over an empty

@@ -55,6 +55,20 @@ def _stdlib_modules():
 # resolved relative to the spec, so they must be absolute.
 REPO_ROOT = os.path.abspath(os.path.join(SPECPATH, os.pardir))
 
+# The panel's own renderer, headless, so the Studio previews a design as
+# the glass draws it. It lands at _internal/hmi-ui/hmi-ui.exe, which is
+# where designer.preview.find_hmi_ui looks in a frozen Studio. A build
+# without it (native/hmi-ui/win64/build.sh not run) still ships: the Studio
+# then previews with Qt/QML, as it did before the port.
+binaries = []
+_hmi_ui = os.path.join(REPO_ROOT, "native", "hmi-ui", "out", "win64", "hmi-ui.exe")
+if os.path.isfile(_hmi_ui):
+    binaries.append((_hmi_ui, "hmi-ui"))
+else:
+    print(f"warning: {_hmi_ui} not found; the packaged Studio will preview with "
+          "Qt/QML instead of hmi-ui (build it with native/hmi-ui/win64/build.sh)",
+          file=sys.stderr)
+
 datas = [
     (os.path.join(REPO_ROOT, "tools", "hmi_deployer", "resources"),
      os.path.join("tools", "hmi_deployer", "resources")),
@@ -66,7 +80,7 @@ datas = [
 a = Analysis(
     [os.path.join(REPO_ROOT, "main.py")],
     pathex=[REPO_ROOT, os.path.join(REPO_ROOT, "gui")],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     # tagengine is reached through a sys.path insert at import time, and
     # schema.deps only through main.py's --deps-scan dispatch; neither is

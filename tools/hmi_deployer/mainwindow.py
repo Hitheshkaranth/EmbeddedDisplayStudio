@@ -1102,7 +1102,12 @@ class MainWindow(QMainWindow):
         # The bezel shows the screen; this runs it. Same generated QML, same
         # tag engine, in a window of its own at the panel's real size, so
         # the buttons and selectors can actually be operated.
-        self.btn_live_preview = QPushButton("Open Live Preview")
+        self.btn_live_preview = QPushButton("Open Live Preview (desktop QML)")
+        self.btn_live_preview.setToolTip(
+            "Runs the design's generated QML in a window on this desktop's Qt, "
+            "on the Studio's tag feed. The bezel and the Code section show what "
+            "the panel draws (hmi-ui)."
+        )
         self.btn_live_preview.setProperty("variant", "secondary")
         self._themed_icon(self.btn_live_preview, "eye")
         self.btn_live_preview.clicked.connect(self.open_live_preview)
