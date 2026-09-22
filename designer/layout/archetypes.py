@@ -576,11 +576,23 @@ def _take(by_role, role):
     return None
 
 
+# A control or a lamp made four times its design size is not a bolder
+# design, it is a mistake: a start button filling a foot slot reads as a
+# blue slab. Types the rules call not growable take their slot's position
+# but keep about their own size.
+_NON_GROWABLE_HEADROOM = 1.25
+
+
 def _place(registry, widget, cell, notes):
     """Size the widget to its type's rule inside the cell and centre it."""
+    box_w, box_h = cell.w, cell.h
+    definition = registry.get(widget.type) if registry is not None else None
     try:
         rule = _constraints.rule_for(registry, widget.type)
-        width, height = _constraints.fit_size(rule, cell.w, cell.h)
+        if not rule.growable and definition is not None:
+            box_w = min(box_w, int(round(definition.default_width * _NON_GROWABLE_HEADROOM)))
+            box_h = min(box_h, int(round(definition.default_height * _NON_GROWABLE_HEADROOM)))
+        width, height = _constraints.fit_size(rule, box_w, box_h)
     except NotImplementedError:  # pragma: no cover - until W1 lands
         width, height = cell.w, cell.h
     width, height = int(round(width)), int(round(height))
