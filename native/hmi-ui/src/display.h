@@ -8,9 +8,13 @@
 
 // /dev/dri/cardN via LVGL's DRM driver; the display's native mode.
 lv_display_t *hmi_display_drm(const char *device);
-// A w x h XRGB8888 buffer; nothing is shown anywhere.
+// A w x h ARGB8888 buffer; nothing is shown anywhere. The buffer starts
+// fully transparent, so a design whose screen background carries alpha
+// ("#00000000") renders its widgets over nothing -- the Studio composes
+// such renders on its canvas the way the panel composes widgets over the
+// page. Opaque backgrounds render exactly as on the panel.
 lv_display_t *hmi_display_headless(int w, int h);
-// Render everything pending and write the headless buffer as PNG.
+// Render everything pending and write the headless buffer as PNG, alpha included.
 bool hmi_display_headless_save(lv_display_t *disp, const char *path);
 // What is on screen right now, whatever the display: LVGL's snapshot of the
 // active screen, written as PNG. The panel's `kill -USR1 $(pidof hmi-ui)`

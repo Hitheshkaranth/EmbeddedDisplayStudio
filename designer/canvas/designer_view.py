@@ -48,6 +48,9 @@ class DesignerItem(QGraphicsRectItem):
                     ("" if self.widget_model.type == "Text" else properties.get("color")))
         if not explicit and self.widget_model.type == "Text":
             return QColor(Qt.transparent)
+        # An Image with a picture is just the picture on the panel: no box.
+        if not explicit and self.widget_model.type == "Image" and properties.get("source"):
+            return QColor(Qt.transparent)
         return QColor(explicit or "#27272a")
 
     def label_text(self):
@@ -541,7 +544,10 @@ class DesignerView(QGraphicsView):
         super().__init__(scene, parent)
         self._auto_fit = True
         self.setAcceptDrops(True)
-        self.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        # SmoothPixmapTransform: the renders come back at (or near) the canvas
+        # zoom and are drawn into scene rectangles; without it Qt resamples
+        # them nearest-neighbour and glyphs go jagged.
+        self.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing | QPainter.SmoothPixmapTransform)
         self.setDragMode(QGraphicsView.RubberBandDrag)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         # Repaint the union of what changed rather than each item's own claim.

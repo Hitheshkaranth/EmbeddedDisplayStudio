@@ -147,8 +147,9 @@ class NativeRenderer(QObject):
         enabled: False makes image_for return None without scheduling.
         available: True when a binary was found at construction.
         binary: the path used (or None).
-        background: the screen colour behind a widget render ('#rrggbb');
-            the workspace sets it to the design's screen background.
+        background: the design's screen background ('#rrggbb'), kept for
+            widgets that read it; widget renders themselves are made over a
+            transparent screen so the canvas can compose them.
         parallel: how many child processes may run at once (default 2).
         project_dir: the design's bundle directory, when known. Its assets/
             folder is placed beside the temporary project so widgets that
@@ -251,7 +252,11 @@ class NativeRenderer(QObject):
         still.bindings = {}
         still.actions = {}
         still.geometry = {"x": 0, "y": 0, "width": w, "height": h}
-        project = DesignerProject(name="preview", screen=DesignerScreen(w, h, self.background, theme),
+        # A transparent screen: the widget is drawn over nothing, so the
+        # canvas composes it over the page (and over its neighbours) exactly
+        # as the panel composes the page. `background` is only what a widget
+        # that itself asks for the page colour would see.
+        project = DesignerProject(name="preview", screen=DesignerScreen(w, h, "#00000000", theme),
                                   pages=[DesignerPage("main", "Main", widgets=[still])])
         return project.to_dict()
 

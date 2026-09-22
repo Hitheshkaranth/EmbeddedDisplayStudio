@@ -216,6 +216,9 @@ int main(int argc, char **argv)
 
     int status = 0;
     if (headless) {
+        // The page paints the design's background (alpha and all); the screen
+        // object beneath it must not add an opaque fill of its own.
+        lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_TRANSP, 0);
         status = hmi_display_headless_save(disp, headless) ? 0 : 1;
         hmi_log(HMI_LOG_INFO, "rendered %s", headless);
     } else {
