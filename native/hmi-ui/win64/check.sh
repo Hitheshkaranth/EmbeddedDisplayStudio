@@ -63,7 +63,8 @@ sys.exit(0 if ok else 1)
 PY
 
 echo "== 4. --display refused"
-if "$OUT/win64/hmi-ui.exe" --apps-dir "$WFIX" --display /dev/dri/card1 2>&1 | grep -qi "headless"; then
+refusal="$("$OUT/win64/hmi-ui.exe" --apps-dir "$WFIX" --display /dev/dri/card1 2>&1 || true)"
+if grep -qi "headless" <<<"$refusal"; then
     echo "ok: --display refused"
 else
     echo "FAIL: --display did not fail with a headless message"; exit 1

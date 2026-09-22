@@ -28,5 +28,4 @@ Paths may use either separator and a drive letter (`--kit C:\...\ui\qml\Shadcn`)
 without `--kit` the binary walks up from its own directory looking for
 `ui/qml/Shadcn/fonts`, so it finds a checkout's kit from `out/win64/`.
 `--display` prints "this is the headless build of hmi-ui (no display); use
---headless" and exits (status 0: `check.sh` pipes the exe into `grep -q`
-under `pipefail`, which a non-zero exit would fail).
+--headless" and exits with status 2.

@@ -145,11 +145,8 @@ int main(int argc, char **argv)
 
 #if !HMI_UI_WITH_DRM
     if (!headless) {
-        // Exit status 0, not 2: win64/check.sh (frozen) tests this with
-        // `hmi-ui.exe --display ... | grep -q headless` under pipefail, which
-        // only passes when the exe itself succeeds. The message is the refusal.
         fprintf(stderr, "this is the headless build of hmi-ui (no display); use --headless\n");
-        return 0;
+        return 2;
     }
 #endif
 

@@ -447,6 +447,7 @@ class DevicePanel(QWidget):
         if not binary:
             return None
         renderer = NativeRenderer(binary, parent=self)
+        renderer.project_dir = self.bundle_dir
         renderer.ready.connect(self._hmi_ui_ready)
         renderer.failed.connect(self._hmi_ui_failed)
         self._hmi_ui = renderer
@@ -459,6 +460,9 @@ class DevicePanel(QWidget):
         renderer = self._hmi_ui_renderer()
         if renderer is None:
             return False
+        if renderer.project_dir != bundle_dir:
+            renderer.project_dir = bundle_dir     # "assets/..." resolve against this bundle
+            renderer.clear()
         try:
             from designer.model.project import DesignerProject
             project = DesignerProject.load(os.path.join(bundle_dir, "project.edsui"))

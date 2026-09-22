@@ -85,6 +85,35 @@ def _bundle_dir() -> str | None:
     return getattr(sys, "_MEIPASS", None) if getattr(sys, "frozen", False) else None
 
 
+def _fast_kit(kit: str) -> str:
+    """The kit, or a local copy of its fonts/ and icons/ when it sits on a
+    slow mount. Under WSL the repository lives on /mnt/c (9P): reading the
+    fonts through it made one render take seconds instead of milliseconds.
+    The copy is refreshed when the kit's files are newer."""
+    if not kit.startswith("/mnt/") or not os.path.isdir(kit):
+        return kit
+    digest = hashlib.sha1(kit.encode("utf-8")).hexdigest()[:12]
+    cache = os.path.join(tempfile.gettempdir(), f"hmi-ui-kit-{digest}")
+    try:
+        newest = 0.0
+        for sub in ("fonts", "icons"):
+            folder = os.path.join(kit, sub)
+            if os.path.isdir(folder):
+                newest = max([newest] + [os.path.getmtime(os.path.join(folder, n)) for n in os.listdir(folder)])
+        stamp = os.path.join(cache, ".stamp")
+        if not os.path.isfile(stamp) or os.path.getmtime(stamp) < newest:
+            shutil.rmtree(cache, ignore_errors=True)
+            for sub in ("fonts", "icons"):
+                folder = os.path.join(kit, sub)
+                if os.path.isdir(folder):
+                    shutil.copytree(folder, os.path.join(cache, sub))
+            with open(stamp, "w", encoding="utf-8") as handle:
+                handle.write(kit)
+        return cache
+    except OSError:
+        return kit
+
+
 def _usable(path) -> bool:
     if not path or not os.path.isfile(path):
         return False
@@ -121,6 +150,10 @@ class NativeRenderer(QObject):
         background: the screen colour behind a widget render ('#rrggbb');
             the workspace sets it to the design's screen background.
         parallel: how many child processes may run at once (default 2).
+        project_dir: the design's bundle directory, when known. Its assets/
+            folder is placed beside the temporary project so widgets that
+            show project images ("assets/logo.png") render them instead of
+            the placeholder. None: no assets.
     """
 
     ready = Signal(str)
@@ -137,7 +170,8 @@ class NativeRenderer(QObject):
         self.enabled = True
         self.background = DesignerScreen().background
         self.parallel = 2
-        self._kit = kit_dir()
+        self.project_dir = None
+        self._kit = _fast_kit(kit_dir())
         self._cache = OrderedDict()   # key -> QImage (null = failed, do not re-ask)
         self._queue = OrderedDict()   # key -> _Job, front first
         self._running = {}            # key -> _Job
@@ -237,11 +271,19 @@ class NativeRenderer(QObject):
                 "--kit", os.path.normpath(self._kit),
                 "--theme", str(theme)]
 
-    @staticmethod
-    def _write_bundle(bundle):
+    def _write_bundle(self, bundle):
         tmp = tempfile.mkdtemp(prefix="hmi-ui-preview-")
         with open(os.path.join(tmp, "project.edsui"), "w", encoding="utf-8") as handle:
             json.dump(bundle, handle, ensure_ascii=False)
+        assets = os.path.join(self.project_dir, "assets") if self.project_dir else None
+        if assets and os.path.isdir(assets):
+            # A link where the platform allows one, a copy otherwise: the
+            # runtime resolves "assets/x.png" against its apps dir.
+            target = os.path.join(tmp, "assets")
+            try:
+                os.symlink(assets, target, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                shutil.copytree(assets, target, dirs_exist_ok=True)
         return tmp
 
     @staticmethod

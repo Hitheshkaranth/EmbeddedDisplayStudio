@@ -236,10 +236,10 @@ class NativeRendererBehaviourTests(unittest.TestCase):
         w = _gauge()
         key = preview_key(w, 180, 180, "dark", 1.0)
         r.image_for(w, 180, 180, "dark")
-        loop = QEventLoop()
-        QTimer.singleShot(50, loop.quit)
-        loop.exec()
-        self.assertIn(key, r._running)
+        # Let the child start (a render can finish in tens of milliseconds
+        # once the kit is local, so do not wait for it to be *running*).
+        self.app.processEvents()
+        self.assertTrue(key in r._running or key in r._queue or key in r._cache)
         r.clear()
         got = _wait_signal(r, key, timeout_ms=3000)
         self.assertEqual(got, [])

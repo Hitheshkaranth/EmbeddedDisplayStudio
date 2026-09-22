@@ -51,3 +51,5 @@ int hmi_udp_send(hmi_udp_t s, const char *host, unsigned short port, const void 
 // Returns bytes received, 0 when nothing is waiting (EAGAIN/EWOULDBLOCK), -1 on error.
 int hmi_udp_recv(hmi_udp_t s, void *buf, size_t n);
 void hmi_udp_close(hmi_udp_t s);
+// The port the socket is bound to (what the kernel chose for bind_port 0).
+unsigned short hmi_udp_bound_port(hmi_udp_t s);

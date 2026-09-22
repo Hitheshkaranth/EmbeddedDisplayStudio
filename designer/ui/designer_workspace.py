@@ -1305,6 +1305,10 @@ class DesignerWorkspace(QWidget):
     def set_bundle(self, bundle_dir, manifest=None):
         self.bundle_dir = os.path.abspath(bundle_dir) if bundle_dir else ""
         self.scene.project_dir = self.bundle_dir
+        if hasattr(self.scene.qml_previews, "project_dir"):
+            # The panel's renderer resolves "assets/..." against the bundle.
+            self.scene.qml_previews.project_dir = self.bundle_dir or None
+            self.scene.qml_previews.clear()
         self.bindings.set_tags((manifest or {}).get("tags_required", []))
         path = os.path.join(self.bundle_dir, "project.edsui") if self.bundle_dir else ""
         if path and os.path.isfile(path):

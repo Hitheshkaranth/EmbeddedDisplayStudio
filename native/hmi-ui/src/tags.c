@@ -13,10 +13,6 @@
 #include "log.h"
 #include "lvgl/lvgl.h"
 
-// compat.h's hmi_udp_open cannot report the port the kernel picked for
-// rx_port 0, which hmi_tags_rx_port promises; compat.c provides this extra.
-unsigned short hmi_udp_bound_port(hmi_udp_t s);
-
 #define MAX_DATAGRAM 8192
 #define SUBSCRIBE_MS 2000
 #define WATCHDOG_MS 2500

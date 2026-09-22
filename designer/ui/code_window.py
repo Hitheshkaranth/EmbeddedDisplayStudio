@@ -76,8 +76,9 @@ SCOPE_LABELS = ("Selected widget", "Whole screen")
 # above is the contract's order and the section identity, the combo is
 # presentation. The design is what the panel runs; QML is only what this
 # desktop's Qt preview runs.
-FORMAT_ORDER = ("qml", "edsui")
-FORMAT_LABELS_BY_FMT = {"edsui": "Design JSON", "qml": "QML (desktop preview)"}
+# What the panel runs comes first; the QML is the desktop's preview code.
+FORMAT_ORDER = ("edsui", "qml")
+FORMAT_LABELS_BY_FMT = {"edsui": "Design (.edsui)", "qml": "QML (desktop preview)"}
 FORMAT_LABELS = tuple(FORMAT_LABELS_BY_FMT[f] for f in FORMAT_ORDER)
 # What the section title's suffix says here, over the code model's own
 # wording, so the title and the Format combo tell the same story.
