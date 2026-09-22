@@ -184,6 +184,10 @@ class DesignerPage:
         return cls(str(data.get("id", "main")), str(data.get("name", "Main")),
                    [DesignerWidget.from_dict(item) for item in data.get("widgets", [])])
 
+    def to_dict(self) -> dict[str, Any]:
+        """The page as it sits inside the .edsui "pages" list."""
+        return {"id": self.id, "name": self.name, "widgets": [w.to_dict() for w in self.widgets]}
+
     def walk(self):
         for widget in self.widgets:
             yield from widget.walk()
@@ -235,8 +239,7 @@ class DesignerProject:
     def to_dict(self) -> dict[str, Any]:
         return {"version": self.version, "name": self.name,
                 "screen": asdict(self.screen),
-                "pages": [{"id": p.id, "name": p.name,
-                           "widgets": [w.to_dict() for w in p.widgets]} for p in self.pages]}
+                "pages": [p.to_dict() for p in self.pages]}
 
     @classmethod
     def load(cls, path: str) -> "DesignerProject":
