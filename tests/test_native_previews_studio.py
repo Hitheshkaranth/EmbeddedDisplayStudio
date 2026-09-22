@@ -212,14 +212,33 @@ class CodeSectionDetails(unittest.TestCase):
         self.window = self.workspace.open_code_window()
         self.addCleanup(self.window.close)
 
-    def test_only_the_design_is_offered_and_the_title_says_so(self):
+    def test_design_and_runtime_c_are_offered_never_qml(self):
         from designer.ui import code_window
-        self.assertEqual(code_window.FORMATS, ("edsui",))
-        self.assertFalse(hasattr(self.window, "_fmt_box"))
+        self.assertEqual(code_window.FORMATS, ("edsui", "c"))
+        self.assertEqual(self.window._fmt_box.count(), 2)
+        self.assertTrue(self.window._fmt_box.itemText(0).startswith("Design"))
+        self.assertIn("C", self.window._fmt_box.itemText(1))
         self.window.show_section("widget", "edsui")
         self.assertTrue(self.window._title.text().endswith("-- design (.edsui)"), self.window._title.text())
         with self.assertRaises(ValueError):
             self.window.show_section("page", "qml")
+
+    def test_runtime_c_follows_the_selected_widget(self):
+        ws = self.workspace
+        ws.add_widget("ShButton")
+        gauge, button = ws.current_page.widgets[-2], ws.current_page.widgets[-1]
+        ws.scene.clearSelection(); ws.scene.item_for_id(gauge.id).setSelected(True); self.app.processEvents()
+        self.window.show_section("widget", "c")
+        self.assertTrue(self.window.editor.isReadOnly())
+        self.assertIn("hmi_widget_shgauge", self.window.editor.code())
+        self.assertIn("w_shgauge.c", self.window._title.text())
+        ws.scene.clearSelection(); ws.scene.item_for_id(button.id).setSelected(True); self.app.processEvents()
+        self.assertIn("hmi_widget_shbutton", self.window.editor.code())
+        self.window.show_section("page", "c")
+        code = self.window.editor.code()
+        self.assertIn("// w_shgauge.c", code)
+        self.assertIn("// w_shbutton.c", code)
+        self.assertFalse(self.window.is_edited())
 
     def test_widget_scope_preview_is_hmi_ui_at_the_widget_size(self):
         widget = self.workspace.current_page.widgets[0]

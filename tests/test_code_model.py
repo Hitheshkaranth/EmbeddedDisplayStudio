@@ -357,5 +357,49 @@ class SectionDetailTests(unittest.TestCase):
             self.assertIn("    " + line if line else line, page_text.splitlines())
 
 
+# ---------------------------------------------------------------- runtime C
+from designer.code import c_source_name, hmi_ui_sources_dir, page_c, widget_c  # noqa: E402
+
+
+class RuntimeCTests(unittest.TestCase):
+    def setUp(self):
+        self.registry = default_registry()
+        self.generator = QmlGenerator(self.registry)
+        self.project, self.page, self.gauge, self.card = _project()
+
+    def test_widget_c_is_the_runtime_source(self):
+        self.assertEqual(c_source_name("ShGauge"), "w_shgauge.c")
+        text = widget_c("ShGauge")
+        self.assertIn("hmi_widget_shgauge", text)
+        self.assertIn("ShGauge", text)
+        with open(os.path.join(hmi_ui_sources_dir(), "w_shgauge.c"), encoding="utf-8") as handle:
+            self.assertEqual(text, handle.read())
+
+    def test_every_kit_type_has_a_source(self):
+        for definition in self.registry.definitions():
+            self.assertTrue(os.path.isfile(os.path.join(hmi_ui_sources_dir(), c_source_name(definition.type))),
+                            definition.type)
+
+    def test_unknown_type_is_a_comment(self):
+        self.assertTrue(widget_c("ShNope").startswith("// w_shnope.c: not found"))
+
+    def test_page_c_lists_each_type_once_in_order(self):
+        text = page_c(self.page)
+        self.assertLess(text.index("w_shgauge.c"), text.index("w_shcard.c"))
+        self.assertLess(text.index("w_shcard.c"), text.index("w_text.c"))
+        self.assertEqual(text.count("// w_shgauge.c"), 1)
+
+    def test_sections(self):
+        s = section_for(self.generator, self.registry, self.project, self.page, self.gauge, "widget", "c")
+        self.assertEqual((s.language, s.editable), ("c", False))
+        self.assertIn("w_shgauge.c", s.title)
+        self.assertEqual(s.text, widget_c("ShGauge"))
+        s = section_for(self.generator, self.registry, self.project, self.page, None, "page", "c")
+        self.assertEqual(s.text, page_c(self.page))
+        s = section_for(self.generator, self.registry, self.project, self.page, None, "widget", "c")
+        self.assertFalse(s.editable)
+        self.assertTrue(s.text.startswith("//"))
+
+
 if __name__ == "__main__":
     unittest.main()

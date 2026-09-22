@@ -27,7 +27,7 @@ except ImportError:                                     # Studio icons are a nic
     from PySide6.QtGui import QIcon
     def _tabler_icon(_name, _size=16, _color=None): return QIcon()
 
-LANGUAGES = ("qml", "json", "plain")
+LANGUAGES = ("qml", "json", "c", "plain")
 
 # Editor surfaces and token colours per Studio theme. The surface keys are
 # the editor's; the token keys (keyword ... property) are the highlighter
@@ -218,6 +218,33 @@ class QmlHighlighter(_RuleHighlighter):
         super().set_palette(palette)
 
 
+class CHighlighter(_RuleHighlighter):
+    """C11: keywords and types, preprocessor lines, strings/chars, numbers,
+    // and /* */ comments. The runtime's widget sources are what it colours."""
+
+    _KEYWORDS = (
+        "auto", "break", "case", "const", "continue", "default", "do", "else", "enum", "extern",
+        "for", "goto", "if", "inline", "register", "restrict", "return", "sizeof", "static",
+        "struct", "switch", "typedef", "union", "volatile", "while", "true", "false", "NULL",
+    )
+    _TYPES = (
+        "void", "char", "short", "int", "long", "float", "double", "signed", "unsigned", "bool",
+        "size_t", "ssize_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t",
+        "int32_t", "int64_t", "lv_obj_t", "lv_color_t", "lv_opa_t", "lv_event_t", "lv_area_t",
+        "lv_draw_rect_dsc_t", "lv_timer_t", "hmi_widget_t", "hmi_value_t", "hmi_draw_t",
+        "hmi_widget_ops_t", "state_t",
+    )
+    _rules = (
+        (r"^\s*#\s*\w+.*$", "comment"),
+        (r"\b(?:" + "|".join(_KEYWORDS) + r")\b", "keyword"),
+        (r"\b(?:" + "|".join(_TYPES) + r")\b", "type"),
+        (r"\b[A-Z][A-Z0-9_]{2,}\b", "property"),
+        (r"\b(?:0[xX][0-9A-Fa-f]+|\d+\.?\d*(?:[eE][+-]?\d+)?[fFuUlL]*)\b", "number"),
+    )
+    _comments = True
+    _quotes = "\"'"
+
+
 class JsonHighlighter(_RuleHighlighter):
     """Keys, strings, numbers, true/false/null. Same `set_palette` contract."""
 
@@ -363,7 +390,7 @@ class CodeEditor(QPlainTextEdit):
             self._highlighter.setDocument(None)
             self._highlighter.setParent(None)
             self._highlighter = None
-        cls = {"qml": QmlHighlighter, "json": JsonHighlighter}.get(language)
+        cls = {"qml": QmlHighlighter, "json": JsonHighlighter, "c": CHighlighter}.get(language)
         if cls is not None:
             self._highlighter = cls(self.document())
             self._highlighter.set_palette(self._palette)

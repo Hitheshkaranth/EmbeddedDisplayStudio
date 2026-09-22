@@ -9,16 +9,21 @@ section and lets the design JSON be edited and applied back.
 from .code_model import (
     CodeError,
     CodeSection,
+    c_source_name,
+    hmi_ui_sources_dir,
+    page_c,
     page_edsui,
     page_qml,
     parse_page_edsui,
     parse_widget_edsui,
     section_for,
+    widget_c,
     widget_edsui,
     widget_qml,
 )
 
 __all__ = [
-    "CodeError", "CodeSection", "page_edsui", "page_qml", "parse_page_edsui",
-    "parse_widget_edsui", "section_for", "widget_edsui", "widget_qml",
+    "CodeError", "CodeSection", "c_source_name", "hmi_ui_sources_dir", "page_c",
+    "page_edsui", "page_qml", "parse_page_edsui", "parse_widget_edsui", "section_for",
+    "widget_c", "widget_edsui", "widget_qml",
 ]

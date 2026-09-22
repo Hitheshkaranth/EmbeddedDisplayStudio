@@ -22,13 +22,58 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import sys
 from dataclasses import dataclass
 
 from designer.model import DesignerPage, DesignerProject, DesignerWidget
 from designer.model.project import ID_RE
 
 SCOPES = ("widget", "page")
-FORMATS = ("qml", "edsui")
+FORMATS = ("qml", "edsui", "c")
+
+# The runtime's widget sources: native/hmi-ui/src/widgets/w_<type>.c, one
+# file per kit type, the C that draws the widget on the panel. A frozen
+# Studio carries a copy of that directory (packaging/EmbeddedDisplayStudio.spec).
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def hmi_ui_sources_dir() -> str:
+    """The directory holding w_<type>.c (repository or frozen bundle)."""
+    base = getattr(sys, "_MEIPASS", None) if getattr(sys, "frozen", False) else _REPO_ROOT
+    return os.path.join(base, "native", "hmi-ui", "src", "widgets")
+
+
+def c_source_name(widget_type: str) -> str:
+    """The runtime source file for a kit type: ShGauge -> w_shgauge.c."""
+    return f"w_{widget_type.lower()}.c"
+
+
+def widget_c(widget_type: str) -> str:
+    """The C source that implements `widget_type` in hmi-ui, or a one-line
+    comment saying it was not found."""
+    path = os.path.join(hmi_ui_sources_dir(), c_source_name(widget_type))
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.read()
+    except OSError:
+        return f"// {c_source_name(widget_type)}: not found ({hmi_ui_sources_dir()})\n"
+
+
+def page_c(page: DesignerPage) -> str:
+    """The runtime sources of every widget type on `page`, each under a
+    banner naming its file, in first-use order."""
+    seen = []
+    for widget in page.walk():
+        if widget.type not in seen:
+            seen.append(widget.type)
+    if not seen:
+        return "// This page has no widgets yet\n"
+    parts = []
+    for widget_type in seen:
+        banner = f"// {'=' * 74}\n// {c_source_name(widget_type)}  ({widget_type})\n// {'=' * 74}\n"
+        parts.append(banner + widget_c(widget_type))
+    return "\n".join(parts)
 
 
 class CodeError(ValueError):
@@ -147,7 +192,15 @@ def section_for(generator, registry, project: DesignerProject, page: DesignerPag
         raise ValueError(f"unknown scope {scope!r}")
     if fmt not in FORMATS:
         raise ValueError(f"unknown format {fmt!r}")
-    language = "qml" if fmt == "qml" else "json"
+    language = {"qml": "qml", "edsui": "json", "c": "c"}[fmt]
+    if fmt == "c":
+        if scope == "page":
+            return CodeSection(scope, fmt, f'Page "{page.name}" -- runtime C (hmi-ui)', page_c(page), False, language)
+        if widget is None:
+            return CodeSection(scope, fmt, "No selection -- runtime C (hmi-ui)",
+                               "// Select a widget on the canvas to see the C that draws it\n", False, language)
+        return CodeSection(scope, fmt, f"{widget.id} ({widget.type}) -- runtime C: {c_source_name(widget.type)}",
+                           widget_c(widget.type), False, language)
     if scope == "page":
         if fmt == "qml":
             title, text = f'Page "{page.name}" -- generated QML', page_qml(generator, project, page)

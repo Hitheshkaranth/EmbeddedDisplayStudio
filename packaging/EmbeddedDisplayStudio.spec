@@ -75,6 +75,10 @@ datas = [
     (os.path.join(REPO_ROOT, "ui", "tokens.json"), "ui"),
     (os.path.join(REPO_ROOT, "ui", "icons"), os.path.join("ui", "icons")),
     (os.path.join(REPO_ROOT, "ui", "qml"), os.path.join("ui", "qml")),
+    # The runtime's widget sources: the Code section shows the C that draws
+    # each widget on the panel (designer/code/code_model.py widget_c).
+    (os.path.join(REPO_ROOT, "native", "hmi-ui", "src", "widgets"),
+     os.path.join("native", "hmi-ui", "src", "widgets")),
 ]
 
 a = Analysis(

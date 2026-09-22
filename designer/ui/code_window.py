@@ -73,15 +73,15 @@ SCOPES = ("widget", "page")
 # The Code section shows what the panel runs: the design itself. The QML the
 # generator writes is the desktop's own preview code and is not offered here
 # (designer.code still produces it for tools that want it).
-FORMATS = ("edsui",)
+FORMATS = ("edsui", "c")
 SCOPE_LABELS = ("Selected widget", "Whole screen")
 # The Format combo, top to bottom, mapped to FORMATS explicitly: the tuple
 # above is the contract's order and the section identity, the combo is
 # presentation. The design is what the panel runs; QML is only what this
 # desktop's Qt preview runs.
 # What the panel runs comes first; the QML is the desktop's preview code.
-FORMAT_ORDER = ("edsui",)
-FORMAT_LABELS_BY_FMT = {"edsui": "Design (.edsui)", "qml": "QML (desktop preview)"}
+FORMAT_ORDER = ("edsui", "c")
+FORMAT_LABELS_BY_FMT = {"edsui": "Design (.edsui)", "c": "Runtime C (hmi-ui)", "qml": "QML (desktop preview)"}
 FORMAT_LABELS = tuple(FORMAT_LABELS_BY_FMT[f] for f in FORMAT_ORDER)
 # What the section title's suffix says here, over the code model's own
 # wording, so the title and the Format combo tell the same story.
@@ -438,7 +438,10 @@ class CodeWindow(QMainWindow):
             return item
 
         self._scope_box = field("Scope", SCOPE_LABELS, 140, "What the code is of")
+        self._fmt_box = field("Format", FORMAT_LABELS, 150,
+                              "The design the panel runs (editable), or the C that draws it in hmi-ui (read-only)")
         self._scope_box.currentIndexChanged.connect(self._box_changed)
+        self._fmt_box.currentIndexChanged.connect(self._box_changed)
         bar.addSeparator()
         self._preview_action = action("Preview", self.set_preview_visible, "eye", checkable=True)
         spacer = QWidget()
@@ -484,10 +487,10 @@ class CodeWindow(QMainWindow):
     # ------------------------------------------------------------ slots
 
     def _box_changed(self, _index) -> None:
-        self.show_section(SCOPES[self._scope_box.currentIndex()], self._fmt)
+        self.show_section(SCOPES[self._scope_box.currentIndex()], FORMAT_ORDER[self._fmt_box.currentIndex()])
 
     def _sync_boxes(self) -> None:
-        for box, values, current in ((self._scope_box, SCOPES, self._scope),):
+        for box, values, current in ((self._scope_box, SCOPES, self._scope), (self._fmt_box, FORMAT_ORDER, self._fmt)):
             box.blockSignals(True)
             box.setCurrentIndex(values.index(current))
             box.blockSignals(False)
@@ -649,7 +652,9 @@ class CodeWindow(QMainWindow):
         return page.id or "page"
 
     def _save_as(self) -> None:
-        if self._fmt == "qml":
+        if self._fmt == "c":
+            extension, filters = "c", "C sources (*.c);;All files (*)"
+        elif self._fmt == "qml":
             extension, filters = "qml", "QML files (*.qml);;All files (*)"
         else:
             extension, filters = "json", "JSON files (*.json);;All files (*)"

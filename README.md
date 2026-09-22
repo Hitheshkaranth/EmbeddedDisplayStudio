@@ -1115,8 +1115,16 @@ selection as it changes, with an optional preview of that section rendered
 by `hmi-ui` beside the text. The design can be edited and applied back: an
 Apply replaces that widget or page in the model as one undo step, so `Ctrl+Z`
 in the Designer takes the whole edit back at once, and the section re-reads
-the model after every change on either side. No QML appears here: the QML
-the Studio generates is only its own desktop preview code.
+the model after every change on either side. The second format, **Runtime C
+(hmi-ui)**, shows the C that draws the selected widget on the panel —
+`native/hmi-ui/src/widgets/w_<type>.c`, read-only, the very file compiled into
+the runtime — or, for the whole screen, the source of every widget type the
+page uses. No QML appears here: the QML the Studio generates is only its own
+desktop preview code.
+
+<div align="center">
+<img src="docs/assets/screenshot-code-c.png" alt="The Code section in Runtime C format: w_shclustergauge.c, the C that draws the cluster gauge on the panel, beside its render" width="880" />
+</div>
 
 <div align="center">
 <img src="docs/assets/screenshot-code-widget.png" alt="The Code section in widget scope: the selected cluster gauge's design JSON beside its hmi-ui render" width="880" />
