@@ -297,6 +297,9 @@ class CodeWindow(QMainWindow):
         mono = '"Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace'
         for action, name in self._icon_names.items():
             action.setIcon(icon(name, 16, fg))
+        # The same chevron the Designer's combos use (a QSS image has to be a file).
+        from designer.ui.designer_workspace import _icon_file
+        arrow = _icon_file("chevron-down", 12, muted_fg)
         self.setStyleSheet(f"""
             QMainWindow#codeWindow {{ background: {bg}; }}
             QMainWindow#codeWindow QWidget {{ font-size: 12px; }}
@@ -328,9 +331,14 @@ class CodeWindow(QMainWindow):
             QWidget#barSpacer {{ background: transparent; }}
             QComboBox#barField {{
                 background: {raised}; color: {fg}; border: 1px solid {border}; border-radius: 6px;
-                padding: 0 8px; min-height: 24px; max-height: 26px;
+                padding: 0 30px 0 10px; min-height: 24px; max-height: 26px;
             }}
             QComboBox#barField:hover {{ border-color: {_rgba(primary, 0.55)}; }}
+            QComboBox#barField::drop-down {{
+                subcontrol-origin: padding; subcontrol-position: center right;
+                width: 26px; border: none; background: transparent;
+            }}
+            QComboBox#barField::down-arrow {{ image: url("{arrow}"); width: 12px; height: 12px; }}
             QComboBox#barField QAbstractItemView {{
                 background: {surface}; color: {fg}; border: 1px solid {border};
                 selection-background-color: {_rgba(primary, 0.18)}; selection-color: {fg};
@@ -349,7 +357,7 @@ class CodeWindow(QMainWindow):
         bar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         bar.setIconSize(QSize(16, 16))
         bar.setFixedHeight(40)
-        bar.layout().setSpacing(2)
+        bar.layout().setSpacing(4)
         bar.layout().setContentsMargins(0, 0, 0, 0)
         self.addToolBar(bar)
 
@@ -365,10 +373,19 @@ class CodeWindow(QMainWindow):
             box = QComboBox()
             box.setObjectName("barField")
             box.addItems(list(labels))
-            box.setFixedWidth(width)
+            # Wide enough for the longest entry plus the drop-down arrow under
+            # the Studio's stylesheet (a fixed width clipped "Selected widget"
+            # and hid the arrow once the app font applied); `width` is a floor.
+            longest = max(box.fontMetrics().horizontalAdvance(label) for label in labels)
+            box.setMinimumWidth(max(width, longest + 2 * 10 + 30))
+            box.setSizeAdjustPolicy(QComboBox.AdjustToContents)
             box.setFixedHeight(26)
             box.setToolTip(tooltip)
             bar.addWidget(box)
+            gap = QWidget()
+            gap.setObjectName("barSpacer")
+            gap.setFixedWidth(10)
+            bar.addWidget(gap)
             return box
 
         def action(text, slot, icon_name, checkable=False):
