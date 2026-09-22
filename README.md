@@ -1224,6 +1224,25 @@ or deploy it to a bench panel as a demonstrator. The full list of values is
 
 ### What changed recently
 
+**0.1.0**
+
+* The panel is Qt-free: `hmi-ui` (C11 + LVGL, DRM/KMS) is the platform GUI,
+  interpreting the design file directly with all 46 widget types, icons,
+  touch and the alarm engine. Bundles carry `runtime: edsui` and no
+  generated code; provisioning installs `hmi-ui`, converts a Qt panel in
+  place and can ship the interpreter (`--python`); the Yocto layer has no
+  Qt dependency. The Qt loaders remain in the repository as a legacy path.
+* The Studio previews with `hmi-ui` itself: the Designer canvas, the bezel
+  and the Code section are rendered by the panel's own renderer (a
+  headless Windows build travels inside the exe), so what the desktop
+  shows is what the glass draws. Only the Live Preview window is still
+  the desktop's Qt/QML.
+* The Code section, beside Designer and AI Design: the `.edsui` design of
+  the selected widget or the whole screen, following the selection, with
+  a preview; editable and applied back as one undo step.
+* `hmi-ui` hardening from review: bounded binding format text, bounded
+  UDP drain per poll.
+
 **0.0.9**
 
 * `sim.car.*` drive cycle and the `automotive_cluster_demo` preset: a cluster
