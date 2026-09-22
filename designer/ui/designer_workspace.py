@@ -509,6 +509,14 @@ class DesignerWorkspace(QWidget):
     previewRequested = Signal(str)
     deployRequested = Signal(str)
     message = Signal(str)
+    # FROZEN CONTRACT (Code window swarm, 2026-09-22; owner W4): emitted after
+    # any change to the design the Code window should re-read -- an undo
+    # stack index change, a page switch/add/delete, a bundle load, a
+    # replace_widget/replace_page. Never emitted for selection changes
+    # (those are scene.selectionIdsChanged).
+    designChanged = Signal()
+    # The current page's index changed (page switch/add/delete/load).
+    pageChanged = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -533,13 +541,29 @@ class DesignerWorkspace(QWidget):
         # Each command closes over a copy of the widgets it touched; a
         # long session would otherwise keep every edit's snapshot alive.
         self.undo_stack.setUndoLimit(UNDO_LIMIT)
+        # Every undoable edit moves the stack index, after the command's redo
+        # has already touched the model, so this is the one place that sees
+        # them all. Connected before the first _load_page so nothing is
+        # missed. Loads and page operations do not push commands and emit
+        # for themselves.
+        self.undo_stack.indexChanged.connect(self._announce_design_change)
         self.clipboard = []
+        # The Code window is built on first use and kept: it is a second
+        # top-level window the author positions once and reopens.
+        self._code_window = None
         self._designer_icon_names = {}
         self._build_ui(); self._shortcuts(); self._load_page()
 
     @property
     def current_page(self):
         return self.project.pages[self.current_page_index]
+
+    def _announce_design_change(self, _index=0):
+        # The stack outlives the workspace on teardown and keeps emitting (see
+        # _pin in _build_ui); a signal on a deleted widget raises from inside
+        # Qt's delivery.
+        if shiboken6.isValid(self):
+            self.designChanged.emit()
 
     def _build_ui(self):
         self.setObjectName("designerWorkspace")
@@ -662,6 +686,10 @@ class DesignerWorkspace(QWidget):
         # Push the actions that leave the Studio to the right, where they read
         # as the end of the workflow rather than one more editing button.
         spacer(primary)
+        # The shortcut lives in _shortcuts with the other workspace keys, so
+        # the tooltip carries it by hand rather than through the helper.
+        self.code_action = action(primary, "Code", self.open_code_window, "terminal-2")
+        self.code_action.setToolTip("Show the QML and design JSON of the selection  Ctrl+Shift+K")
         action(primary, "Preview", self.preview, "eye")
         action(primary, "Generate", self.generate, "file-code")
         self.deploy_button = QPushButton("Deploy")
@@ -888,6 +916,8 @@ class DesignerWorkspace(QWidget):
         widget_previews.set_theme_mode(theme)
         self.palette.apply_theme(theme)
         self.scene.set_theme(theme)
+        if self._code_window is not None:
+            self._code_window.apply_theme(theme)
         t = lambda name: color(name, theme)
         bg, card, border = t("background"), t("card"), t("border")
         fg, muted_fg = t("foreground"), t("mutedForeground")
@@ -1210,6 +1240,7 @@ class DesignerWorkspace(QWidget):
 
     def _shortcuts(self):
         for key, callback in (("Ctrl+Shift+Z", self.undo_stack.redo), ("Ctrl+A", self.select_all),
+                              ("Ctrl+Shift+K", self.open_code_window),
                               ("Left", lambda: self.nudge(-1, 0)), ("Right", lambda: self.nudge(1, 0)),
                               ("Up", lambda: self.nudge(0, -1)), ("Down", lambda: self.nudge(0, 1)),
                               ("Shift+Left", lambda: self.nudge(-10, 0)), ("Shift+Right", lambda: self.nudge(10, 0)),
@@ -1244,6 +1275,9 @@ class DesignerWorkspace(QWidget):
             self.project = DesignerProject(name=self._bundle_project_name(manifest)); self.project.screen.width = int(screen.get("width", 1280)); self.project.screen.height = int(screen.get("height", 800))
             self.project.screen.theme = theme_of(manifest or {})
             self.file_path = path; self.current_page_index = 0; self.undo_stack.clear(); self._load_page()
+            # clear() is silent on an empty stack, so a fresh project would
+            # otherwise never reach the Code window.
+            self.designChanged.emit()
             self._retarget_to_connected_display()
 
     def new_ui(self):
@@ -1267,6 +1301,7 @@ class DesignerWorkspace(QWidget):
         self.project = DesignerProject(name=name); self.project.screen.width = width; self.project.screen.height = height
         self.file_path = os.path.join(self.bundle_dir, "project.edsui") if self.bundle_dir else ""
         self.current_page_index = 0; self.undo_stack.clear(); self._load_page()
+        self.designChanged.emit()
 
     def open_ui(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open visual UI", self.bundle_dir, "Embedded Display UI (*.edsui)")
@@ -1277,6 +1312,7 @@ class DesignerWorkspace(QWidget):
             self.project = DesignerProject.load(path); self.file_path = os.path.abspath(path); self.bundle_dir = os.path.dirname(self.file_path)
             self.scene.project_dir = self.bundle_dir
             self.current_page_index = 0; self.undo_stack.clear(); self._load_page(); self.message.emit(f"Opened {path}")
+            self.designChanged.emit()
             self._retarget_to_connected_display()
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             QMessageBox.critical(self, "Could not open UI", str(exc))
@@ -1489,6 +1525,7 @@ class DesignerWorkspace(QWidget):
         for widget_id in select or []:
             item = self.scene.item_for_id(widget_id)
             if item: item.setSelected(True)
+        self.pageChanged.emit(self.current_page_index)
 
     def _refresh_tree(self):
         self.tree.blockSignals(True); self.tree.clear(); root = QTreeWidgetItem([self.current_page.name]); root.setData(0, Qt.UserRole, "")
@@ -1523,27 +1560,32 @@ class DesignerWorkspace(QWidget):
             if model: self.scene.clearSelection(); canvas_item = self.scene.item_for_id(old); canvas_item.setSelected(True); self._property_command("id", new)
     def _find(self, widget_id): return next((w for w in self.project.all_widgets() if w.id == widget_id), None)
 
+    # Page operations and nudging edit the model without an undo command, so
+    # the stack never announces them; they tell the Code window themselves.
     def change_page(self, index):
-        if index >= 0: self.current_page_index = index; self._load_page()
+        if index >= 0: self.current_page_index = index; self._load_page(); self.designChanged.emit()
     def new_page(self):
         number = len(self.project.pages)+1; page = DesignerPage(self.project.unique_id(f"page{number}"), f"Page {number}")
         self.project.pages.append(page); self.current_page_index = len(self.project.pages)-1; self._load_page()
+        self.designChanged.emit()
     def duplicate_page(self):
         source = self.current_page; number = len(self.project.pages) + 1
         page = copy.deepcopy(source); page.id = self.project.unique_id(f"page{number}"); page.name = f"{source.name} Copy"
         for widget in page.walk(): widget.id = self.project.unique_id(widget.id)
         self.project.pages.append(page); self.current_page_index = len(self.project.pages)-1; self._load_page()
+        self.designChanged.emit()
     def delete_page(self):
         if len(self.project.pages) == 1:
             QMessageBox.information(self, "Page required", "A design must contain at least one page."); return
         del self.project.pages[self.current_page_index]; self.current_page_index = min(self.current_page_index, len(self.project.pages)-1); self._load_page()
+        self.designChanged.emit()
     def select_all(self):
         for item in self.scene.items():
             if hasattr(item, "widget_model"): item.setSelected(True)
     def nudge(self, dx, dy):
         models = self.scene.selected_models()
         for model in models: model.geometry["x"] += dx; model.geometry["y"] += dy
-        if models: self._load_page(select=[m.id for m in models])
+        if models: self._load_page(select=[m.id for m in models]); self.designChanged.emit()
     def _screen_changed(self):
         if not hasattr(self, "scene"): return
         self.project.screen.width = self.screen_width.value(); self.project.screen.height = self.screen_height.value()
@@ -1605,6 +1647,11 @@ class DesignerWorkspace(QWidget):
 
     def _project_name_edited(self):
         name = self.project_name.text().strip()
+        # editingFinished also fires when the field merely loses focus (another
+        # window opening, say); an untouched empty name on an unnamed design is
+        # not an edit and must not raise the warning.
+        if not name and not self.project.name:
+            return
         if NAME_RE.fullmatch(name):
             self.project.name = name
             self.project_name.setText(name)
@@ -1804,6 +1851,96 @@ class DesignerWorkspace(QWidget):
             self.message.emit(f"Generated {len(paths)} QML page(s) in {output_dir}"); return paths
         except (OSError, QmlGenerationError, ValueError) as exc:
             QMessageBox.critical(self, "Generation failed", str(exc)); return []
+    # -- Code window (FROZEN CONTRACT, Code window swarm 2026-09-22; owner W4) --
+    def open_code_window(self):
+        """Shows the Code window (designer/ui/code_window.py), creating the
+        single instance on first use and raising it after; returns it. The
+        window follows this workspace's selection, design changes and theme."""
+        if self._code_window is None:
+            # Imported here, not at the top: the window pulls in the code
+            # model and editor, which the Designer never needs until asked.
+            from designer.ui.code_window import CodeWindow
+            self._code_window = CodeWindow(self)
+        window = self._code_window
+        # The Studio themes the workspace before showing it; a window opened
+        # later has to catch up on its own, and before the first paint.
+        window.apply_theme(getattr(self, "theme", "dark"))
+        window.show(); window.raise_(); window.activateWindow()
+        return window
+
+    def selected_widget(self):
+        """The one selected widget model, or None (multi/none selected)."""
+        models = self.scene.selected_models()
+        return models[0] if len(models) == 1 else None
+
+    def _slot_of(self, widget_id):
+        """The list on the current page holding this widget, and its index
+        there; (None, -1) when the page has no such widget.
+
+        parent_id_of/siblings_of answer for containers the registry knows;
+        this walks every child list so the swap lands in the list the widget
+        is actually in, whatever its parent's definition says.
+        """
+        for siblings in [self.current_page.widgets] + [w.children for w in self.current_page.walk()]:
+            for index, model in enumerate(siblings):
+                if model.id == widget_id:
+                    return siblings, index
+        return None, -1
+
+    def replace_widget(self, widget_id, new_widget):
+        """Swaps the widget with id `widget_id` (anywhere on the current
+        page) for `new_widget` (a DesignerWidget, children included) as one
+        undoable command titled 'Edit <id> code'; reloads the canvas, keeps
+        the new widget selected, emits designChanged. Returns False (and
+        does nothing) when no such widget is on the current page."""
+        siblings, index = self._slot_of(widget_id)
+        if siblings is None:
+            return False
+        outgoing = siblings[index]
+        # The caller (the Code window) may keep editing its object; the
+        # command owns its own copy, like every other snapshot on the stack.
+        incoming = copy.deepcopy(new_widget)
+
+        def swap(old, new):
+            # Located by identity: after the swap `old` and `new` can compare
+            # equal, and the stack's ordering keeps the slot stable anyway.
+            position = next((i for i, m in enumerate(siblings) if m is old), None)
+            if position is None:
+                siblings.insert(min(index, len(siblings)), new)
+            else:
+                siblings[position] = new
+            self._load_page(select=[new.id])
+            self.designChanged.emit()
+
+        self.undo_stack.push(CallbackCommand(
+            f"Edit {widget_id} code", lambda: swap(outgoing, incoming), lambda: swap(incoming, outgoing)))
+        return True
+
+    def replace_page(self, index, new_page):
+        """Swaps `project.pages[index]` for `new_page` (a DesignerPage) as one
+        undoable command titled 'Edit page code'; reloads the canvas when it
+        is the current page, emits designChanged. False when index is out
+        of range."""
+        pages = self.project.pages
+        if not 0 <= index < len(pages):
+            return False
+        outgoing, incoming = pages[index], copy.deepcopy(new_page)
+
+        def swap(page):
+            pages[index] = page
+            if index == self.current_page_index:
+                self._load_page()
+            else:
+                # Only _load_page rebuilds the page combo; a page edited
+                # off-screen still has to show its (possibly new) name.
+                self.pages.setItemText(index, page.name)
+                self.actions.set_pages(pages)
+            self.designChanged.emit()
+
+        self.undo_stack.push(CallbackCommand(
+            "Edit page code", lambda: swap(incoming), lambda: swap(outgoing)))
+        return True
+
     def preview(self):
         """Generate and ask the Studio to reload; False when nothing was generated."""
         if not self.generate(): return False
