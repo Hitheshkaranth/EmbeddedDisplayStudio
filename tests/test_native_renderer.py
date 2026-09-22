@@ -120,5 +120,143 @@ class NativeRendererTests(unittest.TestCase):
         self.assertIsNone(r.render_page_sync(DesignerProject(), DesignerProject().pages[0], "dark"))
 
 
+# ---------------------------------------------------------------- W2 additions
+
+def _wait_signal(renderer, key, timeout_ms=15000):
+    """Both outcomes for a key: ('ready',) or ('failed', message)."""
+    loop = QEventLoop()
+    got = []
+    renderer.ready.connect(lambda k: (got.append(("ready",)), loop.quit()) if k == key else None)
+    renderer.failed.connect(lambda k, m: (got.append(("failed", m)), loop.quit()) if k == key else None)
+    QTimer.singleShot(timeout_ms, loop.quit)
+    loop.exec()
+    return got
+
+
+@unittest.skipUnless(BIN.exists(), "needs the Linux hmi-ui binary (native/hmi-ui/build.sh)")
+class NativeRendererBehaviourTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication(sys.argv)
+
+    def test_failed_render_emits_failed_and_caches_null(self):
+        # A binary that exists, runs and exits non-zero without a PNG.
+        false = "/bin/false" if os.path.isfile("/bin/false") else "/usr/bin/false"
+        r = NativeRenderer(binary=false)
+        self.assertTrue(r.available)
+        w = _gauge()
+        key = preview_key(w, 180, 180, "dark", 1.0)
+        self.assertIsNone(r.image_for(w, 180, 180, "dark"))
+        got = _wait_signal(r, key)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0][0], "failed")
+        self.assertIn("exited with 1", got[0][1])
+        # The failure is remembered: the caller gets a null image and nothing
+        # is queued again on the next repaint.
+        image = r.image_for(w, 180, 180, "dark")
+        self.assertIsInstance(image, QImage)
+        self.assertTrue(image.isNull())
+        self.assertEqual(len(r._queue), 0)
+        self.assertEqual(len(r._running), 0)
+        self.assertIsNone(r.render_widget_sync(w, 180, 180, "dark"))
+        r.shutdown()
+
+    def test_queue_coalesces_duplicate_keys(self):
+        r = NativeRenderer()
+        r.parallel = 1
+        w = _gauge()
+        others = [DesignerWidget(type="ShGauge", id=f"g{i}", geometry={"x": 0, "y": 0, "width": 120, "height": 120},
+                                 properties={"label": f"G{i}", "value": i}) for i in range(4)]
+        key = preview_key(w, 180, 180, "dark", 1.0)
+        # One render takes the only slot; the rest wait in the queue.
+        r.image_for(others[0], 120, 120, "dark")
+        for other in others[1:]:
+            r.image_for(other, 120, 120, "dark")
+        r.image_for(w, 180, 180, "dark")
+        r.image_for(w, 180, 180, "dark")
+        r.image_for(w, 180, 180, "dark")
+        # Nothing has started yet (the pump waits for the event loop): five
+        # distinct keys are queued, the repeated one once and at the front.
+        self.assertEqual(list(r._queue).count(key), 1)
+        self.assertEqual(next(iter(r._queue)), key)
+        self.assertEqual(len(r._queue), 5)
+        # Then everything lands exactly once.
+        seen = []
+        loop = QEventLoop()
+        r.ready.connect(lambda k: (seen.append(k), loop.quit() if len(seen) == 5 else None))
+        QTimer.singleShot(30000, loop.quit)
+        loop.exec()
+        self.assertEqual(len(seen), 5)
+        self.assertEqual(seen.count(key), 1)
+        self.assertEqual(len(r._running), 0)
+        r.shutdown()
+
+    def test_shutdown_kills_running_processes(self):
+        r = NativeRenderer()
+        r.parallel = 2
+        widgets = [DesignerWidget(type="ShGauge", id=f"k{i}", geometry={"x": 0, "y": 0, "width": 200, "height": 200},
+                                  properties={"label": f"K{i}", "value": i}) for i in range(6)]
+        for w in widgets:
+            r.image_for(w, 200, 200, "dark")
+        # Let the pump start the first processes.
+        loop = QEventLoop()
+        QTimer.singleShot(50, loop.quit)
+        loop.exec()
+        self.assertGreater(len(r._running), 0)
+        tmp_dirs = [job.tmp for job in r._running.values()]
+        landed = []
+        r.ready.connect(landed.append)
+        r.failed.connect(lambda k, m: landed.append(k))
+        r.shutdown()
+        self.assertEqual(len(r._running), 0)
+        self.assertEqual(len(r._queue), 0)
+        for tmp in tmp_dirs:
+            self.assertFalse(os.path.exists(tmp))
+        # Killed renders are discarded, not reported.
+        QTimer.singleShot(300, loop.quit)
+        loop.exec()
+        self.assertEqual(landed, [])
+        # The renderer is still usable after a shutdown.
+        self.assertIsInstance(r.render_widget_sync(widgets[0], 200, 200, "dark"), QImage)
+        r.shutdown()
+
+    def test_theme_light_renders_differently(self):
+        r = NativeRenderer()
+        w = _gauge()
+        dark = r.render_widget_sync(w, 180, 180, "dark")
+        light = r.render_widget_sync(w, 180, 180, "light")
+        self.assertIsInstance(dark, QImage)
+        self.assertIsInstance(light, QImage)
+        self.assertNotEqual(preview_key(w, 180, 180, "dark"), preview_key(w, 180, 180, "light"))
+        self.assertNotEqual(dark, light)
+        r.shutdown()
+
+    def test_clear_discards_running_renders(self):
+        r = NativeRenderer()
+        w = _gauge()
+        key = preview_key(w, 180, 180, "dark", 1.0)
+        r.image_for(w, 180, 180, "dark")
+        loop = QEventLoop()
+        QTimer.singleShot(50, loop.quit)
+        loop.exec()
+        self.assertIn(key, r._running)
+        r.clear()
+        got = _wait_signal(r, key, timeout_ms=3000)
+        self.assertEqual(got, [])
+        self.assertEqual(len(r._running), 0)
+        self.assertIsNone(r.image_for(w, 180, 180, "dark"))
+        self.assertEqual(_wait_signal(r, key), [("ready",)])
+        r.shutdown()
+
+    def test_page_key_is_stable_and_scale_aware(self):
+        project = DesignerProject(name="demo", pages=[DesignerPage("main", "Main", widgets=[_gauge()])])
+        page = project.pages[0]
+        self.assertEqual(page_key(project, page, "dark"), page_key(project, page, "dark", 1.0))
+        self.assertNotEqual(page_key(project, page, "dark"), page_key(project, page, "dark", 0.5))
+        self.assertNotEqual(page_key(project, page, "dark"), page_key(project, page, "light"))
+        project.screen.background = "#000000"
+        self.assertNotEqual(page_key(project, page, "dark"), page_key(DesignerProject(name="demo", pages=[page]), page, "dark"))
+
+
 if __name__ == "__main__":
     unittest.main()
