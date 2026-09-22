@@ -417,18 +417,16 @@ static void apply_tag_value(hmi_widget_t *widget, void *user)
             } else {
                 snprintf(formatted, sizeof formatted, "%g", display);
             }
+            // The format string comes from the design file and has no length
+            // limit; build the text with bounded writes (a too-long format
+            // is truncated, never overflowed).
             char result[512] = "";
             const char *fmt = bd->format;
             const char *pct = strstr(fmt, "%1");
             if (pct) {
-                size_t before = (size_t)(pct - fmt);
-                if (before > sizeof(result) - 1) before = sizeof(result) - 1;
-                strncpy(result, fmt, before);
-                result[before] = '\0';
-                strcat(result, formatted);
-                strcat(result, pct + 2);
+                snprintf(result, sizeof result, "%.*s%s%s", (int)(pct - fmt), fmt, formatted, pct + 2);
             } else {
-                strncpy(result, fmt, sizeof(result) - 1);
+                snprintf(result, sizeof result, "%s", fmt);
             }
             hmi_value_t fv = hmi_value_str(result);
             b->apply(w2, bd->prop, &fv, b->user);

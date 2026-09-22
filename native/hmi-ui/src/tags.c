@@ -155,7 +155,9 @@ static void handle_ack(hmi_tags_t *t, const cJSON *obj)
 static void drain(hmi_tags_t *t)
 {
     static char buf[MAX_DATAGRAM + 1024];
-    for (;;) {
+    // Bounded so a flooding sender cannot starve the LVGL loop: whatever is
+    // left waits for the next poll (a few ms away).
+    for (int i = 0; i < 64; ++i) {
         ssize_t n = recvfrom(t->fd, buf, sizeof buf, 0, NULL, NULL);
         if (n < 0) {
             if (errno != EAGAIN && errno != EWOULDBLOCK)

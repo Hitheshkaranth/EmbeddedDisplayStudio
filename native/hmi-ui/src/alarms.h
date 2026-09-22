@@ -65,7 +65,9 @@ const char *hmi_alarms_tag(const hmi_alarms_t *a, size_t i);
 // fires the callback) when the active set changed.
 bool hmi_alarms_evaluate(hmi_alarms_t *a, const char *const *tags, const hmi_value_t *values, size_t n);
 
-// Sorted active alarms; the array is valid until the next evaluate/acknowledge.
+// Sorted active alarms; the array is valid until the next evaluate/acknowledge
+// and is owned by the engine: do not free it or the hmi_value_t values inside
+// (they are borrowed). For a copy to keep, use hmi_alarms_active_value().
 const hmi_alarm_t *hmi_alarms_active(const hmi_alarms_t *a, size_t *count);
 // The same as the HMI_V_LIST ShAlarmTable is bound to (caller frees).
 hmi_value_t hmi_alarms_active_value(const hmi_alarms_t *a);
