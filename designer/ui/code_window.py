@@ -275,6 +275,22 @@ class CodeWindow(QMainWindow):
         self._say("Applied")
         return True
 
+    # -- FROZEN CONTRACT additions (native previews swarm, 2026-09-22; owner W3) --
+    def format_label(self, fmt: str) -> str:
+        """The Format combo's label for 'edsui' / 'qml'. The design is what the
+        panel runs and comes first ("Design (.edsui)"); QML is labelled as the
+        desktop's preview code ("QML (desktop preview)")."""
+        raise NotImplementedError
+
+    def preview_image(self):
+        """The QImage currently shown in the preview pane, or None."""
+        raise NotImplementedError
+
+    def preview_renderer_name(self) -> str:
+        """'hmi-ui' when the preview pane is drawn by the panel's renderer
+        (designer.preview.NativeRenderer), 'qml' when by the Qt fallback."""
+        raise NotImplementedError
+
     def status_text(self) -> str:
         """What the status line says (tests read it)."""
         return self.statusBar().currentMessage()

@@ -848,6 +848,12 @@ class DesignerWorkspace(QWidget):
 
         # -- centre: the canvas ------------------------------------------------
         self.scene = DesignerScene(self.registry); self.view = DesignerView(self.scene); self.view.setObjectName("designerCanvas")
+        # FROZEN CONTRACT (native previews swarm, 2026-09-22; owner W3): the
+        # scene's renderer is designer.preview.NativeRenderer (the panel's own
+        # hmi-ui, headless) when designer.preview.find_hmi_ui() finds a binary,
+        # else this Qt/QML fallback; `preview_renderer_name` says which
+        # ("hmi-ui" / "qml"). Its `background` follows the design's screen.
+        self.preview_renderer_name = "qml"
         self.scene.qml_previews = QmlPreviewRenderer(self.generator, self)
         self.scene.qml_previews.ready.connect(lambda _key: self.scene.update())
         self.view.setFrameShape(QFrame.NoFrame)

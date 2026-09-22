@@ -609,6 +609,20 @@ class DevicePanel(QWidget):
         self.native_preview.stop()
         self._qml_capture_timer.stop()
 
+    # -- FROZEN CONTRACT (native previews swarm, 2026-09-22; owner W3) --------
+    def preview_mode(self) -> str:
+        """What the bezel is showing for the loaded bundle: 'hmi-ui' when it is
+        a still of the page rendered by the panel's own renderer
+        (designer.preview.NativeRenderer; every `edsui` bundle when the
+        binary is available), 'qml' for the Qt Quick preview, 'python' for
+        the child-process preview of a Qt Widgets app, '' when nothing is
+        loaded."""
+        raise NotImplementedError
+
+    def preview_image(self):
+        """The QImage shown in mode 'hmi-ui', else None."""
+        raise NotImplementedError
+
     def suspend_preview(self) -> None:
         """Unload all preview renderers while the Designer tab is active."""
         self.stop_preview()

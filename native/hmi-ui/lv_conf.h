@@ -1237,7 +1237,12 @@
 #endif
 
 /** Driver for /dev/dri/card */
-#define LV_USE_LINUX_DRM 1
+/* The panel build has DRM/KMS and evdev; the Studio's headless preview build
+ * (HMI_UI_WITH_DRM=0 from CMake) has neither and renders to PNG only. */
+#ifndef HMI_UI_WITH_DRM
+#define HMI_UI_WITH_DRM 1
+#endif
+#define LV_USE_LINUX_DRM HMI_UI_WITH_DRM
 
 #if LV_USE_LINUX_DRM
 
@@ -1252,7 +1257,7 @@
 #define LV_USE_TFT_ESPI         0
 
 /** Driver for evdev input devices */
-#define LV_USE_EVDEV 1
+#define LV_USE_EVDEV HMI_UI_WITH_DRM
 
 /** Driver for libinput input devices */
 #define LV_USE_LIBINPUT    0
