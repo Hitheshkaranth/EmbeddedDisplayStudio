@@ -771,6 +771,9 @@ class DesignerWorkspace(QWidget):
             item.setCheckable(True)
             self._text_align_actions[value] = item
         canvas_bar.addSeparator()
+        # Align tidies a selection; this tidies the page, with the same
+        # composition pass the AI tab runs on everything a model sends.
+        action(canvas_bar, "Tidy up", self.tidy_up, "layout-grid", compact=True)
         action(canvas_bar, "Bring to Front", lambda: self.z_order("front"), "arrow-bar-to-up", compact=True)
         action(canvas_bar, "Send to Back", lambda: self.z_order("back"), "arrow-bar-to-down", compact=True)
         spacer(canvas_bar)
@@ -1791,6 +1794,43 @@ class DesignerWorkspace(QWidget):
             self._load_page(select=ids)
 
         self.undo_stack.push(CallbackCommand(f"Align {mode}", redo, undo))
+
+    def tidy_up(self):
+        """Compose the current page: the layout pipeline, one undo step.
+
+        The same pass the AI tab runs on a generated section -- an archetype,
+        the grid, the type's own proportions and the style pass -- applied to
+        whatever is on the canvas now. One CallbackCommand, so Ctrl+Z puts the
+        page back exactly as it was drawn.
+        """
+        page = self.current_page
+        if not page.widgets:
+            self.message.emit("Nothing to tidy up on this page")
+            return
+        before = copy.deepcopy(page.widgets)
+        try:
+            from designer.layout.polish import polish
+            report = polish(self.project, page, self.registry, brief=self.project.name)
+        except Exception as exc:
+            # Never leave half a composition on the canvas.
+            page.widgets[:] = before
+            self._load_page()
+            self.message.emit(f"Could not tidy up: {exc}")
+            return
+        after = copy.deepcopy(page.widgets)
+        if [w.to_dict() for w in after] == [w.to_dict() for w in before]:
+            self.message.emit("Already composed: nothing to tidy up")
+            return
+
+        def apply(widgets):
+            page.widgets[:] = copy.deepcopy(widgets)
+            self._load_page()
+            self.designChanged.emit()
+
+        self.undo_stack.push(CallbackCommand("Tidy up", lambda: apply(after), lambda: apply(before)))
+        self.message.emit(f"Tidy up: {report.archetype or 'composed'}, "
+                          f"{report.before.score:.0f} → {report.after.score:.0f}")
+
     def z_order(self, mode):
         """Raise or lower the selection, undoably."""
         models = self.scene.selected_models()
