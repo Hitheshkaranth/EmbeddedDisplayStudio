@@ -153,7 +153,14 @@ hmi_project_t *hmi_project_load(const char *path, char *err, size_t errlen)
     const char *bslash = strrchr(path, '\\');
     if (bslash && (!slash || bslash > slash)) slash = bslash;
 #endif
-    p->dir = slash ? strndup(path, (size_t)(slash - path)) : dupstr(".");
+    if (slash) {   // strndup is POSIX; mingw-w64 has none
+        size_t n = (size_t)(slash - path);
+        p->dir = malloc(n + 1);
+        memcpy(p->dir, path, n);
+        p->dir[n] = '\0';
+    } else {
+        p->dir = dupstr(".");
+    }
 
     const cJSON *pages = cJSON_GetObjectItemCaseSensitive(root, "pages");
     if (cJSON_IsArray(pages)) {

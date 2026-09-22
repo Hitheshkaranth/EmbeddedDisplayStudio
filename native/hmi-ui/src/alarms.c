@@ -13,6 +13,7 @@
 #include <time.h>
 
 #include "cJSON.h"
+#include "compat.h"
 
 typedef struct {
     char op[4];
@@ -181,11 +182,7 @@ static const char *now_text(hmi_alarms_t *a, char *buf, size_t len)
     if (a->clock) return a->clock(a->clock_user);
     time_t t = time(NULL);
     struct tm tm;
-#ifdef _WIN32
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
+    hmi_localtime(t, &tm);
     strftime(buf, len, "%Y-%m-%dT%H:%M:%S", &tm);
     return buf;
 }

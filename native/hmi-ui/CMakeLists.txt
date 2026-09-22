@@ -52,6 +52,7 @@ target_include_directories(cjson PUBLIC third_party/cjson)
 
 file(GLOB KIT_WIDGETS CONFIGURE_DEPENDS src/widgets/w_*.c)
 add_library(hmi-ui-core STATIC
+    src/compat.c
     src/value.c
     src/model.c
     src/log.c
@@ -70,6 +71,9 @@ add_library(hmi-ui-core STATIC
 )
 target_include_directories(hmi-ui-core PUBLIC src ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hmi-ui-core PUBLIC lvgl cjson m)
+if(WIN32)
+    target_link_libraries(hmi-ui-core PUBLIC ws2_32)
+endif()
 target_compile_options(hmi-ui-core PRIVATE -Wall -Wextra)
 target_compile_definitions(hmi-ui-core PUBLIC HMI_UI_VERSION="${PROJECT_VERSION}")
 
@@ -77,8 +81,11 @@ add_executable(hmi-ui src/main.c)
 target_link_libraries(hmi-ui PRIVATE hmi-ui-core)
 target_compile_options(hmi-ui PRIVATE -Wall -Wextra)
 
-add_executable(hmi-ui-spike spike/main.c)
-target_link_libraries(hmi-ui-spike PRIVATE lvgl m)
+# The feasibility spike drives DRM directly; it has no place in the headless build.
+if(HMI_UI_WITH_DRM)
+    add_executable(hmi-ui-spike spike/main.c)
+    target_link_libraries(hmi-ui-spike PRIVATE lvgl m)
+endif()
 
 install(TARGETS hmi-ui DESTINATION lib/hmi/ui)
 

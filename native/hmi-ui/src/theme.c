@@ -4,8 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
+#include "compat.h"
 #include "gen/kit_schema.h"
 #include "log.h"
 
@@ -16,7 +16,7 @@ static bool has_fonts(const char *dir)
 {
     char path[600];
     snprintf(path, sizeof path, "%s/fonts/Inter-Regular.ttf", dir);
-    return access(path, R_OK) == 0;
+    return hmi_path_exists(path);
 }
 
 const char *hmi_theme_init(const char *override, bool dark)
@@ -29,15 +29,15 @@ const char *hmi_theme_init(const char *override, bool dark)
     const char *candidates[5] = {override, env, NULL, "/usr/lib/hmi/kit", "/usr/lib/hmi/qml/Shadcn"};
     char from_exe[600] = "";
     char exe[512];
-    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
-    if (n > 0) {
-        exe[n] = '\0';
-        // walk up from the binary looking for ui/qml/Shadcn/fonts (a checkout)
-        for (char *p = strrchr(exe, '/'); p && p > exe; p = strrchr(exe, '/')) {
-            *p = '\0';
+    if (hmi_exe_dir(exe, sizeof exe)) {
+        // walk up from the binary's directory looking for ui/qml/Shadcn/fonts (a checkout)
+        for (;;) {
             snprintf(from_exe, sizeof from_exe, "%s/ui/qml/Shadcn", exe);
             if (has_fonts(from_exe)) break;
             from_exe[0] = '\0';
+            char *p = strrchr(exe, '/');
+            if (!p || p == exe) break;
+            *p = '\0';
         }
     }
     candidates[2] = from_exe[0] ? from_exe : NULL;
