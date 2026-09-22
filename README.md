@@ -394,6 +394,85 @@ only step — there is nothing to enable by hand afterwards.
 
 ---
 
+## From the Designer to the glass, in pictures
+
+One design, followed end to end on the bench: a Verdin i.MX8M Plus with a
+10.1" 1024 × 768 panel at the other end of an Ethernet cable, and the Studio
+connected to it. Every image below is a capture from that session; the last
+one is the panel's own screen, written by the runtime.
+
+<div align="center">
+
+<img src="docs/assets/e2e/01-designer.png" alt="The Designer with the flight-deck design open and the attitude indicator selected; the canvas is drawn by hmi-ui" width="880" />
+
+<em><strong>1. Design.</strong> The Designer, connected to the panel, with a
+flight-deck design open and the attitude indicator selected. Every widget on
+the canvas is rendered by <code>hmi-ui</code> — the same C runtime the panel
+runs — so this is already the panel's picture.</em>
+
+<br /><br />
+
+<img src="docs/assets/e2e/02-code-widget.png" alt="The Code section showing the attitude indicator's .edsui and its render" width="880" />
+
+<em><strong>2. The code of a widget.</strong> The Code section with the
+selected widget: its <code>.edsui</code> fragment on the left, exactly what
+the panel will interpret, and its render on the right.</em>
+
+<br /><br />
+
+<img src="docs/assets/e2e/03-code-screen.png" alt="The Code section showing the whole screen's .edsui and the screen's render" width="880" />
+
+<em><strong>3. The code of the screen.</strong> Scope switched to the whole
+screen: the page as it sits in <code>project.edsui</code>, and the screen as
+<code>hmi-ui</code> draws it.</em>
+
+<br /><br />
+
+<img src="docs/assets/e2e/04-console-ready.png" alt="The Display Console before the deploy: bezel preview, readiness checklist all green, Deploy to Target" width="880" />
+
+<em><strong>4. Ready to deploy.</strong> The Display Console: the design in
+the bezel at the connected panel's geometry, the readiness checklist
+(bundle valid, display connected, geometry matches), the verdict
+<code>[Studio design]</code>, and the one button.</em>
+
+<br /><br />
+
+<img src="docs/assets/e2e/05-console-deployed.png" alt="The Display Console after the deploy: progress complete, 'Running on the panel, and set as the boot default', the installer's steps in the console" width="880" />
+
+<em><strong>5. Deployed.</strong> Five seconds later: the installer's steps
+in the console, <code>install-complete</code>, and the release running on the
+panel and set as its boot default.</em>
+
+<br /><br />
+
+<img src="docs/assets/e2e/06-panel-logs.png" alt="Panel Logs showing hmi-ui restarting on the new release and marking itself ready" width="880" />
+
+<em><strong>6. What the panel said.</strong> Panel Logs, live: systemd
+stopping and starting <code>hmi-ui.service</code>, the runtime loading
+<code>test_frame_data</code> at 1024 × 768 with the kit from
+<code>/usr/lib/hmi/kit</code>, marking itself ready and linking to the daemon.</em>
+
+<br /><br />
+
+<img src="docs/assets/e2e/07-system-profile.png" alt="System Profile: the active release, its footprint, storage and RAM" width="880" />
+
+<em><strong>7. What it costs the board.</strong> System Profile: the active
+release and where it landed, a 312 KiB application, the root filesystem
+split, and the RAM left over.</em>
+
+<br /><br />
+
+<img src="docs/assets/e2e/08-panel-screen.png" alt="The panel's own screen: the flight deck drawn by hmi-ui on the Verdin" width="880" />
+
+<em><strong>8. The glass.</strong> Not a preview: the panel's screen, written
+by the runtime itself (<code>kill -USR1 $(pidof hmi-ui)</code> saves
+<code>/run/hmi/screen.png</code>), live values included. Compare it with
+the Code section's render in step 3.</em>
+
+</div>
+
+---
+
 ## From a Python app to the panel
 
 What happens between pressing **Deploy to Target** and the application being the
@@ -715,6 +794,9 @@ Everything below is about the panel that header points at.
   sensor, flip an interlock; the bound tags of the open bundle are wired up
   automatically.
 * **Panel Logs** — the journal from `hmi-ui` and `hmi-hwd`, followed live.
+* **The glass itself** — `ssh <panel> 'kill -USR1 $(pidof hmi-ui)'` makes the
+  runtime write what is on screen, live values and all, to
+  `/run/hmi/screen.png`.
 * **System Profile** — the active release, its footprint on flash, the
   filesystem split and the RAM left over, read back over SSH.
 * **Ships as one file** — `EmbeddedDisplayStudio.exe` carries its own Python,

@@ -39,6 +39,46 @@ lv_display_t *hmi_display_headless(int w, int h)
     return disp;
 }
 
+static bool write_png(const char *path, const unsigned char *rgba, int w, int h)
+{
+    unsigned char *png = NULL;
+    size_t png_size = 0;
+    unsigned err = lodepng_encode32(&png, &png_size, rgba, (unsigned)w, (unsigned)h);
+    bool ok = false;
+    if (!err) {
+        FILE *f = fopen(path, "wb");   // LVGL's lodepng file I/O goes through lv_fs; write it ourselves
+        if (f) { ok = fwrite(png, 1, png_size, f) == png_size; fclose(f); }
+    }
+    if (!ok) hmi_log(HMI_LOG_ERROR, "cannot write %s (%s)", path, err ? lodepng_error_text(err) : "fopen");
+    free(png);
+    return ok;
+}
+
+bool hmi_display_snapshot(const char *path)
+{
+    lv_draw_buf_t *buf = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_ARGB8888);
+    if (!buf) { hmi_log(HMI_LOG_ERROR, "snapshot failed"); return false; }
+    int w = (int)buf->header.w, h = (int)buf->header.h;
+    size_t n = (size_t)w * h;
+    unsigned char *rgba = malloc(n * 4);
+    const unsigned char *px = buf->data;
+    for (int y = 0; y < h; ++y) {
+        const unsigned char *row = px + (size_t)y * buf->header.stride;
+        for (int x = 0; x < w; ++x) {
+            size_t i = ((size_t)y * w + x) * 4;
+            rgba[i + 0] = row[x * 4 + 2];   // LVGL ARGB8888 is stored B, G, R, A
+            rgba[i + 1] = row[x * 4 + 1];
+            rgba[i + 2] = row[x * 4 + 0];
+            rgba[i + 3] = 255;
+        }
+    }
+    bool ok = write_png(path, rgba, w, h);
+    free(rgba);
+    lv_draw_buf_destroy(buf);
+    if (ok) hmi_log(HMI_LOG_INFO, "screen snapshot written to %s", path);
+    return ok;
+}
+
 bool hmi_display_headless_save(lv_display_t *disp, const char *path)
 {
     headless_t *hd = lv_display_get_user_data(disp);
@@ -53,16 +93,7 @@ bool hmi_display_headless_save(lv_display_t *disp, const char *path)
         rgba[i * 4 + 2] = hd->fb[i * 4 + 0];
         rgba[i * 4 + 3] = 255;
     }
-    unsigned char *png = NULL;
-    size_t png_size = 0;
-    unsigned err = lodepng_encode32(&png, &png_size, rgba, (unsigned)hd->w, (unsigned)hd->h);
-    bool ok = false;
-    if (!err) {
-        FILE *f = fopen(path, "wb");   // LVGL's lodepng file I/O goes through lv_fs; write it ourselves
-        if (f) { ok = fwrite(png, 1, png_size, f) == png_size; fclose(f); }
-    }
-    if (!ok) hmi_log(HMI_LOG_ERROR, "cannot write %s (%s)", path, err ? lodepng_error_text(err) : "fopen");
-    free(png);
+    bool ok = write_png(path, rgba, hd->w, hd->h);
     free(rgba);
     return ok;
 }

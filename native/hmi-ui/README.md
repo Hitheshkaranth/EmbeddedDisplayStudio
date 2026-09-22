@@ -30,3 +30,11 @@ temp file, sleep and ticks, the UDP socket); `src/compat.c` has the POSIX and
 Windows branches. `win64/check.sh` is its gate: the Windows renders must
 match the Linux ones pixel for pixel (they do), and `--display` must be
 refused with a message naming the headless build.
+
+## A picture of the glass
+
+`kill -USR1 $(pidof hmi-ui)` makes the running panel write the screen it is
+showing — live tag values included — to `/run/hmi/screen.png`
+(`$HMI_UI_SNAPSHOT` overrides the path). It is LVGL's own snapshot of the
+active screen, so it works whatever the display is; the DRM scanout buffer is
+not readable through `/dev/fb0`, which only holds the kernel console.

@@ -12,3 +12,9 @@ lv_display_t *hmi_display_drm(const char *device);
 lv_display_t *hmi_display_headless(int w, int h);
 // Render everything pending and write the headless buffer as PNG.
 bool hmi_display_headless_save(lv_display_t *disp, const char *path);
+// What is on screen right now, whatever the display: LVGL's snapshot of the
+// active screen, written as PNG. The panel's `kill -USR1 $(pidof hmi-ui)`
+// writes /run/hmi/screen.png this way, so a bench or a support call can see
+// the glass with its live values -- the DRM scanout buffer is not readable
+// through /dev/fb0.
+bool hmi_display_snapshot(const char *path);

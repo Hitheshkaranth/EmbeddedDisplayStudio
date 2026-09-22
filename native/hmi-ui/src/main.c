@@ -35,6 +35,12 @@
 
 static volatile sig_atomic_t g_stop;
 static void on_signal(int sig) { (void)sig; g_stop = 1; }
+#ifndef _WIN32
+// SIGUSR1 asks for a picture of the glass: the loop writes /run/hmi/screen.png
+// (or $HMI_UI_SNAPSHOT) on its next turn.
+static volatile sig_atomic_t g_snapshot;
+static void on_snapshot(int sig) { (void)sig; g_snapshot = 1; }
+#endif
 
 static uint32_t now_ms(void) { return (uint32_t)hmi_millis(); }
 
@@ -152,6 +158,9 @@ int main(int argc, char **argv)
 
     signal(SIGTERM, on_signal);   // systemd stop / harness terminate: leave cleanly
     signal(SIGINT, on_signal);
+#ifndef _WIN32
+    signal(SIGUSR1, on_snapshot);
+#endif
     lv_init();
     lv_tick_set_cb(now_ms);
     hmi_kit_register_all();
@@ -216,6 +225,13 @@ int main(int argc, char **argv)
             lv_timer_handler();
             if (tags) hmi_tags_poll(tags);
             hmi_runtime_tick(rt);
+#ifndef _WIN32
+            if (g_snapshot) {
+                g_snapshot = 0;
+                const char *snap = getenv("HMI_UI_SNAPSHOT");
+                hmi_display_snapshot(snap && *snap ? snap : "/run/hmi/screen.png");
+            }
+#endif
             if (g_stop) break;
             if (exit_after > 0 && now_ms() - t0 >= (uint32_t)exit_after) break;
             hmi_sleep_ms(4);
