@@ -589,7 +589,9 @@ def _place(registry, widget, cell, notes):
     definition = registry.get(widget.type) if registry is not None else None
     try:
         rule = _constraints.rule_for(registry, widget.type)
-        if not rule.growable and definition is not None:
+        # Text is the exception: a label's width is its content, so a title
+        # held to 1.25 x the registry's 140 px comes out clipped.
+        if not rule.growable and definition is not None and widget.type != "Text":
             box_w = min(box_w, int(round(definition.default_width * _NON_GROWABLE_HEADROOM)))
             box_h = min(box_h, int(round(definition.default_height * _NON_GROWABLE_HEADROOM)))
         width, height = _constraints.fit_size(rule, box_w, box_h)

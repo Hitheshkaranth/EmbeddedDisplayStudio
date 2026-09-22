@@ -264,6 +264,7 @@ def apply_style(project, page, registry, grid=None) -> list[str]:
     The background of the screen is left alone: it is the design's own.
     """
     notes: list[str] = []
+    notes.extend(sane_scales(page, registry))
     if grid is None:
         grid = _grid.grid_for(project.screen.width, project.screen.height)
     scale = _type_scale(project)
@@ -579,3 +580,68 @@ def _make_card(project, page, registry, grid, role, axis, prefix, members,
         page.widgets.remove(member)
     page.widgets.insert(min(first, len(page.widgets)), card)
     return [f"{title}: {count} {role} widgets onto one card ({card.id})"]
+
+# -- readable scales ---------------------------------------------------------
+# A model changes a gauge's range and leaves the kit's step behind: 0..100
+# with the ShClusterGauge default step of 1 draws a hundred major ticks and
+# five hundred minor ones, and the dial turns into a scribble. A tick step is
+# not a matter of taste, so it is repaired rather than reported: the nearest
+# 1-2-5 step that leaves between MIN_TICKS and MAX_TICKS divisions.
+TICK_PROPERTIES = (("minimumValue", "maximumValue", "majorStep"),
+                   ("minimumValue", "maximumValue", "step"),
+                   ("minValue", "maxValue", "step"))
+MIN_TICKS = 4
+MAX_TICKS = 12
+
+
+def _nice_step(span: float) -> float:
+    """The 1-2-5 step that divides `span` into MIN_TICKS..MAX_TICKS parts."""
+    import math
+    if span <= 0:
+        return 1.0
+    rough = span / float(MAX_TICKS - 2)
+    magnitude = 10.0 ** math.floor(math.log10(rough)) if rough > 0 else 1.0
+    for factor in (1.0, 2.0, 2.5, 5.0, 10.0):
+        step = factor * magnitude
+        if MIN_TICKS <= span / step <= MAX_TICKS:
+            return step
+    return max(span / float(MAX_TICKS), 1e-6)
+
+
+def _walk(widgets):
+    for widget in widgets:
+        yield widget
+        yield from _walk(widget.children)
+
+
+def sane_scales(page, registry) -> list:
+    """Repair unreadable tick scales on `page`, in place; one note each."""
+    notes = []
+    for widget in _walk(page.widgets):
+        definition = registry.get(widget.type) if registry is not None else None
+        if definition is None:
+            continue
+        for low_key, high_key, step_key in TICK_PROPERTIES:
+            if step_key not in definition.properties or low_key not in definition.properties:
+                continue
+            defaults = definition.defaults or {}
+            try:
+                low = float(widget.properties.get(low_key, defaults.get(low_key, 0.0)))
+                high = float(widget.properties.get(high_key, defaults.get(high_key, 0.0)))
+                step = float(widget.properties.get(step_key, defaults.get(step_key, 0.0)))
+            except (TypeError, ValueError):
+                break
+            span = high - low
+            if span <= 0:
+                break
+            ticks = span / step if step > 0 else float("inf")
+            if MIN_TICKS <= ticks <= MAX_TICKS:
+                break
+            better = _nice_step(span)
+            if abs(better - step) < 1e-9:
+                break
+            widget.properties[step_key] = better
+            notes.append(f"{widget.id}: {int(round(ticks)) if ticks != float('inf') else 'countless'} "
+                         f"ticks over {low:g}..{high:g} is unreadable; step {step:g} -> {better:g}")
+            break
+    return notes

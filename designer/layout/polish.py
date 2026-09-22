@@ -137,9 +137,15 @@ def summary(report) -> str:
 
 def _modules():
     """The sibling passes, imported late so the package still imports while a
-    dependency is a skeleton, and so a test may stand one of them in."""
-    from . import archetypes, arrange, critic, grid, style
-    return archetypes, arrange, critic, grid, style
+    dependency is a skeleton, and so a test may stand one of them in.
+
+    Through importlib, not `from . import ...`: the package re-exports
+    `arrange` and `archetypes` as functions, which shadow the submodules of
+    the same name once __init__ has run.
+    """
+    import importlib
+    return tuple(importlib.import_module(f"{__package__}.{name}")
+                 for name in ("archetypes", "arrange", "critic", "grid", "style"))
 
 
 def _score(verdict) -> float:

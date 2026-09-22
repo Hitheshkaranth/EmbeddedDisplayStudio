@@ -398,7 +398,21 @@ def _balance_axis(widgets, screen_w, screen_h, issues):
                                             screen_w, screen_h * (index + 1) / 3.0)))
         bands.append(("col", index, covered(screen_w * index / 3.0, 0,
                                             screen_w * (index + 1) / 3.0, screen_h)))
-    shares = [(kind, index, value * 3.0 / inside) for kind, index, value in bands]
+    # A band is empty when nothing is in it -- not when what is in it is
+    # small. A row holding one correctly sized button carries little ink and
+    # is still part of the composition, so presence counts for half the
+    # measure; a band with nothing in it scores on ink alone, which is zero.
+    counts = []
+    for kind, index, _value in bands:
+        if kind == "row":
+            lo, hi = screen_h * index / 3.0, screen_h * (index + 1) / 3.0
+            counts.append(sum(1 for r in rects if r[1] < hi and r[1] + r[3] > lo))
+        else:
+            lo, hi = screen_w * index / 3.0, screen_w * (index + 1) / 3.0
+            counts.append(sum(1 for r in rects if r[0] < hi and r[0] + r[2] > lo))
+    total_count = float(sum(counts)) or 1.0
+    shares = [(kind, index, max(value * 3.0 / inside, 0.5 * counts[position] * 3.0 / total_count))
+              for position, (kind, index, value) in enumerate(bands)]
     kind, index, thinnest = min(shares, key=lambda band: band[2])
     empty_term = _clamp(1.0 - thinnest)
     if empty_term > 0.4:
