@@ -1,23 +1,26 @@
 graph LR
     subgraph laptop [Your laptop]
-        designer["Visual designer<br/>project.edsui to generated QML"]
+        designer["Visual Designer / AI Design<br/>edits project.edsui"]
+        code["Code section<br/>the .edsui of a widget or the screen"]
         studio["EmbeddedDisplay Studio<br/>validate, preview, deploy"]
-        child["Preview child<br/>a second interpreter<br/>PySide6 or PySide2, per the manifest"]
+        preview["hmi-ui.exe, headless<br/>the panel's own renderer<br/>draws the canvas, the bezel, the Code preview"]
         cli["deploy_to_hmi.sh<br/>the same thing, in CI"]
     end
-    subgraph panel [The panel]
-        gui["hmi-gui.service<br/>loader + tag engine"]
-        current["/opt/hmi_apps/current<br/>the customer bundle"]
-        runtimes["Qt runtimes<br/>PySide6, plus PySide2 at /opt/hmi-python-qt5"]
+    subgraph panel [The panel: no Qt, no compositor]
+        ui["hmi-ui.service<br/>C11 + LVGL on DRM/KMS<br/>tag engine, bindings, alarms, touch"]
+        current["/opt/hmi_apps/current<br/>project.edsui + assets"]
+        kit["/usr/lib/hmi/kit<br/>Inter fonts, Tabler icon PNGs"]
         display["Connected display<br/>DRM reports its real geometry"]
-        hwd["hmi-hwd.service<br/>libgpiod, IIO, UART"]
+        hwd["hmi-hwd.service<br/>libgpiod, IIO, UART, Modbus"]
     end
-    designer -->|generates a bundle| studio
-    studio -->|runs it unmapped, streams frames back| child
-    studio -->|ssh: upload + hmi-install| gui
-    cli -->|ssh: upload + hmi-install| gui
-    gui --> current
-    current --> runtimes
-    hwd -->|tags, UDP/JSON on loopback| gui
-    gui -->|commands| hwd
+    designer --> studio
+    designer --> code
+    studio -->|renders through| preview
+    studio -->|ssh: upload + hmi-install| ui
+    cli -->|ssh: upload + hmi-install| ui
+    ui -->|interprets| current
+    ui --> kit
+    ui -->|draws to| display
+    hwd -->|tags, UDP/JSON on loopback| ui
+    ui -->|commands| hwd
     display -.->|probed on connect; the bezel and the canvas follow it| studio

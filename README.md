@@ -37,7 +37,7 @@ first.</em>
 
 <br /><br />
 
-<img src="docs/assets/screenshot-designer.png" alt="The Designer workspace with the engine-dashboard project open and the Studio connected to the panel: widget library and layer tree, the canvas drawing the cluster with its real QML, the logo image selected with its eight resize handles, and the property, tag-binding, actions and chat inspectors" width="900" />
+<img src="docs/assets/screenshot-designer.png" alt="The Designer workspace with the engine-dashboard project open and the Studio connected to the panel: widget library and layer tree, the canvas drawing the cluster with the panel's own renderer, the logo image selected with its eight resize handles, and the property, tag-binding, actions and chat inspectors" width="900" />
 
 <em>The engine dashboard open in the Studio's own Designer, connected to the
 panel at the top of the window — library and layers to the left, the canvas
@@ -59,7 +59,7 @@ it to the panel with one button or one command. The app never touches a GPIO
 line, an ADC node or a serial port: it binds to **tags** that arrive over a
 loopback socket, and the platform does the rest.
 
-<img src="docs/assets/architecture.svg" alt="Studio and CLI deploy over SSH to hmi-ui on the panel; hmi-hwd feeds it tags over a loopback socket" width="900" />
+<img src="docs/assets/architecture.svg" alt="On the laptop, the Designer edits project.edsui and the Studio previews it through a headless hmi-ui and deploys it over SSH; on the panel, hmi-ui.service (C + LVGL on DRM/KMS) interprets the deployed design, draws to the display and gets its tags from hmi-hwd over a loopback socket; no Qt and no compositor on the panel" width="900" />
 
 <sub>Source: <a href="docs/assets/architecture.mmd"><code>docs/assets/architecture.mmd</code></a></sub>
 
@@ -71,14 +71,25 @@ Three layers, deliberately decoupled:
 | **2** | `hmi-ui` — the panel GUI runtime | the design file, bindings, alarms, pixels on DRM/KMS | hardware |
 | **3** | deployment | atomic install, health check, rollback | either of the above |
 
-The panel is **Qt-free**. `hmi-ui` (`native/hmi-ui`) is C11 + LVGL: it opens
-the DRM device itself, interprets the deployed `project.edsui` directly and
-renders the same widget kit the Studio shows, at parity with the Studio's QML
-preview (`tests/ui/test_widget_parity.py`). No compositor, no Qt libraries and
-no generated code run on the panel; the Studio on the desktop is still a Qt
-application. The Qt loaders of earlier phases (`gui/hmi_loader`,
-`native/hmi-gui`) remain in the repository as a legacy path for existing Qt
-bundles and are no longer provisioned.
+The panel is **Qt-free**. `hmi-ui` (`native/hmi-ui`) is C11 + LVGL 9: it opens
+the DRM/KMS device itself — no compositor — and interprets the deployed
+`project.edsui` directly: pages, all 46 widget types, tag bindings, actions,
+the alarm engine and touch. Nothing is generated for the panel and nothing is
+compiled per design; a deploy is the design file, its assets and a manifest.
+The kit it draws with (Inter fonts, Tabler icons as PNGs) lives at
+`/usr/lib/hmi/kit`.
+
+The same runtime previews the design on your machine. A headless build of
+`hmi-ui` travels inside the Studio (`hmi-ui.exe` on Windows) and renders the
+Designer canvas, the bezel and the Code section, so what the desktop shows is
+what the glass draws, pixel for pixel — `native/hmi-ui/win64/check.sh` proves
+the Windows renders identical to the Linux ones. The Studio's own chrome is Qt,
+and its interactive Live Preview window is still the desktop's Qt/QML; every
+still image is the panel's renderer.
+
+The Qt loaders of earlier phases (`gui/hmi_loader`, `native/hmi-gui`) remain in
+the repository as a legacy path for existing Qt bundles; they are no longer
+provisioned or packaged.
 
 ---
 
@@ -389,30 +400,30 @@ What happens between pressing **Deploy to Target** and the application being the
 panel's boot default. Every step is the same whether it is driven from the
 window or from `deploy_to_hmi.sh`.
 
-<img src="docs/assets/deploy-pipeline.svg" alt="From reading the application's imports through packaging, upload, checksum, atomic swap and the readiness check, to either the boot default or an automatic rollback" width="760" />
+<img src="docs/assets/deploy-pipeline.svg" alt="From validating the design's manifest through packaging, upload, checksum, atomic swap and the readiness check of hmi-ui, to either the boot default or an automatic rollback" width="760" />
 
 <sub>Source: <a href="docs/assets/deploy-pipeline.mmd"><code>docs/assets/deploy-pipeline.mmd</code></a></sub>
 
 A few of those steps are worth their own sentence.
 
-**Nothing is converted.** There is no build, no freezing, no cross-compilation:
-the panel carries a complete CPython and the Qt binding the manifest asks for,
-so the application runs there from the same sources it runs from on your
-machine. What the pipeline does is decide what travels, prove it arrived
-intact, and swap it in without a window where the panel has no UI.
+**Nothing is converted.** There is no build, no code generation for the
+target, no cross-compilation: the panel's runtime interprets `project.edsui`
+as the Designer saved it. What the pipeline does is decide what travels, prove
+it arrived intact, and swap it in without a window where the panel has no UI.
 
-**The dependency check reads the application, not a list.** Every file that
-would be packaged is parsed, each absolute import reduced to its top-level
-name, and the standard library, the bundle's own modules, the Qt bindings the
-platform pins, and anything guarded by `try: … except ImportError` are removed.
-What is left is what pip must supply — and the panel is asked to *import* each
-one, because a wheel built for another architecture is present on disk and
-still fatal at startup.
-
-**What travels is what runs.** Build outputs, caches and VCS metadata are
+**What travels is what runs.** A Studio bundle carries `manifest.json`
+(`runtime: edsui`, the screen, the tags it needs, its alarm thresholds),
+`project.edsui` and `assets/`. The QML the Studio generates for its own
+desktop preview (`generated/`), build outputs, caches and VCS metadata are
 excluded by one packer shared with the CLI, so the same folder produces a
 byte-identical tarball either way, and the checksum the target verifies does
-not depend on which tool sent it.
+not depend on which tool sent it. (A legacy Qt bundle still goes through the
+dependency check that asks the panel to *import* each module it needs.)
+
+**Readiness is the picture, not the process.** `hmi-install` restarts
+`hmi-ui.service` and waits for `/run/hmi/gui-ready`, which the runtime touches
+only once the design loaded and the first page is on the glass — a design the
+runtime cannot load never counts as deployed.
 
 **The swap cannot leave the panel dark.** `current` is promoted by `rename(2)`,
 never `rm` then `ln`. If the new release does not signal readiness within 25 s,
@@ -719,8 +730,10 @@ panel: the header's <strong>Connected</strong> badge with <strong>Disconnect</st
 beside it, the target's user and key with <strong>Export key…</strong> /
 <strong>Import key…</strong> under them, the display geometry read off the
 panel, the readiness checklist, the bundle's verdict —
-<code>Bundle Valid: automotive-cluster v1.0.0 [QML]</code> — and the one button
-that sends it, with <strong>Open Live Preview</strong> beneath. Further down:
+<code>Bundle Valid: engine-dashboard v1.1.0 [Studio design]</code> — and the one
+button that sends it, with <strong>Open Live Preview (desktop QML)</strong>
+beneath. The bezel on the left is the design as <code>hmi-ui</code> renders it,
+composed at the connected panel's 1024 × 768. Further down:
 <strong>Rollback</strong> to the release that worked, <strong>Restart GUI</strong>
 without a reboot, and the releases the panel still holds, listed from the
 panel itself. The bar and the console report the installer's own steps as the
@@ -728,21 +741,35 @@ panel reaches them.</em>
 
 <br /><br />
 
+<img src="docs/assets/screenshot-code.png" alt="The Code section: the whole screen's design JSON on the left, and the same screen rendered by hmi-ui on the right" width="880" />
+
+<em><strong>Code section.</strong> The <code>.edsui</code> of the whole screen —
+exactly what the panel interprets — with the same screen rendered by
+<code>hmi-ui</code> beside it. Switch the scope to the selected widget and the
+text and the preview follow the canvas selection; edit the JSON and
+<strong>Apply</strong> puts it back into the design as one undo step.</em>
+
+<br /><br />
+
 <img src="docs/assets/screenshot-live-preview.png" alt="The Live Preview window running the automotive cluster at the panel's resolution" width="880" />
 
-<em><strong>Live Preview window.</strong> The same generated QML the panel
-runs, in a window of its own at 1280 × 800 (shown at 75 %), on the Studio's
+<em><strong>Live Preview window.</strong> The design as the desktop's Qt/QML
+runs it, in a window of its own at 1280 × 800 (shown at 75 %), on the Studio's
 tag engine — here with no feed connected, so every bound value sits at its
 fallback and the battery readout is already red. Tag Lab, the simulator or a
-connected panel drives it; the drive-mode chevrons and tiles are operable.</em>
+connected panel drives it; the drive-mode chevrons and tiles are operable. It
+is the one preview that is not drawn by <code>hmi-ui</code>: it is interactive,
+and interaction needs a running runtime.</em>
 
 <br /><br />
 
 <img src="docs/assets/screenshot-studio.png" alt="A Qt5 application running in the live preview beside the panel it deploys to" width="880" />
 
-<em><strong>Bezel preview.</strong> A customer's Qt5 application running inside
-the preview of the panel, beside the target it deploys to — connected here to a
-10.1", 1024 × 768 panel, which is the geometry the bezel composes it at.</em>
+<em><strong>Bezel preview of a legacy Qt bundle.</strong> A customer's Qt5
+application running inside the preview of the panel, beside the target it
+deploys to — connected here to a 10.1", 1024 × 768 panel, which is the geometry
+the bezel composes it at. Qt bundles need a panel that still carries the legacy
+Qt loader; a Studio design needs no Qt on the panel at all.</em>
 
 <br /><br />
 
@@ -758,10 +785,9 @@ binds to exists.</em>
 <img src="docs/assets/screenshot-logs.png" alt="Panel Logs following the journal" width="880" />
 
 <em><strong>Panel Logs.</strong> The journal from the panel's own services,
-followed live. Here it is doing the job it exists for: the hardware daemon is
-crash-looping on a missing standard-library module, and the restart counter is
-in the thousands — a fault no deploy would have reported, because the deploy
-succeeded.</em>
+followed live — here <code>hmi-hwd</code> reporting, every five seconds, that the
+UART it was configured for is not answering. A fault no deploy would have
+reported, because the deploy succeeded.</em>
 
 <br /><br />
 
@@ -1009,6 +1035,10 @@ Apply replaces that widget or page in the model as one undo step, so `Ctrl+Z`
 in the Designer takes the whole edit back at once, and the section re-reads
 the model after every change on either side. No QML appears here: the QML
 the Studio generates is only its own desktop preview code.
+
+<div align="center">
+<img src="docs/assets/screenshot-code-widget.png" alt="The Code section in widget scope: the selected cluster gauge's design JSON beside its hmi-ui render" width="880" />
+</div>
 
 Avionics controls use the same data path as every other live HMI value. Bind,
 for example, `ShFuelQuantity.leftValue` to `fuel.left.quantity` and
