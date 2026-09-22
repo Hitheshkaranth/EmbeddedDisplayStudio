@@ -54,25 +54,27 @@ class CodeWindowTests(unittest.TestCase):
 
     def test_follows_selection_in_widget_qml_scope(self):
         gauge_id, button_id = _ids(self.workspace)
-        self.window.show_section("widget", "qml")
-        self.assertEqual((self.window.scope, self.window.fmt), ("widget", "qml"))
+        self.window.show_section("widget", "edsui")
+        self.assertEqual((self.window.scope, self.window.fmt), ("widget", "edsui"))
         self._select(gauge_id)
         gauge = self.workspace.selected_widget()
-        self.assertEqual(self.window.editor.code(), widget_qml(self.workspace.generator, self.workspace.project, gauge))
-        self.assertTrue(self.window.editor.isReadOnly())
+        self.assertEqual(self.window.editor.code(), widget_edsui(gauge))
+        self.assertFalse(self.window.editor.isReadOnly())
+        # QML is not a Code-section format any more: the panel runs the design.
+        with self.assertRaises(ValueError):
+            self.window.show_section("widget", "qml")
         self._select(button_id)
-        self.assertIn(f"id: {button_id}", self.window.editor.code())
-        self.assertNotIn(f"id: {gauge_id}", self.window.editor.code())
+        self.assertIn(f'"id": "{button_id}"', self.window.editor.code())
+        self.assertNotIn(f'"id": "{gauge_id}"', self.window.editor.code())
         self.workspace.scene.clearSelection(); self.app.processEvents()
         self.assertTrue(self.window.editor.code().lstrip().startswith("//"))
 
     def test_page_scope_shows_whole_screen(self):
         gauge_id, button_id = _ids(self.workspace)
-        self.window.show_section("page", "qml")
-        code = self.window.editor.code()
-        self.assertIn(f"id: {gauge_id}", code)
-        self.assertIn(f"id: {button_id}", code)
         self.window.show_section("page", "edsui")
+        code = self.window.editor.code()
+        self.assertIn(f'"id": "{gauge_id}"', code)
+        self.assertIn(f'"id": "{button_id}"', code)
         self.assertEqual(self.window.editor.code(), page_edsui(self.workspace.current_page))
         self.assertFalse(self.window.editor.isReadOnly())
 
@@ -215,11 +217,8 @@ class CodeWindowMoreTests(unittest.TestCase):
         self.window.show_section("page", "edsui")
         self.assertEqual(seen, [("page", "edsui")])
         self.assertEqual(self.window._scope_box.currentText(), "Whole screen")
-        self.assertEqual(self.window._fmt_box.currentText(), "Design (.edsui)")
-        self.window._fmt_box.setCurrentIndex(1)
-        self.assertEqual((self.window.scope, self.window.fmt), ("page", "qml"))
         with self.assertRaises(ValueError):
-            self.window.show_section("nope", "qml")
+            self.window.show_section("nope", "edsui")
 
     def test_edit_survives_refresh_and_keep_stays(self):
         gauge_id, button_id = _ids(self.workspace)
@@ -232,13 +231,13 @@ class CodeWindowMoreTests(unittest.TestCase):
         self.assertEqual(self.window.editor.code(), edited)
         self.assertTrue(self.window._title.text().endswith(" *"))
         self.window._confirm_discard = lambda: False  # Keep
-        self.window.show_section("widget", "qml")
+        self.window.show_section("page", "edsui")
         self.assertEqual((self.window.scope, self.window.fmt), ("widget", "edsui"))
         self.assertEqual(self.window.editor.code(), edited)
         self.window._confirm_discard = lambda: True   # Discard
-        self.window.show_section("widget", "qml")
-        self.assertEqual(self.window.fmt, "qml")
-        self.assertIn(f"id: {button_id}", self.window.editor.code())
+        self.window.show_section("page", "edsui")
+        self.assertEqual(self.window.scope, "page")
+        self.assertIn(f'"id": "{button_id}"', self.window.editor.code())
 
     def test_apply_page_json(self):
         self.window.show_section("page", "edsui")
@@ -269,7 +268,7 @@ class CodeWindowMoreTests(unittest.TestCase):
         self.window.refresh()
         self.assertIn("previews are off", self.window.preview._label.text())
         self.workspace.scene.qml_previews.enabled = True
-        self.window.show_section("page", "qml")
+        self.window.show_section("page", "edsui")
         self.window.show(); QTest.qWait(600)
         pane = self.window.preview
         self.assertTrue(pane._image is not None or pane._label.text() in ("Rendering...", "This section did not render"))
@@ -400,8 +399,8 @@ class StudioCodeTabTests(unittest.TestCase):
         window.designer_workspace.scene.clearSelection()
         window.designer_workspace.scene.item_for_id(gauge_id).setSelected(True)
         self.app.processEvents()
-        code.show_section("widget", "qml")
-        self.assertIn(f"id: {gauge_id}", code.editor.code())
+        code.show_section("widget", "edsui")
+        self.assertIn(f'"id": "{gauge_id}"', code.editor.code())
 
 
 if __name__ == "__main__":

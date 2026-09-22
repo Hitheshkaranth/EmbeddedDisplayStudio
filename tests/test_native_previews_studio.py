@@ -91,9 +91,7 @@ class CodeSectionUsesNativeRenderer(unittest.TestCase):
         self.addCleanup(window.close)
         # What the panel runs comes first; QML is the desktop's preview code.
         self.assertEqual(window.fmt, "edsui")
-        labels = [window.format_label(f) for f in ("edsui", "qml")]
-        self.assertTrue(labels[0].lower().startswith("design"), labels)
-        self.assertIn("desktop", labels[1].lower(), labels)
+        self.assertTrue(window.format_label("edsui").lower().startswith("design"))
         window.show_section("page", "edsui")
         window.set_preview_visible(True)
         window.show()
@@ -214,16 +212,14 @@ class CodeSectionDetails(unittest.TestCase):
         self.window = self.workspace.open_code_window()
         self.addCleanup(self.window.close)
 
-    def test_combo_and_title_follow_the_format(self):
+    def test_only_the_design_is_offered_and_the_title_says_so(self):
         from designer.ui import code_window
-        for fmt in code_window.FORMATS:
-            self.window.show_section("widget", fmt)
-            self.assertEqual(self.window._fmt_box.currentText(), self.window.format_label(fmt))
-            self.assertEqual(code_window.FORMAT_ORDER[self.window._fmt_box.currentIndex()], fmt)
+        self.assertEqual(code_window.FORMATS, ("edsui",))
+        self.assertFalse(hasattr(self.window, "_fmt_box"))
         self.window.show_section("widget", "edsui")
         self.assertTrue(self.window._title.text().endswith("-- design (.edsui)"), self.window._title.text())
-        self.window.show_section("page", "qml")
-        self.assertTrue(self.window._title.text().endswith("-- QML (desktop preview)"), self.window._title.text())
+        with self.assertRaises(ValueError):
+            self.window.show_section("page", "qml")
 
     def test_widget_scope_preview_is_hmi_ui_at_the_widget_size(self):
         widget = self.workspace.current_page.widgets[0]
