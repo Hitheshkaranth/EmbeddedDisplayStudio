@@ -12,7 +12,7 @@ of what is selected in the Designer and follows the selection live:
     body      left: title line + CodeEditor (designer/ui/code_editor.py)
               right (when Preview is on): the same section rendered, using
               the workspace's QmlPreviewRenderer (workspace.scene.qml_previews)
-              for a widget, or that renderer over an "Item" wrapper holding
+              for a widget, or that renderer over a "Rectangle" wrapper holding
               the page's widgets for the whole screen. Fitted to the pane,
               aspect kept, re-rendered when the design changes.
     status    a line for messages: 'Applied', an error from CodeError, etc.
@@ -127,6 +127,10 @@ class _PreviewPane(QWidget):
         if area.width() < 2 or area.height() < 2:
             return
         pixmap = QPixmap.fromImage(self._image)
+        # Shrink to fit, never enlarge: a render is at the section's real
+        # pixel size, and blowing a 160 px widget up to fill the pane only
+        # blurs it. Small sections sit centred at 1:1 with room around them.
+        area = area.boundedTo(pixmap.size() + QSize(0, 0)) if (pixmap.width() <= area.width() and pixmap.height() <= area.height()) else area
         self._label.setPixmap(pixmap.scaled(area, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def resizeEvent(self, event):
@@ -538,19 +542,22 @@ class CodeWindow(QMainWindow):
 
     @staticmethod
     def _page_wrapper(page, screen) -> DesignerWidget:
-        """The page's widgets under one Item the renderer can draw whole.
+        """The page's widgets on one Rectangle the renderer can draw whole:
+        the screen, with the design's background, as the page file paints it.
 
         The renderer keys its cache on the wrapper's own properties and its
         children's ids, not on what the children hold, so a property edit
         on the page would keep showing the old render. Folding a digest of
         the page into a property the generator never emits (it is not a
-        registered Item property) makes the key follow the content.
+        registered Rectangle property) makes the key follow the content.
         """
         content = json.dumps([w.to_dict() for w in page.widgets], sort_keys=True, default=str)
         digest = hashlib.sha1(content.encode("utf-8")).hexdigest()
-        return DesignerWidget(type="Item", id=PAGE_WRAPPER_ID,
+        return DesignerWidget(type="Rectangle", id=PAGE_WRAPPER_ID,
                               geometry={"x": 0, "y": 0, "width": screen.width, "height": screen.height},
-                              properties={"_content": digest}, children=list(page.widgets))
+                              properties={"color": screen.background, "borderWidth": 0, "radius": 0,
+                                          "_content": digest},
+                              children=list(page.widgets))
 
     # ------------------------------------------------------------ actions
 

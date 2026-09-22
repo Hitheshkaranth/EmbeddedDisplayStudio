@@ -1647,6 +1647,11 @@ class DesignerWorkspace(QWidget):
 
     def _project_name_edited(self):
         name = self.project_name.text().strip()
+        # editingFinished also fires when the field merely loses focus (another
+        # window opening, say); an untouched empty name on an unnamed design is
+        # not an edit and must not raise the warning.
+        if not name and not self.project.name:
+            return
         if NAME_RE.fullmatch(name):
             self.project.name = name
             self.project_name.setText(name)
