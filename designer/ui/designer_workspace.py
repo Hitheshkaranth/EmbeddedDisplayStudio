@@ -509,6 +509,14 @@ class DesignerWorkspace(QWidget):
     previewRequested = Signal(str)
     deployRequested = Signal(str)
     message = Signal(str)
+    # FROZEN CONTRACT (Code window swarm, 2026-09-22; owner W4): emitted after
+    # any change to the design the Code window should re-read -- an undo
+    # stack index change, a page switch/add/delete, a bundle load, a
+    # replace_widget/replace_page. Never emitted for selection changes
+    # (those are scene.selectionIdsChanged).
+    designChanged = Signal()
+    # The current page's index changed (page switch/add/delete/load).
+    pageChanged = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1804,6 +1812,32 @@ class DesignerWorkspace(QWidget):
             self.message.emit(f"Generated {len(paths)} QML page(s) in {output_dir}"); return paths
         except (OSError, QmlGenerationError, ValueError) as exc:
             QMessageBox.critical(self, "Generation failed", str(exc)); return []
+    # -- Code window (FROZEN CONTRACT, Code window swarm 2026-09-22; owner W4) --
+    def open_code_window(self):
+        """Shows the Code window (designer/ui/code_window.py), creating the
+        single instance on first use and raising it after; returns it. The
+        window follows this workspace's selection, design changes and theme."""
+        raise NotImplementedError
+
+    def selected_widget(self):
+        """The one selected widget model, or None (multi/none selected)."""
+        raise NotImplementedError
+
+    def replace_widget(self, widget_id, new_widget):
+        """Swaps the widget with id `widget_id` (anywhere on the current
+        page) for `new_widget` (a DesignerWidget, children included) as one
+        undoable command titled 'Edit <id> code'; reloads the canvas, keeps
+        the new widget selected, emits designChanged. Returns False (and
+        does nothing) when no such widget is on the current page."""
+        raise NotImplementedError
+
+    def replace_page(self, index, new_page):
+        """Swaps `project.pages[index]` for `new_page` (a DesignerPage) as one
+        undoable command titled 'Edit page code'; reloads the canvas when it
+        is the current page, emits designChanged. False when index is out
+        of range."""
+        raise NotImplementedError
+
     def preview(self):
         """Generate and ask the Studio to reload; False when nothing was generated."""
         if not self.generate(): return False
