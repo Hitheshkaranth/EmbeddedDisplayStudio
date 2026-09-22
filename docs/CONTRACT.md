@@ -277,7 +277,7 @@ cannot disagree at all.
 
 | `runtime` | `entry` | Execution model |
 | --- | --- | --- |
-| `edsui` | must end `.edsui` | **What the Studio writes.** `hmi-ui` interprets the design file directly: pages, widgets, bindings, actions and the manifest's alarms, with the tag engine and alarm engine built in. Nothing is generated for the panel; the Studio's `generated/` QML is its own preview and is excluded from the tarball (the manifest's `preview` key names it). |
+| `edsui` | must end `.edsui` | **What the Studio writes.** `hmi-ui` interprets the design file directly: pages, widgets, bindings, actions and the manifest's alarms, with the tag engine and alarm engine built in. Nothing is generated for the panel; the Studio's `generated/` QML is its own preview and is excluded from the tarball (the manifest's `preview` key names it). The desktop previews an `edsui` bundle with `hmi-ui` itself, run headless, so the bezel, the Designer canvas and the Code section show what the panel draws; the generated QML is the fallback where no `hmi-ui` binary is at hand. |
 | `qml` | must end `.qml` | Retired. Loaded by the Qt loader `hmi-gui` (`native/hmi-gui`, kept in the repo as a legacy fallback) into a QML engine. A Qt-free panel cannot start it. |
 | `python` | must end `.py` | Retired. The app was the GUI process, exec'd by `hmi-gui-launch` under Wayland. A Qt-free panel cannot start it. |
 
