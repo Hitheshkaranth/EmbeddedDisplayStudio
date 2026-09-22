@@ -34,8 +34,104 @@ Behaviour:
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QMainWindow
+import hashlib
+import json
+import re
+
+from PySide6.QtCore import QSettings, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtWidgets import (
+    QApplication, QComboBox, QFileDialog, QLabel, QMainWindow, QMessageBox, QSizePolicy,
+    QSplitter, QToolBar, QVBoxLayout, QWidget,
+)
+
+# Module references, not names: the functions and the editor class are looked
+# up when they are used, so a test can stand in for a piece that has not
+# landed yet without reaching into this module.
+from designer import code as design_code
+from designer.model import DesignerWidget
+from designer.ui import code_editor
+
+try:
+    from ui.python.shadcn import color, icon
+except ImportError:
+    from PySide6.QtGui import QIcon
+
+    _FALLBACK_TOKENS = {
+        "dark": {"background": "#09090b", "card": "#18181b", "border": "#27272a",
+                 "foreground": "#fafafa", "mutedForeground": "#a1a1aa", "primary": "#fafafa"},
+        "light": {"background": "#ffffff", "card": "#ffffff", "border": "#e4e4e7",
+                  "foreground": "#09090b", "mutedForeground": "#71717a", "primary": "#18181b"},
+    }
+
+    def icon(_name, _size=16, _color=None): return QIcon()
+
+    def color(name, theme="dark"): return _FALLBACK_TOKENS[theme][name]
+
+SCOPES = ("widget", "page")
+FORMATS = ("qml", "edsui")
+SCOPE_LABELS = ("Selected widget", "Whole screen")
+FORMAT_LABELS = ("QML", "Design JSON")
+SETTINGS_KEY = "codeWindow/geometry"
+DEFAULT_SIZE = QSize(1000, 700)
+# The wrapper the whole screen is rendered through; its id never clashes
+# with a design id because "__" is not what the id validator hands out.
+PAGE_WRAPPER_ID = "__page__"
+PREVIEWS_OFF = "Live QML previews are off (Designer toolbar)"
+RENDERING = "Rendering..."
+NOTHING_SELECTED = "Nothing selected"
+UNAVAILABLE = "This section did not render"
+
+
+def _rgba(hex_color: str, alpha: float) -> str:
+    c = QColor(hex_color)
+    return f"rgba({c.red()},{c.green()},{c.blue()},{alpha:.2f})"
+
+
+class _PreviewPane(QWidget):
+    """The right-hand pane: one QImage fitted to whatever room it has, or a
+    line of text saying why there is no image yet."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("codePreviewPane")
+        self.setMinimumWidth(160)
+        self._image = None
+        self._label = QLabel(self)
+        self._label.setObjectName("codePreviewImage")
+        self._label.setAlignment(Qt.AlignCenter)
+        self._label.setWordWrap(True)
+        # A QLabel holding a pixmap wants at least the pixmap's size, which
+        # would stop the splitter from ever shrinking the pane again once a
+        # full-screen render landed. Let the layout decide and fit to it.
+        self._label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self._label.setMinimumSize(1, 1)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.addWidget(self._label)
+
+    def set_image(self, image) -> None:
+        self._image = image
+        self._label.setText("")
+        self._fit()
+
+    def set_message(self, text: str) -> None:
+        self._image = None
+        self._label.setPixmap(QPixmap())
+        self._label.setText(text)
+
+    def _fit(self) -> None:
+        if self._image is None or self._image.isNull():
+            return
+        area = self._label.size()
+        if area.width() < 2 or area.height() < 2:
+            return
+        pixmap = QPixmap.fromImage(self._image)
+        self._label.setPixmap(pixmap.scaled(area, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit()
 
 
 class CodeWindow(QMainWindow):
@@ -53,46 +149,449 @@ class CodeWindow(QMainWindow):
 
     def __init__(self, workspace, parent=None):
         super().__init__(parent)
-        raise NotImplementedError
+        self._workspace = workspace
+        self._scope, self._fmt = "widget", "qml"
+        # The section the editor currently holds, the text the window put
+        # there, and what it belongs to (a widget id or a page index). An edit
+        # is measured against the loaded text rather than against the live
+        # model, so an Apply followed by Undo -- the model moving under a
+        # text the user did not touch -- reads as "not edited" and refreshes.
+        self._section = None
+        self._loaded_text = ""
+        self._target = None
+        # Set when a refresh left an edit alone; the next time the text is
+        # back to what was loaded, the skipped refresh is made up.
+        self._stale = False
+        self._theme = "dark"
+        self._icon_names = {}
+        self.setWindowTitle("Code")
+        self.setObjectName("codeWindow")
+        self._build_ui()
+        self._connect(workspace)
+        self.resize(DEFAULT_SIZE)
+        geometry = QSettings("EmbeddedDisplay", "Studio").value(SETTINGS_KEY)
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        self.apply_theme(getattr(workspace, "theme", "dark"))
+        self.refresh()
 
     # ---------------------------------------------------------------- API
 
     @property
     def scope(self) -> str:
         """'widget' or 'page'."""
-        raise NotImplementedError
+        return self._scope
 
     @property
     def fmt(self) -> str:
         """'qml' or 'edsui'."""
-        raise NotImplementedError
+        return self._fmt
 
     def show_section(self, scope: str, fmt: str) -> None:
         """Switches the view (asks about unapplied edits first)."""
-        raise NotImplementedError
+        if scope not in SCOPES or fmt not in FORMATS:
+            raise ValueError(f"unknown section {scope!r}/{fmt!r}")
+        if (scope, fmt) == (self._scope, self._fmt) and self._section is not None:
+            self._sync_boxes()
+            return
+        if self.is_edited() and not self._confirm_discard():
+            self._sync_boxes()
+            return
+        self._scope, self._fmt = scope, fmt
+        self._sync_boxes()
+        self._load(overwrite=True, keep_scroll=False)
+        self.sectionChanged.emit(scope, fmt)
 
     def refresh(self) -> None:
         """Re-reads the model into the editor and preview (called on
         selection/design changes; safe to call at any time)."""
-        raise NotImplementedError
+        self._load(overwrite=False, keep_scroll=True)
 
     def set_preview_visible(self, visible: bool) -> None:
-        raise NotImplementedError
+        visible = bool(visible)
+        self._preview_action.blockSignals(True)
+        self._preview_action.setChecked(visible)
+        self._preview_action.blockSignals(False)
+        self.preview.setVisible(visible)
+        if visible:
+            # A pane that was hidden when the splitter first laid out comes
+            # back at its minimum width; give it its share once.
+            if self.preview.width() <= self.preview.minimumWidth():
+                total = max(self._splitter.width(), DEFAULT_SIZE.width())
+                self._splitter.setSizes([total * 3 // 5, total * 2 // 5])
+            self._refresh_preview()
 
     def preview_visible(self) -> bool:
-        raise NotImplementedError
+        return self._preview_action.isChecked()
 
     def is_edited(self) -> bool:
         """True while the editor text differs from the model's JSON."""
-        raise NotImplementedError
+        return bool(self._section is not None and self._section.editable
+                    and self.editor.code() != self._loaded_text)
 
     def apply(self) -> bool:
         """Parses and applies an edited design JSON. True on success."""
-        raise NotImplementedError
+        section = self._section
+        if section is None or not section.editable:
+            self._say("Nothing to apply: this view is read-only")
+            return False
+        workspace, text = self._workspace, self.editor.code()
+        try:
+            if section.scope == "widget":
+                widget_id = self._target
+                if not widget_id:
+                    self._say("Nothing to apply: no widget is selected")
+                    return False
+                new = design_code.parse_widget_edsui(text, workspace.registry, workspace.project,
+                                                     replacing=widget_id)
+                applied = workspace.replace_widget(widget_id, new)
+                what = f'widget "{widget_id}"'
+            else:
+                index = self._target if isinstance(self._target, int) else -1
+                pages = workspace.project.pages
+                page = pages[index] if 0 <= index < len(pages) else None
+                new = design_code.parse_page_edsui(text, workspace.registry, workspace.project,
+                                                   replacing=page.id if page else None)
+                applied = workspace.replace_page(index, new)
+                what = f"page {index + 1}"
+        except design_code.CodeError as exc:
+            self._report_error(str(exc))
+            return False
+        except ValueError as exc:
+            # The model's own complaint (from_dict on a value it cannot
+            # take) is as much a code error as a parse failure is.
+            self._report_error(str(exc))
+            return False
+        if not applied:
+            self._say(f"Could not apply: {what} is no longer in the design")
+            return False
+        # The model holds what was parsed; show it the way the model writes
+        # it, so the view and the model agree byte for byte from here on.
+        self._load(overwrite=True, keep_scroll=True)
+        self._say("Applied")
+        return True
 
     def status_text(self) -> str:
         """What the status line says (tests read it)."""
-        raise NotImplementedError
+        return self.statusBar().currentMessage()
 
     def apply_theme(self, theme: str) -> None:
-        raise NotImplementedError
+        theme = "light" if theme == "light" else "dark"
+        self._theme = theme
+        self.editor.apply_theme(theme)
+        t = lambda name: color(name, theme)
+        # W2's editor palette, when it says what its surface is, wins for
+        # the panes that touch the editor so code and preview sit on one
+        # colour; the chrome keeps the Studio's tokens.
+        palette = getattr(code_editor, "LIGHT_PALETTE" if theme == "light" else "DARK_PALETTE", None)
+        palette = palette if isinstance(palette, dict) else {}
+        bg, fg = palette.get("background", t("background")), palette.get("foreground", t("foreground"))
+        card, border, muted_fg, primary = t("card"), t("border"), t("mutedForeground"), t("primary")
+        surface = card if theme == "dark" else t("background")
+        raised = _rgba(fg, 0.035 if theme == "dark" else 0.025)
+        hover = _rgba(fg, 0.06)
+        mono = '"Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace'
+        for action, name in self._icon_names.items():
+            action.setIcon(icon(name, 16, fg))
+        self.setStyleSheet(f"""
+            QMainWindow#codeWindow {{ background: {bg}; }}
+            QMainWindow#codeWindow QWidget {{ font-size: 12px; }}
+            QSplitter#codeSplitter::handle {{ background: {border}; }}
+            QWidget#codeEditorPane, QWidget#codePreviewPane {{ background: {bg}; }}
+            QLabel#codePreviewImage {{ background: transparent; color: {muted_fg}; }}
+            QLabel#codeTitle {{
+                background: {bg}; color: {muted_fg}; font-family: {mono}; font-size: 11px;
+                border-bottom: 1px solid {border}; padding: 6px 12px;
+            }}
+            QToolBar#codeToolbar {{
+                background: {surface}; border: none; border-bottom: 1px solid {border};
+                padding: 0 10px; spacing: 2px;
+            }}
+            QToolBar#codeToolbar::separator {{ background: {border}; width: 1px; margin: 7px 6px; }}
+            QToolBar#codeToolbar QToolButton {{
+                background: transparent; color: {fg}; border: 1px solid transparent;
+                border-radius: 6px; padding: 0 8px; min-height: 28px; max-height: 28px;
+            }}
+            QToolBar#codeToolbar QToolButton:hover {{ background: {hover}; }}
+            QToolBar#codeToolbar QToolButton:pressed {{ background: {_rgba(primary, 0.15)}; }}
+            QToolBar#codeToolbar QToolButton:checked {{
+                background: {_rgba(primary, 0.14)}; border-color: {_rgba(primary, 0.35)}; }}
+            QToolBar#codeToolbar QToolButton:disabled {{ color: {_rgba(fg, 0.35)}; }}
+            QLabel#barCaption {{
+                background: transparent; color: {muted_fg}; font-size: 10px; font-weight: 600;
+                letter-spacing: 1px;
+            }}
+            QWidget#barSpacer {{ background: transparent; }}
+            QComboBox#barField {{
+                background: {raised}; color: {fg}; border: 1px solid {border}; border-radius: 6px;
+                padding: 0 8px; min-height: 24px; max-height: 26px;
+            }}
+            QComboBox#barField:hover {{ border-color: {_rgba(primary, 0.55)}; }}
+            QComboBox#barField QAbstractItemView {{
+                background: {surface}; color: {fg}; border: 1px solid {border};
+                selection-background-color: {_rgba(primary, 0.18)}; selection-color: {fg};
+            }}
+            QStatusBar {{ background: {surface}; color: {muted_fg}; border-top: 1px solid {border}; }}
+            QStatusBar::item {{ border: none; }}
+        """)
+
+    # ------------------------------------------------------------- build
+
+    def _build_ui(self) -> None:
+        bar = QToolBar("Code window actions")
+        bar.setObjectName("codeToolbar")
+        bar.setMovable(False)
+        bar.setFloatable(False)
+        bar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        bar.setIconSize(QSize(16, 16))
+        bar.setFixedHeight(40)
+        bar.layout().setSpacing(2)
+        bar.layout().setContentsMargins(0, 0, 0, 0)
+        self.addToolBar(bar)
+
+        def caption(text):
+            label = QLabel(text.upper())
+            label.setObjectName("barCaption")
+            label.setContentsMargins(8, 0, 6, 0)
+            label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+            bar.addWidget(label)
+
+        def field(text, labels, width, tooltip):
+            caption(text)
+            box = QComboBox()
+            box.setObjectName("barField")
+            box.addItems(list(labels))
+            box.setFixedWidth(width)
+            box.setFixedHeight(26)
+            box.setToolTip(tooltip)
+            bar.addWidget(box)
+            return box
+
+        def action(text, slot, icon_name, checkable=False):
+            item = bar.addAction(icon(icon_name), text)
+            item.setCheckable(checkable)
+            item.setToolTip(text)
+            self._icon_names[item] = icon_name
+            (item.toggled if checkable else item.triggered).connect(slot)
+            button = bar.widgetForAction(item)
+            if button is not None:
+                button.setCursor(Qt.PointingHandCursor)
+            return item
+
+        self._scope_box = field("Scope", SCOPE_LABELS, 140, "What the code is of")
+        self._fmt_box = field("Format", FORMAT_LABELS, 120,
+                              "Generated QML (read-only) or the design JSON (editable)")
+        self._scope_box.currentIndexChanged.connect(self._box_changed)
+        self._fmt_box.currentIndexChanged.connect(self._box_changed)
+        bar.addSeparator()
+        self._preview_action = action("Preview", self.set_preview_visible, "eye", checkable=True)
+        spacer = QWidget()
+        spacer.setObjectName("barSpacer")
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        bar.addWidget(spacer)
+        self._apply_action = action("Apply", self.apply, "check")
+        self._apply_action.setEnabled(False)
+        self._copy_action = action("Copy", self._copy, "copy")
+        self._save_action = action("Save as...", self._save_as, "device-floppy")
+
+        splitter = self._splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("codeSplitter")
+        splitter.setChildrenCollapsible(False)
+        left = QWidget()
+        left.setObjectName("codeEditorPane")
+        column = QVBoxLayout(left)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
+        self._title = QLabel()
+        self._title.setObjectName("codeTitle")
+        column.addWidget(self._title)
+        self.editor = code_editor.CodeEditor(left)
+        self.editor.codeEdited.connect(self._edited)
+        column.addWidget(self.editor, 1)
+        self.preview = _PreviewPane()
+        self.preview.hide()
+        splitter.addWidget(left)
+        splitter.addWidget(self.preview)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        self.setCentralWidget(splitter)
+        self.statusBar().setSizeGripEnabled(True)
+
+    def _connect(self, workspace) -> None:
+        workspace.scene.selectionIdsChanged.connect(self._selection_changed)
+        workspace.designChanged.connect(self.refresh)
+        workspace.pageChanged.connect(self._page_changed)
+        renderer = getattr(workspace.scene, "qml_previews", None)
+        if renderer is not None:
+            renderer.ready.connect(self._preview_ready)
+
+    # ------------------------------------------------------------ slots
+
+    def _box_changed(self, _index) -> None:
+        self.show_section(SCOPES[self._scope_box.currentIndex()], FORMATS[self._fmt_box.currentIndex()])
+
+    def _sync_boxes(self) -> None:
+        for box, values, current in ((self._scope_box, SCOPES, self._scope), (self._fmt_box, FORMATS, self._fmt)):
+            box.blockSignals(True)
+            box.setCurrentIndex(values.index(current))
+            box.blockSignals(False)
+
+    def _selection_changed(self, _ids) -> None:
+        # A page view does not change with the selection; reloading it would
+        # only reset the editor's undo history for nothing.
+        if self._scope == "widget":
+            self.refresh()
+        else:
+            self._refresh_preview()
+
+    def _page_changed(self, _index) -> None:
+        self.refresh()
+
+    def _preview_ready(self, _key) -> None:
+        if self.preview_visible():
+            self._refresh_preview()
+
+    def _edited(self) -> None:
+        edited = self.is_edited()
+        self._apply_action.setEnabled(edited)
+        self._update_title()
+        if not edited and self._stale:
+            self.refresh()
+
+    # ------------------------------------------------------------ loading
+
+    def _load(self, *, overwrite: bool, keep_scroll: bool) -> None:
+        if not overwrite and self.is_edited():
+            # The user's text stays; the model has moved on underneath it.
+            self._stale = True
+            self._update_title()
+            self._refresh_preview()
+            return
+        section, target = self._read_section()
+        self._section, self._target, self._stale = section, target, False
+        self.editor.set_language(section.language)
+        self.editor.set_read_only_view(not section.editable)
+        if self.editor.code() != section.text:
+            self.editor.set_code(section.text, keep_scroll=keep_scroll)
+        self._loaded_text = section.text
+        self._apply_action.setEnabled(False)
+        self._update_title()
+        self._refresh_preview()
+
+    def _read_section(self):
+        workspace = self._workspace
+        widget = workspace.selected_widget() if self._scope == "widget" else None
+        page = workspace.current_page
+        target = (widget.id if widget else None) if self._scope == "widget" else workspace.current_page_index
+        try:
+            section = design_code.section_for(workspace.generator, workspace.registry, workspace.project,
+                                              page, widget, self._scope, self._fmt)
+        except Exception as exc:      # noqa: BLE001 -- a code view must never take the Studio down
+            section = design_code.CodeSection(self._scope, self._fmt, "Code unavailable",
+                                              f"// {exc}\n", False, "plain")
+        return section, target
+
+    def _update_title(self) -> None:
+        if self._section is None:
+            self._title.setText("")
+            return
+        self._title.setText(self._section.title + (" *" if self.is_edited() else ""))
+
+    def _confirm_discard(self) -> bool:
+        box = QMessageBox(QMessageBox.Question, "Unapplied edits",
+                          "The design JSON has edits that were not applied.", parent=self)
+        box.setInformativeText("Discard them and switch the view, or keep editing?")
+        discard = box.addButton("Discard", QMessageBox.DestructiveRole)
+        keep = box.addButton("Keep", QMessageBox.RejectRole)
+        box.setDefaultButton(keep)
+        box.setEscapeButton(keep)
+        box.exec()
+        return box.clickedButton() is discard
+
+    # ------------------------------------------------------------ preview
+
+    def _refresh_preview(self) -> None:
+        if not self.preview_visible():
+            return
+        workspace = self._workspace
+        renderer = getattr(workspace.scene, "qml_previews", None)
+        if renderer is None or not renderer.enabled:
+            self.preview.set_message(PREVIEWS_OFF)
+            return
+        screen = workspace.project.screen
+        if self._scope == "widget":
+            widget = workspace.selected_widget()
+            if widget is None:
+                self.preview.set_message(NOTHING_SELECTED)
+                return
+            width, height = widget.geometry.get("width", 0), widget.geometry.get("height", 0)
+        else:
+            widget = self._page_wrapper(workspace.current_page, screen)
+            width, height = screen.width, screen.height
+        image = renderer.image_for(widget, width, height, screen.theme, 1.0)
+        if image is None:
+            self.preview.set_message(RENDERING)
+        elif image.isNull():
+            self.preview.set_message(UNAVAILABLE)
+        else:
+            self.preview.set_image(image)
+
+    @staticmethod
+    def _page_wrapper(page, screen) -> DesignerWidget:
+        """The page's widgets under one Item the renderer can draw whole.
+
+        The renderer keys its cache on the wrapper's own properties and its
+        children's ids, not on what the children hold, so a property edit
+        on the page would keep showing the old render. Folding a digest of
+        the page into a property the generator never emits (it is not a
+        registered Item property) makes the key follow the content.
+        """
+        content = json.dumps([w.to_dict() for w in page.widgets], sort_keys=True, default=str)
+        digest = hashlib.sha1(content.encode("utf-8")).hexdigest()
+        return DesignerWidget(type="Item", id=PAGE_WRAPPER_ID,
+                              geometry={"x": 0, "y": 0, "width": screen.width, "height": screen.height},
+                              properties={"_content": digest}, children=list(page.widgets))
+
+    # ------------------------------------------------------------ actions
+
+    def _say(self, text: str) -> None:
+        self.statusBar().showMessage(text)
+
+    def _report_error(self, message: str) -> None:
+        self._say(message)
+        match = re.search(r"\bline (\d+)", message)
+        if match:
+            self.editor.go_to_line(int(match.group(1)))
+
+    def _copy(self) -> None:
+        QApplication.clipboard().setText(self.editor.code())
+        self._say("Copied")
+
+    def _suggested_name(self) -> str:
+        if self._scope == "widget":
+            return str(self._target or "widget")
+        page = self._workspace.current_page
+        return page.id or "page"
+
+    def _save_as(self) -> None:
+        if self._fmt == "qml":
+            extension, filters = "qml", "QML files (*.qml);;All files (*)"
+        else:
+            extension, filters = "json", "JSON files (*.json);;All files (*)"
+        path, _ = QFileDialog.getSaveFileName(self, "Save code as", f"{self._suggested_name()}.{extension}", filters)
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(self.editor.code())
+        except OSError as exc:
+            self._say(f"Could not save: {exc}")
+            return
+        self._say(f"Saved {path}")
+
+    # ------------------------------------------------------------ events
+
+    def closeEvent(self, event):
+        QSettings("EmbeddedDisplay", "Studio").setValue(SETTINGS_KEY, self.saveGeometry())
+        event.ignore()
+        self.hide()
