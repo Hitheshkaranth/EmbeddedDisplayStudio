@@ -1016,9 +1016,11 @@ class DesignerWorkspace(QWidget):
             QToolBar QToolButton::menu-indicator {{ image: none; width: 0px; }}
             QLabel#barCaption {{ color: {muted_fg}; font-size: 10px; font-weight: 600; letter-spacing: 1px; }}
             QLabel#zoomLabel {{ color: {muted_fg}; font-size: 11px; font-family: {mono}; }}
+            /* `height` too: the app-wide QComboBox/QLineEdit rule sets height:
+               36px, which Qt applies as a hard minimum unless overridden. */
             QLineEdit#barField, QComboBox#barField, QSpinBox#barField {{
                 background: {raised}; color: {fg}; border: 1px solid {border}; border-radius: 6px;
-                padding: 0 8px; min-height: 24px; max-height: 26px; font-size: 12px;
+                padding: 0 8px; height: 26px; min-height: 24px; max-height: 26px; font-size: 12px;
             }}
             QSpinBox#barField {{ font-family: {mono}; padding-right: 6px; }}
             QLineEdit#barField:hover, QComboBox#barField:hover, QSpinBox#barField:hover {{

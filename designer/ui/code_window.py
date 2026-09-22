@@ -352,10 +352,10 @@ class CodeWindow(QMainWindow):
                 background: {surface}; border: none; border-bottom: 1px solid {border};
                 padding: 0 10px; spacing: 2px;
             }}
-            QToolBar#codeToolbar::separator {{ background: {border}; width: 1px; margin: 7px 6px; }}
+            QToolBar#codeToolbar::separator {{ background: {border}; width: 1px; margin: 8px 6px; }}
             QToolBar#codeToolbar QToolButton {{
                 background: transparent; color: {fg}; border: 1px solid transparent;
-                border-radius: 6px; padding: 0 8px; min-height: 28px; max-height: 28px;
+                border-radius: 6px; padding: 0 8px; min-height: 26px; max-height: 26px;
             }}
             QToolBar#codeToolbar QToolButton:hover {{ background: {hover}; }}
             QToolBar#codeToolbar QToolButton:pressed {{ background: {_rgba(primary, 0.15)}; }}
@@ -368,15 +368,15 @@ class CodeWindow(QMainWindow):
             }}
             QWidget#barSpacer {{ background: transparent; }}
             QComboBox#barField {{
-                background: {raised}; color: {fg}; border: 1px solid {border}; border-radius: 6px;
-                padding: 0 30px 0 10px; min-height: 24px; max-height: 26px;
+                background: {raised}; color: {fg}; border: 1px solid {border}; border-radius: 5px;
+                padding: 0 24px 0 8px; height: 24px; min-height: 22px; max-height: 24px; font-size: 12px;
             }}
             QComboBox#barField:hover {{ border-color: {_rgba(primary, 0.55)}; }}
             QComboBox#barField::drop-down {{
                 subcontrol-origin: padding; subcontrol-position: center right;
-                width: 26px; border: none; background: transparent;
+                width: 22px; border: none; background: transparent;
             }}
-            QComboBox#barField::down-arrow {{ image: url("{arrow}"); width: 12px; height: 12px; }}
+            QComboBox#barField::down-arrow {{ image: url("{arrow}"); width: 10px; height: 10px; }}
             QComboBox#barField QAbstractItemView {{
                 background: {surface}; color: {fg}; border: 1px solid {border};
                 selection-background-color: {_rgba(primary, 0.18)}; selection-color: {fg};
@@ -394,7 +394,7 @@ class CodeWindow(QMainWindow):
         bar.setFloatable(False)
         bar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         bar.setIconSize(QSize(16, 16))
-        bar.setFixedHeight(40)
+        bar.setFixedHeight(36)
         bar.layout().setSpacing(4)
         bar.layout().setContentsMargins(0, 0, 0, 0)
         self.addToolBar(bar)
@@ -415,9 +415,9 @@ class CodeWindow(QMainWindow):
             # the Studio's stylesheet (a fixed width clipped "Selected widget"
             # and hid the arrow once the app font applied); `width` is a floor.
             longest = max(box.fontMetrics().horizontalAdvance(label) for label in labels)
-            box.setMinimumWidth(max(width, longest + 2 * 10 + 30))
+            box.setMinimumWidth(max(width, longest + 2 * 8 + 26))
             box.setSizeAdjustPolicy(QComboBox.AdjustToContents)
-            box.setFixedHeight(26)
+            box.setFixedHeight(24)
             box.setToolTip(tooltip)
             bar.addWidget(box)
             gap = QWidget()
