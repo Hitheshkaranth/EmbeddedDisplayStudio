@@ -363,5 +363,46 @@ class WorkspaceCodeIntegrationExtraTests(unittest.TestCase):
         self.assertNotEqual(self.workspace.pages.itemText(0), "Cover")
 
 
+# ---------------------------------------------------------------- the Studio tab
+class StudioCodeTabTests(unittest.TestCase):
+    """The Studio hosts the Code window as a section beside Designer / AI Design."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication(sys.argv)
+        cls._stylesheet, cls._font = cls.app.styleSheet(), cls.app.font()
+        from PySide6.QtCore import QSettings
+        cls._last_bundle = QSettings("MIL-HMI", "Deployer").value("last_bundle", "")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.setStyleSheet(cls._stylesheet)
+        cls.app.setFont(cls._font)
+        from PySide6.QtCore import QSettings
+        QSettings("MIL-HMI", "Deployer").setValue("last_bundle", cls._last_bundle)
+
+    def test_code_is_a_tab_and_the_designer_action_selects_it(self):
+        from tools.hmi_deployer.mainwindow import MainWindow
+        window = MainWindow()
+        self.addCleanup(lambda: (window.close(), window.deleteLater(), self.app.processEvents()))
+        tabs = window._right_tabs
+        names = [tabs.tabText(i) for i in range(tabs.count())]
+        self.assertEqual(names[:3], ["Designer", "AI Design", "Code"])
+        self.assertEqual([window.primary_nav.tabText(i) for i in range(window.primary_nav.count())], names)
+        tabs.setCurrentWidget(window.designer_workspace)
+        code = window.designer_workspace.open_code_window()
+        self.assertIs(code, window._code_tab)
+        self.assertIs(tabs.currentWidget(), code)
+        self.assertFalse(code.isWindow())
+        # The tab follows the design like the window did.
+        window.designer_workspace.add_widget("ShGauge")
+        gauge_id = window.designer_workspace.current_page.widgets[-1].id
+        window.designer_workspace.scene.clearSelection()
+        window.designer_workspace.scene.item_for_id(gauge_id).setSelected(True)
+        self.app.processEvents()
+        code.show_section("widget", "qml")
+        self.assertIn(f"id: {gauge_id}", code.editor.code())
+
+
 if __name__ == "__main__":
     unittest.main()

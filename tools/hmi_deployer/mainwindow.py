@@ -967,6 +967,19 @@ class MainWindow(QMainWindow):
         self._right_tabs.addTab(self._ai_tab, "AI Design")
         self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(self._ai_tab), "bolt")
 
+        # ── Code tab ─────────────────────────────────────────────────────
+        # The Code window (generated QML / design JSON of the selected widget
+        # or the whole screen, with a preview) lives here as a section beside
+        # the Designer rather than as a floating window; the Designer's
+        # "Code" action and Ctrl+Shift+K switch to it.
+        from designer.ui.code_window import CodeWindow
+        self._code_tab = CodeWindow(self.designer_workspace)
+        self._code_tab.setWindowFlags(Qt.Widget)
+        self.designer_workspace.host_code_window(
+            self._code_tab, lambda: self._right_tabs.setCurrentWidget(self._code_tab))
+        self._right_tabs.addTab(self._code_tab, "Code")
+        self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(self._code_tab), "file-code")
+
         # ── Deploy tab ────────────────────────────────────────────────────
         deploy_page = QWidget()
         deploy_page.setObjectName("deployConsolePage")
@@ -1406,7 +1419,7 @@ class MainWindow(QMainWindow):
         # Selecting the tab is the request for the measurement.
         self._right_tabs.currentChanged.connect(self._on_tab_changed)
 
-        tab_icons = ("device-imac", "device-desktop", "bolt", "activity", "terminal-2", "cpu")
+        tab_icons = ("device-imac", "device-desktop", "bolt", "file-code", "activity", "terminal-2", "cpu")
         for index in range(self._right_tabs.count()):
             self.primary_nav.addTab(self._right_tabs.tabText(index))
             self._themed_tab_icon(self.primary_nav, index, tab_icons[index])
@@ -1790,10 +1803,12 @@ class MainWindow(QMainWindow):
         # the separate runtime preview there so the editor gets the full
         # workspace; every operational tab retains the established preview.
         in_designer = self._right_tabs.currentWidget() is self.designer_workspace
-        in_ai = self._right_tabs.currentWidget() is self._ai_tab
+        in_ai = self._right_tabs.currentWidget() in (self._ai_tab, self._code_tab)
         self._preview_panel_wrap.setVisible(not in_designer and not in_ai)
         if in_designer or in_ai:
             self.device_panel.suspend_preview()
+        if self._right_tabs.currentWidget() is self._code_tab:
+            self._code_tab.refresh()
         elif self.bundle_dir and self.device_panel.manifest is None:
             is_valid, _messages = validate_bundle(self.bundle_dir)
             if is_valid:
@@ -1812,7 +1827,7 @@ class MainWindow(QMainWindow):
         matters: `device_panel.grab()` on the Designer tab returns an empty
         panel, which reads in CI as the application having failed to render.
         """
-        hidden_preview = (self.designer_workspace, self._ai_tab)
+        hidden_preview = (self.designer_workspace, self._ai_tab, self._code_tab)
         for index in range(self._right_tabs.count()):
             if self._right_tabs.widget(index) not in hidden_preview:
                 self._right_tabs.setCurrentIndex(index)

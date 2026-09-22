@@ -985,15 +985,16 @@ Studio's live preview. **Deploy** confirms the deployment name, does the same,
 validates, and hands the bundle to the same pipeline an imported application
 uses.
 
-**The Code window.** **Code** on the file/edit row (or `Ctrl+Shift+K`) opens a
-separate, non-modal window that shows the code behind what is selected on the
-canvas and follows the selection as it changes: the generated QML of the
+**The Code section.** **Code** sits beside Designer and AI Design in the
+Studio's sections; the **Code** action on the Designer's file/edit row (or
+`Ctrl+Shift+K`) switches to it. It shows the code behind what is selected on
+the canvas and follows the selection as it changes: the generated QML of the
 selected widget or of the whole screen, and the design JSON of the same, with
 an optional live preview of that section beside the text. The QML is read-only
 — it is what the generator produces, not a second source. The design JSON can
 be edited and applied back: an Apply replaces that widget or page in the model
 as one undo step, so `Ctrl+Z` in the Designer takes the whole edit back at
-once, and the window re-reads the model after every change on either side.
+once, and the section re-reads the model after every change on either side.
 
 Avionics controls use the same data path as every other live HMI value. Bind,
 for example, `ShFuelQuantity.leftValue` to `fuel.left.quantity` and

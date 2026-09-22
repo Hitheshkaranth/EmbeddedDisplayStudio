@@ -551,6 +551,7 @@ class DesignerWorkspace(QWidget):
         # The Code window is built on first use and kept: it is a second
         # top-level window the author positions once and reopens.
         self._code_window = None
+        self._code_activate = None
         self._designer_icon_names = {}
         self._build_ui(); self._shortcuts(); self._load_page()
 
@@ -1852,10 +1853,24 @@ class DesignerWorkspace(QWidget):
         except (OSError, QmlGenerationError, ValueError) as exc:
             QMessageBox.critical(self, "Generation failed", str(exc)); return []
     # -- Code window (FROZEN CONTRACT, Code window swarm 2026-09-22; owner W4) --
+    def host_code_window(self, window, activate):
+        """The Studio embeds the Code window as a tab beside the Designer:
+        `window` is that instance and `activate` switches to the tab.
+        open_code_window then activates it instead of showing a window."""
+        self._code_window = window
+        self._code_activate = activate
+        window.apply_theme(getattr(self, "theme", "dark"))
+
     def open_code_window(self):
         """Shows the Code window (designer/ui/code_window.py), creating the
         single instance on first use and raising it after; returns it. The
-        window follows this workspace's selection, design changes and theme."""
+        window follows this workspace's selection, design changes and theme.
+        When the Studio hosts it as a tab (host_code_window), that tab is
+        selected instead."""
+        if self._code_activate is not None and self._code_window is not None:
+            self._code_window.apply_theme(getattr(self, "theme", "dark"))
+            self._code_activate()
+            return self._code_window
         if self._code_window is None:
             # Imported here, not at the top: the window pulls in the code
             # model and editor, which the Designer never needs until asked.
