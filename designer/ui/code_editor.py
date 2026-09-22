@@ -231,19 +231,6 @@ class JsonHighlighter(_RuleHighlighter):
         super().set_palette(palette)
 
 
-class _Cursor(QTextCursor):
-    """A QTextCursor whose selectedText() joins lines with '\\n'.
-
-    Qt's selectedText() separates blocks with U+2029, which is what the clipboard
-    never sees and what every caller of a *code* editor trips over when it
-    compares against the text it put in. The editor hands out this cursor so
-    `editor.textCursor().selectedText()` reads like `code()` does.
-    """
-
-    def selectedText(self) -> str:
-        return super().selectedText().replace(" ", "\n")
-
-
 class _Gutter(QWidget):
     """The line-number strip; painting is delegated to the editor, which owns
     the block geometry and the colours."""
@@ -487,9 +474,6 @@ class CodeEditor(QPlainTextEdit):
         return False
 
     # ------------------------------------------------------------ Qt hooks
-
-    def textCursor(self) -> QTextCursor:
-        return _Cursor(super().textCursor())
 
     def keyPressEvent(self, event) -> None:
         key = event.key()

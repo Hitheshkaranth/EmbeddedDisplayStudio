@@ -187,12 +187,6 @@ class EditorBehaviourTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication(sys.argv)
 
-    def test_selected_text_uses_newlines(self):
-        editor = CodeEditor()
-        editor.set_code("a\nb\n")
-        editor.selectAll()
-        self.assertEqual(editor.textCursor().selectedText(), "a\nb\n")
-
     def test_set_code_clears_undo(self):
         editor = CodeEditor()
         editor.set_code("one\n")

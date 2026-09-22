@@ -31,21 +31,6 @@ SCOPES = ("widget", "page")
 FORMATS = ("qml", "edsui")
 
 
-def _page_to_dict(page: DesignerPage) -> dict:
-    # The shape DesignerProject.to_dict writes for each page, so the page
-    # fragment shown here is byte-for-byte what sits in the .edsui.
-    return {"id": page.id, "name": page.name, "widgets": [w.to_dict() for w in page.widgets]}
-
-
-# The contract (page_edsui's docstring and the frozen gate) reads
-# `page.to_dict()`, but the model only serialises pages inline from
-# DesignerProject.to_dict. This module may not edit designer/model, so the
-# method is attached here until it moves home; the guard makes that move a
-# no-op for this file.
-if not hasattr(DesignerPage, "to_dict"):
-    DesignerPage.to_dict = _page_to_dict
-
-
 class CodeError(ValueError):
     """The text cannot be turned into a model object. The message is shown
     to the user verbatim, so it names the problem and, when known, the
