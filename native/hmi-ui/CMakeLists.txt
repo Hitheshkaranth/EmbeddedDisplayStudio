@@ -17,8 +17,22 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(DRM REQUIRED libdrm)
+# FROZEN CONTRACT (native previews swarm, 2026-09-22; owner W1).
+# HMI_UI_WITH_DRM=OFF builds the headless-only runtime (PNG rendering,
+# --render-widget/--headless) with no libdrm and no evdev: what the Studio
+# ships on Windows/macOS to preview designs with the panel's own renderer.
+# The default stays ON on Linux (the panel). lv_conf.h reads the matching
+# HMI_UI_WITH_DRM compile definition to switch LV_USE_LINUX_DRM/LV_USE_EVDEV.
+option(HMI_UI_WITH_DRM "Build the DRM/KMS display and evdev input (Linux panel)" ON)
+if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    set(HMI_UI_WITH_DRM OFF CACHE BOOL "" FORCE)
+endif()
+
+if(HMI_UI_WITH_DRM)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(DRM REQUIRED libdrm)
+endif()
+add_compile_definitions(HMI_UI_WITH_DRM=$<BOOL:${HMI_UI_WITH_DRM}>)
 
 set(LV_BUILD_CONF_PATH "${CMAKE_CURRENT_SOURCE_DIR}/lv_conf.h" CACHE PATH "" FORCE)
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
@@ -27,14 +41,18 @@ set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
 add_subdirectory(lvgl EXCLUDE_FROM_ALL)
 # The DRM driver (src/drivers/display/drm) includes <xf86drm.h>; LVGL's own
 # CMake does not add libdrm, so do it here.
-target_include_directories(lvgl PUBLIC ${DRM_INCLUDE_DIRS})
-target_link_libraries(lvgl PUBLIC ${DRM_LIBRARIES} m)
+if(HMI_UI_WITH_DRM)
+    target_include_directories(lvgl PUBLIC ${DRM_INCLUDE_DIRS})
+    target_link_libraries(lvgl PUBLIC ${DRM_LIBRARIES})
+endif()
+target_link_libraries(lvgl PUBLIC m)
 
 add_library(cjson STATIC third_party/cjson/cJSON.c)
 target_include_directories(cjson PUBLIC third_party/cjson)
 
 file(GLOB KIT_WIDGETS CONFIGURE_DEPENDS src/widgets/w_*.c)
 add_library(hmi-ui-core STATIC
+    src/compat.c
     src/value.c
     src/model.c
     src/log.c
@@ -53,6 +71,9 @@ add_library(hmi-ui-core STATIC
 )
 target_include_directories(hmi-ui-core PUBLIC src ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hmi-ui-core PUBLIC lvgl cjson m)
+if(WIN32)
+    target_link_libraries(hmi-ui-core PUBLIC ws2_32)
+endif()
 target_compile_options(hmi-ui-core PRIVATE -Wall -Wextra)
 target_compile_definitions(hmi-ui-core PUBLIC HMI_UI_VERSION="${PROJECT_VERSION}")
 
@@ -60,8 +81,11 @@ add_executable(hmi-ui src/main.c)
 target_link_libraries(hmi-ui PRIVATE hmi-ui-core)
 target_compile_options(hmi-ui PRIVATE -Wall -Wextra)
 
-add_executable(hmi-ui-spike spike/main.c)
-target_link_libraries(hmi-ui-spike PRIVATE lvgl m)
+# The feasibility spike drives DRM directly; it has no place in the headless build.
+if(HMI_UI_WITH_DRM)
+    add_executable(hmi-ui-spike spike/main.c)
+    target_link_libraries(hmi-ui-spike PRIVATE lvgl m)
+endif()
 
 install(TARGETS hmi-ui DESTINATION lib/hmi/ui)
 

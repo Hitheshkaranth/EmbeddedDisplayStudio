@@ -215,8 +215,8 @@ class CodeWindowMoreTests(unittest.TestCase):
         self.window.show_section("page", "edsui")
         self.assertEqual(seen, [("page", "edsui")])
         self.assertEqual(self.window._scope_box.currentText(), "Whole screen")
-        self.assertEqual(self.window._fmt_box.currentText(), "Design JSON")
-        self.window._fmt_box.setCurrentIndex(0)
+        self.assertEqual(self.window._fmt_box.currentText(), "Design (.edsui)")
+        self.window._fmt_box.setCurrentIndex(1)
         self.assertEqual((self.window.scope, self.window.fmt), ("page", "qml"))
         with self.assertRaises(ValueError):
             self.window.show_section("nope", "qml")

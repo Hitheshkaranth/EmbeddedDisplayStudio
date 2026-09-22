@@ -3,8 +3,8 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 
+#include "compat.h"
 #include "log.h"
 #include "theme.h"
 
@@ -14,7 +14,7 @@ static bool icon_path(const char *name, char *buf, size_t len)
 {
     if (!name || !*name || !hmi_theme_kit_dir()[0]) return false;
     snprintf(buf, len, "%s/icons/%s.png", hmi_theme_kit_dir(), name);
-    return access(buf, R_OK) == 0;
+    return hmi_path_exists(buf);
 }
 
 bool hmi_icon_exists(const char *name)

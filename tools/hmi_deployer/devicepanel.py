@@ -2,7 +2,9 @@
 tools/hmi_deployer/devicepanel.py
 Layer: 3 (Host Deployer)
 Purpose: The centred hardware mock-up of the panel with a live QML preview.
-(CONTRACT section 10).
+(CONTRACT section 10). An `edsui` bundle is shown as the panel's own renderer
+(hmi-ui, headless) draws it when that binary is at hand; the QML generated
+beside the design is the fallback.
 """
 import os
 import sys
@@ -15,7 +17,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QApplication
 from PySide6.QtQuickWidgets import QQuickWidget
 from PySide6.QtQml import QQmlComponent, QQmlContext
 
-from schema.manifest import preview_entry, theme_of
+from schema.manifest import THEMES, preview_entry, theme_of
 from .native_preview import NativePreview
 from .bezel import BEZEL_MARGIN_PCT, bezel_logo, paint_device_bezel
 
@@ -209,6 +211,15 @@ class DevicePanel(QWidget):
         # rescale without waiting for the next one.
         self._native_frame = None
 
+        # The panel's own renderer for an `edsui` bundle (designer.preview.
+        # NativeRenderer), built on first use and dropped when the preview
+        # stops; the page it is drawing, and the still it delivered.
+        self._hmi_ui = None
+        self._hmi_ui_request = None
+        self._hmi_ui_image = None
+        # What the bezel shows for the loaded bundle; see preview_mode.
+        self._preview_mode = ""
+
         self.tag_engine = None
 
         # Keeps the throwaway QML object that owns the Theme assignment alive;
@@ -376,8 +387,16 @@ class DevicePanel(QWidget):
         
         entry = preview_entry(manifest)
         runtime = manifest.get("runtime", "qml")
+        self._hmi_ui_request = None
+        self._hmi_ui_image = None
+        self._preview_mode = ""
 
-        if runtime == "python":
+        if runtime == "edsui" and self._render_with_hmi_ui(bundle_dir, manifest):
+            # The panel's renderer has the page; its still lands through
+            # _poll_hmi_ui and nothing of the generated QML is loaded.
+            self.native_preview.stop()
+        elif runtime == "python":
+            self._preview_mode = "python"
             # A Qt Widgets app owns its own QApplication and window, so it
             # cannot be composited into the QQuickWidget. It is rendered
             # offscreen in a child process at the target resolution instead,
@@ -391,17 +410,120 @@ class DevicePanel(QWidget):
             )
         else:
             self.native_preview.stop()
-            self._show_qml_view()
-            entry_path = os.path.join(bundle_dir, entry)
-            # setSource() is a no-op when given the same URL, and the engine
-            # caches compiled components by URL. Designer regeneration writes
-            # that same generated/Main.qml path, so without explicitly
-            # unloading and invalidating the cache the Display Console keeps
-            # showing the previous design indefinitely.
-            self.quick_widget.setSource(QUrl())
-            self.quick_widget.engine().clearComponentCache()
-            self.quick_widget.setSource(QUrl.fromLocalFile(entry_path))
+            self._load_qml_preview(bundle_dir, entry)
 
+        self.update_geometry()
+
+    def _load_qml_preview(self, bundle_dir: str, entry: str) -> None:
+        """Run the bundle's QML in the offscreen Quick renderer."""
+        self._preview_mode = "qml"
+        self._show_qml_view()
+        entry_path = os.path.join(bundle_dir, entry)
+        # setSource() is a no-op when given the same URL, and the engine
+        # caches compiled components by URL. Designer regeneration writes
+        # that same generated/Main.qml path, so without explicitly
+        # unloading and invalidating the cache the Display Console keeps
+        # showing the previous design indefinitely.
+        self.quick_widget.setSource(QUrl())
+        self.quick_widget.engine().clearComponentCache()
+        self.quick_widget.setSource(QUrl.fromLocalFile(entry_path))
+
+    # ------------------------------------------------------ hmi-ui preview
+
+    def _hmi_ui_renderer(self):
+        """The panel's renderer, or None where its binary is not at hand.
+
+        Looked up per bundle rather than at import: a Studio without the
+        binary (a checkout that never built it) previews with QML as before.
+        """
+        if self._hmi_ui is not None:
+            return self._hmi_ui
+        try:
+            from designer.preview import NativeRenderer, find_hmi_ui
+            binary = find_hmi_ui()
+        except Exception as exc:      # noqa: BLE001 -- the QML preview is the fallback
+            logging.warning("hmi-ui preview unavailable: %s", exc)
+            return None
+        if not binary:
+            return None
+        renderer = NativeRenderer(binary, parent=self)
+        renderer.project_dir = self.bundle_dir
+        renderer.ready.connect(self._hmi_ui_ready)
+        renderer.failed.connect(self._hmi_ui_failed)
+        self._hmi_ui = renderer
+        return renderer
+
+    def _render_with_hmi_ui(self, bundle_dir: str, manifest: dict) -> bool:
+        """Hand the bundle's design to hmi-ui. True when it took it: the still
+        arrives through the renderer's `ready`; False sends the caller to
+        the QML preview instead."""
+        renderer = self._hmi_ui_renderer()
+        if renderer is None:
+            return False
+        if renderer.project_dir != bundle_dir:
+            renderer.project_dir = bundle_dir     # "assets/..." resolve against this bundle
+            renderer.clear()
+        try:
+            from designer.model.project import DesignerProject
+            project = DesignerProject.load(os.path.join(bundle_dir, "project.edsui"))
+        except Exception as exc:      # noqa: BLE001 -- an unreadable design previews as QML
+            logging.warning("hmi-ui preview: cannot load the design: %s", exc)
+            return False
+        if not project.pages:
+            return False
+        # The manifest's theme is what the panel shell applies; the design's
+        # own is what a bundle written before the key was recorded meant.
+        theme = manifest.get("theme")
+        theme = theme if theme in THEMES else project.screen.theme
+        self._hmi_ui_request = (project, project.pages[0], theme)
+        self._show_hmi_ui_view()
+        self._poll_hmi_ui()
+        return True
+
+    def _show_hmi_ui_view(self) -> None:
+        """A dark, empty screen while the render runs: the same view the still
+        is painted into, so nothing of the previous bundle lingers."""
+        self._native_frame = None
+        self.quick_widget.hide()
+        self.qml_view.hide()
+        self.native_view.clear()
+        self.native_view.show()
+
+    def _poll_hmi_ui(self) -> None:
+        """Take the still if the renderer has it; otherwise it is scheduled
+        and `ready` brings us back here."""
+        if self._hmi_ui_request is None or self._hmi_ui is None:
+            return
+        project, page, theme = self._hmi_ui_request
+        image = self._hmi_ui.page_image_for(project, page, theme)
+        if image is None:
+            return
+        if image.isNull():
+            self._fall_back_to_qml("hmi-ui did not render the page")
+            return
+        self._hmi_ui_request = None
+        self._hmi_ui_image = image
+        self._preview_mode = "hmi-ui"
+        self._on_preview_frame(image)
+
+    def _hmi_ui_ready(self, _key: str) -> None:
+        self._poll_hmi_ui()
+
+    def _hmi_ui_failed(self, _key: str, message: str) -> None:
+        # Only a failure of the page being waited for matters; one for a
+        # render abandoned by a later load is not.
+        if self._hmi_ui_request is not None:
+            self._fall_back_to_qml(message)
+
+    def _fall_back_to_qml(self, message: str) -> None:
+        """The generated QML instead, and the reason in the console."""
+        self._hmi_ui_request = None
+        if self.manifest is None or not self.bundle_dir:
+            return
+        self.previewMessage.emit(
+            f"hmi-ui could not render this design ({message}); showing the desktop QML preview instead."
+        )
+        self._load_qml_preview(self.bundle_dir, preview_entry(self.manifest))
         self.update_geometry()
 
     # ------------------------------------------------------- native preview
@@ -608,6 +730,30 @@ class DevicePanel(QWidget):
         """
         self.native_preview.stop()
         self._qml_capture_timer.stop()
+        # A render still running is not worth waiting for; the next load
+        # builds a fresh renderer. The still already shown stays, as the
+        # last frame of a Qt Widgets app does.
+        self._hmi_ui_request = None
+        renderer, self._hmi_ui = self._hmi_ui, None
+        if renderer is not None:
+            renderer.shutdown()
+            renderer.deleteLater()
+
+    # -- FROZEN CONTRACT (native previews swarm, 2026-09-22; owner W3) --------
+    def preview_mode(self) -> str:
+        """What the bezel is showing for the loaded bundle: 'hmi-ui' when it is
+        a still of the page rendered by the panel's own renderer
+        (designer.preview.NativeRenderer; every `edsui` bundle when the
+        binary is available), 'qml' for the Qt Quick preview, 'python' for
+        the child-process preview of a Qt Widgets app, '' when nothing is
+        loaded."""
+        if self.manifest is None:
+            return ""
+        return self._preview_mode
+
+    def preview_image(self):
+        """The QImage shown in mode 'hmi-ui', else None."""
+        return self._hmi_ui_image if self._preview_mode == "hmi-ui" else None
 
     def suspend_preview(self) -> None:
         """Unload all preview renderers while the Designer tab is active."""

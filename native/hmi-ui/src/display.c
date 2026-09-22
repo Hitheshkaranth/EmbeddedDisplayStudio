@@ -7,6 +7,7 @@
 #include "log.h"
 #include "lvgl/src/libs/lodepng/lodepng.h"
 
+#if HMI_UI_WITH_DRM
 lv_display_t *hmi_display_drm(const char *device)
 {
     lv_display_t *disp = lv_linux_drm_create();
@@ -15,6 +16,7 @@ lv_display_t *hmi_display_drm(const char *device)
             (int)lv_display_get_horizontal_resolution(disp), (int)lv_display_get_vertical_resolution(disp));
     return disp;
 }
+#endif
 
 typedef struct { uint8_t *fb; int w, h; } headless_t;
 

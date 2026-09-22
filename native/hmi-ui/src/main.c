@@ -11,15 +11,18 @@
 //   hmi-ui --render-widget TYPE --headless OUT.png [--size WxH] [--props JSON]
 //       Renders one kit widget with the given properties (JSON object) at
 //       its registered default size unless --size is given: the parity gate.
+//   The headless build (HMI_UI_WITH_DRM=0: the Studio's preview binary on
+//   Windows) has no display or touch input; without --headless it says so
+//   and exits.
 #include <getopt.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 #include "cJSON.h"
+#include "compat.h"
 #include "display.h"
 #include "gen/kit_schema.h"
 #include "log.h"
@@ -33,12 +36,7 @@
 static volatile sig_atomic_t g_stop;
 static void on_signal(int sig) { (void)sig; g_stop = 1; }
 
-static uint32_t now_ms(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
-}
+static uint32_t now_ms(void) { return (uint32_t)hmi_millis(); }
 
 static void write_ready(const char *path)
 {
@@ -88,15 +86,14 @@ static hmi_project_t *widget_project(const char *type, int w, int h, const char 
     cJSON_AddItemToArray(pages, page);
     char *text = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
-    char path[] = "/tmp/hmi-ui-widget-XXXXXX";
-    int fd = mkstemp(path);
-    if (fd < 0) { snprintf(err, errlen, "mkstemp failed"); free(text); return NULL; }
-    FILE *f = fdopen(fd, "w");
+    char path[512];
+    FILE *f = hmi_tmpfile(path, sizeof path);
+    if (!f) { snprintf(err, errlen, "cannot create a temporary file"); free(text); return NULL; }
     fputs(text, f);
     fclose(f);
     free(text);
     hmi_project_t *p = hmi_project_load(path, err, errlen);
-    unlink(path);
+    hmi_remove(path);
     return p;
 }
 
@@ -146,6 +143,13 @@ int main(int argc, char **argv)
         }
     }
 
+#if !HMI_UI_WITH_DRM
+    if (!headless) {
+        fprintf(stderr, "this is the headless build of hmi-ui (no display); use --headless\n");
+        return 2;
+    }
+#endif
+
     signal(SIGTERM, on_signal);   // systemd stop / harness terminate: leave cleanly
     signal(SIGINT, on_signal);
     lv_init();
@@ -175,12 +179,17 @@ int main(int argc, char **argv)
         int w = size_w > 0 ? size_w : project->width, h = size_h > 0 ? size_h : project->height;
         disp = hmi_display_headless(w, h);
     } else {
+#if HMI_UI_WITH_DRM
         disp = hmi_display_drm(display);
         if (touch && *touch) {
             lv_indev_t *indev = lv_evdev_create(LV_INDEV_TYPE_POINTER, touch);
             if (indev) { lv_indev_set_display(indev, disp); hmi_log(HMI_LOG_INFO, "touch input %s", touch); }
             else hmi_log(HMI_LOG_WARNING, "cannot open touch device %s", touch);
         }
+#else
+        (void)display; (void)touch;
+        return 0;   // unreachable: refused above, before anything was loaded
+#endif
     }
     lv_obj_t *screen = lv_screen_active();
     lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
@@ -209,7 +218,7 @@ int main(int argc, char **argv)
             hmi_runtime_tick(rt);
             if (g_stop) break;
             if (exit_after > 0 && now_ms() - t0 >= (uint32_t)exit_after) break;
-            usleep(4000);
+            hmi_sleep_ms(4);
         }
         hmi_log(HMI_LOG_INFO, g_stop ? "exiting on signal" : "exiting after %ld ms", exit_after);
     }

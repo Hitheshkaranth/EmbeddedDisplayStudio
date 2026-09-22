@@ -7,14 +7,15 @@ private helpers and private classes.
 A separate, non-modal window ("Code") beside the Studio that shows the code
 of what is selected in the Designer and follows the selection live:
 
-    toolbar   Scope: [Selected widget | Whole screen]   Format: [QML | Design JSON]
+    toolbar   Scope: [Selected widget | Whole screen]   Format: [QML (desktop preview) | Design JSON]
               [Preview] toggle   ...   [Apply] [Copy] [Save as...]
     body      left: title line + CodeEditor (designer/ui/code_editor.py)
-              right (when Preview is on): the same section rendered, using
-              the workspace's QmlPreviewRenderer (workspace.scene.qml_previews)
-              for a widget, or that renderer over a "Rectangle" wrapper holding
-              the page's widgets for the whole screen. Fitted to the pane,
-              aspect kept, re-rendered when the design changes.
+              right (when Preview is on): the same section rendered by the
+              workspace's renderer (workspace.scene.qml_previews): hmi-ui, the
+              panel's own, when its binary is at hand (a page is rendered
+              whole through page_image_for), else the Qt/QML fallback (a page
+              goes through a "Rectangle" wrapper holding its widgets). Fitted
+              to the pane, aspect kept, re-rendered when the design changes.
     status    a line for messages: 'Applied', an error from CodeError, etc.
 
 Behaviour:
@@ -71,13 +72,24 @@ except ImportError:
 SCOPES = ("widget", "page")
 FORMATS = ("qml", "edsui")
 SCOPE_LABELS = ("Selected widget", "Whole screen")
-FORMAT_LABELS = ("QML", "Design JSON")
+# The Format combo, top to bottom, mapped to FORMATS explicitly: the tuple
+# above is the contract's order and the section identity, the combo is
+# presentation. The design is what the panel runs; QML is only what this
+# desktop's Qt preview runs.
+# What the panel runs comes first; the QML is the desktop's preview code.
+FORMAT_ORDER = ("edsui", "qml")
+FORMAT_LABELS_BY_FMT = {"edsui": "Design (.edsui)", "qml": "QML (desktop preview)"}
+FORMAT_LABELS = tuple(FORMAT_LABELS_BY_FMT[f] for f in FORMAT_ORDER)
+# What the section title's suffix says here, over the code model's own
+# wording, so the title and the Format combo tell the same story.
+TITLE_SUFFIXES = {" -- generated QML": " -- QML (desktop preview)",
+                  " -- design JSON": " -- design (.edsui)"}
 SETTINGS_KEY = "codeWindow/geometry"
 DEFAULT_SIZE = QSize(1000, 700)
 # The wrapper the whole screen is rendered through; its id never clashes
 # with a design id because "__" is not what the id validator hands out.
 PAGE_WRAPPER_ID = "__page__"
-PREVIEWS_OFF = "Live QML previews are off (Designer toolbar)"
+PREVIEWS_OFF = "Live previews are off (Designer toolbar)"
 RENDERING = "Rendering..."
 NOTHING_SELECTED = "Nothing selected"
 UNAVAILABLE = "This section did not render"
@@ -154,7 +166,8 @@ class CodeWindow(QMainWindow):
     def __init__(self, workspace, parent=None):
         super().__init__(parent)
         self._workspace = workspace
-        self._scope, self._fmt = "widget", "qml"
+        # Opens on the design: it is what the panel runs and what can be edited.
+        self._scope, self._fmt = "widget", "edsui"
         # The section the editor currently holds, the text the window put
         # there, and what it belongs to (a widget id or a page index). An edit
         # is measured against the loaded text rather than against the live
@@ -274,6 +287,28 @@ class CodeWindow(QMainWindow):
         self._load(overwrite=True, keep_scroll=True)
         self._say("Applied")
         return True
+
+    # -- FROZEN CONTRACT additions (native previews swarm, 2026-09-22; owner W3) --
+    def format_label(self, fmt: str) -> str:
+        """The Format combo's label for 'edsui' / 'qml'. The design is what the
+        panel runs and comes first ("Design (.edsui)"); QML is labelled as the
+        desktop's preview code ("QML (desktop preview)")."""
+        if fmt not in FORMATS:
+            raise ValueError(f"unknown format {fmt!r}")
+        return FORMAT_LABELS_BY_FMT[fmt]
+
+    def preview_image(self):
+        """The QImage currently shown in the preview pane, or None."""
+        image = self.preview._image
+        return image if image is not None and not image.isNull() else None
+
+    def preview_renderer_name(self) -> str:
+        """'hmi-ui' when the preview pane is drawn by the panel's renderer
+        (designer.preview.NativeRenderer), 'qml' when by the Qt fallback."""
+        name = getattr(self._workspace, "preview_renderer_name", None)
+        if name in ("hmi-ui", "qml"):
+            return name
+        return "hmi-ui" if self._page_renderer() is not None else "qml"
 
     def status_text(self) -> str:
         """What the status line says (tests read it)."""
@@ -449,10 +484,10 @@ class CodeWindow(QMainWindow):
     # ------------------------------------------------------------ slots
 
     def _box_changed(self, _index) -> None:
-        self.show_section(SCOPES[self._scope_box.currentIndex()], FORMATS[self._fmt_box.currentIndex()])
+        self.show_section(SCOPES[self._scope_box.currentIndex()], FORMAT_ORDER[self._fmt_box.currentIndex()])
 
     def _sync_boxes(self) -> None:
-        for box, values, current in ((self._scope_box, SCOPES, self._scope), (self._fmt_box, FORMATS, self._fmt)):
+        for box, values, current in ((self._scope_box, SCOPES, self._scope), (self._fmt_box, FORMAT_ORDER, self._fmt)):
             box.blockSignals(True)
             box.setCurrentIndex(values.index(current))
             box.blockSignals(False)
@@ -516,7 +551,12 @@ class CodeWindow(QMainWindow):
         if self._section is None:
             self._title.setText("")
             return
-        self._title.setText(self._section.title + (" *" if self.is_edited() else ""))
+        title = self._section.title
+        for suffix, shown in TITLE_SUFFIXES.items():
+            if title.endswith(suffix):
+                title = title[:-len(suffix)] + shown
+                break
+        self._title.setText(title + (" *" if self.is_edited() else ""))
 
     def _confirm_discard(self) -> bool:
         box = QMessageBox(QMessageBox.Question, "Unapplied edits",
@@ -546,16 +586,27 @@ class CodeWindow(QMainWindow):
                 self.preview.set_message(NOTHING_SELECTED)
                 return
             width, height = widget.geometry.get("width", 0), widget.geometry.get("height", 0)
+            image = renderer.image_for(widget, width, height, screen.theme, 1.0)
+        elif self._page_renderer() is not None:
+            # The panel's renderer draws a page as the panel does, from the
+            # project itself; the Rectangle wrapper below is only how the QML
+            # renderer, which knows nothing of pages, is handed a whole screen.
+            image = renderer.page_image_for(workspace.project, workspace.current_page, screen.theme, 1.0)
         else:
             widget = self._page_wrapper(workspace.current_page, screen)
-            width, height = screen.width, screen.height
-        image = renderer.image_for(widget, width, height, screen.theme, 1.0)
+            image = renderer.image_for(widget, screen.width, screen.height, screen.theme, 1.0)
         if image is None:
             self.preview.set_message(RENDERING)
         elif image.isNull():
             self.preview.set_message(UNAVAILABLE)
         else:
             self.preview.set_image(image)
+
+    def _page_renderer(self):
+        """The scene's renderer when it can draw a whole page itself
+        (designer.preview.NativeRenderer), else None."""
+        renderer = getattr(self._workspace.scene, "qml_previews", None)
+        return renderer if callable(getattr(renderer, "page_image_for", None)) else None
 
     @staticmethod
     def _page_wrapper(page, screen) -> DesignerWidget:
