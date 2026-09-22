@@ -1277,6 +1277,17 @@ click.
    "make the RPM gauge bigger" or "add a coolant warning" edit the design on the
    canvas instead of starting over.  **Stop** cancels a run at the next token.
 
+<div align="center">
+<img src="docs/assets/ai/composition-before.png" alt="The model's own geometry: a gauge whose ticks are a scribble, a stretched alarm table, controls scattered" width="440" /> <img src="docs/assets/ai/composition-after.png" alt="The same widgets composed: a readable dial, the table at its proportions, the controls in a foot band" width="440" />
+
+<em>The same model output, before and after the composition pass — both drawn
+by the panel's own renderer. The dial's ticks were a scribble because the model
+changed the gauge's range to 0–100 and left the kit's step of 1 behind: 500 tick
+marks. The pass repairs the scale, sizes each face to its proportions, places
+everything on the grid and puts the controls in a band. 78 → 86 on the critic,
+with no errors left.</em>
+</div>
+
 ### Reading the execution shell
 
 Every turn produces a foldable record that stays open while the run is live
