@@ -25,6 +25,7 @@ Networking runs on a worker thread; the connector's event stream is relayed
 to the UI through a signal so the canvas stays responsive while a local
 model streams.
 """
+import copy
 import os
 import re
 import tempfile
@@ -33,7 +34,7 @@ import time
 from PySide6.QtCore import Qt, Signal, QTimer, QThread, QSettings, QSize, QEvent, QRectF, QPointF, QRect, QPoint
 from PySide6.QtGui import (
     QFont, QTextCursor, QKeyEvent, QPainter, QPen, QColor, QConicalGradient,
-    QLinearGradient, QBrush,
+    QLinearGradient, QBrush, QPixmap,
 )
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFrame, QGraphicsView, QHBoxLayout, QLabel, QLayout,
@@ -692,6 +693,7 @@ class ExecutionShell(Foldable):
         self.response_fold = None
         self.response_pane = None
         self.parse_row = None
+        self.polish_row = None
         self.changes_fold = None
         self.usage_row = None
         self.error_row = None
@@ -875,6 +877,31 @@ class ExecutionShell(Foldable):
         self.changes_fold.add(body)
         self._add_row(self.changes_fold)
 
+    def note_polish(self, report):
+        """``Composed: hero-centre, 62 -> 88`` -- what the layout pass did.
+
+        The model's geometry is a draft; designer.layout.polish composes it
+        before it reaches the canvas, and a record that does not say so
+        leaves the author wondering why the screen is not what was sent.
+        """
+        if report is None:
+            return None
+        try:
+            from designer.layout.polish import summary
+            title = summary(report)
+        except Exception:
+            title = f"Composed: {getattr(report, 'archetype', '') or 'as drawn'}"
+        meta = ""
+        try:
+            issues = [i for i in report.after.issues if i.severity == "error"]
+            meta = f"{len(issues)} defect{'s' if len(issues) != 1 else ''} left" if issues else ""
+        except Exception:
+            pass
+        gain = getattr(report, "gain", 0.0) or 0.0
+        self.polish_row = self._add_row(ToolRow("layout-grid", title, meta,
+                                                "ok" if gain >= 0 else "pending"))
+        return self.polish_row
+
     def note_error(self, message: str):
         self.error_row = self._add_row(ToolRow("alert-triangle", message, "", "fail"))
         self.error_row.title.setWordWrap(True)
@@ -948,12 +975,92 @@ class ExecutionShell(Foldable):
 
 
 # ---------------------------------------------------------------------------
+# Variants = the same section, composed differently
+# ---------------------------------------------------------------------------
+
+class VariantThumb(QFrame):
+    """One composition, drawn by the panel's own renderer. Click to take it."""
+
+    clicked = Signal()
+
+    def __init__(self, pixmap, title: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("variantThumb")
+        self.setCursor(Qt.PointingHandCursor)
+        col = QVBoxLayout(self)
+        col.setContentsMargins(4, 4, 4, 6)
+        col.setSpacing(4)
+        art = QLabel()
+        art.setPixmap(pixmap)
+        art.setAlignment(Qt.AlignCenter)
+        col.addWidget(art)
+        self.caption = ElidedLabel(title)
+        self.caption.setObjectName("variantCaption")
+        self.caption.setAlignment(Qt.AlignCenter)
+        self.caption.setToolTip(title)
+        col.addWidget(self.caption)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+
+class VariantStrip(QWidget):
+    """Up to three compositions of the same widgets, offered under the turn.
+
+    Composition is a judgement call the critic can only narrow, not settle,
+    so the ones it liked are shown rather than argued about: whichever is
+    clicked replaces what is on the canvas.
+    """
+
+    picked = Signal(object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("variantStrip")
+        col = QVBoxLayout(self)
+        col.setContentsMargins(0, 2, 0, 0)
+        col.setSpacing(6)
+        self.heading = QLabel("Other compositions")
+        self.heading.setObjectName("toolMeta")
+        col.addWidget(self.heading)
+        host = QWidget()
+        self.row = QHBoxLayout(host)
+        self.row.setContentsMargins(0, 0, 0, 0)
+        self.row.setSpacing(8)
+        self.row.addStretch(1)
+        col.addWidget(host)
+        self.setVisible(False)
+
+    def clear(self):
+        while self.row.count() > 1:
+            item = self.row.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+        self.setVisible(False)
+
+    def show_variants(self, items):
+        """items: (archetype_id, score, QImage, project), best first."""
+        self.clear()
+        for archetype, score, image, project in list(items)[:3]:
+            pixmap = QPixmap.fromImage(image).scaled(QSize(132, 92), Qt.KeepAspectRatio,
+                                                     Qt.SmoothTransformation)
+            thumb = VariantThumb(pixmap, f"{archetype} · {score:.0f}")
+            thumb.clicked.connect(lambda p=project: self.picked.emit(p))
+            self.row.insertWidget(self.row.count() - 1, thumb)
+        self.setVisible(self.row.count() > 1)
+
+
+# ---------------------------------------------------------------------------
 # Turn = brief + shell + conclusion
 # ---------------------------------------------------------------------------
 
 class TurnWidget(QWidget):
     applyRequested = Signal(object)
     editRequested = Signal(str)   # "Edit brief & retry": put the brief back in the composer
+    variantPicked = Signal(object)  # a composition from the strip, for the canvas
 
     def __init__(self, brief: str, parent=None):
         super().__init__(parent)
@@ -1003,6 +1110,9 @@ class TurnWidget(QWidget):
         self.chip_host.setObjectName("chipHost")
         self.chip_row = FlowLayout(self.chip_host)
         body.addWidget(self.chip_host)
+        self.variant_strip = VariantStrip()
+        self.variant_strip.picked.connect(self.variantPicked)
+        body.addWidget(self.variant_strip)
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 2, 0, 0)
         self.apply_btn = QPushButton("Apply to canvas")
@@ -1071,6 +1181,11 @@ class TurnWidget(QWidget):
         self.edit_btn.setIcon(_icon("pencil", 13, _token("foreground", self._theme)))
         self.error_card.setVisible(True)
 
+    def show_variants(self, items):
+        """Offer other compositions of this section; nothing shown for none."""
+        self.variant_strip.show_variants(items)
+        self.card.setVisible(self.card.isVisible() or self.variant_strip.isVisible())
+
     def conclude(self, project, prose: str, chips: list):
         """chips: list of (text, tone)."""
         self.project = project
@@ -1085,7 +1200,7 @@ class TurnWidget(QWidget):
         self.chip_host.setVisible(bool(chips))
         self.apply_btn.setVisible(project is not None)
         self.apply_btn.setIcon(_icon("device-desktop", 14, _token("foreground", self._theme)))
-        self.card.setVisible(bool(prose) or bool(chips))
+        self.card.setVisible(bool(prose) or bool(chips) or self.variant_strip.isVisible())
 
     def retheme(self, theme):
         self._theme = theme
@@ -1282,6 +1397,9 @@ class AIDesignTab(QWidget):
         self._section_project = None
         self._queued_section_request = None
         self._root_brief = ""
+        # The panel's own renderer, for the variant thumbnails: None until
+        # asked for, False when there is no hmi-ui binary to ask.
+        self._variant_renderer_cache = None
         self._theme = "dark"
         self._icon_slots = []  # (widget, icon_name, size, token) re-rendered on theme change
         self.settings = QSettings("MIL-HMI", "Deployer")
@@ -1694,7 +1812,14 @@ class AIDesignTab(QWidget):
                every plain widget in the page colour, which showed as grey
                slabs behind captions and inside the shell heads. */
             QWidget#fieldBox, QWidget#shellHead, QWidget#toolRow, QWidget#turn,
-            QWidget#chipHost, QWidget#foldBody, QWidget#hero, QWidget#heroColumn {{ background: transparent; }}
+            QWidget#chipHost, QWidget#foldBody, QWidget#hero, QWidget#heroColumn,
+            QWidget#variantStrip {{ background: transparent; }}
+
+            /* -- variant strip: three quiet thumbnails, one click each ------ */
+            QFrame#variantThumb {{ background: {raised}; border: 1px solid {border};
+                                   border-radius: 8px; }}
+            QFrame#variantThumb:hover {{ border-color: {primary}; background: {tint(primary, 0.08)}; }}
+            QLabel#variantCaption {{ color: {muted_fg}; font-size: 10px; }}
 
             QLabel#fieldCaption {{ color: {muted_fg}; font-size: 10px; font-weight: 600; letter-spacing: 1px; }}
             QLabel#sessionLabel, QLabel#toolMeta, QLabel#foldRight {{ color: {muted_fg}; font-size: 11px; }}
@@ -2047,6 +2172,58 @@ class AIDesignTab(QWidget):
             self.canvasFocusRequested.emit()
         return outcome
 
+    def _variant_renderer(self):
+        """The panel's renderer for the thumbnails, or None when there is none."""
+        if self._variant_renderer_cache is not None:
+            return self._variant_renderer_cache or None
+        try:
+            from designer.preview import NativeRenderer
+            renderer = NativeRenderer()
+        except Exception:
+            renderer = None
+        if renderer is None or not getattr(renderer, "available", False):
+            self._variant_renderer_cache = False
+            return None
+        self._variant_renderer_cache = renderer
+        return renderer
+
+    def _offer_variants(self, turn, project):
+        """Show the other compositions of this section as thumbnails.
+
+        Drawn by hmi-ui itself, so what is offered is what the glass will
+        show. Without the binary there is nothing honest to show: the strip
+        is skipped and the turn reads exactly as it did before.
+        """
+        renderer = self._variant_renderer()
+        if renderer is None or project is None or not project.pages:
+            return
+        try:
+            from designer.layout.polish import polish_candidates
+            registry = getattr(self.generator, "registry", None)
+            page = project.pages[0]
+            items = []
+            for candidate, verdict, archetype in polish_candidates(
+                    project, page, registry, brief=self._root_brief, limit=3):
+                variant = copy.deepcopy(project)
+                variant.pages[0] = candidate
+                image = renderer.render_page_sync(variant, candidate, variant.screen.theme)
+                if image is None or image.isNull():
+                    continue
+                items.append((archetype, verdict.score, image, variant))
+            if len(items) < 2:
+                return
+            turn.show_variants(items)
+        except Exception:
+            return      # a variant strip is a courtesy; it never breaks a turn
+
+    def _take_variant(self, project):
+        """A thumbnail was clicked: that composition becomes the canvas."""
+        if project is None:
+            return
+        self.last_project = project
+        self.apply_to_canvas(project=project)
+        self.statusMessage.emit("AI Design: composition applied to the canvas")
+
     def set_last_project(self, project):
         self.last_project = project
 
@@ -2094,6 +2271,7 @@ class AIDesignTab(QWidget):
         turn.request_text = brief
         turn.retheme(self._theme)
         turn.applyRequested.connect(lambda project: self.apply_to_canvas(project=project, focus=True))
+        turn.variantPicked.connect(self._take_variant)
         turn.editRequested.connect(self._use_example)
         self.turns.append(turn)
         self.chat_layout.insertWidget(self.chat_layout.count() - 1, turn)
@@ -2102,6 +2280,9 @@ class AIDesignTab(QWidget):
         width, height = self._screen_size()
         registry = getattr(self.generator, "registry", None)
         self.connector.system_prompt = build_system_prompt(registry, width, height, brief=self._root_brief)
+        # The brief picks the composition archetype when the section is polished.
+        if self.generator is not None:
+            self.generator.brief = self._root_brief
 
         self.streaming = True
         self.send_btn.setToolTip("Stop")
@@ -2205,6 +2386,7 @@ class AIDesignTab(QWidget):
             summary = summarize_widgets(project) if project is not None else ""
             shell.note_parse(project, summary)
             if project is not None:
+                shell.note_polish(getattr(self.generator, "last_polish", None))
                 sectioned = hasattr(project, "_section_complete") or bool(getattr(project, "_truncated", False))
                 section_index = int(getattr(project, "_section_index", self._section_run) or self._section_run)
                 section_label = str(getattr(project, "_section_label", "") or "").strip()
@@ -2232,6 +2414,7 @@ class AIDesignTab(QWidget):
                     else:
                         chips.append(("Applied to canvas", "ok"))
                         chips.append(("Panel preview not refreshed", "warn"))
+                    self._offer_variants(turn, project)
                 if sectioned and (was_truncated or not section_complete):
                     if self._queue_next_section(section_next, truncated=was_truncated):
                         chips.append(("Applied · continuing automatically", "warn"))

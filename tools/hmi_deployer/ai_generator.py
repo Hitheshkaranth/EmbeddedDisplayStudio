@@ -227,6 +227,74 @@ def summarize_widgets(project) -> str:
     return f"{total} widget{'s' if total != 1 else ''}: " + ", ".join(parts)
 
 
+# Types worth quoting a design size for whatever the brief says: the ones a
+# panel screen is mostly made of. Anything the brief actually names is added.
+PROMPT_CORE_TYPES = ("Text", "ShButton", "ShCard", "ShGauge", "ShClusterGauge",
+                     "ShNumDisplay", "ShTrendChart", "ShAlarmTable", "ShToggle")
+
+
+def _design_sizes(registry, brief: str, limit: int = 14) -> str:
+    """``ShClusterGauge 240x240, ShGauge 180x180`` -- the sizes the brief needs.
+
+    A model given no sizes invents them, and a face at the wrong size is the
+    defect no prompt wording fixes afterwards (the baseline's 864x100 fuel
+    gauge). Deterministic: the brief's own words first, then the core types.
+    """
+    if registry is None:
+        return ""
+    try:
+        definitions = list(registry.definitions())
+    except Exception:
+        return ""
+    words = {w for w in re.split(r"[^a-z0-9]+", (brief or "").lower()) if len(w) >= 3}
+    wanted, seen = [], set()
+    for definition in sorted(definitions, key=lambda d: d.type):
+        haystack = f"{definition.type} {definition.display_name}".lower()
+        if any(word in haystack for word in words) and definition.type not in seen:
+            seen.add(definition.type)
+            wanted.append(definition)
+    for name in PROMPT_CORE_TYPES:
+        definition = registry.get(name)
+        if definition is not None and name not in seen:
+            seen.add(name)
+            wanted.append(definition)
+    return ", ".join(f"{d.type} {d.default_width}x{d.default_height}" for d in wanted[:limit])
+
+
+def compose_section(registry, screen_width: int, screen_height: int, brief: str = "") -> str:
+    """The composition half of the system prompt.
+
+    Geometry the model invents is fixed afterwards by designer.layout.polish,
+    but a draft that arrives composed needs less moving, so the prompt states
+    the same rules the critic measures: the grid, no overlap, aligned edges,
+    one hero, every widget near its type's design size, captions under faces.
+    """
+    try:
+        from designer.layout import grid as grid_module
+        grid = grid_module.grid_for(int(screen_width), int(screen_height))
+        rhythm = (f"a {grid.margin} px safe margin at every edge, a {grid.gutter} px gutter "
+                  f"between columns and between rows, and {grid.rows} rows")
+    except Exception:          # the layout package is optional at import time
+        rhythm = "a safe margin at every edge and one consistent gutter between columns and rows"
+    sizes = _design_sizes(registry, brief)
+    section = (
+        "\n\nCompose the screen, do not scatter it across it. Lay it out on a 12-column grid with "
+        + rhythm + ". Every x, y, width and height lands on that grid, so edges are aligned: "
+        "widgets side by side share a top edge and a height, widgets stacked share a left edge "
+        "and a width.\n"
+        "Widgets must not overlap, not by one pixel, and nothing may sit in the margin band.\n"
+        "Give the screen one hero -- the instrument the brief is really about, clearly the "
+        "largest thing on it -- and arrange the rest around it in reading order; leave no band "
+        "of the screen empty while another is crowded.\n"
+    )
+    if sizes:
+        section += ("Size every widget near the size its type is designed for (width x height): "
+                    + sizes + ". A dial is square; never stretch a face to fill a row.\n")
+    section += ("Put a short Text caption under any face that shows no label of its own, and use "
+                "the top band for the screen's title rather than leaving it empty.")
+    return section
+
+
 def build_system_prompt(registry: Optional[WidgetRegistry] = None,
                         screen_width: int = 1280, screen_height: int = 800,
                         brief: str = "") -> str:
@@ -280,6 +348,7 @@ def build_system_prompt(registry: Optional[WidgetRegistry] = None,
         "after it, nothing. If asked to continue, return only the next section and do not repeat "
         "widgets already emitted."
     )
+    prompt += compose_section(registry, screen_width, screen_height, brief)
     if brief:
         from tools.hmi_deployer.design_presets import match_preset, prompt_section
         preset = match_preset(brief)
@@ -294,6 +363,17 @@ class AIDesignGenerator:
     def __init__(self, registry: Optional[WidgetRegistry] = None):
         self.registry = registry or WidgetRegistry()
         self.progress = GeneratorProgress()
+        # FROZEN CONTRACT (AI beauty swarm, 2026-09-22; owner W4): every
+        # parsed section goes through designer.layout.polish before it is
+        # returned, so what reaches the canvas is composed, not a draft.
+        # False (tests, a caller that polishes itself) returns it raw.
+        self.polish_enabled = True
+        self.last_polish = None      # the PolishReport of the last generate()
+        # The brief the section was asked for, when the caller knows it: it
+        # picks the composition archetype. Empty is fine -- the widget count
+        # then decides.
+        self.brief = ""
+        self.renderer = None         # a NativeRenderer for the critic's pixel axes
 
     def generate(self, ai_output: str, screen_width: int = 1280, screen_height: int = 800) -> Optional[DesignerProject]:
         """Generate a DesignerProject from AI output.
@@ -303,8 +383,33 @@ class AIDesignGenerator:
         2. Markdown-wrapped QML code blocks
         3. Plain QML code
 
-        Returns DesignerProject or None on failure.
+        Returns DesignerProject or None on failure. Unless `polish_enabled`
+        is False the parsed design is composed by designer.layout.polish
+        before it is returned, and the PolishReport is kept in `last_polish`.
         """
+        project = self._parse_output(ai_output, screen_width, screen_height)
+        self.last_polish = None
+        if project is None or not self.polish_enabled:
+            return project
+        try:
+            from designer.layout.polish import polish
+            self.progress.progress.emit("Composing the design...")
+            report = None
+            for page in project.pages:
+                page_report = polish(project, page, self.registry,
+                                     brief=self.brief or project.name, renderer=self.renderer)
+                report = report or page_report
+            self.last_polish = report
+        except Exception as exc:
+            # A design in a draft's clothes beats no design at all: whatever
+            # the layout pipeline did, the model's work reaches the canvas.
+            logger.warning("Polish failed, returning the unpolished design: %s", exc)
+            self.last_polish = None
+        return project
+
+    def _parse_output(self, ai_output: str, screen_width: int = 1280,
+                      screen_height: int = 800) -> Optional[DesignerProject]:
+        """Everything generate() does before the design is composed."""
         self.progress.progress.emit("Parsing AI output...")
 
         # Strategy 1: JSON design payload -- a fenced ```json block first (that

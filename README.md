@@ -1246,11 +1246,26 @@ click.
    rectangle rather than failing the whole design — and diffed against what is
    on the canvas.  The chips report `+added −removed ~changed`; expand
    **Canvas changes** in the shell for the ids.
-4. **Apply.**  With auto-apply on, the merged project replaces the canvas as
+4. **Composition.**  A model asked for absolute geometry returns a draft: a
+   start/stop button inside the fuel gauge, a `ShFuelQuantity` stretched to
+   864 × 100, left edges at 32, 40 and 80 px.  Prompting does not fix that, so
+   every parsed section goes through `designer.layout.polish` before it
+   reaches the canvas: a human-designed composition archetype places the
+   widgets, the 12-column grid aligns them, each type is sized to the
+   proportions its face needs, a style pass sets the type scale and captions,
+   and a critic scores the result on overlap, margins, alignment, grid,
+   hierarchy, balance and proportion.  Rounds that do not raise the score are
+   rolled back, and the shell says what happened — `Composed: hero-centre,
+   54 → 90`.  Where the panel's own renderer is available the other
+   compositions are offered as thumbnails under the turn; clicking one swaps
+   the canvas.  The same pass is the Designer's **Tidy up** button, and it
+   only ever moves, sizes and styles: no widget, property, binding or action
+   is invented, renamed or dropped.
+5. **Apply.**  With auto-apply on, the merged project replaces the canvas as
    one undoable step, so `Ctrl+Z` in the Designer takes you back to the
    previous turn.  The AI title (`AI Design`, `AI Design (partial)`) is coerced
    to a deployable name (`ai-design-partial`) so the manifest is valid.
-5. **Preview.**  Applying also runs the Designer's own Preview: the QML is
+6. **Preview.**  Applying also runs the Designer's own Preview: the QML is
    generated, the manifest updated, and the bundle reloaded into the live
    panel.  **You do not need a bundle open first** — if none is, the Designer
    provisions one under `Documents/EmbeddedDisplay Studio/projects/<name>/`,
@@ -1258,9 +1273,20 @@ click.
    adopts it as the current bundle.  From there **Preview** and **Deploy** in
    the Designer, and the Display Console, behave exactly as they do for any
    other bundle.
-6. **Multi-turn.**  Up to three prior turns ride along with a new brief, so
+7. **Multi-turn.**  Up to three prior turns ride along with a new brief, so
    "make the RPM gauge bigger" or "add a coolant warning" edit the design on the
    canvas instead of starting over.  **Stop** cancels a run at the next token.
+
+<div align="center">
+<img src="docs/assets/ai/composition-before.png" alt="The model's own geometry: a gauge whose ticks are a scribble, a stretched alarm table, controls scattered" width="440" /> <img src="docs/assets/ai/composition-after.png" alt="The same widgets composed: a readable dial, the table at its proportions, the controls in a foot band" width="440" />
+
+<em>The same model output, before and after the composition pass — both drawn
+by the panel's own renderer. The dial's ticks were a scribble because the model
+changed the gauge's range to 0–100 and left the kit's step of 1 behind: 500 tick
+marks. The pass repairs the scale, sizes each face to its proportions, places
+everything on the grid and puts the controls in a band. 78 → 86 on the critic,
+with no errors left.</em>
+</div>
 
 ### Reading the execution shell
 
