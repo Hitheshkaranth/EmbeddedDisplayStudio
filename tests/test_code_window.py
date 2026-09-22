@@ -184,5 +184,133 @@ class WorkspaceCodeIntegrationTests(unittest.TestCase):
         self.assertGreaterEqual(len(pages), 1)
 
 
+# ---------------------------------------------------------------------------
+# STAND-IN, removed at integration (W4). CodeWindow.__init__ raises
+# NotImplementedError until W3 lands, so the workspace gate runs against a
+# minimal window with the frozen constructor and the two members the
+# workspace touches (apply_theme and the "Code" title). It subclasses the
+# frozen class so the gate's isinstance check holds, and skips its __init__.
+# Delete everything from here to "END STAND-IN" once W3 is merged; the W4
+# tests below it use only the frozen API and stay.
+# ---------------------------------------------------------------------------
+from PySide6.QtWidgets import QMainWindow  # noqa: E402
+
+import designer.ui.code_window as _code_window_module  # noqa: E402
+
+
+class _StandInCodeWindow(CodeWindow):
+    def __init__(self, workspace, parent=None):
+        QMainWindow.__init__(self, parent)
+        self.workspace = workspace
+        self.themes = []
+        self.setWindowTitle("Code")
+
+    def apply_theme(self, theme):
+        self.themes.append(theme)
+
+
+def setUpModule():
+    _code_window_module.CodeWindow = _StandInCodeWindow
+
+
+def tearDownModule():
+    _code_window_module.CodeWindow = CodeWindow
+# ---------------------------------------------------------------- END STAND-IN
+
+
+class WorkspaceCodeIntegrationExtraTests(unittest.TestCase):
+    """W4: what the brief asks for beyond the frozen minimum."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication(sys.argv)
+
+    def setUp(self):
+        self.workspace = _workspace()
+        self.addCleanup(self.workspace.close)
+
+    def _select(self, *ids):
+        self.workspace.scene.clearSelection()
+        for widget_id in ids:
+            self.workspace.scene.item_for_id(widget_id).setSelected(True)
+        self.app.processEvents()
+
+    def test_selected_widget_is_the_single_selection(self):
+        gauge_id, button_id = _ids(self.workspace)
+        self._select()                                   # add_widget leaves the newcomer selected
+        self.assertIsNone(self.workspace.selected_widget())
+        self._select(gauge_id)
+        self.assertEqual(self.workspace.selected_widget().id, gauge_id)
+        self._select(gauge_id, button_id)
+        self.assertIsNone(self.workspace.selected_widget())
+
+    def test_code_action_icon_and_shortcut(self):
+        from PySide6.QtGui import QKeySequence, QShortcut
+        action = next(a for a in self.workspace.findChildren(type(self.workspace.live_action)) if a.text() == "Code")
+        self.assertEqual(self.workspace._designer_icon_names[action], "terminal-2")
+        keys = [s.key().toString() for s in self.workspace.findChildren(QShortcut)]
+        self.assertIn(QKeySequence("Ctrl+Shift+K").toString(), keys)
+
+    def test_theme_is_forwarded_once_the_window_exists(self):
+        self.workspace.apply_theme("light")             # no window yet: nothing to forward to
+        window = self.workspace.open_code_window()
+        self.assertEqual(window.themes, ["light"])      # caught up on open
+        self.workspace.apply_theme("dark")
+        self.assertEqual(window.themes, ["light", "dark"])
+
+    def test_replace_widget_reaches_a_nested_child(self):
+        self.workspace.add_widget("ShCard")
+        card_id = _ids(self.workspace)[-1]
+        self.workspace.add_widget("Text", parent_id=card_id)
+        card = next(w for w in self.workspace.current_page.widgets if w.id == card_id)
+        child = card.children[0]
+        new = DesignerWidget.from_dict(child.to_dict())
+        new.properties["text"] = "nested edit"
+        self.assertTrue(self.workspace.replace_widget(child.id, new))
+        self.assertEqual(card.children[0].properties["text"], "nested edit")
+        self.assertIsNot(card.children[0], new, "the command must own its own copy")
+        self.workspace.undo_stack.undo()
+        self.assertIs(card.children[0], child)
+        self.workspace.undo_stack.redo()
+        self.assertEqual(card.children[0].properties["text"], "nested edit")
+        self.assertEqual([w.id for w in self.workspace.scene.selected_models()], [child.id])
+
+    def test_replace_widget_can_rename(self):
+        gauge_id, _ = _ids(self.workspace)
+        gauge = next(w for w in self.workspace.current_page.widgets if w.id == gauge_id)
+        new = DesignerWidget.from_dict(gauge.to_dict())
+        new.id = "renamedGauge"
+        self.assertTrue(self.workspace.replace_widget(gauge_id, new))
+        self.assertEqual([w.id for w in self.workspace.scene.selected_models()], ["renamedGauge"])
+        self.workspace.undo_stack.undo()
+        self.assertEqual([w.id for w in self.workspace.scene.selected_models()], [gauge_id])
+
+    def test_designChanged_on_loads_and_page_operations(self):
+        import tempfile
+        # A fresh workspace: its undo stack is empty, so clear() on load is
+        # silent and the load has to speak for itself.
+        workspace = DesignerWorkspace(); self.addCleanup(workspace.close)
+        changes = []
+        workspace.designChanged.connect(lambda: changes.append(1))
+        workspace.set_bundle(tempfile.mkdtemp(), {"name": "qc", "version": "1.0.0"})
+        self.assertEqual(len(changes), 1, "a bundle load with an empty undo stack")
+        workspace.new_page(); workspace.duplicate_page()
+        workspace.change_page(0); workspace.delete_page()
+        self.assertEqual(len(changes), 5)
+        workspace.new_ui()
+        self.assertEqual(len(changes), 6)
+
+    def test_replace_page_off_screen_renames_the_combo_entry(self):
+        from designer.model import DesignerPage
+        self.workspace.new_page()            # now on page 1
+        new = DesignerPage.from_dict(self.workspace.project.pages[0].to_dict())
+        new.name = "Cover"
+        self.assertTrue(self.workspace.replace_page(0, new))
+        self.assertEqual(self.workspace.current_page_index, 1)
+        self.assertEqual(self.workspace.pages.itemText(0), "Cover")
+        self.workspace.undo_stack.undo()
+        self.assertNotEqual(self.workspace.pages.itemText(0), "Cover")
+
+
 if __name__ == "__main__":
     unittest.main()
