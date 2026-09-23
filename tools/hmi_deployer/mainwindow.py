@@ -392,6 +392,8 @@ class MainWindow(QMainWindow):
         self._themed_icon(self.btn_test, icon_name)
         # Qt does not restyle on a property change by itself.
         self.btn_test.setProperty("linkState", state)
+        if hasattr(self, "_connect_beam"):
+            self._connect_beam.set_active(state == "connecting")
         self.btn_test.style().unpolish(self.btn_test)
         self.btn_test.style().polish(self.btn_test)
         self._link_state = state
@@ -744,6 +746,9 @@ class MainWindow(QMainWindow):
             self._ai_tab.apply_theme(self.theme)
         if hasattr(self, "_code_tab"):
             self._code_tab.apply_theme(self.theme)
+        for effect in ("logo_ring", "_connect_beam", "_deploy_beam", "_refresh_beam", "primary_nav"):
+            if hasattr(self, effect):
+                getattr(self, effect).set_theme(self.theme)
         logging.getLogger("EmbeddedDisplay Studio").info(
             "theme=%s stylesheet=%d chars", self.theme, len(app.styleSheet() or "")
         )
@@ -769,7 +774,13 @@ class MainWindow(QMainWindow):
         self.lbl_logo.setPixmap(
             QPixmap(logo_path).scaled(36, 36, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         )
-        self.lbl_logo.setFixedSize(46, 46)
+        self.lbl_logo.setFixedSize(40, 40)
+        # The mark sits in a slowly flowing liquid-metal rim (Libraries.dev
+        # metal-fx, ported in ui/python/fx/metal.py); 15 fps, a few px.
+        from ui.python.fx.metal import MetalRing
+        self.logo_ring = MetalRing(self.lbl_logo, ring=2, padding=1)
+        self.logo_ring.setFixedSize(48, 48)
+        self.logo_ring.start()
 
         # Wordmark beside the logo, in the design system's heading style.
         title_wrap = QWidget()
@@ -813,6 +824,8 @@ class MainWindow(QMainWindow):
         self.inp_port.setPlaceholderText("22")
         self.btn_test = QPushButton("Connect")
         self.btn_test.setObjectName("connectButton")
+        from ui.python.fx.beam import BorderBeam
+        self._connect_beam = BorderBeam(self.btn_test, size="sm", variant="ocean", radius=10)
         self._themed_icon(self.btn_test, "plug-connected")
         self.btn_test.clicked.connect(self.on_test_conn)
         # The link's other half. Connect used to be the only verb: once the
@@ -843,7 +856,16 @@ class MainWindow(QMainWindow):
         self._themed_icon(self.btn_theme, "sun" if self.theme == "dark" else "moon")
         self.btn_theme.clicked.connect(self.on_toggle_theme)
 
-        top_bar.addWidget(self.lbl_logo)
+        from ui.python import fx
+        self.btn_motion = QPushButton("")
+        self.btn_motion.setProperty("variant", "ghost")
+        self.btn_motion.setCheckable(True)
+        self.btn_motion.setChecked(fx.animations_enabled())
+        self.btn_motion.setToolTip("Animations: on (click to use still effects)")
+        self._themed_icon(self.btn_motion, "sparkles")
+        self.btn_motion.toggled.connect(self.on_toggle_motion)
+
+        top_bar.addWidget(self.logo_ring)
         top_bar.addSpacing(8)
         top_bar.addWidget(title_wrap)
         top_bar.addSpacing(24)
@@ -869,6 +891,7 @@ class MainWindow(QMainWindow):
         top_bar.addSpacing(8)
         top_bar.addWidget(self.lbl_connection)
         top_bar.addSpacing(8)
+        top_bar.addWidget(self.btn_motion)
         top_bar.addWidget(self.btn_theme)
 
         main_layout.addLayout(top_bar)
@@ -877,7 +900,8 @@ class MainWindow(QMainWindow):
         # content widget keeps its QTabWidget state machine, but its tab bar is
         # deliberately surfaced here so navigation reads across the whole
         # Studio rather than as part of only the right-hand pane.
-        self.primary_nav = QTabBar()
+        from ui.python.fx.liquid import LiquidTabBar
+        self.primary_nav = LiquidTabBar()
         self.primary_nav.setObjectName("primaryNav")
         self.primary_nav.setDrawBase(False)
         self.primary_nav.setExpanding(False)
@@ -1086,6 +1110,8 @@ class MainWindow(QMainWindow):
         # Deployment Actions
         deploy_box = QGroupBox()
         deploy_box.setProperty("class", "consoleSectionPanel")
+        from ui.python.fx.beam import BorderBeam
+        self._deploy_beam = BorderBeam(deploy_box, size="line", variant="colorful")
         deploy_layout = QVBoxLayout(deploy_box)
         deploy_layout.setContentsMargins(14, 14, 14, 14)
         deploy_layout.setSpacing(8)
@@ -1372,6 +1398,8 @@ class MainWindow(QMainWindow):
         # the subtitle it always was.
         profile_heading = self._page_heading("System Profile", "cpu")
         self.btn_refresh_profile = QPushButton("Refresh profile")
+        from ui.python.fx.beam import BorderBeam
+        self._refresh_beam = BorderBeam(self.btn_refresh_profile, size="sm", variant="ocean", radius=10)
         self.btn_refresh_profile.setProperty("variant", "outline")
         self.btn_refresh_profile.setProperty("busy", "false")
         self._themed_icon(self.btn_refresh_profile, "refresh")
@@ -1882,6 +1910,7 @@ class MainWindow(QMainWindow):
         button.setText("Refreshing…" if busy else "Refresh profile")
         button.style().unpolish(button)
         button.style().polish(button)
+        self._refresh_beam.set_active(busy)
 
     def refresh_memory_profile(self):
         """Read the active release and capacity profile from the connected SOM.
@@ -1922,6 +1951,14 @@ class MainWindow(QMainWindow):
             timeout_s=MEMORY_PROFILE_TIMEOUT_S,
             line_hook=self._record_memory_profile_line,
         )
+
+    def on_toggle_motion(self, enabled: bool) -> None:
+        """The Animations switch: every ui.python.fx effect moves, or shows
+        its still frame (and no effect timer runs)."""
+        from ui.python import fx
+        fx.set_animations_enabled(enabled)
+        self.btn_motion.setToolTip("Animations: on (click to use still effects)" if enabled
+                                   else "Animations: off (click to animate)")
 
     def on_toggle_theme(self):
         self.theme = "dark" if self.theme == "light" else "light"
@@ -2324,6 +2361,7 @@ class MainWindow(QMainWindow):
 
     def _progress_begin(self) -> None:
         """Shows the bar at zero, in its neutral colour, for a new deploy."""
+        self._deploy_beam.set_active(True)
         self.progress.setVisible(True)
         self.progress.setRange(0, 100)
         self.progress.setFormat("%p%")
@@ -2360,6 +2398,7 @@ class MainWindow(QMainWindow):
         A deploy the operator called off is not a fault, and painting it red
         would teach them to ignore red.
         """
+        self._deploy_beam.set_active(False)
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress.setFormat("%p%")
@@ -2397,6 +2436,7 @@ class MainWindow(QMainWindow):
         the installer rolls back on its own -- but the tool still has to say
         plainly that this attempt did not land.
         """
+        self._deploy_beam.set_active(False)
         self._deploy_failed = True
         self.progress.setVisible(True)
         if self.progress.maximum() == 0:
@@ -3162,6 +3202,7 @@ class MainWindow(QMainWindow):
                 self._discard_packaging_dir(packaging_dir)
                 if code == 0 and not self._deploy_failed:
                     self.log("Deployment complete.")
+                    self._deploy_beam.set_active(False)
                     self._progress_succeed()
                     self.start_relay()
                     return

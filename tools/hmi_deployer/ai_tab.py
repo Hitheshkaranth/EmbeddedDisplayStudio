@@ -224,9 +224,13 @@ class Orb(QWidget):
     """OpenDesign's orb: a soft glowing sphere with an arc sweeping round it
     while a turn runs; a filled dot with a check / cross once it settles."""
 
+    # What the run is doing -> the thinking-orb state that shows it.
+    PHASE_ORBS = {"sending": "connecting", "connecting": "connecting", "thinking": "breathing",
+                  "writing": "composing", "parsing": "shaping"}
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(18, 18)
+        self.setFixedSize(20, 20)
         self._angle = 0
         self._pulse = 0.0
         self._timer = QTimer(self)
@@ -234,17 +238,31 @@ class Orb(QWidget):
         self._timer.timeout.connect(self._tick)
         self._state = "idle"
         self._theme = "dark"
+        # While running, a thinking orb (ui/python/fx/orb.py) draws the phase;
+        # the settled check / cross / square stay this widget's own painting.
+        from ui.python.fx.orb import ThinkingOrb
+        self._thinking = ThinkingOrb(self, state="connecting", size=20)
+        self._thinking.hide()
 
     def set_state(self, state: str, theme: str = None):
         """state: running | ok | fail | stopped | idle."""
         if theme:
             self._theme = theme
         self._state = state
+        self._thinking.set_theme(self._theme)
+        self._thinking.set_color(QColor(_token("primary", self._theme)))
         if state == "running":
-            self._timer.start()
+            self._thinking.show()
+            self._thinking.start()
         else:
-            self._timer.stop()
+            self._thinking.stop()
+            self._thinking.hide()
         self.update()
+
+    def set_phase(self, phase: str) -> None:
+        """The run's status key (sending, thinking, writing, parsing ...):
+        picks the orb that shows it."""
+        self._thinking.set_state(self.PHASE_ORBS.get(phase, "breathing"))
 
     def _tick(self):
         self._angle = (self._angle + 9) % 360
@@ -252,6 +270,8 @@ class Orb(QWidget):
         self.update()
 
     def paintEvent(self, _event):
+        if self._state == "running":
+            return                              # the thinking orb child draws it
         import math
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -716,6 +736,7 @@ class ExecutionShell(Foldable):
 
     def set_status(self, key: str):
         self._status = key
+        self.orb.set_phase(key)
         self.status_word.setText(self.STATUS_WORDS.get(key, key))
         self.status_word.setProperty("tone", {"failed": "fail", "done": "ok", "stopped": "warn"}.get(key, ""))
         self.status_word.style().unpolish(self.status_word)
@@ -1570,6 +1591,8 @@ class AIDesignTab(QWidget):
 
         self.composer_card = QFrame()
         self.composer_card.setObjectName("composerCard")
+        from ui.python.fx.beam import BorderBeam
+        self._composer_beam = BorderBeam(self.composer_card, size="md", variant="colorful", radius=16)
         self.composer_card.setProperty("focused", "false")
         cc = QVBoxLayout(self.composer_card)
         cc.setContentsMargins(14, 12, 10, 8)
@@ -1797,6 +1820,8 @@ class AIDesignTab(QWidget):
     def apply_theme(self, theme: str):
         """Re-skin from the Studio's shadcn tokens; called by the main window."""
         self._theme = theme
+        if hasattr(self, "_composer_beam"):
+            self._composer_beam.set_theme(theme)
         t = lambda name: _token(name, theme)
         bg, card, border = t("background"), t("card"), t("border")
         fg, muted_fg, muted = t("foreground"), t("mutedForeground"), t("muted")
@@ -2311,6 +2336,7 @@ class AIDesignTab(QWidget):
                 self.generator.brief = self._root_brief
 
             self.streaming = True
+            self._composer_beam.set_active(True)
             self.send_btn.setToolTip("Stop")
             self.send_btn.setProperty("stop", "true")
             self.send_btn.style().unpolish(self.send_btn); self.send_btn.style().polish(self.send_btn)
@@ -2334,6 +2360,7 @@ class AIDesignTab(QWidget):
             self._worker = None
             turn.shell.finish("failed")
             self.streaming = False
+            self._composer_beam.set_active(False)
             self.send_btn.setEnabled(True)
             self.send_btn.setToolTip("Generate (Ctrl+Enter)")
             self.send_btn.setProperty("stop", "false")
@@ -2528,6 +2555,7 @@ class AIDesignTab(QWidget):
 
     def _on_worker_done(self):
         self.streaming = False
+        self._composer_beam.set_active(False)
         self._worker = None
         self._active_turn = None
         self.send_btn.setEnabled(True)
