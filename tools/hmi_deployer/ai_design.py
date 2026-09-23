@@ -179,6 +179,10 @@ class ProviderConfig:
     apiVersion: str = ""
     requiresApiKey: bool = False
     models: list = field(default_factory=list)
+    # Reasoning models (Qwen3, DeepSeek-R1, ...) think before they answer and
+    # their reasoning counts against max_tokens, so a long think can spend the
+    # whole budget and return no design.  Off unless the user asks for it.
+    thinking: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -188,6 +192,7 @@ class ProviderConfig:
             "apiKey": self.apiKey,
             "apiVersion": self.apiVersion,
             "requiresApiKey": self.requiresApiKey,
+            "thinking": self.thinking,
         }
 
     @classmethod
@@ -200,6 +205,7 @@ class ProviderConfig:
             apiKey=filtered.get("apiKey", ""),
             apiVersion=filtered.get("apiVersion", ""),
             requiresApiKey=filtered.get("requiresApiKey", False),
+            thinking=bool(filtered.get("thinking", False)),
             models=filtered.get("models", []),
         )
 
@@ -865,6 +871,12 @@ class ODConnector:
                 # Ask for the trailing usage chunk so token counts are exact.
                 "stream_options": {"include_usage": True},
             }
+            if not self.byok.thinking:
+                # Qwen-style templates render a reasoning pass unless told
+                # otherwise; vLLM forwards these kwargs to the template.
+                # Templates that do not know the flag ignore it, and a server
+                # that rejects the field gets one retry without it below.
+                payload["chat_template_kwargs"] = {"enable_thinking": False}
             parser = parse_openai_stream
         elif prov == "anthropic":
             url = f"{base}/v1/messages"
@@ -921,12 +933,26 @@ class ODConnector:
         HTTP errors carry the server's body (provider error JSON is far more
         useful than "400 Bad Request").  Cancellation is checked per chunk.
         """
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         ctx = ssl.create_default_context()
         shown = redact_url(url)
+
+        def _post(body_dict):
+            req = urllib.request.Request(
+                url, data=json.dumps(body_dict).encode("utf-8"),
+                headers=headers, method="POST")
+            return urllib.request.urlopen(req, timeout=300, context=ctx)
+
         try:
-            resp = urllib.request.urlopen(req, timeout=300, context=ctx)
+            try:
+                resp = _post(payload)
+            except urllib.error.HTTPError as exc:
+                # A server whose chat template rejects unknown kwargs answers
+                # 400; the request is worth one retry in its plainest form.
+                if exc.code != 400 or "chat_template_kwargs" not in payload:
+                    raise
+                logger.info("retrying without chat_template_kwargs")
+                plain = {k: v for k, v in payload.items() if k != "chat_template_kwargs"}
+                resp = _post(plain)
         except urllib.error.HTTPError as exc:
             body = ""
             try:

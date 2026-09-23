@@ -26,6 +26,7 @@ to the UI through a signal so the canvas stays responsive while a local
 model streams.
 """
 import copy
+import logging
 import os
 import re
 import tempfile
@@ -58,6 +59,9 @@ except ImportError:  # pragma: no cover - the Studio always ships ui/
                  "warning": "#f59e0b", "destructive": "#ef4444", "info": "#3b82f6",
                  "accent": "#27272a", "input": "#27272a"}
     def _token(name, theme="dark"): return _FALLBACK.get(name, "#888888")
+
+
+logger = logging.getLogger(__name__)
 
 
 def _rgba(hex_color: str, alpha: float) -> str:
@@ -1523,6 +1527,17 @@ class AIDesignTab(QWidget):
         self.api_key.editingFinished.connect(self._endpoint_edited)
         self.api_key_box = self._labelled("API key", self.api_key)
         ep.addWidget(self.api_key_box, 1)
+        # Reasoning models spend their output budget thinking before they
+        # write; on a shared endpoint that reads as a frozen run, so the
+        # reasoning pass is off unless it is asked for.
+        self.thinking_check = QCheckBox("Let the model think first")
+        self.thinking_check.setObjectName("autoApply")
+        self.thinking_check.setToolTip(
+            "Reasoning models (Qwen3, DeepSeek-R1) reason before answering, and that\n"
+            "reasoning counts against the output budget: a run takes minutes and can\n"
+            "end with no design at all. Leave this off unless the endpoint is idle.")
+        self.thinking_check.toggled.connect(self._on_thinking_toggled)
+        ep.addWidget(self._labelled("Reasoning", self.thinking_check), 1)
         top.addWidget(self.endpoint_box)
         layout.addWidget(top_bar)
 
@@ -2012,6 +2027,7 @@ class AIDesignTab(QWidget):
         preset["baseUrl"] = self.settings.value(f"ai/baseUrl/{key}", preset.get("baseUrl", ""), type=str)
         preset["apiKey"] = self.settings.value(f"ai/apiKey/{key}", "", type=str)
         preset["model"] = self.settings.value(f"ai/model/{key}", (preset.get("models") or [""])[0], type=str)
+        preset["thinking"] = self.settings.value(f"ai/thinking/{key}", False, type=bool)
         self.connector.mode = "byok"
         self.connector.byok = ProviderConfig.from_dict(preset)
         self.settings.setValue("ai/provider", key)
@@ -2019,6 +2035,9 @@ class AIDesignTab(QWidget):
         self.base_url.setText(preset["baseUrl"])
         self.api_key.setText(preset["apiKey"])
         self.api_key_box.setVisible(bool(preset.get("requiresApiKey")) or bool(preset["apiKey"]))
+        self.thinking_check.blockSignals(True)
+        self.thinking_check.setChecked(bool(preset["thinking"]))
+        self.thinking_check.blockSignals(False)
 
         self._probe_models = []
         self._probe_ok = None
@@ -2050,6 +2069,12 @@ class AIDesignTab(QWidget):
             return
         self.connector.byok.model = text.strip()
         self.settings.setValue(f"ai/model/{self._current_provider_key()}", text.strip())
+
+    def _on_thinking_toggled(self, on: bool):
+        if not self.connector or not self.connector.byok:
+            return
+        self.connector.byok.thinking = bool(on)
+        self.settings.setValue(f"ai/thinking/{self._current_provider_key()}", bool(on))
 
     def _endpoint_edited(self):
         if not self.connector or not self.connector.byok:
@@ -2277,28 +2302,43 @@ class AIDesignTab(QWidget):
         self.chat_layout.insertWidget(self.chat_layout.count() - 1, turn)
         self._scroll_to_bottom()
 
-        width, height = self._screen_size()
-        registry = getattr(self.generator, "registry", None)
-        self.connector.system_prompt = build_system_prompt(registry, width, height, brief=self._root_brief)
-        # The brief picks the composition archetype when the section is polished.
-        if self.generator is not None:
-            self.generator.brief = self._root_brief
+        try:
+            width, height = self._screen_size()
+            registry = getattr(self.generator, "registry", None)
+            self.connector.system_prompt = build_system_prompt(registry, width, height, brief=self._root_brief)
+            # The brief picks the composition archetype when the section is polished.
+            if self.generator is not None:
+                self.generator.brief = self._root_brief
 
-        self.streaming = True
-        self.send_btn.setToolTip("Stop")
-        self.send_btn.setProperty("stop", "true")
-        self.send_btn.style().unpolish(self.send_btn); self.send_btn.style().polish(self.send_btn)
-        self._set_send_icon("player-stop")
-        self.statusMessage.emit(f"AI Design: generating with {model}")
+            self.streaming = True
+            self.send_btn.setToolTip("Stop")
+            self.send_btn.setProperty("stop", "true")
+            self.send_btn.style().unpolish(self.send_btn); self.send_btn.style().polish(self.send_btn)
+            self._set_send_icon("player-stop")
+            self.statusMessage.emit(f"AI Design: generating with {model}")
 
-        # Bound-method slots so PySide queues the calls onto the UI thread;
-        # a lambda would run on the worker thread and touch widgets there.
-        self._active_turn = turn
-        self._worker = GenerationWorker(self.connector, brief, model, self)
-        self._worker.event.connect(self._on_worker_event)
-        self._worker.finished.connect(self._on_worker_done)
-        self._worker.finished.connect(self._worker.deleteLater)
-        self._worker.start()
+            # Bound-method slots so PySide queues the calls onto the UI thread;
+            # a lambda would run on the worker thread and touch widgets there.
+            self._active_turn = turn
+            self._worker = GenerationWorker(self.connector, brief, model, self)
+            self._worker.event.connect(self._on_worker_event)
+            self._worker.finished.connect(self._on_worker_done)
+            self._worker.finished.connect(self._worker.deleteLater)
+            self._worker.start()
+        except Exception as exc:
+            # Nothing below the card had started yet, so the run ends here
+            # rather than leaving a card that says 'Sending request…' for ever.
+            logger.exception("could not start generation")
+            turn.shell.note_error(f"Could not start the request: {exc}")
+            self._active_turn = None
+            self._worker = None
+            turn.shell.finish("failed")
+            self.streaming = False
+            self.send_btn.setEnabled(True)
+            self.send_btn.setToolTip("Generate (Ctrl+Enter)")
+            self.send_btn.setProperty("stop", "false")
+            self.send_btn.style().unpolish(self.send_btn); self.send_btn.style().polish(self.send_btn)
+            self._set_send_icon("player-play")
 
     def _queue_next_section(self, label: str = "", truncated: bool = False) -> bool:
         """Schedule the next bounded section after the current worker exits."""
