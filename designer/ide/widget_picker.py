@@ -28,11 +28,30 @@ or type (case-insensitive substring).
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QIcon, QImage, QPainter, QFont, QPixmap
-from PySide6.QtWidgets import QListWidget, QListWidgetItem, QLineEdit, QLabel, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPixmap
+from PySide6.QtWidgets import (
+    QAbstractItemView, QLineEdit, QListWidget, QListWidgetItem, QStyledItemDelegate, QVBoxLayout,
+    QWidget,
+)
 
+from designer.ide.project_files import _rgba, color
 
 THUMB_SIZE = QSize(56, 40)
+
+# Nesting depth of the row's widget (0 for a page-level widget).
+_DEPTH_ROLE = Qt.UserRole + 1
+_INDENT_PX = 16
+
+
+class _IndentDelegate(QStyledItemDelegate):
+    """Shifts a row right by its nesting depth; a QListWidget has no tree
+    indentation of its own."""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        depth = int(index.data(_DEPTH_ROLE) or 0)
+        if depth:
+            option.rect = option.rect.adjusted(depth * _INDENT_PX, 0, 0, 0)
 
 
 class WidgetPicker(QWidget):
@@ -48,342 +67,235 @@ class WidgetPicker(QWidget):
 
     def __init__(self, workspace, parent=None):
         super().__init__(parent)
+        self.setObjectName("widgetPicker")
         self._workspace = workspace
         self._theme = "dark"
-        self._filter_text = ""
-        self._thumbnail_cache = {}  # widget_id -> QImage
-
-        # List widget for widgets
-        self._list = QListWidget()
-        self._list.setIconSize(THUMB_SIZE)
-        self._list.setUniformItemSizes(True)
-        self._list.setSortingEnabled(False)
-        self._list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
-        self._list.setEditTriggers(QListWidget.EditTrigger.NoEditTriggers)
-        self._list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
-        self._list.itemClicked.connect(self._on_item_clicked)
-
-        # Filter field
-        self._filter_edit = QLineEdit()
-        self._filter_edit.setPlaceholderText("Filter")
-        self._filter_edit.textChanged.connect(self._on_filter_changed)
-
-        # Empty label
-        self._empty_label = QLabel("")
-        self._empty_label.setAlignment(Qt.AlignCenter)
-
-        # Layout
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self._filter_edit)
-        layout.addWidget(self._empty_label)
-        layout.addWidget(self._list)
-
-        # Internal state
-        self._widgets_cache = []  # full list of DesignerWidget from current page
+        # Row id -> the fitted QImage it shows, and -> its DesignerWidget.
+        self._thumbs: dict[str, QImage] = {}
+        self._widgets: dict = {}
+        # The renderer whose `ready` is connected; the workspace may swap it.
         self._renderer = None
 
-        # Connect workspace signals
-        self._workspace.designChanged.connect(self.rebuild)
-        self._workspace.pageChanged.connect(self.rebuild)
-        self._workspace.scene.selectionIdsChanged.connect(self._on_selection_ids_changed)
+        self.filter_edit = QLineEdit()
+        self.filter_edit.setObjectName("widgetPickerFilter")
+        self.filter_edit.setPlaceholderText("Filter widgets")
+        self.filter_edit.setClearButtonEnabled(True)
+        self.filter_edit.textChanged.connect(self._apply_filter)
 
-        # Connect renderer ready signal (lazy, set up in rebuild)
-        self._old_bus = None
+        self.list = QListWidget()
+        self.list.setObjectName("widgetPickerList")
+        self.list.setIconSize(THUMB_SIZE)
+        self.list.setUniformItemSizes(True)
+        self.list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.list.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.list.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.list.setItemDelegate(_IndentDelegate(self.list))
+        self.list.itemClicked.connect(self._on_item_clicked)
 
-        self.rebuild()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.filter_edit)
+        layout.addWidget(self.list, 1)
+
+        workspace.designChanged.connect(self.rebuild)
+        workspace.pageChanged.connect(self._on_page_changed)
+        workspace.scene.selectionIdsChanged.connect(self._on_selection_ids)
+
         self.apply_theme("dark")
-
-    def _get_renderer(self):
-        """Get the current renderer from workspace scene."""
-        try:
-            return self._workspace.scene.qml_previews
-        except AttributeError:
-            return None
-
-    def _connect_renderer(self):
-        """Connect to the current renderer's ready signal."""
-        # Disconnect old bus
-        if self._old_bus is not None:
-            try:
-                self._old_bus.ready.disconnect(self._on_thumbnail_ready)
-            except Exception:
-                pass
-
-        renderer = self._get_renderer()
-        if renderer is not None:
-            self._old_bus = renderer._bus
-            renderer.ready.connect(self._on_thumbnail_ready)
-
-    def _on_thumbnail_ready(self, key):
-        """When a thumbnail lands, fill in the row if we don't have it yet."""
-        for widget in self._widgets_cache:
-            wid = widget.id
-            if wid not in self._thumbnail_cache:
-                renderer = self._get_renderer()
-                if renderer is not None:
-                    img = renderer.image_for(
-                        widget,
-                        widget.geometry.get("width", 100),
-                        widget.geometry.get("height", 40),
-                        self._theme
-                    )
-                    if img is not None:
-                        self._thumbnail_cache[wid] = img
-                        self._update_item_thumbnail(wid)
-                        return
-
-    def _on_item_clicked(self, item):
-        """Handle click on a list item."""
-        widget_id = str(item.data(Qt.UserRole) or "")
-        if widget_id:
-            self.pick(widget_id)
-
-    def _on_filter_changed(self, text):
-        """Handle filter text changes."""
-        self._filter_text = text
-        self._build_filtered_list()
-
-    def _on_selection_ids_changed(self, ids):
-        """When the canvas selection changes, update highlight."""
-        if len(ids) == 1:
-            self._select_highlighted(ids[0])
-
-    def _select_highlighted(self, widget_id):
-        """Set the current item to the widget with given id."""
-        for i in range(self._list.count()):
-            item = self._list.item(i)
-            if item:
-                wid = str(item.data(Qt.UserRole) or "")
-                if wid == widget_id:
-                    self._list.setCurrentItem(item)
-                    return
-        self._list.clearSelection()
-
-    def _get_current_selection(self):
-        """Get the currently selected widget id from workspace."""
-        try:
-            sel = self._workspace.scene.selectionIds
-            if sel and len(sel) == 1:
-                return sel[0]
-        except AttributeError:
-            pass
-        return ""
+        self.rebuild()
 
     # ----------------------------------------------------------------- public
 
     def rebuild(self) -> None:
         """Re-reads the current page's widgets."""
-        # Save scroll position
-        hpos = self._list.horizontalScrollBar().value()
-
-        # Clear and rebuild
-        self._list.clear()
-        self._thumbnail_cache.clear()
-
+        scroll = self.list.verticalScrollBar().value()
+        self.list.clear()
+        self._thumbs.clear()
+        self._widgets.clear()
+        renderer = self._current_renderer()
         try:
-            page = self._workspace.current_page
-        except AttributeError:
-            self._widgets_cache = []
-            self._empty_label.setVisible(True)
-            return
-
-        self._widgets_cache = list(page.widgets)
-        self._connect_renderer()
-
-        self._build_filtered_list()
-
-        # Restore scroll position
-        self._list.horizontalScrollBar().setValue(hpos)
-
-    def _build_filtered_list(self):
-        """Build the list, filtered by self._filter_text."""
-        self._list.clear()
-        self._thumbnail_cache.clear()
-
-        # Determine which widgets match the filter
-        filter_lower = self._filter_text.lower() if self._filter_text else ""
-
-        for widget in self._widgets_cache:
-            wid = widget.id
-            wtype = widget.type
-            if filter_lower and filter_lower not in wid.lower() and filter_lower not in wtype.lower():
-                continue
-
-            item = QListWidgetItem()
-            item.setData(Qt.UserRole, wid)
-            item.setText(f"{wid} ({wtype})")
-
-            # Determine thumbnail
-            renderer = self._get_renderer()
-            if renderer is not None:
-                img = renderer.image_for(
-                    widget,
-                    widget.geometry.get("width", 100),
-                    widget.geometry.get("height", 40),
-                    self._theme
-                )
-                if img is not None:
-                    scaled = self._scale_thumbnail(img)
-                    item.setIcon(QIcon(scaled))
-                    self._thumbnail_cache[wid] = img
-                else:
-                    # Thumbnail not ready yet - use placeholder
-                    placeholder = self._make_placeholder_icon(wtype)
-                    item.setIcon(placeholder)
-            else:
-                # No renderer - use placeholder
-                placeholder = self._make_placeholder_icon(wtype)
-                item.setIcon(placeholder)
-
-            self._list.addItem(item)
-
-        self._empty_label.setVisible(self._list.count() == 0)
+            widgets = self._workspace.current_page.widgets
+        except (AttributeError, IndexError):
+            widgets = []
+        for widget, depth in self._walk(widgets, 0):
+            item = QListWidgetItem(f"{widget.id}\n{widget.type}")
+            item.setData(Qt.UserRole, widget.id)
+            item.setData(_DEPTH_ROLE, depth)
+            item.setToolTip(f"{widget.id} ({widget.type})")
+            self._widgets[widget.id] = widget
+            image = self._fetch(widget, renderer)
+            item.setIcon(QIcon(QPixmap.fromImage(image)) if image is not None
+                         else self._placeholder(widget.type))
+            self.list.addItem(item)
+        self._apply_filter(self.filter_edit.text())
+        selected = self._workspace.selected_widget()
+        self._highlight(selected.id if selected is not None else "", scroll_to=False)
+        # Lay the rows out now so the scroll bar has its range back.
+        self.list.doItemsLayout()
+        self.list.verticalScrollBar().setValue(scroll)
 
     def widget_ids(self) -> list[str]:
         """The ids of the rows currently shown (filter applied), top to bottom."""
-        ids = []
-        for i in range(self._list.count()):
-            item = self._list.item(i)
-            if item:
-                wid = str(item.data(Qt.UserRole) or "")
-                if wid:
-                    ids.append(wid)
-        return ids
+        return [self.list.item(row).data(Qt.UserRole) for row in range(self.list.count())
+                if not self.list.item(row).isHidden()]
 
     def highlighted_id(self) -> str:
         """The id of the highlighted row, or ''."""
-        # Check current list selection first
-        current = self._list.currentItem()
-        if current is not None:
-            return str(current.data(Qt.UserRole) or "")
-        # Fall back to workspace selection
-        return self._get_current_selection()
+        items = self.list.selectedItems()
+        return items[0].data(Qt.UserRole) if items else ""
 
     def pick(self, widget_id: str) -> None:
         """What clicking the row does: workspace.select_widget(widget_id),
         highlight it, emit widgetPicked."""
         self._workspace.select_widget(widget_id)
-        # Directly highlight (selectionIdsChanged may not fire synchronously)
-        self._select_highlighted(widget_id)
+        self._highlight(widget_id)
         self.widgetPicked.emit(widget_id)
 
     def thumbnail(self, widget_id: str):
         """The QImage shown for that row, or None while it has none."""
-        return self._thumbnail_cache.get(widget_id)
+        return self._thumbs.get(widget_id)
 
     def set_filter(self, text: str) -> None:
         """Same as typing into filter_edit."""
-        self._filter_edit.blockSignals(True)
-        self._filter_edit.setText(text)
-        self._filter_edit.blockSignals(False)
-        self._filter_text = text
-        self._build_filtered_list()
+        self.filter_edit.setText(text)
 
     def apply_theme(self, theme: str) -> None:
         """'dark' or 'light'."""
-        self._theme = theme
-        if theme == "light":
-            self.setStyleSheet("""
-                QListWidget {
-                    background: #ffffff;
-                    color: #000000;
-                    border: 1px solid #cccccc;
-                    font-size: 12px;
-                }
-                QListWidget::item:selected {
-                    background: #d0e0ff;
-                    color: #000000;
-                }
-                QListWidget::item:hover {
-                    background: #e8e8e8;
-                }
-                QLineEdit {
-                    background: #ffffff;
-                    color: #000000;
-                    border: 1px solid #cccccc;
-                    border-radius: 3px;
-                    padding: 2px 8px;
-                }
-                QLabel {
-                    color: #888888;
-                }
-            """)
-        else:
-            self.setStyleSheet("""
-                QListWidget {
-                    background: #1e1e1e;
-                    color: #cccccc;
-                    border: 1px solid #3c3c3c;
-                    font-size: 12px;
-                }
-                QListWidget::item:selected {
-                    background: #094771;
-                    color: #ffffff;
-                }
-                QListWidget::item:hover {
-                    background: #2a2d2e;
-                }
-                QLineEdit {
-                    background: #3c3c3c;
-                    color: #cccccc;
-                    border: 1px solid #555555;
-                    border-radius: 3px;
-                    padding: 2px 8px;
-                }
-                QLabel {
-                    color: #888888;
-                }
-            """)
+        self._theme = "light" if theme == "light" else "dark"
+        t = self._theme
+        bg, fg, border = color("background", t), color("foreground", t), color("border", t)
+        primary = color("primary", t)
+        self.setStyleSheet(f"""
+            QWidget#widgetPicker {{ background: {bg}; }}
+            QLineEdit#widgetPickerFilter {{
+                background: {bg}; color: {fg}; border: none; border-bottom: 1px solid {border};
+                padding: 5px 8px; font-size: 12px;
+            }}
+            QListWidget#widgetPickerList {{
+                background: {bg}; color: {fg}; border: none; font-size: 12px; outline: 0;
+            }}
+            QListWidget#widgetPickerList::item {{ padding: 3px 4px; }}
+            QListWidget#widgetPickerList::item:hover {{ background: {_rgba(fg, 0.06)}; }}
+            QListWidget#widgetPickerList::item:selected {{
+                background: {_rgba(primary, 0.16)}; color: {fg};
+            }}
+        """)
+        # The placeholder tiles are the Studio's colours; thumbnails are the panel's.
+        for row in range(self.list.count()):
+            item = self.list.item(row)
+            widget = self._widgets.get(item.data(Qt.UserRole))
+            if widget is not None and widget.id not in self._thumbs:
+                item.setIcon(self._placeholder(widget.type))
 
-    # -------------------------------------------------------------------- private
+    # ---------------------------------------------------------------- private
 
-    def _update_item_thumbnail(self, widget_id):
-        """Update a list item's icon with a new thumbnail."""
-        for i in range(self._list.count()):
-            item = self._list.item(i)
-            if item:
-                wid = str(item.data(Qt.UserRole) or "")
-                if wid == widget_id:
-                    img = self._thumbnail_cache.get(widget_id)
-                    if img is not None:
-                        scaled = self._scale_thumbnail(img)
-                        item.setIcon(QIcon(scaled))
-                    break
+    @classmethod
+    def _walk(cls, widgets, depth):
+        for widget in widgets:
+            yield widget, depth
+            yield from cls._walk(getattr(widget, "children", None) or [], depth + 1)
 
-    def _scale_thumbnail(self, img):
-        """Scale a QImage to THUMB_SIZE with aspect ratio kept, return QPixmap."""
-        scaled = img.scaled(
-            THUMB_SIZE.width(), THUMB_SIZE.height(),
-            Qt.KeepAspectRatio, Qt.SmoothTransformation
-        )
-        return QPixmap.fromImage(scaled)
+    def _current_renderer(self):
+        renderer = getattr(self._workspace.scene, "qml_previews", None)
+        if renderer is not self._renderer:
+            if self._renderer is not None:
+                try:
+                    self._renderer.ready.disconnect(self._on_ready)
+                except (RuntimeError, TypeError):
+                    pass  # already gone with its renderer
+            if renderer is not None:
+                renderer.ready.connect(self._on_ready)
+            self._renderer = renderer
+        return renderer
 
-    def _make_placeholder_icon(self, widget_type):
-        """Create a placeholder icon with the widget type's initial letter."""
-        image = QImage(
-            THUMB_SIZE.width(), THUMB_SIZE.height(),
-            QImage.Format_ARGB32
-        )
-        if self._theme == "dark":
-            image.fill(0xFF444444)
-        else:
-            image.fill(0xFFCCCCCC)
-        painter = QPainter(image)
-        painter.setPen(0xFFFFFFFF)
+    def _panel_theme(self) -> str:
+        try:
+            return self._workspace.project.screen.theme
+        except AttributeError:
+            return "dark"
+
+    def _fetch(self, widget, renderer):
+        """The fitted thumbnail (also recorded for thumbnail()), or None."""
+        if renderer is None:
+            return None
+        geometry = widget.geometry
+        image = renderer.image_for(widget, int(geometry.get("width", 0)),
+                                   int(geometry.get("height", 0)), self._panel_theme())
+        if image is None or image.isNull():
+            return None
+        fitted = image.scaled(THUMB_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._thumbs[widget.id] = fitted
+        return fitted
+
+    def _on_ready(self, _key) -> None:
+        # The key is the renderer's own; asking again for every row still
+        # without a picture is cheap (cache hits) and needs no key format.
+        renderer = self._current_renderer()
+        for row in range(self.list.count()):
+            item = self.list.item(row)
+            widget = self._widgets.get(item.data(Qt.UserRole))
+            if widget is None or widget.id in self._thumbs:
+                continue
+            image = self._fetch(widget, renderer)
+            if image is not None:
+                item.setIcon(QIcon(QPixmap.fromImage(image)))
+
+    def _placeholder(self, widget_type: str) -> QIcon:
+        tile = QImage(THUMB_SIZE, QImage.Format_ARGB32_Premultiplied)
+        tile.fill(Qt.transparent)
+        painter = QPainter(tile)
+        painter.setRenderHint(QPainter.Antialiasing)
+        fg = QColor(color("mutedForeground", self._theme))
+        fill = QColor(fg)
+        fill.setAlphaF(0.14)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(fill)
+        painter.drawRoundedRect(tile.rect().adjusted(1, 1, -1, -1), 5, 5)
         font = QFont()
-        font.setPointSize(16)
+        font.setPixelSize(16)
         font.setBold(True)
         painter.setFont(font)
-        initial = widget_type[0].upper() if widget_type else "?"
-        painter.drawText(image.rect(), Qt.AlignCenter, initial)
+        painter.setPen(fg)
+        initial = widget_type[2:3] if widget_type.startswith("Sh") and len(widget_type) > 2 else widget_type[:1]
+        painter.drawText(tile.rect(), Qt.AlignCenter, (initial or "?").upper())
         painter.end()
-        return QIcon(QPixmap.fromImage(image))
+        return QIcon(QPixmap.fromImage(tile))
 
-    @property
-    def list(self):
-        return self._list
+    def _apply_filter(self, text: str) -> None:
+        needle = text.strip().lower()
+        for row in range(self.list.count()):
+            item = self.list.item(row)
+            widget = self._widgets.get(item.data(Qt.UserRole))
+            shown = (not needle or widget is None or needle in widget.id.lower()
+                     or needle in widget.type.lower())
+            item.setHidden(not shown)
 
-    @property
-    def filter_edit(self):
-        return self._filter_edit
+    def _highlight(self, widget_id: str, scroll_to: bool = True) -> None:
+        """Selects the row of widget_id ('' or unknown: none) without the
+        list's signals, so the canvas's own selection never comes back as a
+        pick()."""
+        self.list.blockSignals(True)
+        try:
+            for row in range(self.list.count()):
+                item = self.list.item(row)
+                if widget_id and item.data(Qt.UserRole) == widget_id:
+                    self.list.setCurrentItem(item)
+                    if scroll_to:
+                        self.list.scrollToItem(item)
+                    return
+            self.list.clearSelection()
+            self.list.setCurrentRow(-1)
+        finally:
+            self.list.blockSignals(False)
+
+    def _on_item_clicked(self, item: QListWidgetItem) -> None:
+        widget_id = item.data(Qt.UserRole)
+        if widget_id:
+            self.pick(widget_id)
+
+    def _on_page_changed(self, _index: int) -> None:
+        self.rebuild()
+
+    def _on_selection_ids(self, ids: list) -> None:
+        self._highlight(ids[0] if len(ids) == 1 else "")
