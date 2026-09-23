@@ -5,6 +5,7 @@ Purpose: Entry point, argparse, theme bootstrap.
 """
 import sys
 import argparse
+import threading
 import logging
 import logging.handlers
 import os
@@ -68,6 +69,28 @@ def _install_log_file():
         return ""
 
 
+def _install_crash_logging():
+    """Send every uncaught exception to the log.
+
+    A windowed build has no console: an exception escaping a Qt slot used to
+    vanish, and the UI simply stopped moving (an AI run that kept saying it
+    was sending, with no request ever made).  Logging it costs nothing and
+    turns that class of bug into one line in studio.log.
+    """
+    root = logging.getLogger("EmbeddedDisplay Studio")
+
+    def handle(exc_type, exc, tb):
+        root.error("uncaught exception", exc_info=(exc_type, exc, tb))
+        sys.__excepthook__(exc_type, exc, tb)
+
+    def handle_thread(args):
+        root.error("uncaught exception in thread %s", args.thread_name if hasattr(args, "thread_name") else "?",
+                   exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+
+    sys.excepthook = handle
+    threading.excepthook = handle_thread
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="EmbeddedDisplay Studio - BYOA HMI deployment tool"
@@ -80,6 +103,7 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
     log_path = _install_log_file()
+    _install_crash_logging()
     if log_path:
         # First line in the file names the build and the target, because a
         # log that does not say which version produced it answers half a

@@ -79,6 +79,11 @@ datas = [
     # each widget on the panel (designer/code/code_model.py widget_c).
     (os.path.join(REPO_ROOT, "native", "hmi-ui", "src", "widgets"),
      os.path.join("native", "hmi-ui", "src", "widgets")),
+    # The design presets read an exemplar off disk when a brief matches one
+    # (tools/hmi_deployer/design_presets.py, _TEMPLATES_DIR). Without these a
+    # hand-written brief raised FileNotFoundError inside the send path.
+    (os.path.join(REPO_ROOT, "designer", "templates"),
+     os.path.join("designer", "templates")),
 ]
 
 a = Analysis(

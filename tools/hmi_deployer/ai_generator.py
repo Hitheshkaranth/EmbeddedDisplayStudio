@@ -350,10 +350,16 @@ def build_system_prompt(registry: Optional[WidgetRegistry] = None,
     )
     prompt += compose_section(registry, screen_width, screen_height, brief)
     if brief:
-        from tools.hmi_deployer.design_presets import match_preset, prompt_section
-        preset = match_preset(brief)
-        if preset is not None:
-            prompt += "\n\n" + prompt_section(preset, screen_width, screen_height)
+        # The exemplar is an enhancement: a preset whose template cannot
+        # be read (a packaged build that did not ship designer/templates)
+        # must cost the run its exemplar, never the run itself.
+        try:
+            from tools.hmi_deployer.design_presets import match_preset, prompt_section
+            preset = match_preset(brief)
+            if preset is not None:
+                prompt += "\n\n" + prompt_section(preset, screen_width, screen_height)
+        except Exception as exc:
+            logger.warning("design preset skipped for this brief: %s", exc)
     return prompt
 
 

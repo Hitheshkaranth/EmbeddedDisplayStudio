@@ -4,7 +4,9 @@ Everything here runs without a network or a QApplication -- the parsers take
 literal lines, the formatters take numbers.
 """
 import json
+import os
 import unittest
+import unittest.mock
 
 
 def sse(obj):
@@ -175,6 +177,99 @@ class TestGenerateEvents(unittest.TestCase):
         roles = [m["role"] for m in captured["payload"]["messages"]]
         self.assertEqual(roles, ["system", "user", "assistant", "user"])
         self.assertEqual(captured["payload"]["stream_options"], {"include_usage": True})
+
+
+class TestReasoningPass(unittest.TestCase):
+    """A reasoning model spends the output budget before it writes.
+
+    Qwen3.6 on the lab's vLLM streamed 240s of reasoning and no design: the
+    reasoning counts against max_tokens, so a long think can return nothing
+    at all.  The chat template is asked to skip it unless the user opts in.
+    """
+
+    def _payload(self, **config):
+        from tools.hmi_deployer.ai_design import ODConnector, ProviderConfig
+        captured = {}
+        conn = ODConnector(mode="byok", byok=ProviderConfig(
+            provider=config.pop("provider", "vllm"), model="m", baseUrl="http://x", **config))
+
+        def capture(url, payload, headers, parser):
+            captured.update(payload)
+            return iter([])
+
+        conn._stream_events = capture
+        list(conn.generate_events("brief"))
+        return captured
+
+    def test_the_reasoning_pass_is_off_by_default(self):
+        self.assertEqual(self._payload()["chat_template_kwargs"], {"enable_thinking": False})
+
+    def test_asking_for_it_leaves_the_template_alone(self):
+        self.assertNotIn("chat_template_kwargs", self._payload(thinking=True))
+
+    def test_openai_proper_is_covered_too(self):
+        payload = self._payload(provider="openai", apiKey="k")
+        self.assertEqual(payload["chat_template_kwargs"], {"enable_thinking": False})
+
+    def test_a_server_that_rejects_the_flag_gets_one_plain_retry(self):
+        import io as _io
+        import urllib.error
+        from tools.hmi_deployer.ai_design import ODConnector, ProviderConfig
+        sent = []
+
+        class Response(_io.BytesIO):
+            def __enter__(self): return self
+            def __exit__(self, *exc): return False
+
+        def urlopen(req, timeout=None, context=None):
+            sent.append(json.loads(req.data.decode("utf-8")))
+            if "chat_template_kwargs" in sent[-1]:
+                raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, None)
+            return Response(b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n')
+
+        conn = ODConnector(mode="byok", byok=ProviderConfig(provider="vllm", model="m", baseUrl="http://x"))
+        with unittest.mock.patch("urllib.request.urlopen", urlopen):
+            events = list(conn.generate_events("brief"))
+
+        self.assertEqual(len(sent), 2)
+        self.assertNotIn("chat_template_kwargs", sent[1])
+        self.assertIn({"type": "delta", "delta": "hi"}, events)
+        self.assertEqual(conn.conversation[-1].content, "hi")
+
+
+class TestPresetExemplarIsOptional(unittest.TestCase):
+    """A packaged build that shipped no designer/templates hung every run.
+
+    build_system_prompt appends a preset exemplar when the brief matches one,
+    and the packaged Studio did not carry the template files: a hand-written
+    brief ("engine cockpit display with altimeter...") matched the automotive
+    preset, DesignerProject.load raised FileNotFoundError on the UI thread,
+    PySide swallowed it, and the card said "Sending request..." for ever.
+    """
+
+    def test_a_missing_template_costs_the_exemplar_not_the_prompt(self):
+        import unittest.mock
+        from tools.hmi_deployer.ai_generator import build_system_prompt
+        brief = "engine cockpit display with altimeter and fuel monitoring"
+        with unittest.mock.patch("tools.hmi_deployer.design_presets.load_template",
+                                 side_effect=FileNotFoundError("automotive_cluster.edsui")):
+            prompt = build_system_prompt(None, 1024, 768, brief=brief)
+        self.assertIn("Allowed widget types:", prompt)
+        self.assertNotIn("Exemplar", prompt)
+
+    def test_the_templates_the_presets_name_are_really_there(self):
+        from tools.hmi_deployer.design_presets import presets
+        for preset in presets():
+            with self.subTest(preset=preset.name):
+                self.assertTrue(os.path.isfile(preset.template),
+                                f"{preset.name} points at a missing template: {preset.template}")
+
+    def test_the_packaging_spec_ships_the_templates(self):
+        spec = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "packaging", "EmbeddedDisplayStudio.spec")
+        with open(spec, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn('"designer", "templates"', text)
 
 
 class TestProjectDiff(unittest.TestCase):
