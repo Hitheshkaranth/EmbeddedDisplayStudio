@@ -18,7 +18,7 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QTextCursor  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QTabBar  # noqa: E402
 
 from designer.ide.editor_tabs import EditorTabs  # noqa: E402
 from designer.ui.code_editor import CodeEditor, DARK_PALETTE, PythonHighlighter  # noqa: E402
@@ -156,8 +156,9 @@ class EditorTabsTests(unittest.TestCase):
         QTest.keyClick(self.pinned, Qt.Key_Z, Qt.ControlModifier | Qt.ShiftModifier)
         self.assertEqual(self.pinned_calls, ["save", "undo", "redo", "redo"])
         self.assertTrue(self.tabs.save())
-        self.assertFalse(self.tabs.tabBar().tabButton(0, self.tabs.tabBar().RightSide) is not None
-                         and self.tabs.tabBar().tabButton(0, self.tabs.tabBar().RightSide).isVisible(),
+        right = QTabBar.ButtonPosition.RightSide     # PySide6 6.11: enum values live on the class
+        self.assertFalse(self.tabs.tabBar().tabButton(0, right) is not None
+                         and self.tabs.tabBar().tabButton(0, right).isVisible(),
                          "the pinned tab has no close button")
 
     def test_close_dirty_asks(self):
@@ -884,6 +885,46 @@ class PythonHighlighterQCTests(unittest.TestCase):
         spans = _spans("def f(): pass  # x\n", theme="light")
         self.assertEqual(spans[0].get("def"), LIGHT_PALETTE["keyword"])
         self.assertEqual(spans[0].get("# x"), LIGHT_PALETTE["comment"])
+
+
+class EditorTabsWindowsLockTests(unittest.TestCase):
+    """Coordinator QC: an open file must not lock the folders above it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication(sys.argv)
+
+    def test_folder_above_an_open_file_can_be_renamed_and_deleted(self):
+        root = os.path.realpath(tempfile.mkdtemp(prefix="ide-lock-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        path = os.path.join(root, "a", "b", "c.c")
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w") as f:
+            f.write("x\n")
+        tabs = EditorTabs()
+        self.addCleanup(tabs.deleteLater)
+        tabs.set_root(root)
+        self.assertIsNotNone(tabs.open_file(path))
+        os.rename(os.path.join(root, "a"), os.path.join(root, "moved"))   # WinError 5 when locked
+        tabs.file_renamed(os.path.join(root, "a"), os.path.join(root, "moved"))
+        self.assertEqual(tabs.open_paths(), [os.path.join(root, "moved", "b", "c.c")])
+        shutil.rmtree(os.path.join(root, "moved"))
+
+    def test_external_atomic_replaces_never_fail(self):
+        root = os.path.realpath(tempfile.mkdtemp(prefix="ide-lock-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        path = os.path.join(root, "w.c")
+        with open(path, "w") as f:
+            f.write("0\n")
+        tabs = EditorTabs()
+        self.addCleanup(tabs.deleteLater)
+        tabs.set_root(root)
+        tabs.open_file(path)
+        for i in range(200):            # what an agent's edit tool does
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                f.write(f"{i}\n")
+            os.replace(tmp, path)
 
 
 if __name__ == "__main__":
