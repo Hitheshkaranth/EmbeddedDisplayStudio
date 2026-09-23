@@ -131,5 +131,69 @@ class BotAvatarTests(unittest.TestCase):
         self.assertLess(paint_ms(avatar), 12.0)
 
 
+
+class AvatarPortTests(unittest.TestCase):
+    """W-C's own checks on the port (engine fidelity, still frame, extras)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = app()
+
+    def setUp(self):
+        fx.set_animations_enabled(True)
+
+    def _avatar(self, **kw):
+        avatar = BotAvatar(**kw)
+        self.addCleanup(avatar.deleteLater)
+        return avatar
+
+    def test_mulberry32_matches_the_source(self):
+        from ui.python.fx.avatar import _mulberry32
+        # node: rng(Math.floor(0.37 * 1e6) + 1), three draws
+        r = _mulberry32(370001)
+        self.assertEqual([r(), r(), r()], [0.6975546323228627, 0.9667365262284875, 0.9297918432857841])
+
+    def test_every_source_shape_parses(self):
+        for shape in SHAPES + ("triangle",):
+            path = shape_path(shape)
+            self.assertTrue(path.contains(QPointF(50, 60)), shape)
+            box = path.boundingRect()
+            self.assertTrue(0 <= box.left() and box.right() <= 100, (shape, box))
+        # the squircle is 86 wide, rebuilt from the generator's formula
+        self.assertAlmostEqual(shape_path("square").boundingRect().width(), 86, delta=0.5)
+
+    def test_pose_fields(self):
+        pose = self._avatar().pose()
+        for key in ("yaw", "pitch", "roll", "x", "y", "sx", "sy", "eyeOpen", "blink",
+                    "lookX", "lookY", "breath", "laugh", "w"):
+            self.assertIn(key, pose)
+        self.assertEqual(pose["w"], [1.0, 0.0, 0.0])
+
+    def test_still_frame_is_the_rest_pose(self):
+        a, b = self._avatar(size=80), self._avatar(size=80)
+        a.start()
+        _simulate(a, 3.0)
+        a.stop()
+        self.assertEqual(difference(a.render_at(1.0), b.render_at(1.0)), 0.0)
+        with self.assertRaises(ValueError):
+            a.set_shape("teapot")
+        with self.assertRaises(ValueError):
+            BotAvatar(state="dancing")
+
+    def test_shape_switch_and_crisp_render(self):
+        avatar = self._avatar(size=80)
+        before = avatar.render_at(1.0)
+        avatar.set_shape("droid")
+        self.assertGreater(difference(before, avatar.render_at(1.0)), 1.0)
+        avatar._shading = "crisp"
+        self.assertGreater(coverage(avatar.render_at(1.0)), 0.15)
+
+    def test_pointer_turns_the_head(self):
+        avatar = self._avatar(size=90, interactive=True)
+        avatar._pointer = QPointF(90, 40)       # to the right of the head
+        poses = _simulate(avatar, 1.5)
+        self.assertGreater(poses[-1]["lookX"], 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()
