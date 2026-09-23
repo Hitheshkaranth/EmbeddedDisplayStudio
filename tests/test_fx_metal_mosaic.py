@@ -161,3 +161,123 @@ class MosaicTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MetalMosaicExtraTests(unittest.TestCase):
+    """W-D's own checks beyond the frozen gate."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = app()
+
+    def setUp(self):
+        fx.set_animations_enabled(True)
+        self.addCleanup(fx.set_animations_enabled, True)
+
+    def test_paint_metal_restores_painter_state(self):
+        image = QImage(80, 30, QImage.Format_ARGB32_Premultiplied)
+        image.fill(0)
+        painter = QPainter(image)
+        try:
+            painter.setOpacity(0.7)
+            painter.setClipRect(QRectF(0, 0, 60, 30))
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(2, 2, 76, 26), 13, 13)
+            paint_metal(painter, path, 5.0, preset="gold", theme="light")
+            self.assertAlmostEqual(painter.opacity(), 0.7, places=3)
+            self.assertTrue(painter.hasClipping())
+            self.assertEqual(painter.clipBoundingRect().toRect().width(), 60)
+            paint_metal(painter, QPainterPath(), 5.0)          # empty path: a no-op
+        finally:
+            painter.end()
+        self.assertLess(region_alpha(image, .8, .3, 1, .7), 4)  # the clip held
+
+    def test_silver_is_neutral_and_chromatic_has_a_fringe(self):
+        silver = [QColor.fromRgba(_metal_image(2.0, preset="silver").pixel(x, 20)) for x in range(20, 120)]
+        self.assertLess(abs(sum(c.red() for c in silver) - sum(c.blue() for c in silver)),
+                        sum(c.red() for c in silver) * 0.12)
+        chroma = _metal_image(2.0, preset="chromatic")
+        spread = max(max(c.red(), c.green(), c.blue()) - min(c.red(), c.green(), c.blue())
+                     for c in (QColor.fromRgba(chroma.pixel(x, y)) for x in range(20, 120) for y in (12, 20, 28)))
+        self.assertGreater(spread, 60)
+
+    def test_ring_radius_and_still_frame(self):
+        ring = MetalRing(QLabel("E"), ring=3, radius=6, padding=2, preset="silver")
+        self.addCleanup(ring.deleteLater)
+        ring.resize(80, 40)
+        self.assertEqual(ring.child().geometry().left(), 5)
+        self.assertGreaterEqual(ring.sizeHint().width(), ring.child().sizeHint().width() + 10)
+        image = ring.render_at(1.0)
+        round_ring = MetalRing(QLabel("E"), ring=3, padding=2)
+        self.addCleanup(round_ring.deleteLater)
+        round_ring.resize(80, 40)
+        corner = region_alpha(image, 0, 0, .04, .08)
+        self.assertGreater(corner, 60)                                   # radius 6: mostly filled
+        self.assertGreater(corner, region_alpha(round_ring.render_at(1.0), 0, 0, .04, .08) + 50)
+        fx.set_animations_enabled(False)
+        ring.start()
+        self.assertFalse(clock_has(ring))
+
+    def test_reveal_rebases_a_foreign_timeline(self):
+        view = MosaicView()
+        view.resize(240, 150)
+        self.addCleanup(view.deleteLater)
+        view.set_loading()
+        t = 1000.0                           # a gallery-style clock, far from fx.now()
+        for _ in range(5):
+            t += 1 / 15
+            view._tick(t)
+        view.set_image(QImage(10, 10, QImage.Format_ARGB32))
+        self.assertTrue(view.revealing())
+        t += 1 / 15
+        view._tick(t)
+        self.assertTrue(view.revealing())    # did not end at once
+        mid = view.render_at(t + 1.0)
+        self.assertGreater(coverage(mid, step=4), 0.3)
+        while t < 1000.0 + REVEAL_S + 1.0:
+            t += 1 / 15
+            view._tick(t)
+        self.assertFalse(view.revealing())
+        self.assertFalse(clock_has(view))
+
+    def test_reveal_passes_through_blocks(self):
+        view = MosaicView()
+        view.resize(320, 200)
+        self.addCleanup(view.deleteLater)
+        view.set_loading()
+        base = fx.now()
+        image = QImage(160, 100, QImage.Format_ARGB32)
+        image.fill(QColor("#ffffff"))
+        painter = QPainter(image)
+        painter.fillRect(0, 0, 80, 100, QColor("#000000"))
+        painter.end()
+        view.set_image(image)
+        early = view.render_at(base + 0.5)
+        done = view.render_at(base + REVEAL_S + 0.1)
+        self.assertGreater(difference(early, done), 3.0)
+        edge = QColor.fromRgba(done.pixel(161, 100))            # sharp once revealed
+        self.assertGreater(edge.lightness(), 200)
+
+    def test_image_none_message_and_switch_off(self):
+        view = MosaicView()
+        view.resize(200, 120)
+        self.addCleanup(view.deleteLater)
+        view.set_loading()
+        view.set_image(None)
+        self.assertFalse(view.loading())
+        self.assertIsNone(view.image())
+        self.assertFalse(clock_has(view))
+        view.set_message("Rendering failed")
+        self.assertGreater(coverage(view.render_at(1.0)), 0.001)
+        fx.set_animations_enabled(False)
+        view.set_loading()
+        view.set_image(QImage(20, 20, QImage.Format_ARGB32))   # no reveal with animations off
+        self.assertFalse(view.revealing())
+        self.assertIsNotNone(view.image())
+
+    def test_large_mosaic_budget(self):
+        view = MosaicView()
+        view.resize(640, 400)
+        self.addCleanup(view.deleteLater)
+        view.set_loading()
+        self.assertLess(paint_ms(view, frames=5), 40.0)
