@@ -289,34 +289,48 @@ class PythonHighlighter(_RuleHighlighter):
     def highlightBlock(self, text: str) -> None:
         super().highlightBlock(text)
 
+        string_fmt = self._formats["string"]
         comment_fmt = self._formats["comment"]
+        n = len(text)
+        i = 0
 
         # Handle triple-quoted strings that may span multiple lines.
         state = self.previousBlockState()
-        if state == 1:
-            end = text.find('"""')
-            if end < 0:
-                end = text.find("'''")
-            if end < 0:
-                self.setFormat(0, len(text), self._formats["string"])
+        in_triple = state == 1
+        if in_triple:
+            end_tq = text.find('"""')
+            end_sq = text.find("'''")
+            if end_tq < 0 and end_sq < 0:
+                self.setFormat(0, n, string_fmt)
                 self.setCurrentBlockState(1)
                 return
+            elif end_tq >= 0 and (end_sq < 0 or end_tq <= end_sq):
+                end = end_tq
+                tq = '"""'
+            else:
+                end = end_sq
+                tq = "'''"
             if end > 0:
-                self.setFormat(0, end, self._formats["string"])
-            self.setFormat(end, 3, self._formats["string"])
-            self.setCurrentBlockState(0)
+                self.setFormat(0, end, string_fmt)
+            self.setFormat(end, 3, string_fmt)
+            i = end + 3
+            in_triple = False
+        else:
+            i = 0
 
-        i = 0
-        n = len(text)
+        # Single-pass scanner: strings then comments (not inside strings).
         while i < n:
+            if text[i] == '#':
+                self.setFormat(i, n - i, comment_fmt)
+                return
             if text[i:i + 3] in ('"""', "'''"):
                 quote = text[i:i + 3]
                 end = text.find(quote, i + 3)
                 if end < 0:
-                    self.setFormat(i, n - i, self._formats["string"])
+                    self.setFormat(i, n - i, string_fmt)
                     self.setCurrentBlockState(1)
                     return
-                self.setFormat(i, end + 3 - i, self._formats["string"])
+                self.setFormat(i, end + 3 - i, string_fmt)
                 i = end + 3
             elif text[i] in ('"', "'"):
                 quote = text[i]
@@ -325,17 +339,13 @@ class PythonHighlighter(_RuleHighlighter):
                     if text[j] == "\\":
                         j += 1
                     j += 1
-                self.setFormat(i, min(j + 1, n) - i, self._formats["string"])
-                i = min(j + 1, n)
+                end = min(j + 1, n)
+                self.setFormat(i, end - i, string_fmt)
+                i = end
             else:
                 i += 1
 
         self.setCurrentBlockState(0)
-
-        # Handle # comments (not inside strings, which the loop above handled).
-        hash_pos = text.find("#")
-        if hash_pos >= 0:
-            self.setFormat(hash_pos, n - hash_pos, comment_fmt)
 
 
 class JsonHighlighter(_RuleHighlighter):
