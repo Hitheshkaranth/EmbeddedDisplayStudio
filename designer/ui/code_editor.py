@@ -267,85 +267,89 @@ class PythonHighlighter(_RuleHighlighter):
         "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
         "while", "with", "yield",
     )
-    _TYPES = (
-        "self", "cls",
-        "bool", "bytearray", "bytes", "complex", "dict", "enumerate", "float",
-        "frozenset", "int", "iter", "list", "map", "object", "range", "reversed",
-        "set", "slice", "staticmethod", "str", "super", "tuple", "type",
-        "zip", "property", "classmethod", "staticmethod",
-        "Exception", "ValueError", "TypeError", "KeyError", "IndexError",
-        "AttributeError", "ImportError", "OSError", "IOError", "FileNotFoundError",
-        "StopIteration", "RuntimeError", "NotImplementedError", "OverflowError",
-        "ZeroDivisionError", "MemoryError", "GeneratorExit", "SystemExit",
-        "KeyboardInterrupt", "ArithmeticError", "LookupError", "EnvironmentError",
+    _BUILTINS = (
+        "self", "cls", "abs", "all", "any", "bool", "bytearray", "bytes", "callable",
+        "chr", "classmethod", "complex", "dict", "dir", "divmod", "enumerate", "filter",
+        "float", "format", "frozenset", "getattr", "hasattr", "hash", "id", "input", "int",
+        "isinstance", "issubclass", "iter", "len", "list", "map", "max", "min", "next",
+        "object", "open", "ord", "pow", "print", "property", "range", "repr", "reversed",
+        "round", "set", "setattr", "slice", "sorted", "staticmethod", "str", "sum", "super",
+        "tuple", "type", "vars", "zip",
     )
     _rules = (
-        (r"^(\s*)(@[\w.]+)", "property"),
+        # CapWords names are classes; an ALL_CAPS name is a constant, not a type.
+        (r"\b_*[A-Z][A-Za-z0-9_]*[a-z][A-Za-z0-9_]*\b", "type"),
+        (r"\b(?:" + "|".join(_BUILTINS) + r")\b", "type"),
+        # After the type rules, so True/False/None stay keywords.
         (r"\b(?:" + "|".join(_KEYWORDS) + r")\b", "keyword"),
-        (r"\b(?:" + "|".join(_TYPES) + r")\b", "type"),
-        (r"\b(?:0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?[jJ]?)\b", "number"),
+        (r"\b(?:0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+"
+         r"|\d[\d_]*(?:\.[\d_]*)?(?:[eE][+-]?\d+)?[jJ]?)\b", "number"),
+        # \K keeps the indent out of the match, so only '@name' is coloured.
+        (r"^\s*\K@[A-Za-z_][\w.]*", "property"),
     )
 
-    def highlightBlock(self, text: str) -> None:
-        super().highlightBlock(text)
+    # Block states: a triple-quoted string runs into the next line. Which
+    # quote opened it matters -- ''' does not close """.
+    _IN_TRIPLE_DOUBLE = 1
+    _IN_TRIPLE_SINGLE = 2
+    _TRIPLE_STATE = {'"""': _IN_TRIPLE_DOUBLE, "'''": _IN_TRIPLE_SINGLE}
+    _STATE_TRIPLE = {_IN_TRIPLE_DOUBLE: '"""', _IN_TRIPLE_SINGLE: "'''"}
+    _PREFIXES = frozenset({"r", "u", "b", "f", "br", "rb", "fr", "rf"})
 
-        string_fmt = self._formats["string"]
-        comment_fmt = self._formats["comment"]
+    def _highlight_literals(self, text: str) -> None:
+        # One left-to-right scan decides what is string and what is comment,
+        # so a '#' inside a string, or quotes inside a comment, never mislead.
+        string, comment = self._formats["string"], self._formats["comment"]
         n = len(text)
         i = 0
-
-        # Handle triple-quoted strings that may span multiple lines.
-        state = self.previousBlockState()
-        in_triple = state == 1
-        if in_triple:
-            end_tq = text.find('"""')
-            end_sq = text.find("'''")
-            if end_tq < 0 and end_sq < 0:
-                self.setFormat(0, n, string_fmt)
-                self.setCurrentBlockState(1)
+        self.setCurrentBlockState(0)
+        quote = self._STATE_TRIPLE.get(self.previousBlockState())
+        if quote is not None:
+            end = self._string_end(text, 0, quote)
+            if end < 0:
+                self.setFormat(0, n, string)
+                self.setCurrentBlockState(self._TRIPLE_STATE[quote])
                 return
-            elif end_tq >= 0 and (end_sq < 0 or end_tq <= end_sq):
-                end = end_tq
-                tq = '"""'
-            else:
-                end = end_sq
-                tq = "'''"
-            if end > 0:
-                self.setFormat(0, end, string_fmt)
-            self.setFormat(end, 3, string_fmt)
-            i = end + 3
-            in_triple = False
-        else:
-            i = 0
-
-        # Single-pass scanner: strings then comments (not inside strings).
+            self.setFormat(0, end, string)
+            i = end                       # after the closing quotes, not on them
         while i < n:
-            if text[i] == '#':
-                self.setFormat(i, n - i, comment_fmt)
+            ch = text[i]
+            if ch == "#":
+                self.setFormat(i, n - i, comment)
                 return
-            if text[i:i + 3] in ('"""', "'''"):
-                quote = text[i:i + 3]
-                end = text.find(quote, i + 3)
-                if end < 0:
-                    self.setFormat(i, n - i, string_fmt)
-                    self.setCurrentBlockState(1)
-                    return
-                self.setFormat(i, end + 3 - i, string_fmt)
-                i = end + 3
-            elif text[i] in ('"', "'"):
-                quote = text[i]
-                j = i + 1
-                while j < n and text[j] != quote:
-                    if text[j] == "\\":
-                        j += 1
-                    j += 1
-                end = min(j + 1, n)
-                self.setFormat(i, end - i, string_fmt)
-                i = end
+            if ch not in "\"'":
+                i += 1
+                continue
+            start = i
+            p = i
+            while p > 0 and (text[p - 1].isalnum() or text[p - 1] == "_"):
+                p -= 1
+            if text[p:i].lower() in self._PREFIXES:
+                start = p                 # r"..", f'..', rb"..": the prefix is part of it
+            quote = ch * 3 if text.startswith(ch * 3, i) else ch
+            end = self._string_end(text, i + len(quote), quote)
+            if end < 0:
+                self.setFormat(start, n - start, string)
+                if len(quote) == 3:
+                    self.setCurrentBlockState(self._TRIPLE_STATE[quote])
+                return
+            self.setFormat(start, end - start, string)
+            i = end
+
+    @staticmethod
+    def _string_end(text: str, i: int, quote: str) -> int:
+        """Index just past the `quote` closing a string whose body starts at
+        i, or -1 when the line ends first. A backslash escapes the next
+        character (in raw strings too, as far as finding the end goes)."""
+        n = len(text)
+        while i < n:
+            if text[i] == "\\":
+                i += 2
+            elif text.startswith(quote, i):
+                return i + len(quote)
             else:
                 i += 1
-
-        self.setCurrentBlockState(0)
+        return -1
 
 
 class JsonHighlighter(_RuleHighlighter):

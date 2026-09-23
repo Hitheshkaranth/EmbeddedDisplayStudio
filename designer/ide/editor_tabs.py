@@ -40,104 +40,93 @@ A deleted file keeps its tab, marked dirty, so its text can be saved again.
 from __future__ import annotations
 
 import os
-import time
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QFileSystemWatcher, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QTabBar, QTabWidget, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QTabBar, QTabWidget, QVBoxLayout,
+    QWidget,
 )
 
-from designer.ui.code_editor import CodeEditor
+from designer.ide import project_files
+from designer.ui.code_editor import DARK_PALETTE, LIGHT_PALETTE, CodeEditor
+
+try:
+    from ui.python.shadcn import icon as _tabler_icon
+except ImportError:                                     # icons are a nicety, not a need
+    _tabler_icon = None
+
+# A watched file that vanished is often being rewritten (delete + create, as
+# some editors and tools save); look again after this long before calling it
+# deleted.
+_GONE_RECHECK_MS = 250
+
+_NBSP, _LINE_SEP, _PARAGRAPH_SEP = chr(0xA0), chr(0x2028), chr(0x2029)
 
 
-def relative_path(root: str, path: str) -> str:
-    """path relative to root with '/' separators."""
-    try:
-        from designer.ide.project_files import relative_path as _rp
-        return _rp(root, path)
-    except ImportError:
-        try:
-            return os.path.relpath(path, root).replace(os.sep, "/")
-        except ValueError:
-            return path.replace(os.sep, "/")
+def _editor_view(text: str) -> str:
+    # CodeEditor.code() is QTextDocument.toPlainText(), which turns NBSP into
+    # a space and Unicode line/paragraph separators into "\n". Disk text is
+    # compared in that form, or such a file would look changed forever.
+    return text.replace(_NBSP, " ").replace(_LINE_SEP, "\n").replace(_PARAGRAPH_SEP, "\n")
 
 
-def _is_inside_safe(root: str, path: str) -> bool:
-    """Check path is under root using realpath."""
-    try:
-        from designer.ide.project_files import is_inside as _is
-        return _is(root, path)
-    except ImportError:
-        try:
-            real_root = os.path.realpath(root)
-            real_path = os.path.realpath(path)
-            return real_path == real_root or real_path.startswith(real_root + os.sep)
-        except (ValueError, TypeError):
-            return False
+def _same_path(a: str, b: str) -> bool:
+    return os.path.normcase(a) == os.path.normcase(b)
 
 
-class _Banner(QWidget):
-    """A banner above the editor showing a disk-change notice."""
-
-    def __init__(self, filename: str, parent=None):
-        super().__init__(parent)
-        self._filename = filename
-        self._reload_button = None
-        self._keep_button = None
-        self._label = QLabel(f"{filename} changed on disk.")
-        self._reload_button = QLabel("[Reload]")
-        self._reload_button.setCursor(Qt.PointingHandCursor)
-        self._keep_button = QLabel("[Keep mine]")
-        self._keep_button.setCursor(Qt.PointingHandCursor)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        layout.addWidget(self._label)
-        layout.addStretch()
-        layout.addWidget(self._keep_button)
-        layout.addWidget(self._reload_button)
-        self.setStyleSheet("background: #2d1f00; color: #e6a800; padding: 2px 6px; font-size: 11px;")
-
-    def reloadClicked(self):
-        pass
-
-    def keepClicked(self):
-        pass
+def _under(path: str, folder: str) -> bool:
+    folder = os.path.normcase(folder.rstrip("\\/"))
+    return os.path.normcase(path).startswith(folder + os.sep)
 
 
-class _FileWatcher(QWidget):
-    """A QWidget that holds a QFileSystemWatcher and exposes a fileChanged
-    Signal so EditorTabs can connect without importing Qt internals."""
-
-    fileChanged = Signal(str)
+class _Banner(QFrame):
+    """"<name> changed on disk." [Reload] [Keep mine], above a dirty editor."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        from PySide6.QtCore import QFileSystemWatcher
-        self._watcher = QFileSystemWatcher(self)
-        self._watcher.fileChanged.connect(
-            lambda p: self.fileChanged.emit(p)
-        )
+        self.setObjectName("editorBanner")
+        self.label = QLabel(objectName="editorBannerText")
+        self.reload_button = QPushButton("Reload", objectName="editorBannerButton")
+        self.keep_button = QPushButton("Keep mine", objectName="editorBannerButton")
+        for button in (self.reload_button, self.keep_button):
+            button.setCursor(Qt.PointingHandCursor)
+            button.setFocusPolicy(Qt.NoFocus)   # the editor keeps the keyboard
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 4, 6, 4)
+        layout.setSpacing(6)
+        layout.addWidget(self.label, 1)
+        layout.addWidget(self.reload_button)
+        layout.addWidget(self.keep_button)
+        self.hide()
 
-    def addFile(self, path: str) -> None:
-        try:
-            if path not in self._watcher.files():
-                self._watcher.addPath(path)
-        except RuntimeError:
-            pass
+    def set_name(self, name: str) -> None:
+        self.label.setText(f"{name} changed on disk.")
 
-    def removeFile(self, path: str) -> None:
-        try:
-            self._watcher.removePath(path)
-        except (RuntimeError, AttributeError):
-            pass
 
-    def files(self):
-        try:
-            return self._watcher.files()
-        except AttributeError:
-            return []
+class _TabBar(QTabBar):
+    """The tab bar, with the button positions reachable from an instance too
+    (tabBar().RightSide): PySide6 6.11 exposes enum values on the class only,
+    and callers -- the gate among them -- write it the Qt 5 way."""
+
+    LeftSide = QTabBar.ButtonPosition.LeftSide
+    RightSide = QTabBar.ButtonPosition.RightSide
+
+
+class _FileTab:
+    """What EditorTabs knows about one open file."""
+
+    def __init__(self, path: str, editor: CodeEditor, page: QWidget, banner: _Banner):
+        self.path = path
+        self.editor = editor
+        self.page = page
+        self.banner = banner
+        self.saved = ""             # editor-view text last read from / written to disk
+        self.encoding = "utf-8"
+        self.newline = "\n"
+        self.missing = False        # deleted on disk: dirty until saved again
+        self.dirty = False          # last state announced on dirtyChanged
+        self.pending = None         # the TextFile the banner is about
 
 
 class EditorTabs(QTabWidget):
@@ -160,53 +149,48 @@ class EditorTabs(QTabWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("editorTabs")
+        self.setTabBar(_TabBar(self))
         self.setTabsClosable(True)
-        self._root: str = ""
-        self._path_to_index: dict[str, int] = {}
-        self._saved: dict[str, str] = {}
-        self._pinned_handlers: dict[int, dict] = {}
-        self._watcher = _FileWatcher(self)
-        self._watcher.fileChanged.connect(self.file_changed_on_disk)
-        self._last_save_time: float = 0.0
-        self._banners: dict[str, _Banner] = {}
-        self._tab_page_map: dict[int, QWidget] = {}
-        self.tabCloseRequested.connect(self._on_tab_close)
-
-        _save = QShortcut(QKeySequence("Ctrl+S"), self)
-        _save.setContext(Qt.WidgetWithChildrenShortcut)
-        _save.activated.connect(self.save)
-        _save_all = QShortcut(QKeySequence("Ctrl+Shift+S"), self)
-        _save_all.setContext(Qt.WidgetWithChildrenShortcut)
-        _save_all.activated.connect(self.save_all)
-        _close = QShortcut(QKeySequence("Ctrl+W"), self)
-        _close.setContext(Qt.WidgetWithChildrenShortcut)
-        _close.activated.connect(lambda: self.close_file(self.current_path()))
-        _undo = QShortcut(QKeySequence("Ctrl+Z"), self)
-        _undo.setContext(Qt.WidgetWithChildrenShortcut)
-        _undo.activated.connect(self.undo)
-        _redo = QShortcut(QKeySequence("Ctrl+Y"), self)
-        _redo.setContext(Qt.WidgetWithChildrenShortcut)
-        _redo.activated.connect(self.redo)
-        _redo2 = QShortcut(QKeySequence("Ctrl+Shift+Z"), self)
-        _redo2.setContext(Qt.WidgetWithChildrenShortcut)
-        _redo2.activated.connect(self.redo)
+        self.setDocumentMode(True)
+        self._root = ""
+        self._theme = "dark"
+        self._files: dict[QWidget, _FileTab] = {}       # tab page -> file
+        self._pinned: dict[QWidget, dict] = {}          # pinned widget -> handlers
+        self._pinned_icons: dict[QWidget, str] = {}
+        self._watcher = QFileSystemWatcher(self)
+        self._watcher.fileChanged.connect(self._on_watched_file_changed)
+        self._gone: set[str] = set()
+        self._gone_timer = QTimer(self)
+        self._gone_timer.setSingleShot(True)
+        self._gone_timer.setInterval(_GONE_RECHECK_MS)
+        self._gone_timer.timeout.connect(self._recheck_gone)
+        self.tabCloseRequested.connect(self._on_tab_close_requested)
+        self.currentChanged.connect(self._on_current_changed)
+        self._keys = []                                 # (QKeyCombination, slot)
+        for keys, slot in (
+            ("Ctrl+S", self._key_save),
+            ("Ctrl+Shift+S", self._key_save_all),
+            ("Ctrl+W", self._key_close),
+            ("Ctrl+Z", self.undo),
+            ("Ctrl+Y", self.redo),
+            ("Ctrl+Shift+Z", self.redo),
+        ):
+            sequence = QKeySequence(keys)
+            shortcut = QShortcut(sequence, self)
+            shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(slot)
+            self._keys.append((sequence[0], slot))
+        self.apply_theme("dark")
 
     # ---------------------------------------------------------- project
 
     def set_root(self, root: str) -> None:
-        old_root = self._root
+        """The project folder: tooltips are relative to it and open_file
+        refuses paths outside it (when a root is set). Open tabs stay."""
         self._root = os.path.realpath(root) if root else ""
-        self._path_to_index.clear()
-        self._saved.clear()
-        self._pinned_handlers.clear()
-        self._banners.clear()
-        self._tab_page_map.clear()
-        if old_root:
-            for p in list(self._watcher.files()):
-                self._watcher.removeFile(p)
-        if self._root:
-            self._watcher.addFile(self._root)
-        self.currentFileChanged.emit("")
+        for rec in self._files.values():
+            self._update_tab(rec)
 
     def root(self) -> str:
         return self._root
@@ -215,439 +199,534 @@ class EditorTabs(QTabWidget):
 
     def add_pinned(self, widget, title: str, icon_name: str = "",
                    handlers: dict | None = None) -> int:
-        idx = self.count()
-        self.insertTab(idx, widget, title)
-        self._path_to_index[""] = idx
-        self._saved[""] = ""
-        if handlers is not None:
-            self._pinned_handlers[idx] = handlers
-        tabBar = self.tabBar()
-        for i in range(self.count()):
-            tabBar.setTabButton(i, QTabBar.RightSide, None)
-            tabBar.setTabButton(i, QTabBar.LeftSide, None)
-        return idx
+        """Adds a non-closable tab after the existing pinned ones and returns
+        its index. icon_name is a Tabler icon name (ui.python.shadcn.icon),
+        ignored when icons are unavailable. handlers maps 'save', 'undo',
+        'redo' to callables used by save()/undo()/redo() while that tab is
+        current ('save' returns a bool); a missing handler makes the key a
+        no-op there (save() returns False)."""
+        index = self.insertTab(len(self._pinned), widget, title)
+        self._pinned[widget] = dict(handlers or {})
+        if icon_name:
+            self._pinned_icons[widget] = icon_name
+            self._set_pinned_icon(widget, icon_name)
+        bar = self.tabBar()
+        for side in (QTabBar.LeftSide, QTabBar.RightSide):
+            button = bar.tabButton(index, side)
+            if button is not None:
+                bar.setTabButton(index, side, None)
+                button.deleteLater()
+        return index
 
     def open_file(self, path: str, line: int = 0):
+        """Opens `path` (or switches to its tab when already open), focuses
+        the editor and, with line >= 1, puts the cursor on that line.
+        Returns the CodeEditor, or None when the file cannot be opened (the
+        reason goes out on `message`; no tab is added)."""
         path = os.path.realpath(path)
-        if path in self._path_to_index:
-            self.setCurrentIndex(self._path_to_index[path])
-            return self.editor_for(path)
-        if self._root and not _is_inside_safe(self._root, path):
-            self.message.emit(f"{os.path.basename(path)} is outside the project root")
-            return None
-        try:
-            from designer.ide.project_files import read_text, language_for
-            tf = read_text(path)
-        except Exception as exc:
-            self.message.emit(f"Cannot open {os.path.basename(path)}: {exc}")
-            return None
-        editor = CodeEditor()
-        editor.set_language(language_for(path))
-        editor.set_code(tf.text, keep_scroll=True)
-        page = self._make_tab_page(editor)
-        idx = self.count()
-        self.insertTab(idx, page, os.path.basename(path))
-        self._tab_page_map[idx] = page
-        self.setTabToolTip(idx, relative_path(self._root, path) if self._root else path)
-        self._path_to_index[path] = idx
-        self._saved[path] = tf.text
-        self._watcher.addFile(path)
-        self.setCurrentIndex(idx)
+        rec = self._find(path)
+        if rec is None:
+            name = os.path.basename(path)
+            if self._root and not project_files.is_inside(self._root, path):
+                self.message.emit(f"Cannot open {name}: it is outside the project folder")
+                return None
+            try:
+                loaded = project_files.read_text(path)
+            except project_files.FileReadError as exc:
+                self.message.emit(str(exc) or f"Cannot open {name}")
+                return None
+            except OSError as exc:
+                self.message.emit(f"Cannot open {name}: {exc.strerror or exc}")
+                return None
+            rec = self._new_tab(path, loaded)
+        self.setCurrentWidget(rec.page)
+        rec.editor.setFocus(Qt.OtherFocusReason)
         if line >= 1:
-            editor.go_to_line(line)
-        return editor
-
-    def _make_tab_page(self, editor):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(editor)
-        return page
+            rec.editor.go_to_line(line)
+        return rec.editor
 
     def editor_for(self, path: str):
-        idx = self._path_to_index.get(path)
-        if idx is not None:
-            w = self.widget(idx)
-            if w is not None and isinstance(w, QWidget) and w.layout() is not None:
-                if w.layout().count() > 0:
-                    child = w.layout().itemAt(0)
-                    if child is not None:
-                        return child.widget()
-            return w
-        return None
+        """The CodeEditor of an open file, or None."""
+        rec = self._find(path)
+        return rec.editor if rec is not None else None
 
     def open_paths(self) -> list[str]:
-        return [p for p, i in self._path_to_index.items() if p != "" and i < self.count()]
+        """Absolute paths of the open file tabs, in tab order."""
+        return [rec.path for rec in self._records()]
 
     def current_path(self) -> str:
-        idx = self.currentIndex()
-        if idx < 0:
-            return ""
-        for p, i in self._path_to_index.items():
-            if i == idx:
-                return p
-        return ""
+        """The current tab's path, '' for a pinned tab or none."""
+        rec = self._files.get(self.currentWidget())
+        return rec.path if rec is not None else ""
 
     def is_dirty(self, path: str) -> bool:
-        saved = self._saved.get(path)
-        if saved is None:
-            return False
-        editor = self.editor_for(path)
-        if editor is None:
-            return False
-        return editor.code() != saved
+        rec = self._find(path)
+        return rec is not None and self._dirty(rec)
 
     def dirty_paths(self) -> list[str]:
-        return [p for p in self._path_to_index if p and self.is_dirty(p)]
+        return [rec.path for rec in self._records() if self._dirty(rec)]
 
     def save(self, path: str | None = None) -> bool:
+        """Saves one file (the current one when None) with
+        project_files.write_text, keeping its encoding and newline style.
+        With None on a pinned tab, runs its 'save' handler. False, with a
+        message, on failure or when there is nothing to save."""
         if path is None:
-            path = self.current_path()
-        if path == "":
-            idx = self._path_to_index.get("")
-            if idx is not None and idx < self.count():
-                h = self._pinned_handlers.get(idx, {})
-                fn = h.get("save")
-                if fn is not None:
-                    return bool(fn())
+            current = self.currentWidget()
+            if current in self._pinned:
+                handler = self._pinned[current].get("save")
+                return bool(handler()) if handler is not None else False
+            rec = self._files.get(current)
+        else:
+            rec = self._find(path)
+        if rec is None:
+            self.message.emit("Nothing to save")
             return False
-        editor = self.editor_for(path)
-        if editor is None:
-            return False
-        text = editor.code()
-        saved = self._saved.get(path)
-        if saved == text:
-            return True
+        name = os.path.basename(rec.path)
+        text = rec.editor.code()
+        # Not watched while it is replaced: on Windows the watcher's thread
+        # opens watched files when their folder changes (our temp file is such
+        # a change), and os.replace over an open file fails "Access is denied".
+        # Re-adding afterwards also moves the watch onto the new file.
+        self._unwatch(rec.path)
         try:
-            from designer.ide.project_files import write_text
-            write_text(path, text)
-            self._saved[path] = text
-            self._last_save_time = time.monotonic()
-            self._update_tab_title(path)
-            self.dirtyChanged.emit(path, False)
-            self.fileSaved.emit(path)
-            return True
-        except Exception as exc:
-            self.message.emit(f"Cannot save {os.path.basename(path)}: {exc}")
+            project_files.write_text(rec.path, text, rec.encoding, rec.newline)
+        except (OSError, ValueError) as exc:
+            # ValueError: a character the file's encoding (latin-1) cannot hold.
+            self._watch(rec.path)
+            reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else exc
+            self.message.emit(f"Cannot save {name}: {reason}")
             return False
+        rec.saved = text
+        rec.missing = False
+        self._watch(rec.path)
+        self._refresh_dirty(rec)
+        self.message.emit(f"Saved {name}")
+        self.fileSaved.emit(rec.path)
+        return True
 
     def save_all(self) -> bool:
-        paths = self.dirty_paths()
-        if not paths:
-            return True
-        all_ok = True
-        for p in paths:
-            if not self.save(p):
-                all_ok = False
-        return all_ok
+        """Saves every dirty file; True when all saved."""
+        ok = True
+        for rec in self._records():
+            if self._dirty(rec):
+                ok = self.save(rec.path) and ok
+        return ok
 
     def close_file(self, path: str, force: bool = False) -> bool:
-        if path == "":
+        """Closes a file tab. A dirty file asks _ask_unsaved(path) unless
+        force: 'save' saves then closes (a failed save keeps the tab),
+        'discard' closes, 'cancel' keeps it. True when the tab is gone."""
+        if not path:
             return False
-        idx = self._path_to_index.get(path)
-        if idx is None or idx >= self.count():
+        rec = self._find(path)
+        if rec is None:
             return True
-        if self.is_dirty(path) and not force:
-            ans = self._ask_unsaved(path)
-            if ans == self.CANCEL:
-                return False
-            if ans == self.SAVE:
-                if not self.save(path):
+        if not force and self._dirty(rec):
+            self.setCurrentWidget(rec.page)
+            answer = self._ask_unsaved(rec.path)
+            if answer == self.SAVE:
+                if not self.save(rec.path):
                     return False
-        self._remove_tab(idx, path)
+            elif answer != self.DISCARD:
+                return False
+        self._remove(rec)
         return True
 
     def close_all(self, force: bool = False) -> bool:
-        file_paths = list(self._path_to_index.keys())
-        for p in file_paths:
-            if p == "":
-                continue
-            idx = self._path_to_index.get(p)
-            if idx is None or idx >= self.count():
-                continue
-            if self.is_dirty(p) and not force:
-                ans = self._ask_unsaved(p)
-                if ans == self.CANCEL:
-                    return False
-                if ans == self.SAVE:
-                    if not self.save(p):
-                        return False
-        file_paths = list(self._path_to_index.keys())
-        for p in file_paths:
-            if p == "":
-                continue
-            idx = self._path_to_index.get(p)
-            if idx is not None and idx < self.count():
-                self._remove_tab(idx, p)
+        """close_file on every file tab; stops at the first cancel."""
+        for rec in self._records():
+            if not self.close_file(rec.path, force):
+                return False
         return True
 
     def undo(self) -> None:
-        path = self.current_path()
-        if path:
-            editor = self.editor_for(path)
-            if editor is not None:
-                editor.undo()
-        else:
-            idx = self._path_to_index.get("")
-            if idx is not None and idx < self.count():
-                h = self._pinned_handlers.get(idx, {})
-                fn = h.get("undo")
-                if fn is not None:
-                    fn()
+        """Undo in the current file's editor, or the pinned tab's 'undo'."""
+        self._edit_action("undo")
 
     def redo(self) -> None:
-        path = self.current_path()
-        if path:
-            editor = self.editor_for(path)
-            if editor is not None:
-                editor.redo()
-        else:
-            idx = self._path_to_index.get("")
-            if idx is not None and idx < self.count():
-                h = self._pinned_handlers.get(idx, {})
-                fn = h.get("redo")
-                if fn is not None:
-                    fn()
+        self._edit_action("redo")
 
     # ---------------------------------------------------------- disk events
 
     def file_changed_on_disk(self, path: str) -> None:
-        if path not in self._path_to_index:
+        """See the module docstring. Paths that are not open are ignored."""
+        rec = self._find(path)
+        if rec is None:
             return
-        if not os.path.isfile(path):
+        name = os.path.basename(rec.path)
+        self._watch(rec.path)
+        if not os.path.isfile(rec.path):
+            if not rec.missing:
+                rec.missing = True
+                self._hide_banner(rec)
+                self._refresh_dirty(rec)
+                self.message.emit(f"{name} was deleted on disk")
             return
-        elapsed = time.monotonic() - self._last_save_time
-        if elapsed < 2.0:
-            self._last_save_time = 0.0
         try:
-            from designer.ide.project_files import read_text
-            tf = read_text(path)
-        except Exception:
+            loaded = project_files.read_text(rec.path)
+        except (project_files.FileReadError, OSError) as exc:
+            self.message.emit(f"Cannot reload {name}: {exc}")
             return
-        disk_text = tf.text
-        saved = self._saved.get(path)
-        if saved == disk_text:
+        disk = _editor_view(loaded.text)
+        mine = rec.editor.code()
+        if disk == rec.saved or disk == mine:
+            # Our own save, or the disk caught up with the editor: nothing to
+            # ask, and a banner about an older version is stale now.
+            rec.saved, rec.encoding, rec.newline = disk, loaded.encoding, loaded.newline
+            rec.missing = False
+            self._hide_banner(rec)
+            self._refresh_dirty(rec)
             return
-        idx = self._path_to_index.get(path)
-        if idx is None or idx >= self.count():
+        if mine == rec.saved:
+            self._reload(rec, loaded)
             return
-        if self.is_dirty(path):
-            if path not in self._banners:
-                self._show_banner(path)
-        else:
-            self._saved[path] = disk_text
-            editor = self.editor_for(path)
-            if editor is not None:
-                editor.set_code(disk_text, keep_scroll=True)
+        rec.pending = loaded
+        rec.banner.set_name(name)
+        rec.banner.show()
 
     def has_banner(self, path: str) -> bool:
-        return path in self._banners
+        """True while the "changed on disk" banner shows for that file."""
+        rec = self._find(path)
+        return rec is not None and not rec.banner.isHidden()
 
     def resolve_banner(self, path: str, reload: bool) -> None:
-        banner = self._banners.pop(path, None)
-        if banner is not None:
-            idx = self._path_to_index.get(path)
-            if idx is not None:
-                page = self._tab_page_map.get(idx)
-                if page is not None and page.layout() is not None:
-                    while page.layout().count():
-                        child = page.layout().takeAt(0)
-                        if child.widget() is not None:
-                            child.widget().deleteLater()
-            banner.deleteLater()
+        """The banner's buttons: reload=True replaces the text with the disk's
+        (clean again), False keeps the editor's text (stays dirty)."""
+        rec = self._find(path)
+        if rec is None:
+            return
         if reload:
             try:
-                from designer.ide.project_files import read_text
-                tf = read_text(path)
-                self._saved[path] = tf.text
-                editor = self.editor_for(path)
-                if editor is not None:
-                    editor.set_code(tf.text, keep_scroll=True)
-            except Exception:
-                pass
-            else:
-                self.dirtyChanged.emit(path, False)
-        else:
-            if path in self._path_to_index:
-                editor = self.editor_for(path)
-                if editor is not None:
-                    self._saved[path] = editor.code()
-                    if not self.is_dirty(path):
-                        self.dirtyChanged.emit(path, False)
+                loaded = project_files.read_text(rec.path)
+            except (project_files.FileReadError, OSError) as exc:
+                self.message.emit(f"Cannot reload {os.path.basename(rec.path)}: {exc}")
+                return
+            self._reload(rec, loaded)
+            return
+        if rec.pending is not None:
+            # The version the user saw and declined becomes the baseline, so
+            # the same content arriving again does not ask again.
+            rec.saved = _editor_view(rec.pending.text)
+            rec.encoding, rec.newline = rec.pending.encoding, rec.pending.newline
+        self._hide_banner(rec)
+        self._refresh_dirty(rec)
 
     def file_renamed(self, old: str, new: str) -> None:
-        old = os.path.realpath(old)
-        new = os.path.realpath(new)
-        idx = self._path_to_index.get(old)
-        if idx is not None and idx < self.count():
-            self._retarget_tab(old, new, idx)
-        else:
-            retargeted = []
-            for p in list(self._path_to_index.keys()):
-                if p == old or (self._root and p.startswith(old + os.sep)):
-                    if p == old:
-                        new_p = new
-                    else:
-                        rel = os.path.relpath(p, old)
-                        new_p = os.path.join(new, rel)
-                    retargeted.append((p, new_p))
-            for p, new_p in retargeted:
-                self._retarget_tab(p, new_p, self._path_to_index[p])
-
-    def _retarget_tab(self, old: str, new: str, idx: int) -> None:
-        del self._path_to_index[old]
-        self._path_to_index[new] = idx
-        self._saved[new] = self._saved.pop(old, "")
-        self._watcher.removeFile(old)
-        self._watcher.addFile(new)
-        self._banners.pop(old, None)
-        self.setTabText(idx, os.path.basename(new))
-        self.setTabToolTip(idx, relative_path(self._root, new) if self._root else new)
+        """Slot for ProjectTree.fileRenamed: retargets the tab of `old` (or of
+        every open file under `old` when a folder was renamed)."""
+        old, new = os.path.realpath(old), os.path.realpath(new)
+        current = self.current_path()
+        for rec in self._records():
+            if _same_path(rec.path, old):
+                target = new
+            elif _under(rec.path, old):
+                target = os.path.join(new, rec.path[len(old.rstrip("\\/")) + 1:])
+            else:
+                continue
+            self._unwatch(rec.path)
+            rec.path = target
+            language = project_files.language_for(target)
+            if language != rec.editor._language:
+                rec.editor.set_language(language)
+            rec.banner.set_name(os.path.basename(target))
+            self._watch(target)
+            self._update_tab(rec)
+        if self.current_path() != current:
+            self.currentFileChanged.emit(self.current_path())
 
     def file_deleted(self, path: str) -> None:
+        """Slot for ProjectTree.fileDeleted: a clean tab of that file (or under
+        that folder) closes; a dirty one stays, still dirty."""
         path = os.path.realpath(path)
-        for p in list(self._path_to_index.keys()):
-            if p != path:
+        for rec in self._records():
+            if not (_same_path(rec.path, path) or _under(rec.path, path)):
                 continue
-            idx = self._path_to_index.get(p)
-            if idx is not None and idx < self.count():
-                if not self.is_dirty(p):
-                    self._watcher.removeFile(p)
-                    self._remove_tab(idx, p)
-                else:
-                    self._saved[p] = "DELETED_MARKER"
+            if self._dirty(rec):
+                self._unwatch(rec.path)
+                rec.missing = True
+                self._hide_banner(rec)
+                self._refresh_dirty(rec)
+            else:
+                self._remove(rec)
 
     # ---------------------------------------------------------- agent context
 
     def selection_context(self) -> dict:
-        path = self.current_path()
-        if path == "":
+        """What the agent is told about the editor, {} on a pinned tab or none:
+        {"path": abs path, "relative": path relative to root(),
+         "language": ..., "cursor_line": 1-based,
+         "start_line": 1-based, "end_line": 1-based, "text": selected text}
+        With no selection, start_line == end_line == cursor_line and text ''."""
+        rec = self._files.get(self.currentWidget())
+        if rec is None:
             return {}
-        editor = self.editor_for(path)
-        if editor is None:
-            return {}
+        editor = rec.editor
         cursor = editor.textCursor()
-        selected = cursor.selectedText()
-        if selected:
-            start = cursor.selectionStart()
-            end = cursor.selectionEnd()
-            start_block = cursor.document().findBlock(start).blockNumber()
-            end_block = cursor.document().findBlock(end).blockNumber()
-        else:
-            line_num = cursor.blockNumber()
-            start_block = line_num
-            end_block = line_num
-        ctx = {
-            "path": path,
-            "relative": relative_path(self._root, path) if self._root else path,
+        document = editor.document()
+        cursor_line = cursor.blockNumber() + 1
+        start_line = end_line = cursor_line
+        text = ""
+        if cursor.hasSelection():
+            start, end = cursor.selectionStart(), cursor.selectionEnd()
+            start_line = document.findBlock(start).blockNumber() + 1
+            end_block = document.findBlock(end)
+            end_line = end_block.blockNumber() + 1
+            # A selection that stops at the very start of a line (whole lines
+            # picked with Shift+Down) does not include that line.
+            if end_line > start_line and end == end_block.position():
+                end_line -= 1
+            # Positions index toPlainText() one-to-one; selectedText() would
+            # hand back U+2029 for the line breaks.
+            text = editor.code()[start:end]
+        return {
+            "path": rec.path,
+            "relative": self._relative(rec.path),
             "language": editor._language,
-            "cursor_line": cursor.blockNumber() + 1,
-            "start_line": start_block + 1,
-            "end_line": end_block + 1,
-            "text": selected,
+            "cursor_line": cursor_line,
+            "start_line": start_line,
+            "end_line": end_line,
+            "text": text,
         }
-        return ctx
 
     def apply_theme(self, theme: str) -> None:
-        dark = theme == "dark"
-        for p, idx in self._path_to_index.items():
-            if p == "":
-                continue
-            editor = self.editor_for(p)
-            if editor is not None:
-                editor.apply_theme(theme)
-        for banner in self._banners.values():
-            if dark:
-                banner.setStyleSheet(
-                    "background: #2d1f00; color: #e6a800; padding: 2px 6px; font-size: 11px;"
-                )
-            else:
-                banner.setStyleSheet(
-                    "background: #fff8e1; color: #7c6900; padding: 2px 6px; font-size: 11px;"
-                )
-        self.setStyleSheet(
-            "QTabWidget::pane { border: none; background: transparent; }"
-            "QTabBar::tab { background: #1a1e28; color: #8b949e; padding: 4px 12px; }"
-            "QTabBar::tab:selected { background: #0b0f14; color: #e6edf3; }"
-            "QTabBar::tab:!selected { margin-top: 2px; }"
-            "QLabel { color: inherit; }"
-            if dark else
-            "QTabBar::tab { background: #f3f4f6; color: #6b7280; padding: 4px 12px; }"
-            "QTabBar::tab:selected { background: #ffffff; color: #111827; }"
-            "QTabBar::tab:!selected { margin-top: 2px; }"
-            "QLabel { color: inherit; }"
-        )
+        """'dark' or 'light': every editor, the banners, the tab bar."""
+        self._theme = "light" if theme == "light" else "dark"
+        p = LIGHT_PALETTE if self._theme == "light" else DARK_PALETTE
+        warn = "#b45309" if self._theme == "light" else "#e3b341"
+        self.setStyleSheet(f"""
+            QTabWidget#editorTabs::pane {{ border: none; background: {p['background']}; }}
+            QTabWidget#editorTabs > QTabBar {{ background: {p['bar']}; }}
+            QTabWidget#editorTabs > QTabBar::tab {{
+                background: {p['bar']}; color: {p['muted']}; border: none;
+                border-right: 1px solid {p['border']}; border-bottom: 1px solid {p['border']};
+                padding: 5px 10px; font-size: 12px;
+            }}
+            QTabWidget#editorTabs > QTabBar::tab:selected {{
+                background: {p['background']}; color: {p['bar_text']};
+                border-bottom: 1px solid {p['background']};
+            }}
+            QTabWidget#editorTabs > QTabBar::tab:hover:!selected {{ color: {p['bar_text']}; }}
+            QFrame#editorBanner {{ background: {p['bar']}; border-bottom: 1px solid {warn}; }}
+            QLabel#editorBannerText {{ background: transparent; color: {warn}; font-size: 12px; }}
+            QPushButton#editorBannerButton {{
+                background: transparent; color: {p['bar_text']}; border: 1px solid {p['border']};
+                border-radius: 4px; padding: 2px 10px; font-size: 12px;
+            }}
+            QPushButton#editorBannerButton:hover {{ background: {p['current_line']}; }}
+        """)
+        for rec in self._files.values():
+            rec.editor.apply_theme(self._theme)
+        for widget, name in self._pinned_icons.items():
+            self._set_pinned_icon(widget, name)
 
     # ---------------------------------------------------------- hooks
 
     def _ask_unsaved(self, path: str) -> str:
-        return self.DISCARD
+        """Asks Save / Discard / Cancel for a dirty file (a QMessageBox);
+        returns SAVE, DISCARD or CANCEL. Tests replace this method."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Unsaved changes")
+        box.setText(f"Save the changes to {os.path.basename(path)}?")
+        box.setInformativeText("Your changes are lost if you don't save them.")
+        box.setStandardButtons(QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+        box.setDefaultButton(QMessageBox.Save)
+        box.setEscapeButton(QMessageBox.Cancel)
+        box.exec()
+        clicked = box.standardButton(box.clickedButton())
+        box.deleteLater()
+        if clicked == QMessageBox.Save:
+            return self.SAVE
+        if clicked == QMessageBox.Discard:
+            return self.DISCARD
+        return self.CANCEL
+
+    # ---------------------------------------------------------- Qt hooks
+
+    def event(self, event) -> bool:
+        # Claim our keys when they are pressed inside this widget, before the
+        # application's shortcut map sees them. The map matches QShortcuts
+        # against the *active* window's focus widget, not against the widget
+        # the key was sent to: until the window system activates this window
+        # (just shown, or embedded in one that never activates) another
+        # window's shortcut -- another EditorTabs' Ctrl+S -- would take the
+        # key. A child that wants the key claims it first (CodeEditor does for
+        # undo/redo), because the override reaches it before bubbling here.
+        # The claimed key then arrives as a key press (keyPressEvent below);
+        # the QShortcuts still serve focus this event never passes through.
+        if event.type() == QEvent.ShortcutOverride and self._key_slot(event) is not None:
+            event.accept()
+            return True
+        return super().event(event)
+
+    def keyPressEvent(self, event) -> None:
+        slot = self._key_slot(event)
+        if slot is None:
+            super().keyPressEvent(event)
+            return
+        event.accept()
+        slot()
 
     # ---------------------------------------------------------- private
 
-    def _on_tab_close(self, idx: int) -> None:
-        path = ""
-        for p, i in self._path_to_index.items():
-            if i == idx:
-                path = p
-                break
-        if path and path != "":
-            self.close_file(path)
-
-    def _remove_tab(self, idx: int, path: str) -> None:
-        self._watcher.removeFile(path)
-        self._watcher.removeFile(self._root)
-        self._banners.pop(path, None)
-        del self._path_to_index[path]
-        page = self._tab_page_map.pop(idx, None)
-        if page is not None:
-            page.deleteLater()
-        self.removeTab(idx)
-        self.currentFileChanged.emit(self.current_path())
-        for p, saved in self._saved.items():
-            if saved == "DELETED_MARKER":
-                if not self.is_dirty(p):
-                    continue
-
-    def _update_tab_title(self, path: str) -> None:
-        idx = self._path_to_index.get(path)
-        if idx is not None:
-            self.setTabText(idx, os.path.basename(path))
-
-    def _show_banner(self, path: str) -> None:
-        if path in self._banners:
-            return
-        idx = self._path_to_index.get(path)
-        if idx is None:
-            return
-        page = self._tab_page_map.get(idx)
-        if page is None or page.layout() is None:
-            return
-        editor = self.editor_for(path)
-        if editor is None:
-            return
-        filename = os.path.basename(path)
-        banner = _Banner(filename, page)
-        reload_clicked = lambda b=banner: (
-            self.resolve_banner(path, True),
-            b.deleteLater()
-        )
-        keep_clicked = lambda b=banner: (
-            self.resolve_banner(path, False),
-            b.deleteLater()
-        )
-        banner._reload_button.clicked.connect(reload_clicked)
-        banner._keep_button.clicked.connect(keep_clicked)
-        layout = page.layout()
-        layout.insertWidget(0, banner)
-        self._banners[path] = banner
-
-    def _find_page_for(self, path: str) -> QWidget | None:
-        idx = self._path_to_index.get(path)
-        if idx is not None:
-            return self._tab_page_map.get(idx)
+    def _key_slot(self, event):
+        mods = event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier | Qt.AltModifier
+                                    | Qt.MetaModifier)
+        for combo, slot in self._keys:
+            if event.key() == combo.key() and mods == combo.keyboardModifiers():
+                return slot
         return None
 
-    def _now(self) -> float:
-        return time.monotonic()
+    def _records(self) -> list[_FileTab]:
+        """The open files in tab order (a snapshot: callers may close tabs)."""
+        pages = (self.widget(i) for i in range(self.count()))
+        return [self._files[page] for page in pages if page in self._files]
+
+    def _find(self, path: str) -> _FileTab | None:
+        if not path:
+            return None
+        wanted = os.path.normcase(os.path.realpath(path))
+        for rec in self._files.values():
+            if os.path.normcase(rec.path) == wanted:
+                return rec
+        return None
+
+    def _relative(self, path: str) -> str:
+        if not self._root:
+            return path.replace(os.sep, "/")
+        return project_files.relative_path(self._root, path)
+
+    def _new_tab(self, path: str, loaded) -> _FileTab:
+        editor = CodeEditor()
+        editor.set_language(project_files.language_for(path))
+        editor.apply_theme(self._theme)
+        editor.set_code(loaded.text, keep_scroll=False)
+        page = QWidget()
+        page.setObjectName("editorPage")
+        banner = _Banner(page)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(banner)
+        layout.addWidget(editor, 1)
+        rec = _FileTab(path, editor, page, banner)
+        rec.saved = editor.code()
+        rec.encoding, rec.newline = loaded.encoding, loaded.newline
+        banner.reload_button.clicked.connect(lambda: self.resolve_banner(rec.path, True))
+        banner.keep_button.clicked.connect(lambda: self.resolve_banner(rec.path, False))
+        editor.codeEdited.connect(lambda: self._refresh_dirty(rec))
+        # Registered before addTab: adding the first tab makes it current, and
+        # currentFileChanged must already see its path.
+        self._files[page] = rec
+        self.addTab(page, "")
+        self._update_tab(rec)
+        self._watch(path)
+        return rec
+
+    def _remove(self, rec: _FileTab) -> None:
+        self._unwatch(rec.path)
+        del self._files[rec.page]
+        index = self.indexOf(rec.page)
+        if index >= 0:
+            self.removeTab(index)
+        rec.page.deleteLater()
+
+    def _dirty(self, rec: _FileTab) -> bool:
+        return rec.missing or rec.editor.code() != rec.saved
+
+    def _refresh_dirty(self, rec: _FileTab) -> None:
+        dirty = self._dirty(rec)
+        if dirty == rec.dirty:
+            return
+        rec.dirty = dirty
+        self._update_tab(rec)
+        self.dirtyChanged.emit(rec.path, dirty)
+
+    def _update_tab(self, rec: _FileTab) -> None:
+        index = self.indexOf(rec.page)
+        if index < 0:
+            return
+        # A bare '&' would turn into a mnemonic underline in the tab title.
+        title = os.path.basename(rec.path).replace("&", "&&")
+        self.setTabText(index, title + (" *" if rec.dirty else ""))
+        self.setTabToolTip(index, self._relative(rec.path))
+
+    def _reload(self, rec: _FileTab, loaded) -> None:
+        rec.editor.set_code(loaded.text, keep_scroll=True)
+        rec.saved = rec.editor.code()
+        rec.encoding, rec.newline = loaded.encoding, loaded.newline
+        rec.missing = False
+        self._hide_banner(rec)
+        self._refresh_dirty(rec)
+
+    def _hide_banner(self, rec: _FileTab) -> None:
+        rec.pending = None
+        rec.banner.hide()
+
+    def _watch(self, path: str, fresh: bool = False) -> None:
+        # An atomic replace (ours or anyone's) leaves the watch on the old,
+        # unlinked file; `fresh` re-adds it so it follows the new one.
+        if fresh and path in self._watcher.files():
+            self._watcher.removePath(path)
+        if os.path.isfile(path) and path not in self._watcher.files():
+            self._watcher.addPath(path)
+
+    def _unwatch(self, path: str) -> None:
+        if path in self._watcher.files():
+            self._watcher.removePath(path)
+
+    def _on_watched_file_changed(self, path: str) -> None:
+        if os.path.isfile(path):
+            self._watch(path, fresh=True)
+            self.file_changed_on_disk(path)
+        else:
+            self._gone.add(path)
+            self._gone_timer.start()
+
+    def _recheck_gone(self) -> None:
+        gone, self._gone = self._gone, set()
+        for path in gone:
+            self.file_changed_on_disk(path)
+
+    def _on_current_changed(self, _index: int) -> None:
+        self.currentFileChanged.emit(self.current_path())
+
+    def _edit_action(self, name: str) -> None:
+        current = self.currentWidget()
+        if current in self._pinned:
+            handler = self._pinned[current].get(name)
+            if handler is not None:
+                handler()
+            return
+        rec = self._files.get(current)
+        if rec is not None:
+            getattr(rec.editor, name)()
+
+    def _key_save(self) -> None:
+        self.save()
+
+    def _key_save_all(self) -> None:
+        self.save_all()
+
+    def _key_close(self) -> None:
+        path = self.current_path()
+        if path:
+            self.close_file(path)
+
+    def _on_tab_close_requested(self, index: int) -> None:
+        rec = self._files.get(self.widget(index))
+        if rec is not None:
+            self.close_file(rec.path)
+
+    def _set_pinned_icon(self, widget: QWidget, name: str) -> None:
+        if _tabler_icon is None:
+            return
+        index = self.indexOf(widget)
+        if index < 0:
+            return
+        palette = LIGHT_PALETTE if self._theme == "light" else DARK_PALETTE
+        try:
+            self.setTabIcon(index, _tabler_icon(name, 16, palette["text"]))
+        except Exception:                               # an unknown icon name is not fatal
+            pass
