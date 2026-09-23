@@ -8,6 +8,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -16,7 +17,7 @@ sys.path.insert(0, str(REPO_ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
-from PySide6.QtCore import QSettings, Qt  # noqa: E402
+from PySide6.QtCore import QEventLoop, QSettings, Qt, QTimer  # noqa: E402
 from PySide6.QtGui import QTextCursor  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
@@ -27,10 +28,13 @@ from designer.ui.designer_workspace import DesignerWorkspace  # noqa: E402
 
 
 def _wait(predicate, ms=5000):
-    waited = 0
-    while not predicate() and waited < ms:
-        QTest.qWait(50)
-        waited += 50
+    """Spins a QEventLoop, not QTest.qWait: in PySide6 6.11 qWait holds the
+    GIL and starves the agent backend's threads (see test_ide_opencode)."""
+    deadline = time.monotonic() + ms / 1000
+    while not predicate() and time.monotonic() < deadline:
+        loop = QEventLoop()
+        QTimer.singleShot(20, loop.quit)
+        loop.exec()
     return predicate()
 
 
