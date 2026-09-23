@@ -13,6 +13,7 @@ HTTP 500. GET /_requests returns every request seen as
 Environment knobs:
     FAKE_OPENCODE_FAIL=1       exit(3) before listening, printing an error
     FAKE_OPENCODE_SILENT=1     never print the listening line (start timeout)
+    FAKE_OPENCODE_MODEL=p/m    GET /config names this model (opencode's configured one)
     FAKE_OPENCODE_DROP_AFTER=N close each event stream after N events
                                (server.connected counts as the first)
 """
@@ -87,6 +88,9 @@ class Handler(BaseHTTPRequestHandler):
                 ],
                 "default": {"ghost": "none", "cloud": "big/model", "local": "alpha"},
             })
+        if path == "/config":
+            model = os.environ.get("FAKE_OPENCODE_MODEL")
+            return self._json(200, {"model": model} if model else {})
         if path == "/event":
             return self._stream()
         return self._json(404, {"name": "NotFound", "message": f"no route {path}"})

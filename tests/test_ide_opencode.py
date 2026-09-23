@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtTest import QTest  # noqa: E402
+from PySide6.QtCore import QEventLoop, QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from designer.ide import opencode_client as oc  # noqa: E402
@@ -27,6 +27,19 @@ from designer.ide.agent_backend import ERROR, READY, OpencodeBackend, SYSTEM_PRO
 FIXTURE = str(REPO_ROOT / "tests" / "fixtures" / "opencode_events_edit.sse")
 FAKE = [sys.executable, str(REPO_ROOT / "tests" / "fixtures" / "fake_opencode.py")]
 SESSION = "ses_f328de678ffeFpsGDKP5pNthLH"
+
+
+def spin_until(predicate, ms):
+    """Runs the event loop until predicate() or ms pass. Not QTest.qWait:
+    in PySide6 6.11 it holds the GIL, so the backend's reader and worker
+    threads barely run (a probe: 1 time slice a second against ~65 for a
+    QEventLoop, which is what the Studio's app.exec does)."""
+    deadline = time.monotonic() + ms / 1000
+    while not predicate() and time.monotonic() < deadline:
+        loop = QEventLoop()
+        QTimer.singleShot(20, loop.quit)
+        loop.exec()
+    return predicate()
 
 
 def _normalized(session=SESSION):
@@ -297,11 +310,7 @@ class OpencodeBackendTests(unittest.TestCase):
         self.backend.modelsChanged.connect(self.models.append)
 
     def _wait(self, predicate, ms=10000):
-        waited = 0
-        while not predicate() and waited < ms:
-            QTest.qWait(50)
-            waited += 50
-        return predicate()
+        return spin_until(predicate, ms)
 
     def test_start_send_receive(self):
         self.backend.start(str(REPO_ROOT))
@@ -389,6 +398,107 @@ class OpencodeBackendTests(unittest.TestCase):
         time.sleep(0.5)
         with self.assertRaises(Exception):
             urllib.request.urlopen(url + "/config/providers", timeout=2)
+
+
+class OpencodeQcTests(unittest.TestCase):
+    """Coordinator QC: what the frozen gate did not pin."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication(sys.argv)
+
+    def _sse_server(self, body: bytes):
+        """A one-route server answering GET /event with `body`, then closing."""
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(body)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_address[1]}"
+
+    def test_sse_framing(self):
+        body = (b": comment\n\n"
+                b'data: {"type": "a",\ndata:  "n": 1}\n\n'      # one event over two data lines
+                b"data: not json\n\n"
+                b'data: {"type": "b"}\r\n\r\n')
+        url = self._sse_server(body)
+        events = list(oc.OpencodeClient(url, "/p").events())
+        self.assertEqual(events, [{"type": "a", "n": 1}, {"type": "b"}])
+
+    def test_early_exit_reported_fast(self):
+        os.environ["FAKE_OPENCODE_FAIL"] = "1"
+        try:
+            started = time.monotonic()
+            with self.assertRaises(oc.OpencodeError):
+                oc.OpencodeServer(command=FAKE).start(timeout=20)
+            self.assertLess(time.monotonic() - started, 5, "a dead child does not wait out the timeout")
+        finally:
+            os.environ.pop("FAKE_OPENCODE_FAIL", None)
+
+    def test_stop_during_start_never_turns_ready(self):
+        backend = OpencodeBackend(server_command=FAKE)
+        self.addCleanup(backend.stop)
+        states = []
+        backend.stateChanged.connect(lambda s, d: states.append(s))
+        backend.start(str(REPO_ROOT))
+        backend.stop()
+        spin_until(lambda: False, 2500)
+        self.assertEqual(backend.state(), "stopped")
+        self.assertNotIn(READY, states)
+
+    def test_abort_without_session_is_idle(self):
+        backend = OpencodeBackend(server_command=FAKE)
+        self.addCleanup(backend.stop)
+        events = []
+        backend.event.connect(events.append)
+        backend.start(str(REPO_ROOT))
+        self.assertTrue(spin_until(lambda: backend.state() == READY, 10000))
+        backend.abort()
+        self.assertEqual(events, [{"type": "idle"}])
+
+    def test_server_death_is_an_error_state(self):
+        backend = OpencodeBackend(server_command=FAKE)
+        self.addCleanup(backend.stop)
+        backend.start(str(REPO_ROOT))
+        self.assertTrue(spin_until(lambda: backend.state() == READY, 10000))
+        backend._server._proc.kill()
+        self.assertTrue(spin_until(lambda: backend.state() == ERROR, 15000), backend.detail())
+        self.assertIn("stopped unexpectedly", backend.detail())
+
+    def test_default_is_the_configured_model(self):
+        # opencode's per-provider default map put an OpenRouter image model
+        # first on the bench; the configured model must win when listed.
+        for configured, expected in (("local/zeta", oc.ModelRef("local", "zeta")),
+                                     ("nowhere/else", oc.ModelRef("cloud", "big/model"))):
+            os.environ["FAKE_OPENCODE_MODEL"] = configured
+            server = oc.OpencodeServer(command=FAKE)
+            try:
+                _models, default = oc.OpencodeClient(server.start(15), "/p").providers()
+            finally:
+                server.stop()
+                os.environ.pop("FAKE_OPENCODE_MODEL", None)
+            self.assertEqual(default, expected, configured)
+
+    def test_normalizer_releases_untyped_text_at_idle(self):
+        norm = oc.EventNormalizer("ses_x")
+        norm.feed({"type": "message.updated", "properties": {"info": {"id": "m", "role": "assistant", "sessionID": "ses_x"}}})
+        held = norm.feed({"type": "message.part.delta", "properties": {
+            "sessionID": "ses_x", "messageID": "m", "partID": "p", "field": "text", "delta": "late"}})
+        self.assertEqual(held, [])
+        out = norm.feed({"type": "session.idle", "properties": {"sessionID": "ses_x"}})
+        self.assertEqual(out, [{"type": "text", "id": "p", "delta": "late"}, {"type": "idle"}])
 
 
 if __name__ == "__main__":

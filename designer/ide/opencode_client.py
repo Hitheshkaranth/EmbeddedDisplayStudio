@@ -28,7 +28,17 @@ before writing EventNormalizer.
 """
 from __future__ import annotations
 
+import collections
+import json
+import os
+import shutil
+import socket
+import subprocess
 import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from typing import Iterator, Optional, Sequence
 
@@ -36,6 +46,13 @@ from typing import Iterator, Optional, Sequence
 # "opencode server listening on http://127.0.0.1:4096".
 LISTENING_PREFIX = "opencode server listening on "
 INSTALL_HINT = "opencode is not installed: run  npm i -g opencode-ai  and reopen the Code section"
+
+_TAIL_LINES = 50
+_BODY_EXCERPT = 300
+# opencode sends a heartbeat every ~10 s; a stream silent for this long is
+# treated as dead and reopened by the caller.
+_STREAM_IDLE_TIMEOUT = 60.0
+_REPLIES = ("once", "always", "reject")
 
 
 class OpencodeError(Exception):
@@ -67,24 +84,16 @@ def find_opencode() -> Optional[str]:
     """The opencode executable: $OPENCODE_BIN when it names a file, else
     shutil.which('opencode') (which finds opencode.cmd on Windows), else
     %APPDATA%\\npm\\opencode.cmd on Windows; None when none exists."""
-    import os
-    import shutil
-
-    env_bin = os.environ.get("OPENCODE_BIN")
-    if env_bin and os.path.isfile(env_bin):
-        return env_bin
-
-    which = shutil.which("opencode")
-    if which:
-        return which
-
+    configured = os.environ.get("OPENCODE_BIN")
+    if configured and os.path.isfile(configured):
+        return configured
+    found = shutil.which("opencode")
+    if found:
+        return found
     if os.name == "nt":
-        appdata = os.environ.get("APPDATA")
-        if appdata:
-            path = os.path.join(appdata, "npm", "opencode.cmd")
-            if os.path.isfile(path):
-                return path
-
+        shim = os.path.join(os.environ.get("APPDATA", ""), "npm", "opencode.cmd")
+        if os.path.isfile(shim):
+            return shim
     return None
 
 
@@ -105,11 +114,12 @@ class OpencodeServer:
         self._command = list(command) if command else None
         self._cwd = cwd
         self._port = port
-        self._proc = None
+        self._proc: Optional[subprocess.Popen] = None
         self._url: Optional[str] = None
-        self._output_lines: list[str] = []
-        self._ready_event = threading.Event()
+        self._listening: Optional[str] = None
+        self._tail: collections.deque[str] = collections.deque(maxlen=_TAIL_LINES)
         self._lock = threading.Lock()
+        self._heard = threading.Event()
 
     def start(self, timeout: float = 30.0) -> str:
         """Starts the child and waits for the LISTENING_PREFIX line; returns
@@ -117,117 +127,95 @@ class OpencodeServer:
         -- INSTALL_HINT when there is no executable; the child's output tail
         when it exits or does not listen within `timeout` (the child is
         stopped then). Calling start on a running server returns its url."""
-        if self._url is not None:
+        if self.running:
             return self._url
-
-        if self._command is None:
-            exe = find_opencode()
-            if exe is None:
+        self.stop()
+        prefix = self._command
+        if prefix is None:
+            executable = find_opencode()
+            if executable is None:
                 raise OpencodeError(INSTALL_HINT)
-            self._command = [exe]
-
-        argv = list(self._command) + ["serve", "--hostname", "127.0.0.1", "--port", str(self._port)]
-
+            prefix = [executable]
+        argv = list(prefix) + ["serve", "--hostname", "127.0.0.1", "--port", str(self._port)]
+        self._tail.clear()
+        self._heard.clear()
+        self._listening = None
         try:
-            import subprocess
-
-            kwargs: dict = dict(
-                argv=argv,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                text=True,
-                bufsize=1,
-            )
-            if self._cwd:
-                kwargs["cwd"] = self._cwd
-            if os.name == "nt":
-                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-
-            self._proc = subprocess.Popen(**kwargs)
-        except Exception as exc:
-            raise OpencodeError(str(exc))
-
-        self._ready_event.clear()
-        self._thread = threading.Thread(target=self._drain_output, daemon=True)
-        self._thread.start()
-
-        started = self._ready_event.wait(timeout=timeout)
-        if not started:
-            self._stop_proc()
-            self._proc = None
-            tail = "\n".join(self._output_lines[-20:]) if self._output_lines else "timeout"
-            raise OpencodeError(tail)
-
-        if self._proc.poll() is not None:
-            self._url = None
-            tail = "\n".join(self._output_lines[-20:]) if self._output_lines else "child exited"
-            raise OpencodeError(tail)
-
-        return self._url
-
-    def _drain_output(self) -> None:
-        if self._proc is None or self._proc.stdout is None:
-            return
-        while True:
-            line = self._proc.stdout.readline()
-            if not line:
+            self._proc = subprocess.Popen(
+                argv, cwd=self._cwd or None, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                # opencode prints UTF-8 whatever the console code page is.
+                text=True, encoding="utf-8", errors="replace", bufsize=1,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0)
+        except OSError as exc:
+            raise OpencodeError(f"Could not start opencode ({argv[0]}): {exc}") from exc
+        threading.Thread(target=self._drain, args=(self._proc,), name="opencode-output",
+                         daemon=True).start()
+        deadline = time.monotonic() + timeout
+        # Wait in short steps so a child that dies early is reported at once
+        # rather than after the whole timeout.
+        while not self._heard.wait(0.1):
+            if self._proc.poll() is not None:
+                self._heard.wait(0.3)       # let the drain thread catch the last lines
+                if self._listening is None:
+                    code = self._proc.returncode
+                    self.stop()
+                    raise OpencodeError(self._failure(f"opencode exited (code {code}) before listening"))
                 break
-            line = line.rstrip("\n\r")
-            with self._lock:
-                self._output_lines.append(line)
-                if len(self._output_lines) > 50:
-                    self._output_lines = self._output_lines[-50:]
-            if LISTENING_PREFIX in line:
-                url = line.split(LISTENING_PREFIX, 1)[-1].strip()
-                with self._lock:
-                    self._url = url
-                self._ready_event.set()
+            if time.monotonic() > deadline:
+                self.stop()
+                raise OpencodeError(self._failure(f"opencode did not start listening within {timeout:g} s"))
+        self._url = self._listening
+        return self._url
 
     def stop(self) -> None:
         """Terminates the child (and on Windows its process tree, since
         opencode.cmd starts node which starts the server), waits up to 3 s,
         then kills. Idempotent; url becomes None."""
-        self._stop_proc()
-        with self._lock:
-            self._url = None
-
-    def _stop_proc(self) -> None:
-        proc = self._proc
+        proc, self._proc, self._url = self._proc, None, None
         if proc is None:
             return
-        if os.name == "nt" and proc.pid is not None:
-            try:
-                import subprocess
-                subprocess.run(
-                    ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
-                    capture_output=True, timeout=3,
-                )
-            except Exception:
-                pass
-        try:
+        if proc.poll() is not None:
+            _close_pipe(proc)
+            return
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
             proc.terminate()
-            proc.wait(timeout=3)
-        except Exception:
-            try:
-                proc.kill()
-                proc.wait(timeout=3)
-            except Exception:
-                pass
-        self._proc = None
+        try:
+            proc.wait(3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(3)
+        _close_pipe(proc)
 
     @property
     def running(self) -> bool:
-        return self._url is not None
+        return self._proc is not None and self._proc.poll() is None and self._url is not None
 
     @property
     def url(self) -> Optional[str]:
-        return self._url
+        return self._url if self.running else None
 
     def output_tail(self) -> str:
         """The last lines the child printed, joined with newlines."""
         with self._lock:
-            return "\n".join(self._output_lines)
+            return "\n".join(self._tail)
+
+    def _drain(self, proc: subprocess.Popen) -> None:
+        for line in proc.stdout:
+            line = line.rstrip("\r\n")
+            with self._lock:
+                self._tail.append(line)
+            if self._listening is None and LISTENING_PREFIX in line:
+                self._listening = line.split(LISTENING_PREFIX, 1)[1].strip().rstrip("/")
+                self._heard.set()
+
+    def _failure(self, sentence: str) -> str:
+        tail = self.output_tail().strip()
+        return f"{sentence}:\n{tail}" if tail else sentence
 
 
 class OpencodeClient:
@@ -236,7 +224,7 @@ class OpencodeClient:
     OpencodeError on connection errors, HTTP >= 400 and bad JSON."""
 
     def __init__(self, base_url: str, directory: str, timeout: float = 15.0):
-        self._base_url = base_url
+        self._base_url = base_url.rstrip("/")
         self._directory = directory
         self._timeout = timeout
 
@@ -248,78 +236,58 @@ class OpencodeClient:
     def directory(self) -> str:
         return self._directory
 
-    def _url(self, path: str) -> str:
-        qs = urllib.parse.urlencode({"directory": self._directory})
-        return f"{self._base_url}{path}?{qs}"
-
-    def _request(self, method: str, path: str, body: Optional[dict] = None) -> Optional[dict]:
-        import json
-        url = self._url(path)
-        data = json.dumps(body).encode("utf-8") if body is not None else None
-        headers = {"Content-Type": "application/json"} if data is not None else {}
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
-        try:
-            resp = urllib.request.urlopen(req, timeout=self._timeout)
-            raw = resp.read()
-            if raw:
-                return json.loads(raw)
-            return None
-        except urllib.error.HTTPError as e:
-            body_raw = ""
-            try:
-                body_raw = e.read().decode("utf-8", errors="replace")[:300]
-            except Exception:
-                pass
-            raise OpencodeError(f"{e.code}: {body_raw}")
-        except urllib.error.URLError as e:
-            raise OpencodeError(str(e.reason))
-
     def providers(self) -> tuple[list[ModelRef], Optional[ModelRef]]:
         """Every model of every provider (providers in the order given,
-        models sorted by id) and the default: the first provider in the
-        `default` map that is also listed, else None."""
-        data = self._request("GET", "/config/providers")
-        if not data:
-            raise OpencodeError("empty response")
-        providers_list: list[ModelRef] = []
-        for prov in data.get("providers", []):
-            pid = prov.get("id", "")
-            for mid in sorted(prov.get("models", {}).keys()):
-                providers_list.append(ModelRef(pid, mid))
-        default_map = data.get("default", {})
-        default = None
-        for prov_id in default_map:
-            if any(m.provider_id == prov_id for m in providers_list):
-                default = ModelRef(prov_id, default_map[prov_id])
-                break
-        return (providers_list, default)
+        models sorted by id) and the default: the model opencode's own
+        config names (GET /config "model", what `opencode run` uses) when it
+        is listed, else the first provider in the `default` map that is also
+        listed, else None."""
+        configured = ModelRef.parse(self._configured_model())
+        data = self._call("GET", "/config/providers")
+        if not isinstance(data, dict):
+            raise OpencodeError("opencode sent no provider list")
+        models, listed = [], set()
+        for provider in data.get("providers") or []:
+            pid = provider.get("id") or ""
+            for mid in sorted(provider.get("models") or {}):
+                models.append(ModelRef(pid, mid))
+                listed.add((pid, mid))
+        # The per-provider `default` map starts with whichever provider
+        # sorts first (on this bench an OpenRouter image model); the user's
+        # configured model is what they expect the agent to use.
+        if configured is not None and (configured.provider_id, configured.model_id) in listed:
+            return models, configured
+        for pid, mid in (data.get("default") or {}).items():
+            if (pid, mid) in listed:
+                return models, ModelRef(pid, mid)
+        return models, None
 
     def create_session(self, title: str = "Studio") -> str:
         """Returns the new session id."""
-        data = self._request("POST", "/session", {"title": title})
-        if not data or "id" not in data:
-            raise OpencodeError("missing session id in response")
-        return data["id"]
+        data = self._call("POST", "/session", {"title": title})
+        sid = data.get("id") if isinstance(data, dict) else None
+        if not sid:
+            raise OpencodeError("opencode created a session without an id")
+        return sid
 
     def prompt(self, session_id: str, text: str, model: Optional[ModelRef] = None,
                system: Optional[str] = None) -> None:
         """POST prompt_async; returns as soon as the server accepted it."""
-        parts = [{"type": "text", "text": text}]
-        body: dict = {"parts": parts}
+        body: dict = {"parts": [{"type": "text", "text": text}]}
         if model is not None:
             body["model"] = {"providerID": model.provider_id, "modelID": model.model_id}
-        if system is not None:
+        if system:
             body["system"] = system
-        self._request("POST", f"/session/{session_id}/prompt_async", body)
+        self._call("POST", f"/session/{urllib.parse.quote(session_id)}/prompt_async", body)
 
     def abort(self, session_id: str) -> None:
-        self._request("POST", f"/session/{session_id}/abort")
+        self._call("POST", f"/session/{urllib.parse.quote(session_id)}/abort")
 
     def reply_permission(self, permission_id: str, reply: str) -> None:
         """reply is 'once', 'always' or 'reject' (ValueError otherwise)."""
-        if reply not in ("once", "always", "reject"):
-            raise ValueError(f"invalid reply: {reply!r}; must be 'once', 'always', or 'reject'")
-        self._request("POST", f"/permission/{permission_id}/reply", {"reply": reply})
+        if reply not in _REPLIES:
+            raise ValueError(f"reply must be one of {_REPLIES}, not {reply!r}")
+        self._call("POST", f"/permission/{urllib.parse.quote(permission_id)}/reply", {"reply": reply})
 
     def events(self, stop: Optional[threading.Event] = None) -> Iterator[dict]:
         """Opens GET /event and yields each event dict as it arrives. Returns
@@ -328,34 +296,107 @@ class OpencodeClient:
         framing: lines starting 'data:' carry JSON (several data lines of one
         event are joined with '\\n'); a blank line ends an event; lines
         starting ':' are comments; malformed JSON is skipped."""
-        import socket
-        url = self._url("/event")
-        req = urllib.request.Request(url, headers={"Accept": "text/event-stream"})
-        resp = urllib.request.urlopen(req, timeout=1.0)
-        buffer = ""
-        while True:
-            if stop and stop.is_set():
-                return
-            try:
-                raw_line = resp.readline()
-            except (socket.timeout, TimeoutError):
-                continue
-            if not raw_line:
-                return
-            line = raw_line.decode("utf-8", errors="replace").rstrip("\n\r")
-            if line.startswith(":"):
-                continue
-            if line == "":
-                if buffer.strip():
+        # A read that times out leaves Python's socket file unusable, so the
+        # stream is read blocking and `stop` is honoured by a watcher that
+        # shuts the socket down, which ends the blocked read at once.
+        request = urllib.request.Request(self._url("/event"), headers={"Accept": "text/event-stream"})
+        try:
+            response = urllib.request.urlopen(request, timeout=_STREAM_IDLE_TIMEOUT)
+        except (urllib.error.URLError, OSError) as exc:
+            raise OpencodeError(self._unreachable(exc)) from exc
+        done = threading.Event()
+        stop = stop or threading.Event()
+
+        def watch():
+            while not done.is_set():
+                if stop.wait(0.25):
+                    _shutdown(response)
+                    return
+        threading.Thread(target=watch, name="opencode-events-stop", daemon=True).start()
+        data: list[str] = []
+        try:
+            while not stop.is_set():
+                try:
+                    raw = response.readline()
+                except (OSError, ValueError):
+                    return                      # shut down by stop(), or the stream died
+                if not raw:
+                    return
+                line = raw.decode("utf-8", "replace").rstrip("\r\n")
+                if line.startswith(":"):
+                    continue
+                if line.startswith("data:"):
+                    data.append(line[5:].lstrip(" "))
+                    continue
+                if line == "" and data:
+                    payload, data = "\n".join(data), []
                     try:
-                        event = json.loads(buffer.strip())
-                        yield event
+                        event = json.loads(payload)
                     except ValueError:
-                        pass
-                    buffer = ""
-                continue
-            if line.startswith("data:"):
-                buffer += line[5:]
+                        continue
+                    if isinstance(event, dict) and not stop.is_set():
+                        yield event
+        finally:
+            done.set()
+            response.close()
+
+    # ------------------------------------------------------------ private
+
+    def _configured_model(self) -> str:
+        try:
+            config = self._call("GET", "/config")
+        except OpencodeError:
+            return ""                   # older servers: fall back to the default map
+        return (config or {}).get("model") or "" if isinstance(config, dict) else ""
+
+    def _url(self, path: str) -> str:
+        return f"{self._base_url}{path}?{urllib.parse.urlencode({'directory': self._directory})}"
+
+    def _call(self, method: str, path: str, body: Optional[dict] = None):
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        request = urllib.request.Request(self._url(path), data=data, method=method)
+        if data is not None:
+            request.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout) as response:
+                raw = response.read()
+        except urllib.error.HTTPError as exc:
+            excerpt = exc.read(_BODY_EXCERPT).decode("utf-8", "replace").strip()
+            raise OpencodeError(f"opencode answered HTTP {exc.code} to {method} {path}"
+                                + (f": {excerpt}" if excerpt else "")) from exc
+        except (urllib.error.URLError, OSError) as exc:
+            raise OpencodeError(self._unreachable(exc)) from exc
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except ValueError as exc:
+            raise OpencodeError(f"opencode sent something that is not JSON for {method} {path}") from exc
+
+    def _unreachable(self, exc: Exception) -> str:
+        reason = getattr(exc, "reason", exc)
+        return f"Cannot reach opencode at {self._base_url}: {reason}"
+
+
+def _close_pipe(proc: subprocess.Popen) -> None:
+    # The drain thread ends on EOF; closing our end releases the handle even
+    # when a grandchild (node under opencode.cmd) still holds the pipe.
+    try:
+        proc.stdout.close()
+    except (AttributeError, OSError, ValueError):
+        pass
+
+
+def _shutdown(response) -> None:
+    """Ends a blocked read on an HTTP response from another thread."""
+    try:
+        sock = response.fp.raw._sock
+        sock.shutdown(socket.SHUT_RDWR)
+    except (AttributeError, OSError):
+        try:
+            response.close()
+        except Exception:
+            pass
 
 
 class EventNormalizer:
@@ -405,220 +446,164 @@ class EventNormalizer:
     """
 
     def __init__(self, session_id: str):
-        self._session_id = session_id
-        self._message_roles: dict[str, str] = {}
-        self._part_types: dict[str, str] = {}
-        self._part_accumulated: dict[str, str] = {}
-        self._part_emitted: dict[str, str] = {}
-        self._buffered: dict[str, list[dict]] = {}
-        self._tool_seen: set[tuple[str, str]] = set()
-        self._last_state_type: Optional[str] = None
+        self.set_session(session_id)
 
     def set_session(self, session_id: str) -> None:
-        self._session_id = session_id
-        self._message_roles.clear()
-        self._part_types.clear()
-        self._part_accumulated.clear()
-        self._part_emitted.clear()
-        self._buffered.clear()
-        self._tool_seen.clear()
-        self._last_state_type = None
-
-    def _same_session(self, props: dict) -> bool:
-        sid = props.get("sessionID")
-        if sid:
-            return sid == self._session_id
-        part = props.get("part")
-        if isinstance(part, dict):
-            return part.get("sessionID") == self._session_id
-        info = props.get("info")
-        if isinstance(info, dict):
-            return info.get("sessionID") == self._session_id or info.get("id") == self._session_id
-        return False
+        """Switches to another session and forgets all per-part state."""
+        self._session = session_id
+        self._roles: dict[str, str] = {}          # message id -> role
+        self._types: dict[str, str] = {}          # part id -> 'text' | 'reasoning' | ...
+        self._part_message: dict[str, str] = {}   # part id -> message id
+        self._sent: dict[str, str] = {}           # part id -> text emitted so far
+        self._held: dict[str, list[str]] = {}     # part id -> deltas before its type is known
+        self._tool_states: set[tuple[str, str]] = set()
+        self._state = ""                          # last 'busy' / 'idle' emitted
 
     def feed(self, raw: dict) -> list[dict]:
-        etype = raw.get("type", "")
-        props = raw.get("properties") or {}
-        out: list[dict] = []
-
-        if etype == "file.edited":
-            fpath = props.get("file")
-            if fpath:
-                out.append({"type": "file_edited", "path": fpath})
-            return out
-
-        if etype == "permission.asked" or etype == "permission.updated":
-            if not self._same_session(props):
-                return out
-            pid = props.get("id", "")
-            perm = props.get("permission", "")
-            patterns = props.get("patterns", [])
-            title = f"{perm}: {', '.join(patterns)}"
-            out.append({"type": "permission", "id": pid, "permission": perm,
-                        "patterns": patterns, "title": title})
-            return out
-
-        if etype == "session.error":
-            if not self._same_session(props):
-                return out
-            error_obj = props.get("error") or {}
-            name = error_obj.get("name", "")
-            if name == "MessageAbortedError":
-                return out
-            data = error_obj.get("data") or {}
-            msg = data.get("message")
-            if not msg:
-                msg = name or "Unknown error"
-            out.append({"type": "error", "message": msg})
-            return out
-
-        if etype == "session.status":
-            if not self._same_session(props):
-                return out
-            status = props.get("status") or {}
-            stype = status.get("type", "")
-            if stype in ("busy", "retry"):
-                if self._last_state_type != "busy":
-                    out.append({"type": "busy"})
-                    self._last_state_type = "busy"
-            elif stype == "idle":
-                if self._last_state_type != "idle":
-                    out.append({"type": "idle"})
-                    self._last_state_type = "idle"
-            return out
-
-        if etype == "session.idle":
-            if not self._same_session(props):
-                return out
-            if self._last_state_type != "idle":
-                out.append({"type": "idle"})
-                self._last_state_type = "idle"
-            return out
-
-        if etype == "message.updated":
-            if not self._same_session(props):
-                return out
+        """The agent events for one raw event (often none)."""
+        kind = raw.get("type") if isinstance(raw, dict) else None
+        props = raw.get("properties") if isinstance(raw, dict) else None
+        if not kind or not isinstance(props, dict):
+            return []
+        if kind == "file.edited":
+            path = props.get("file")
+            return [{"type": "file_edited", "path": path}] if path else []
+        if self._session_of(props) != self._session:
+            return []
+        if kind == "message.updated":
             info = props.get("info") or {}
-            mid = info.get("id", "")
-            role = info.get("role", "")
-            if mid:
-                self._message_roles[mid] = role
-            return out
+            if info.get("id"):
+                self._roles[info["id"]] = info.get("role", "")
+            return []
+        if kind == "message.part.delta":
+            return self._delta(props)
+        if kind == "message.part.updated":
+            return self._part(props.get("part") or {})
+        if kind == "session.status":
+            status = (props.get("status") or {}).get("type")
+            if status in ("busy", "retry"):
+                return self._switch("busy")
+            if status == "idle":
+                return self._switch("idle")
+            return []
+        if kind == "session.idle":
+            return self._switch("idle")
+        if kind in ("permission.asked", "permission.updated"):
+            patterns = [str(p) for p in props.get("patterns") or []]
+            permission = props.get("permission") or props.get("type") or "permission"
+            return [{"type": "permission", "id": props.get("id", ""), "permission": permission,
+                     "patterns": patterns,
+                     "title": f"{permission}: {', '.join(patterns)}" if patterns else permission}]
+        if kind == "session.error":
+            error = props.get("error") or {}
+            if error.get("name") == "MessageAbortedError":
+                return []
+            message = (error.get("data") or {}).get("message") or error.get("name") or "Unknown error"
+            return [{"type": "error", "message": str(message)}]
+        return []
 
-        if etype == "message.part.delta":
-            if not self._same_session(props):
-                return out
-            part_id = props.get("partID", "")
-            if not part_id:
-                return out
-            field = props.get("field", "")
-            delta = props.get("delta", "")
-            if not delta:
-                return out
-            if field != "text":
-                return out
-            part_type = self._part_types.get(part_id)
-            if part_type:
-                old = self._part_emitted.get(part_id, "")
-                if old:
-                    if len(delta) <= len(old):
-                        self._part_accumulated[part_id] = delta
-                        return out
-                    suffix = delta[len(old):]
-                    if suffix:
-                        self._part_accumulated[part_id] = delta
-                        out.append({"type": part_type, "id": part_id, "delta": suffix})
-                else:
-                    self._part_accumulated[part_id] = delta
-                    out.append({"type": part_type, "id": part_id, "delta": delta})
-            else:
-                self._buffered.setdefault(part_id, []).append(
-                    {"type": "text", "id": part_id, "delta": delta})
-            return out
+    # ------------------------------------------------------------ private
 
-        if etype == "message.part.updated":
-            if not self._same_session(props):
-                return out
-            part = props.get("part")
-            if not isinstance(part, dict):
-                return out
-            mid = part.get("messageID", "")
-            if mid:
-                role = part.get("_role_hint") or self._message_roles.get(mid, "")
-                if role:
-                    self._message_roles[mid] = role
-            if self._message_roles.get(mid) == "user":
-                return out
-            part_id = part.get("id", "")
-            part_type = part.get("type", "")
-            full_text = part.get("text", "")
+    @staticmethod
+    def _session_of(props: dict) -> Optional[str]:
+        if props.get("sessionID"):
+            return props["sessionID"]
+        part = props.get("part")
+        if isinstance(part, dict) and part.get("sessionID"):
+            return part["sessionID"]
+        info = props.get("info")
+        if isinstance(info, dict):
+            return info.get("sessionID") or info.get("id")
+        return None
 
-            if part_type in ("text", "reasoning"):
-                self._part_types[part_id] = part_type
-                self._part_accumulated[part_id] = full_text
-                if full_text:
-                    old = self._part_emitted.get(part_id, "")
-                    self._part_emitted[part_id] = full_text
-                    if old and len(full_text) <= len(old):
-                        pass
-                    elif old:
-                        suffix = full_text[len(old):]
-                        if suffix:
-                            out.append({"type": part_type, "id": part_id, "delta": suffix})
-                    else:
-                        out.append({"type": part_type, "id": part_id, "delta": full_text})
-                if part_id in self._buffered:
-                    buf = self._buffered.pop(part_id)
-                    for b in buf:
-                        b["type"] = part_type
-                        out.append(dict(b))
-                return out
+    def _switch(self, state: str) -> list[dict]:
+        if state == self._state:
+            return []
+        self._state = state
+        # A reply is over: text still held for want of a part type is the
+        # assistant's answer (its message said role 'assistant').
+        out = self._release_untyped() if state == "idle" else []
+        return out + [{"type": state}]
 
-            if part_type == "step-finish":
-                tokens = (part.get("state") or {}).get("tokens", {})
-                if not tokens:
-                    tokens = part.get("tokens", {})
-                inp = tokens.get("input", 0) or 0
-                outp = tokens.get("output", 0) or 0
-                rsn = tokens.get("reasoning", 0) or 0
-                if inp or outp or rsn:
-                    out.append({"type": "usage", "input": inp, "output": outp, "reasoning": rsn})
-                return out
+    def _emit(self, part_id: str, kind: str, delta: str) -> list[dict]:
+        if not delta:
+            return []
+        self._sent[part_id] = self._sent.get(part_id, "") + delta
+        return [{"type": kind, "id": part_id, "delta": delta}]
 
-            if part_type == "tool":
-                state = part.get("state", {}) or {}
-                status = state.get("status", "")
-                if status and (part_id, status) not in self._tool_seen:
-                    self._tool_seen.add((part_id, status))
-                    tool_name = part.get("tool", "")
-                    title = state.get("title") or tool_name
-                    inp = state.get("input", {})
-                    output = state.get("output", "")
-                    error = state.get("error", "")
-                    if inp is None:
-                        inp = {}
-                    if output is None:
-                        output = ""
-                    if error is None:
-                        error = ""
-                    out.append({"type": "tool", "id": part_id, "tool": tool_name,
-                                "status": status, "title": str(title),
-                                "input": inp, "output": str(output), "error": str(error)})
-                return out
+    def _delta(self, props: dict) -> list[dict]:
+        if props.get("field", "text") != "text":
+            return []
+        part_id, delta = props.get("partID") or "", props.get("delta") or ""
+        message_id = props.get("messageID") or self._part_message.get(part_id, "")
+        if not part_id or not delta or self._roles.get(message_id) == "user":
+            return []
+        if message_id:
+            self._part_message[part_id] = message_id
+        kind = self._types.get(part_id)
+        if kind in ("text", "reasoning"):
+            return self._emit(part_id, kind, delta)
+        if kind is not None:
+            return []                             # a tool part's field; not transcript text
+        self._held.setdefault(part_id, []).append(delta)
+        return []
 
-            return out
-
+    def _release_untyped(self) -> list[dict]:
+        out: list[dict] = []
+        for part_id in list(self._held):
+            if self._roles.get(self._part_message.get(part_id, "")) == "assistant":
+                out += self._emit(part_id, "text", "".join(self._held.pop(part_id)))
         return out
+
+    def _part(self, part: dict) -> list[dict]:
+        part_id, kind, message_id = part.get("id") or "", part.get("type") or "", part.get("messageID") or ""
+        if message_id:
+            self._part_message[part_id] = message_id
+        if self._roles.get(message_id) == "user":
+            self._held.pop(part_id, None)
+            return []
+        self._types[part_id] = kind
+        if kind in ("text", "reasoning"):
+            out = self._emit(part_id, kind, "".join(self._held.pop(part_id, [])))
+            text, sent = part.get("text") or "", self._sent.get(part_id, "")
+            if len(text) > len(sent) and text.startswith(sent):
+                out += self._emit(part_id, kind, text[len(sent):])
+            return out
+        if kind == "tool":
+            state = part.get("state") or {}
+            status = state.get("status") or "pending"
+            if (part_id, status) in self._tool_states:
+                return []
+            self._tool_states.add((part_id, status))
+            tool = part.get("tool") or "tool"
+            return [{"type": "tool", "id": part_id, "tool": tool, "status": status,
+                     "title": str(state.get("title") or tool),
+                     "input": state.get("input") if isinstance(state.get("input"), dict) else {},
+                     "output": str(state.get("output") or ""),
+                     "error": str(state.get("error") or "")}]
+        if kind == "step-finish":
+            tokens = part.get("tokens") or {}
+            return [{"type": "usage", "input": int(tokens.get("input") or 0),
+                     "output": int(tokens.get("output") or 0),
+                     "reasoning": int(tokens.get("reasoning") or 0)}]
+        return []
 
 
 def read_sse_file(path: str) -> list[dict]:
-    result: list[dict] = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
+    """The raw events of a recorded stream (the fixture format: 'data: {json}'
+    lines separated by blank lines). For tests and replay."""
+    events, data = [], []
+    with open(path, encoding="utf-8") as stream:
+        for line in list(stream) + [""]:
+            line = line.rstrip("\r\n")
             if line.startswith("data:"):
-                import json
+                data.append(line[5:].lstrip(" "))
+            elif not line.strip() and data:
                 try:
-                    result.append(json.loads(line[5:]))
+                    event = json.loads("\n".join(data))
                 except ValueError:
-                    pass
-    return result
+                    event = None
+                if isinstance(event, dict):
+                    events.append(event)
+                data = []
+    return events
