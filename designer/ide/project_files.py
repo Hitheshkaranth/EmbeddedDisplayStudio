@@ -62,6 +62,12 @@ _WATCH_DELAY_MS = 200
 # stall the UI thread on a keystroke.
 _FILTER_MAX_ENTRIES = 5000
 _BAD_NAME_CHARS = '/\\:<>"|?*'
+# A Studio bundle (a folder holding project.edsui) keeps the QML the Studio
+# regenerates from the design, for the desktop's Display Console preview, in
+# generated/ at its root. The panel runs the design; the QML is overwritten
+# on every Generate, so it is output, not code to read or edit.
+_BUNDLE_MARKER = "project.edsui"
+_BUNDLE_OUTPUT_DIRS = frozenset({"generated"})
 
 
 class FileReadError(Exception):
@@ -636,7 +642,11 @@ class ProjectTree(QWidget):
 
     def _fill(self, parent: QStandardItem, directory: str) -> None:
         parent.removeRows(0, parent.rowCount())
+        hide_output = (_norm(directory) == _norm(self._root)
+                       and os.path.isfile(os.path.join(directory, _BUNDLE_MARKER)))
         for name, path, is_dir in _scan(directory):
+            if hide_output and is_dir and name in _BUNDLE_OUTPUT_DIRS:
+                continue
             parent.appendRow(self._make_item(name, path, is_dir))
 
     def _load(self, item: QStandardItem) -> None:

@@ -679,5 +679,39 @@ class TreeLockTests(unittest.TestCase):
         self.assertNotIn(os.path.join(root, "src"), tree.visible_paths())
 
 
+class BundleOutputTests(unittest.TestCase):
+    """generated/Main.qml in a Studio bundle is the desktop preview's QML,
+    rewritten on every Generate: not shown as project code."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication(sys.argv)
+
+    def _tree(self, files):
+        root = os.path.realpath(tempfile.mkdtemp(prefix="ide-bundle-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        for rel in files:
+            path = os.path.join(root, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write("x")
+        tree = ProjectTree()
+        self.addCleanup(tree.deleteLater)
+        tree.set_root(root)
+        return root, tree
+
+    def test_bundle_hides_generated(self):
+        root, tree = self._tree(["project.edsui", "manifest.json", "generated/Main.qml", "src/lib/generated/keep.c"])
+        names = [os.path.relpath(p, root).replace(os.sep, "/") for p in tree.visible_paths()]
+        self.assertNotIn("generated", names)
+        tree.expand(os.path.join(root, "src", "lib", "generated"))
+        self.assertIn(os.path.join(root, "src", "lib", "generated", "keep.c"), tree.visible_paths(),
+                      "only the bundle root's generated/ is output")
+
+    def test_plain_folder_keeps_generated(self):
+        root, tree = self._tree(["README.md", "generated/code.c"])
+        self.assertIn(os.path.join(root, "generated"), tree.visible_paths())
+
+
 if __name__ == "__main__":
     unittest.main()
