@@ -56,21 +56,26 @@ send.
 """
 from __future__ import annotations
 
-import functools
+import html
+import json
+import os
 from typing import Callable
 
-from PySide6.QtCore import Qt, QTimer, Signal
-
-from designer.ide.opencode_client import ModelRef
+from PySide6.QtCore import QSettings, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFrame, QHBoxLayout,
-    QLabel, QPlainTextEdit, QPushButton,
-    QScrollArea, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
+    QScrollArea, QToolButton, QVBoxLayout, QWidget,
 )
 
+from designer.ide.agent_backend import ERROR, READY, STARTING, STOPPED
+from designer.ide.opencode_client import ModelRef
+
 try:
-    from ui.python.shadcn import color as _shadcn_color, icon as _shadcn_icon
+    from ui.python.shadcn import color, icon
 except ImportError:
+    from PySide6.QtGui import QIcon
+
     _FALLBACK_TOKENS = {
         "dark": {"background": "#09090b", "card": "#18181b", "border": "#27272a",
                  "foreground": "#fafafa", "mutedForeground": "#a1a1aa", "primary": "#fafafa",
@@ -79,285 +84,227 @@ except ImportError:
                   "foreground": "#09090b", "mutedForeground": "#71717a", "primary": "#18181b",
                   "destructive": "#dc2626", "muted": "#f4f4f5"},
     }
-    def _shadcn_color(name, theme="dark"):
-        return _FALLBACK_TOKENS.get(theme, _FALLBACK_TOKENS["dark"]).get(name, "#000000")
-    def _shadcn_icon(_name, _size=16, _color=None):
-        from PySide6.QtGui import QIcon
-        return QIcon()
+
+    def icon(_name, _size=16, _color=None): return QIcon()
+
+    def color(name, theme="dark"): return _FALLBACK_TOKENS[theme][name]
 
 SETTINGS_MODEL_KEY = "codeSection/agentModel"
 BLOCK_KINDS = ("user", "assistant", "reasoning", "tool", "permission", "error", "notice")
 
+# Markdown re-render period while a reply streams: often enough to read as
+# live, rare enough that a long reply is not re-laid-out per token.
+_RENDER_MS = 50
+_OUTPUT_CHARS = 4000
+_STATUS_MARKS = {"pending": "...", "running": "...", "completed": "✓", "error": "✗"}
 
-class _BlockFrame(QFrame):
-    """Base class for transcript block widgets."""
 
-    def __init__(self, parent=None):
+def _label(text: str = "", fmt=Qt.PlainText, name: str = "") -> QLabel:
+    label = QLabel(text)
+    label.setTextFormat(fmt)
+    label.setWordWrap(True)
+    label.setTextInteractionFlags(Qt.TextBrowserInteraction if fmt != Qt.PlainText
+                                  else Qt.TextSelectableByMouse)
+    label.setOpenExternalLinks(False)
+    if name:
+        label.setObjectName(name)
+    return label
+
+
+class _Block(QFrame):
+    """One transcript entry. `kind` is its BLOCK_KINDS name; plain_text() is
+    what AgentPanel.blocks() reports for it."""
+
+    kind = ""
+
+    def __init__(self, parent=None, kind: str = ""):
         super().__init__(parent)
+        if kind:
+            self.kind = kind
+        self.setObjectName(f"agentBlock_{self.kind}")
+        self._column = QVBoxLayout(self)
+        self._column.setContentsMargins(8, 6, 8, 6)
+        self._column.setSpacing(4)
 
     def plain_text(self) -> str:
-        """Return the block's plain text for blocks()."""
         raise NotImplementedError
 
 
-class _UserBlock(_BlockFrame):
-    """User message block - plain text."""
+class _TextBlock(_Block):
+    """A block whose text is fixed when it is made: user, error, notice."""
 
-    def __init__(self, text: str, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        self._label = QLabel(text)
-        self._label.setTextFormat(Qt.MarkdownText)
-        self._label.setWordWrap(True)
-        self._label.setTextInteractionFlags(Qt.TextBrowserInteraction)
-        self._label.setOpenExternalLinks(False)
-        layout.addWidget(self._label)
+    def __init__(self, kind: str, text: str, parent=None):
+        super().__init__(parent, kind)
+        # What the user typed is shown as typed: '*' and '<' are not markup.
+        self._label = _label(text, Qt.PlainText, f"agentText_{kind}")
+        self._column.addWidget(self._label)
 
     def plain_text(self) -> str:
         return self._label.text()
 
 
-class _AssistantBlock(_BlockFrame):
-    """Assistant message block - Markdown rendered, delta-appended."""
+class _StreamBlock(_Block):
+    """Text that arrives in deltas and renders as Markdown, throttled: the
+    first delta starts a timer and later ones only append, so a fast stream
+    still repaints every _RENDER_MS instead of waiting for a pause."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
         self._text = ""
-        self._label = QLabel()
-        self._label.setTextFormat(Qt.MarkdownText)
-        self._label.setWordWrap(True)
-        self._label.setTextInteractionFlags(Qt.TextBrowserInteraction)
-        self._label.setOpenExternalLinks(False)
-        self._label.linkActivated.connect(self._on_link)
-        layout.addWidget(self._label)
-        self._render_timer: QTimer | None = None
+        self._body = _label("", Qt.MarkdownText, f"agentBody_{self.kind}")
+        self._body.linkActivated.connect(self._open_link)
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(_RENDER_MS)
+        self._timer.timeout.connect(self._render)
 
-    def _schedule_render(self) -> None:
-        if self._render_timer is None:
-            self._render_timer = QTimer(self)
-            self._render_timer.setSingleShot(True)
-            self._render_timer.timeout.connect(self._do_render)
-        self._render_timer.start(50)
-
-    def _do_render(self) -> None:
-        self._label.setText(self._text)
-
-    def append_delta(self, delta: str) -> None:
+    def append(self, delta: str) -> None:
         self._text += delta
-        self._schedule_render()
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def flush(self) -> None:
+        self._timer.stop()
+        self._render()
+
+    def _render(self) -> None:
+        self._body.setText(self._text)
 
     def plain_text(self) -> str:
         return self._text
 
-    def _on_link(self, href: str) -> None:
-        pass
+    @staticmethod
+    def _open_link(href: str) -> None:
+        QDesktopServices.openUrl(QUrl(href))
 
 
-class _ReasoningBlock(_BlockFrame):
-    """Reasoning/thinking block - collapsible by default."""
+class _AssistantBlock(_StreamBlock):
+    kind = "assistant"
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._text = ""
-        self._collapsed = True
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(2)
-        self._header = QLabel("Thinking...")
-        self._header.setStyleSheet("font-weight: bold;")
-        self._header.mousePressEvent = lambda e: self._toggle()  # type: ignore
-        self._header.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self._layout.addWidget(self._header)
-        self._body = QLabel("")
-        self._body.setTextFormat(Qt.MarkdownText)
-        self._body.setWordWrap(True)
-        self._body.setTextInteractionFlags(Qt.TextBrowserInteraction)
-        self._body.setOpenExternalLinks(False)
+        self._column.addWidget(self._body)
+
+
+class _ReasoningBlock(_StreamBlock):
+    """Collapsed to one header line by default; the header toggles the text."""
+
+    kind = "reasoning"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._header = QToolButton()
+        self._header.setObjectName("agentReasoningHeader")
+        self._header.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self._header.setCheckable(True)
+        self._header.setCursor(Qt.PointingHandCursor)
+        self._header.toggled.connect(self._body.setVisible)
         self._body.setVisible(False)
-        self._layout.addWidget(self._body)
+        self._column.addWidget(self._header)
+        self._column.addWidget(self._body)
+        self._update_header()
 
-    def _toggle(self) -> None:
-        self._collapsed = not self._collapsed
-        self._body.setVisible(not self._collapsed)
+    def append(self, delta: str) -> None:
+        super().append(delta)
         self._update_header()
 
     def _update_header(self) -> None:
-        if self._text:
-            words = len(self._text.split())
-            self._header.setText(f"Thought ({words} words)")
-        else:
-            self._header.setText("Thinking...")
-
-    def append_delta(self, delta: str) -> None:
-        self._text += delta
-        self._update_header()
-
-    def plain_text(self) -> str:
-        return self._text
+        words = len(self._text.split())
+        self._header.setText(f"Thought ({words} words)" if words else "Thinking...")
 
 
-class _ToolBlock(_BlockFrame):
-    """Tool call block with status, input/output, and file links."""
+class _ToolBlock(_Block):
+    """One tool call, updated in place as its status changes. The file it
+    touches is a visible link; the header toggles input and output."""
 
-    def __init__(self, parent=None):
+    kind = "tool"
+
+    def __init__(self, open_file: Callable[[str], None], parent=None):
         super().__init__(parent)
-        self._tool = ""
-        self._title = ""
-        self._status = ""
-        self._input = ""
-        self._output = ""
-        self._error = ""
-        self._expanded = False
-        self._file_path = ""
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(2)
-        self._header = QLabel("tool title ...")
-        self._header.mousePressEvent = lambda e: self._toggle()  # type: ignore
-        self._layout.addWidget(self._header)
-        self._detail = QLabel("")
+        self._event: dict = {}
+        self._header = QToolButton()
+        self._header.setObjectName("agentToolHeader")
+        self._header.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self._header.setCheckable(True)
+        self._header.setCursor(Qt.PointingHandCursor)
+        self._link = _label("", Qt.RichText, "agentToolLink")
+        self._link.linkActivated.connect(open_file)
+        self._link.setVisible(False)
+        self._error = _label("", Qt.PlainText, "agentText_error")
+        self._error.setVisible(False)
+        self._detail = _label("", Qt.PlainText, "agentToolDetail")
         self._detail.setVisible(False)
-        self._detail.setTextFormat(Qt.RichText)
-        self._detail.setWordWrap(True)
-        self._detail.setTextInteractionFlags(Qt.TextBrowserInteraction)
-        
-        self._layout.addWidget(self._detail)
+        self._header.toggled.connect(self._detail.setVisible)
+        for widget in (self._header, self._link, self._error, self._detail):
+            self._column.addWidget(widget)
 
-    def _toggle(self) -> None:
-        self._expanded = not self._expanded
-        self._detail.setVisible(self._expanded)
-        self._update_detail()
-
-    def update(self, tool: str, title: str, status: str,
-               input_data: dict | str, output: str, error: str) -> None:
-        self._tool = tool
-        self._title = title
-        self._status = status
-        if isinstance(input_data, dict):
-            self._input = str(input_data)
-        else:
-            self._input = str(input_data)
-        self._output = output
-        self._error = error
-        # Extract file path from input
+    def apply_event(self, event: dict) -> None:
+        self._event = dict(event)
+        tool, title, status = self._tool(), self._title(), self._status()
+        self._header.setText(f"{_STATUS_MARKS.get(status, '')} {tool}  {title}".strip())
+        source = event.get("input") or {}
+        path = source.get("filePath") or source.get("path") or "" if isinstance(source, dict) else ""
+        if path:
+            name = html.escape(os.path.basename(path) or path)
+            self._link.setText(f'<a href="{html.escape(path, quote=True)}">{name}</a>')
+            self._link.setToolTip(path)
+        self._link.setVisible(bool(path))
+        error = event.get("error") or ""
+        self._error.setText(error)
+        self._error.setVisible(status == "error" and bool(error))
         try:
-            d = input_data if isinstance(input_data, dict) else {}
-            self._file_path = d.get("filePath") or d.get("path") or ""
-        except Exception:
-            self._file_path = ""
-        self._update_header()
-        self._update_detail()
+            shown_input = json.dumps(source, indent=2, ensure_ascii=False)
+        except (TypeError, ValueError):
+            shown_input = str(source)
+        output = (event.get("output") or "")[:_OUTPUT_CHARS]
+        # Plain text: tool output is whatever a command printed, never markup.
+        self._detail.setText(f"Input:\n{shown_input}" + (f"\n\nOutput:\n{output}" if output else ""))
 
-    def _update_header(self) -> None:
-        if self._status == "running":
-            status_str = "..."
-        elif self._status == "completed":
-            status_str = "done"
-        elif self._status == "error":
-            status_str = f"error: {self._error}"
-        else:
-            status_str = self._status or "pending"
-        self._header.setText(f"{self._tool} {self._title} {status_str}")
+    def _tool(self) -> str:
+        return self._event.get("tool") or "tool"
 
-    def _update_detail(self) -> None:
-        parts = []
-        if self._file_path:
-            parts.append(f'<a href="{self._file_path}">{self._file_path}</a>')
-        if self._input:
-            parts.append(f"Input:\n{self._input}")
-        if self._output:
-            parts.append(f"Output:\n{self._output[:4000]}")
-        self._detail.setText("\n\n".join(parts) if parts else "")
+    def _title(self) -> str:
+        return self._event.get("title") or self._tool()
+
+    def _status(self) -> str:
+        return self._event.get("status") or "pending"
 
     def plain_text(self) -> str:
-        status_map = {"pending": "pending", "running": "...",
-                      "completed": "completed", "error": "error"}
-        st = status_map.get(self._status, self._status or "pending")
-        return f"{self._tool} {self._title} {st}"
+        return f"{self._tool()} {self._title()} {self._status()}"
 
 
-class _PermissionBlock(_BlockFrame):
-    """Permission request block with Allow/Always/Reject buttons."""
+class _PermissionBlock(_Block):
+    kind = "permission"
 
-    permission_replied = Signal(str, str)  # (id, reply)
-
-    def __init__(self, id_: str, permission: str, title: str, parent=None):
+    def __init__(self, event: dict, reply: Callable[[str, str], None], parent=None):
         super().__init__(parent)
-        self._id = id_
-        self._title = title
-        self._answered: str | None = None
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(4)
-        self._label = QLabel(title)
-        self._label.setStyleSheet("font-weight: bold;")
-        self._layout.addWidget(self._label)
-        btn_h = QHBoxLayout()
-        self._once_btn = QPushButton("Allow once")
-        self._always_btn = QPushButton("Always")
-        self._reject_btn = QPushButton("Reject")
-        for btn in (self._once_btn, self._always_btn, self._reject_btn):
-            btn.clicked.connect(self._on_click)
-            btn_h.addWidget(btn)
-        self._layout.addLayout(btn_h)
+        self._id = event.get("id", "")
+        self._title = event.get("title") or event.get("permission") or "Permission"
+        self._answer = ""
+        self._reply = reply
+        self._label = _label(self._title, Qt.PlainText, "agentPermissionTitle")
+        self._column.addWidget(self._label)
+        self._buttons = QWidget()
+        row = QHBoxLayout(self._buttons)
+        row.setContentsMargins(0, 0, 0, 0)
+        for text, answer in (("Allow once", "once"), ("Always", "always"), ("Reject", "reject")):
+            button = QPushButton(text)
+            button.setCursor(Qt.PointingHandCursor)
+            button.clicked.connect(lambda _=False, a=answer: self._answered(a))
+            row.addWidget(button)
+        row.addStretch(1)
+        self._column.addWidget(self._buttons)
 
-    def _on_click(self) -> None:
-        btn = self.sender()
-        if btn is self._once_btn:
-            reply = "once"
-        elif btn is self._always_btn:
-            reply = "always"
-        else:
-            reply = "reject"
-        self._answered = reply
-        self._button_click(reply)
-        self.permission_replied.emit(self._id, reply)
-
-    def _button_click(self, reply: str) -> None:
-        # Remove buttons from layout and show answer
-        for btn in (self._once_btn, self._always_btn, self._reject_btn):
-            btn.setVisible(False)
-        self._label.setText(f"{self._title} -> {reply}")
+    def _answered(self, answer: str) -> None:
+        if self._answer:
+            return
+        self._answer = answer
+        self._buttons.setVisible(False)
+        self._label.setText(self.plain_text())
+        self._reply(self._id, answer)
 
     def plain_text(self) -> str:
-        if self._answered:
-            return f"{self._title} -> {self._answered}"
-        return self._title
-
-
-class _ErrorBlock(_BlockFrame):
-    """Error message block."""
-
-    def __init__(self, message: str, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self._label = QLabel(message)
-        self._label.setStyleSheet("color: #ef4444;")
-        layout.addWidget(self._label)
-
-    def plain_text(self) -> str:
-        return self._label.text()
-
-
-class _NoticeBlock(_BlockFrame):
-    """Quiet one-line note."""
-
-    def __init__(self, text: str, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self._label = QLabel(text)
-        self._label.setStyleSheet("color: #a1a1aa; font-style: italic;")
-        layout.addWidget(self._label)
-
-    def plain_text(self) -> str:
-        return self._label.text()
+        return f"{self._title} -> {self._answer}" if self._answer else self._title
 
 
 class AgentPanel(QWidget):
@@ -376,302 +323,28 @@ class AgentPanel(QWidget):
 
     def __init__(self, backend, parent=None):
         super().__init__(parent)
+        self.setObjectName("agentPanel")
         self._backend = backend
-        self._directory: str = ""
-        self._context_provider: Callable[[], dict | None] | None = None
-        self._blocks: list[_BlockFrame] = []
-        self._part_ids: dict[str, str] = {}  # (type, id) -> block index
-        self.context_check: QCheckBox
-        self.input: QPlainTextEdit
-        self.send_button: QPushButton
-        self.stop_button: QPushButton
-        self.new_chat_button: QToolButton
-        self.model_combo: QComboBox
-        self.state_label: QLabel
-
-        self._reply_usage_input: int = 0
-        self._reply_usage_output: int = 0
-
+        self._directory = ""
+        self._context_provider: Callable[[], dict] | None = None
+        self._blocks: list[_Block] = []
+        self._parts: dict[tuple[str, str], _Block] = {}
+        # Busy is the backend's word (busy ... idle), not a widget's
+        # visibility: the Code tab is often not on screen.
+        self._busy = False
+        self._usage = [0, 0]
+        self._follow = True
+        self._theme = "dark"
+        self._filling_models = False
         self._build_ui()
-        self._connect_backend()
+        backend.stateChanged.connect(self._state_changed)
+        backend.modelsChanged.connect(self._fill_models)
+        backend.event.connect(self._on_event)
+        self._fill_models(backend.models())
+        self._state_changed(backend.state(), backend.detail())
         self.apply_theme("dark")
 
-    def _build_ui(self) -> None:
-        main = QVBoxLayout(self)
-        main.setContentsMargins(8, 8, 8, 8)
-        main.setSpacing(6)
-
-        # ---- header ----
-        header = QHBoxLayout()
-        header.setSpacing(6)
-
-        caption = QLabel("Agent")
-        caption.setStyleSheet("font-weight: bold; font-size: 13px;")
-        header.addWidget(caption)
-
-        self.model_combo = QComboBox()
-        self.model_combo.setMinimumWidth(120)
-        self.model_combo.currentIndexChanged.connect(self._on_model_changed)
-        header.addWidget(self.model_combo)
-
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        header.addWidget(spacer)
-
-        self.new_chat_button = QToolButton()
-        self.new_chat_button.setText("+")
-        self.new_chat_button.clicked.connect(self.new_chat)
-        header.addWidget(self.new_chat_button)
-
-        main.addLayout(header)
-
-        # ---- state line ----
-        self.state_label = QLabel("")
-        self.state_label.setWordWrap(True)
-        self.state_label.setVisible(False)
-        main.addWidget(self.state_label)
-
-        # ---- transcript ----
-        self._transcript_scroll = QScrollArea()
-        self._transcript_scroll.setWidgetResizable(True)
-        self._transcript_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._transcript_widget = QWidget()
-        self._transcript_layout = QVBoxLayout(self._transcript_widget)
-        self._transcript_layout.setContentsMargins(0, 0, 0, 0)
-        self._transcript_layout.setSpacing(6)
-        self._transcript_scroll.setWidget(self._transcript_widget)
-        main.addWidget(self._transcript_scroll)
-
-        # ---- composer ----
-        composer = QVBoxLayout()
-        composer.setSpacing(4)
-
-        # Context checkbox
-        self.context_check = QCheckBox("Include open file")
-        self.context_check.setChecked(True)
-        composer.addWidget(self.context_check)
-
-        # Input
-        self.input = QPlainTextEdit()
-        self.input.setPlaceholderText("Message...")
-        self.input.installEventFilter(self)
-        composer.addWidget(self.input)
-
-        # Buttons
-        btn_row = QHBoxLayout()
-        self.send_button = QPushButton("Send")
-        self.send_button.clicked.connect(self._do_send)
-        self.send_button.setMinimumWidth(60)
-        btn_row.addWidget(self.send_button)
-
-        self.stop_button = QPushButton("Stop")
-        self.stop_button.clicked.connect(self.stop)
-        self.stop_button.setVisible(False)
-        self.stop_button.setMinimumWidth(60)
-        btn_row.addWidget(self.stop_button)
-
-        btn_row.addStretch()
-        composer.addLayout(btn_row)
-
-        main.addLayout(composer)
-
-        self._scrolled_to_bottom = True
-
-    def _connect_backend(self) -> None:
-        self._backend.stateChanged.connect(self._on_state_changed)
-        self._backend.modelsChanged.connect(self._on_models_changed)
-        self._backend.event.connect(self._on_event)
-
-    def _on_model_changed(self, index: int) -> None:
-        model = self.selected_model()
-        self._save_model(model)
-
-    def _on_models_changed(self, models: list) -> None:
-        self._populate_models(models)
-
-    def _populate_models(self, models: list) -> None:
-        saved = self._get_saved_model()
-        current_index = self.model_combo.currentIndex()
-        current_text = self.model_combo.currentText() if current_index >= 0 else ""
-
-        self.model_combo.clear()
-        for m in models:
-            self.model_combo.addItem(m.label)
-
-        if saved and any(m.label == saved for m in models):
-            for i, m in enumerate(models):
-                if m.label == saved:
-                    self.model_combo.setCurrentIndex(i)
-                    return
-        elif current_text and any(m.label == current_text for m in models):
-            for i, m in enumerate(models):
-                if m.label == current_text:
-                    self.model_combo.setCurrentIndex(i)
-                    return
-
-        default = self._backend.default_model()
-        if default:
-            for i, m in enumerate(models):
-                if m.label == default.label:
-                    self.model_combo.setCurrentIndex(i)
-                    return
-        elif models:
-            self.model_combo.setCurrentIndex(0)
-
-    def _get_saved_model(self) -> str | None:
-        from PySide6.QtCore import QSettings
-        settings = QSettings("MIL-HMI", "Deployer")
-        val = settings.value(SETTINGS_MODEL_KEY, "", type=str)
-        if val:
-            return val
-        return None
-
-    def _save_model(self, model) -> None:
-        from PySide6.QtCore import QSettings
-        if model is not None:
-            settings = QSettings("MIL-HMI", "Deployer")
-            settings.setValue(SETTINGS_MODEL_KEY, model.label)
-
-    def _on_state_changed(self, state: str, detail: str) -> None:
-        if state == "ready":
-            self.state_label.setText(detail)
-            self.state_label.setVisible(False)
-        elif state == "starting":
-            self.state_label.setText(detail)
-            self.state_label.setVisible(True)
-        elif state == "error":
-            self.state_label.setText(detail)
-            self.state_label.setVisible(True)
-
-    def _on_event(self, event: dict) -> None:
-        etype = event.get("type")
-        if etype == "busy":
-            self._on_busy()
-        elif etype == "idle":
-            self._on_idle()
-        elif etype == "text":
-            self._on_text(event)
-        elif etype == "reasoning":
-            self._on_reasoning(event)
-        elif etype == "tool":
-            self._on_tool(event)
-        elif etype == "permission":
-            self._on_permission(event)
-        elif etype == "error":
-            self._on_error(event)
-        elif etype == "usage":
-            self._on_usage(event)
-        elif etype == "file_edited":
-            path = event.get("path", "")
-            if path:
-                self.fileEdited.emit(path)
-        # else: unknown type, ignored
-
-    def _on_busy(self) -> None:
-        self.send_button.setEnabled(False)
-        self.stop_button.setVisible(True)
-        self._reply_usage_input = 0
-        self._reply_usage_output = 0
-
-    def _on_idle(self) -> None:
-        self.send_button.setEnabled(True)
-        self.stop_button.setVisible(False)
-
-    def _on_text(self, event: dict) -> None:
-        pid = event.get("id", "")
-        delta = event.get("delta", "")
-        idx = self._part_ids.get(("text", pid))
-        if idx is None:
-            block = _AssistantBlock()
-            self._blocks.append(block)
-            self._part_ids[("text", pid)] = len(self._blocks) - 1
-            self._transcript_layout.addWidget(block)
-            idx = len(self._blocks) - 1
-        self._blocks[idx].append_delta(delta)
-        self._ensure_bottom()
-
-    def _on_reasoning(self, event: dict) -> None:
-        pid = event.get("id", "")
-        delta = event.get("delta", "")
-        idx = self._part_ids.get(("reasoning", pid))
-        if idx is None:
-            block = _ReasoningBlock()
-            self._blocks.append(block)
-            self._part_ids[("reasoning", pid)] = len(self._blocks) - 1
-            self._transcript_layout.addWidget(block)
-            idx = len(self._blocks) - 1
-        self._blocks[idx].append_delta(delta)
-        self._ensure_bottom()
-
-    def _on_tool(self, event: dict) -> None:
-        pid = event.get("id", "")
-        tool = event.get("tool", "")
-        status = event.get("status", "pending")
-        title = event.get("title", tool)
-        input_data = event.get("input", {})
-        output = event.get("output", "")
-        error = event.get("error", "")
-
-        idx = self._part_ids.get(("tool", pid))
-        if idx is None:
-            block = _ToolBlock()
-            self._blocks.append(block)
-            self._part_ids[("tool", pid)] = len(self._blocks) - 1
-            self._transcript_layout.addWidget(block)
-            block._detail.linkActivated.connect(lambda href, p=self: p.openFileRequested.emit(href, 0))
-            idx = len(self._blocks) - 1
-        self._blocks[idx].update(tool, title, status, input_data, output, error)
-
-        if status == "completed" or status == "error":
-            self._ensure_bottom()
-
-    def _on_permission(self, event: dict) -> None:
-        pid = event.get("id", "")
-        permission = event.get("permission", "")
-        title = event.get("title", permission)
-        block = _PermissionBlock(pid, permission, title)
-        block.permission_replied.connect(self._backend.reply_permission)
-        self._blocks.append(block)
-        self._transcript_layout.addWidget(block)
-        self._ensure_bottom()
-
-    def _on_error(self, event: dict) -> None:
-        message = event.get("message", "Unknown error")
-        block = _ErrorBlock(message)
-        self._blocks.append(block)
-        self._transcript_layout.addWidget(block)
-        self._ensure_bottom()
-
-    def _on_usage(self, event: dict) -> None:
-        self._reply_usage_input += event.get("input", 0)
-        self._reply_usage_output += event.get("output", 0)
-        self.state_label.setText(
-            f"in {self._reply_usage_input} / out {self._reply_usage_output} tokens"
-        )
-
-    def _ensure_bottom(self) -> None:
-        if not self._scrolled_to_bottom:
-            return
-        bar = self._transcript_scroll.verticalScrollBar()
-        bar.setValue(bar.maximum())
-
-    def _on_scroll(self) -> None:
-        bar = self._transcript_scroll.verticalScrollBar()
-        self._scrolled_to_bottom = bar.value() >= bar.maximum() - 10
-
-    def _do_send(self) -> None:
-        self.send(self.input.toPlainText())
-
-    def eventFilter(self, obj, event):
-        if obj is self.input and event.type() == event.Type.KeyPress:
-            key = event.key()
-            mod = event.modifiers()
-            if key in (Qt.Key_Return, Qt.Key_Enter):
-                if mod & Qt.ShiftModifier:
-                    return False  # let it through (newline)
-                self._do_send()
-                return True  # consume
-        return super().eventFilter(obj, event)
+    # ---------------------------------------------------------------- API
 
     def backend(self):
         return self._backend
@@ -684,19 +357,16 @@ class AgentPanel(QWidget):
         """The project folder: backend.start(path) when it differs from the
         current one ('' -> backend.stop()). Adds a 'notice' block naming the
         folder when a conversation was already on screen."""
-        if path == "":
-            self._backend.stop()
-            self._directory = ""
+        if path == self._directory:
             return
-
-        if path != self._directory:
-            if self._blocks:
-                notice = _NoticeBlock(f"Switched to {path}")
-                self._blocks.append(notice)
-                self._transcript_layout.addWidget(notice)
-            self._backend.start(path)
-            self._directory = path
-            self._populate_models(self._backend.models())
+        self._directory = path
+        if not path:
+            self._backend.stop()
+            return
+        if self._blocks:
+            self._add(_TextBlock("notice", f"Now working in {path}"))
+        self._backend.start(path)
+        self._fill_models(self._backend.models())
 
     def directory(self) -> str:
         return self._directory
@@ -704,122 +374,259 @@ class AgentPanel(QWidget):
     def send(self, text: str) -> bool:
         """What pressing Send does with `text`; False (nothing sent) when the
         text is blank, the backend is not READY, or a reply is in progress."""
-        text = text.strip()
-        if not text:
+        text = (text or "").strip()
+        if not text or self._busy or self._backend.state() != READY:
             return False
-        if self._backend.state() != "ready":
-            return False
-        if self.is_busy():
-            return False
-
         context = None
-        if self.context_check.isChecked() and self._context_provider:
-            context = self._context_provider()
-
-        model = self.selected_model()
-        self._backend.send(text, model=model, context=context)
-        # Add a user block to the transcript
-        user_block = _UserBlock(text)
-        self._blocks.append(user_block)
-        self._transcript_layout.addWidget(user_block)
-        self.input.setPlainText("")
+        if self.context_check.isChecked() and self._context_provider is not None:
+            context = self._context_provider() or None
+        self._usage = [0, 0]
+        self._follow = True
+        self._add(_TextBlock("user", text))
+        self.input.clear()
+        self._set_busy(True)
+        self._backend.send(text, self.selected_model(), context)
         return True
 
     def stop(self) -> None:
         """What pressing Stop does: backend.abort() and a 'notice' "Stopped"."""
         self._backend.abort()
-        notice = _NoticeBlock("Stopped")
-        self._blocks.append(notice)
-        self._transcript_layout.addWidget(notice)
+        self._add(_TextBlock("notice", "Stopped"))
 
     def new_chat(self) -> None:
         """What New chat does."""
+        for block in self._blocks:
+            block.setParent(None)
+            block.deleteLater()
         self._blocks.clear()
-        while self._transcript_layout.count():
-            item = self._transcript_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        self._part_ids.clear()
+        self._parts.clear()
+        self._usage = [0, 0]
         self._backend.new_session()
+        self._state_changed(self._backend.state(), self._backend.detail())
 
     def is_busy(self) -> bool:
-        return self._backend.state() in ("starting", "ready") and self.stop_button.isVisible()
+        return self._busy
 
     def selected_model(self):
         """The ModelRef picked in the combo, or None."""
-        text = self.model_combo.currentText()
-        return ModelRef.parse(text) if text else None
+        return ModelRef.parse(self.model_combo.currentText())
 
     def blocks(self) -> list[tuple[str, str]]:
-        """The transcript as (kind, plain text) pairs, top to bottom."""
-        result = []
-        for b in self._blocks:
-            if isinstance(b, _UserBlock):
-                result.append(("user", b.plain_text()))
-            elif isinstance(b, _AssistantBlock):
-                result.append(("assistant", b.plain_text()))
-            elif isinstance(b, _ReasoningBlock):
-                result.append(("reasoning", b.plain_text()))
-            elif isinstance(b, _ToolBlock):
-                result.append(("tool", b.plain_text()))
-            elif isinstance(b, _PermissionBlock):
-                result.append(("permission", b.plain_text()))
-            elif isinstance(b, _ErrorBlock):
-                result.append(("error", b.plain_text()))
-            elif isinstance(b, _NoticeBlock):
-                result.append(("notice", b.plain_text()))
-        return result
+        """The transcript as (kind, plain text) pairs, top to bottom. For a
+        tool block the text is '<tool> <title> <status>'; for a permission
+        block the title plus, once answered, ' -> <reply>'; for reasoning
+        the full text (even when collapsed)."""
+        return [(block.kind, block.plain_text()) for block in self._blocks]
 
     def transcript_text(self) -> str:
         """blocks() as 'kind: text' lines."""
-        lines = []
-        for kind, text in self.blocks():
-            lines.append(f"{kind}: {text}")
-        return "\n".join(lines)
+        return "\n".join(f"{kind}: {text}" for kind, text in self.blocks())
 
     def apply_theme(self, theme: str) -> None:
         """'dark' or 'light'."""
-        theme = "light" if theme == "light" else "dark"
-        c = lambda name: _shadcn_color(name, theme)
-
+        self._theme = theme = "light" if theme == "light" else "dark"
+        c = lambda name: color(name, theme)  # noqa: E731
         self.setStyleSheet(f"""
             QWidget#agentPanel {{ background: {c('background')}; }}
-            QLabel#agentCaption {{ background: transparent; color: {c('mutedForeground')}; font-weight: bold; font-size: 13px; }}
-            QLabel#agentState {{ background: transparent; color: {c('foreground')}; }}
+            QLabel {{ color: {c('foreground')}; font-size: 12px; background: transparent; }}
+            QLabel#agentCaption {{ font-weight: 600; font-size: 13px; }}
+            QLabel#agentText_notice {{ color: {c('mutedForeground')}; font-style: italic; }}
+            QLabel#agentText_error {{ color: {c('destructive')}; }}
+            QLabel#agentToolDetail {{ color: {c('mutedForeground')}; font-family: Consolas, monospace; }}
+            QFrame#agentBlock_user {{ background: {c('muted')}; border-radius: 8px; }}
+            QFrame#agentBlock_tool, QFrame#agentBlock_permission {{
+                border: 1px solid {c('border')}; border-radius: 8px; }}
+            QToolButton#agentReasoningHeader, QToolButton#agentToolHeader {{
+                border: none; background: transparent; color: {c('mutedForeground')};
+                text-align: left; padding: 0; }}
             QScrollArea#agentTranscript {{ border: none; background: transparent; }}
-            QWidget#agentTranscriptWidget {{ background: transparent; }}
-            QPlainTextEdit {{
-                background: {c('card')}; color: {c('foreground')};
-                border: 1px solid {c('border')}; border-radius: 6px;
-                padding: 4px 8px; font-size: 12px;
-            }}
+            QWidget#agentTranscriptBody {{ background: transparent; }}
+            QPlainTextEdit {{ background: {c('card')}; color: {c('foreground')};
+                border: 1px solid {c('border')}; border-radius: 6px; padding: 4px 6px; }}
             QPlainTextEdit:focus {{ border-color: {c('primary')}; }}
-            QPushButton {{
+            QPushButton, QToolButton#agentNewChat, QComboBox {{
                 background: {c('card')}; color: {c('foreground')};
-                border: 1px solid {c('border')}; border-radius: 6px;
-                padding: 4px 12px; font-size: 12px;
-            }}
-            QPushButton:hover {{ background: {c('muted')}; }}
+                border: 1px solid {c('border')}; border-radius: 6px; padding: 3px 10px; }}
+            QPushButton:hover, QToolButton#agentNewChat:hover {{ background: {c('muted')}; }}
             QPushButton:disabled {{ color: {c('mutedForeground')}; }}
-            QToolButton {{
-                background: {c('card')}; color: {c('foreground')};
-                border: 1px solid {c('border')}; border-radius: 6px;
-                padding: 2px 8px; font-size: 14px;
-            }}
-            QToolButton:hover {{ background: {c('muted')}; }}
-            QComboBox {{
-                background: {c('card')}; color: {c('foreground')};
-                border: 1px solid {c('border')}; border-radius: 5px;
-                padding: 2px 8px; font-size: 12px;
-            }}
-            QComboBox::drop-down {{ border: none; }}
-            QComboBox QAbstractItemView {{
-                background: {c('card')}; color: {c('foreground')};
-                border: 1px solid {c('border')};
-                selection-background-color: {c('muted')};
-            }}
-            QScrollBar:vertical {{ background: {c('muted')}; width: 8px; border-radius: 4px; }}
-            QScrollBar::handle:vertical {{ background: {c('border')}; border-radius: 4px; min-height: 20px; }}
-            QCheckBox {{ color: {c('foreground')}; font-size: 12px; }}
-            QLabel {{ color: {c('foreground')}; font-size: 12px; }}
+            QCheckBox {{ color: {c('mutedForeground')}; }}
         """)
+        self._state_changed(self._backend.state(), self._backend.detail())
+
+    # ---------------------------------------------------------------- UI
+
+    def _build_ui(self) -> None:
+        column = QVBoxLayout(self)
+        column.setContentsMargins(8, 8, 8, 8)
+        column.setSpacing(6)
+
+        header = QHBoxLayout()
+        caption = QLabel("Agent")
+        caption.setObjectName("agentCaption")
+        header.addWidget(caption)
+        self.model_combo = QComboBox()
+        self.model_combo.setObjectName("agentModel")
+        self.model_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.model_combo.setMinimumContentsLength(14)
+        self.model_combo.setToolTip("The model the agent uses")
+        self.model_combo.currentIndexChanged.connect(self._model_picked)
+        header.addWidget(self.model_combo, 1)
+        self.new_chat_button = QToolButton()
+        self.new_chat_button.setObjectName("agentNewChat")
+        self.new_chat_button.setText("New chat")
+        self.new_chat_button.setIcon(icon("plus"))
+        self.new_chat_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.new_chat_button.clicked.connect(self.new_chat)
+        header.addWidget(self.new_chat_button)
+        column.addLayout(header)
+
+        self.state_label = _label("", Qt.PlainText, "agentState")
+        self.state_label.setVisible(False)
+        column.addWidget(self.state_label)
+
+        self._transcript_scroll = QScrollArea()
+        self._transcript_scroll.setObjectName("agentTranscript")
+        self._transcript_scroll.setWidgetResizable(True)
+        self._transcript_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        body = QWidget()
+        body.setObjectName("agentTranscriptBody")
+        self._transcript_layout = QVBoxLayout(body)
+        self._transcript_layout.setContentsMargins(0, 0, 0, 0)
+        self._transcript_layout.setSpacing(8)
+        self._transcript_layout.addStretch(1)
+        self._transcript_scroll.setWidget(body)
+        bar = self._transcript_scroll.verticalScrollBar()
+        # Follow the bottom while the user has not scrolled up; rangeChanged
+        # fires after the layout grew, so the new maximum is the real one.
+        bar.valueChanged.connect(lambda value: setattr(self, "_follow", value >= bar.maximum() - 16))
+        bar.rangeChanged.connect(lambda _lo, hi: self._follow and bar.setValue(hi))
+        column.addWidget(self._transcript_scroll, 1)
+
+        self.context_check = QCheckBox("Include open file")
+        self.context_check.setChecked(True)
+        self.context_check.setToolTip("Tell the agent which file is open and what is selected")
+        column.addWidget(self.context_check)
+        self.input = QPlainTextEdit()
+        self.input.setObjectName("agentInput")
+        self.input.setPlaceholderText("Ask the agent to change the code... (Enter sends, Shift+Enter new line)")
+        self.input.setFixedHeight(84)
+        self.input.installEventFilter(self)
+        column.addWidget(self.input)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.setIcon(icon("player-stop"))
+        self.stop_button.clicked.connect(self.stop)
+        self.stop_button.setVisible(False)
+        buttons.addWidget(self.stop_button)
+        self.send_button = QPushButton("Send")
+        self.send_button.setIcon(icon("send"))
+        self.send_button.clicked.connect(lambda: self.send(self.input.toPlainText()))
+        buttons.addWidget(self.send_button)
+        column.addLayout(buttons)
+
+    def eventFilter(self, obj, event):
+        if obj is self.input and event.type() == event.Type.KeyPress \
+                and event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            if event.modifiers() & Qt.ShiftModifier:
+                return False
+            # Enter never inserts a newline; while busy it does nothing and
+            # the text stays for later.
+            self.send(self.input.toPlainText())
+            return True
+        return super().eventFilter(obj, event)
+
+    # ---------------------------------------------------------------- backend
+
+    def _state_changed(self, state: str, detail: str) -> None:
+        if state == ERROR:
+            self._show_state(detail or "The agent failed to start", error=True)
+            self._set_busy(False)
+        elif state == STARTING:
+            self._show_state("Starting the agent...")
+        elif state == STOPPED:
+            self._show_state("")
+            self._set_busy(False)
+        elif any(self._usage):
+            self._show_usage()
+        else:
+            self._show_state("")
+        self.send_button.setEnabled(state == READY and not self._busy)
+        self.state_label.setToolTip(detail if state == READY else "")
+
+    def _show_state(self, text: str, error: bool = False) -> None:
+        self.state_label.setText(text)
+        self.state_label.setStyleSheet(f"color: {color('destructive', self._theme)};" if error else "")
+        self.state_label.setVisible(bool(text))
+
+    def _show_usage(self) -> None:
+        self._show_state(f"in {self._usage[0]:,} / out {self._usage[1]:,} tokens".replace(",", " "))
+
+    def _fill_models(self, models) -> None:
+        # Refilling the combo moves its index; that must not overwrite the
+        # model the user chose (it may simply not be offered right now).
+        saved = ModelRef.parse(QSettings("MIL-HMI", "Deployer").value(SETTINGS_MODEL_KEY, "") or "")
+        current = self.selected_model()
+        labels = [m.label for m in models]
+        self._filling_models = True
+        try:
+            self.model_combo.clear()
+            self.model_combo.addItems(labels)
+            for wanted in (saved, current, self._backend.default_model()):
+                if wanted is not None and wanted.label in labels:
+                    self.model_combo.setCurrentIndex(labels.index(wanted.label))
+                    break
+        finally:
+            self._filling_models = False
+
+    def _model_picked(self, _index: int) -> None:
+        model = self.selected_model()
+        if not self._filling_models and model is not None:
+            QSettings("MIL-HMI", "Deployer").setValue(SETTINGS_MODEL_KEY, model.label)
+
+    def _on_event(self, event: dict) -> None:
+        kind = event.get("type")
+        if kind == "busy":
+            self._set_busy(True)
+        elif kind == "idle":
+            for block in self._blocks:
+                if isinstance(block, _StreamBlock):
+                    block.flush()
+            self._set_busy(False)
+        elif kind in ("text", "reasoning"):
+            key = (kind, event.get("id", ""))
+            block = self._parts.get(key)
+            if block is None:
+                block = self._parts[key] = self._add(
+                    _AssistantBlock() if kind == "text" else _ReasoningBlock())
+            block.append(event.get("delta", ""))
+        elif kind == "tool":
+            key = ("tool", event.get("id", ""))
+            block = self._parts.get(key)
+            if block is None:
+                block = self._parts[key] = self._add(
+                    _ToolBlock(lambda href: self.openFileRequested.emit(href, 0)))
+            block.apply_event(event)
+        elif kind == "permission":
+            self._add(_PermissionBlock(event, self._backend.reply_permission))
+        elif kind == "error":
+            self._add(_TextBlock("error", event.get("message") or "Unknown error"))
+        elif kind == "usage":
+            self._usage[0] += int(event.get("input") or 0)
+            self._usage[1] += int(event.get("output") or 0)
+            self._show_usage()
+        elif kind == "file_edited":
+            if event.get("path"):
+                self.fileEdited.emit(event["path"])
+
+    def _set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        self.stop_button.setVisible(busy)
+        self.send_button.setEnabled(not busy and self._backend.state() == READY)
+
+    def _add(self, block: _Block) -> _Block:
+        # Blocks go above the trailing stretch so the transcript stays packed
+        # at the top.
+        self._transcript_layout.insertWidget(self._transcript_layout.count() - 1, block)
+        self._blocks.append(block)
+        return block
