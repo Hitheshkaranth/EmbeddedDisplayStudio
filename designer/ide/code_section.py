@@ -12,7 +12,8 @@ import os
 
 from PySide6.QtCore import QSettings, QSize, Qt, Signal
 from PySide6.QtWidgets import (
-    QFileDialog, QLabel, QSizePolicy, QSplitter, QTabWidget, QToolBar, QVBoxLayout, QWidget,
+    QFileDialog, QLabel, QMessageBox, QSizePolicy, QSplitter, QTabWidget, QToolBar, QVBoxLayout,
+    QWidget,
 )
 
 from designer.ide.agent_backend import OpencodeBackend
@@ -120,6 +121,20 @@ class CodeSection(QWidget):
         self.setStyleSheet(
             f"QSplitter#codeSectionSplitter::handle {{ background: {border}; }}"
             f"QLabel#codeSectionRoot {{ color: {muted}; padding: 0 8px; }}")
+
+    def confirm_close(self) -> bool:
+        """Before the Studio closes: unsaved editors ask Save all / Discard /
+        Cancel. True when closing may go ahead."""
+        dirty = self.tabs.dirty_paths()
+        if not dirty:
+            return True
+        names = "\n".join(os.path.basename(p) for p in dirty[:10])
+        answer = QMessageBox.question(
+            self, "Unsaved files", f"Save changes to these files?\n\n{names}",
+            QMessageBox.SaveAll | QMessageBox.Discard | QMessageBox.Cancel, QMessageBox.SaveAll)
+        if answer == QMessageBox.Cancel:
+            return False
+        return answer == QMessageBox.Discard or self.tabs.save_all()
 
     def shutdown(self) -> None:
         """Stops the agent (and the opencode server it started). The Studio

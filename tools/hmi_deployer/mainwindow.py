@@ -742,6 +742,8 @@ class MainWindow(QMainWindow):
             self.designer_workspace.apply_theme(self.theme)
         if hasattr(self, "_ai_tab"):
             self._ai_tab.apply_theme(self.theme)
+        if hasattr(self, "_code_tab"):
+            self._code_tab.apply_theme(self.theme)
         logging.getLogger("EmbeddedDisplay Studio").info(
             "theme=%s stylesheet=%d chars", self.theme, len(app.styleSheet() or "")
         )
@@ -975,15 +977,18 @@ class MainWindow(QMainWindow):
         self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(self._ai_tab), "bolt")
 
         # ── Code tab ─────────────────────────────────────────────────────
-        # The Code window (generated QML / design JSON of the selected widget
-        # or the whole screen, with a preview) lives here as a section beside
-        # the Designer rather than as a floating window; the Designer's
-        # "Code" action and Ctrl+Shift+K switch to it.
-        from designer.ui.code_window import CodeWindow
-        self._code_tab = CodeWindow(self.designer_workspace)
-        self._code_tab.setWindowFlags(Qt.Widget)
-        self.designer_workspace.host_code_window(
-            self._code_tab, lambda: self._right_tabs.setCurrentWidget(self._code_tab))
+        # The project as code (docs/CODE_SECTION.md): files and widgets on
+        # the left, editors in the middle with the design view pinned first,
+        # the opencode agent on the right. The Designer's "Code" action and
+        # Ctrl+Shift+K switch to the design view.
+        from designer.ide.code_section import CodeSection
+        self._code_tab = CodeSection(self.designer_workspace)
+        self._code_tab.message.connect(self.log)
+
+        def show_design_code():
+            self._right_tabs.setCurrentWidget(self._code_tab)
+            self._code_tab.show_design()
+        self.designer_workspace.host_code_window(self._code_tab.design, show_design_code)
         self._right_tabs.addTab(self._code_tab, "Code")
         self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(self._code_tab), "file-code")
 
@@ -3520,6 +3525,11 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Release every local/remote telemetry source before closing."""
+        if hasattr(self, "_code_tab"):
+            if not self._code_tab.confirm_close():
+                event.ignore()
+                return
+            self._code_tab.shutdown()
         self._shutdown_transport()
         self._discard_packaging_dir()
         self.device_panel.stop_preview()
