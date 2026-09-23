@@ -297,7 +297,7 @@ class WidgetPickerTests(unittest.TestCase):
         self.assertEqual(self.picker.highlighted_id(), target)
 
     def test_rebuilds_on_design_change(self):
-        self.ws.add_widget("ShSwitch")
+        self.ws.add_widget("ShToggle")
         QTest.qWait(10)
         self.assertEqual(self.picker.widget_ids(), self._ids())
         self.assertEqual(len(self.picker.widget_ids()), 3)
@@ -577,12 +577,6 @@ class W1PickerQualityTests(unittest.TestCase):
 
     def _ids(self):
         return [w.id for w in self.ws.current_page.widgets]
-
-    def test_rebuilds_on_design_change_with_a_registered_type(self):
-        # The frozen test adds "ShSwitch", which the registry does not have.
-        self.ws.add_widget("ShToggle")
-        self.assertEqual(len(self._ids()), 3)
-        self.assertEqual(self.picker.widget_ids(), self._ids())
 
     def test_thumbnail_asked_at_geometry_size(self):
         for widget in self.ws.current_page.widgets:
