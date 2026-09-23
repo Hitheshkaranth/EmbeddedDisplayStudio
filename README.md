@@ -4,7 +4,7 @@
 
 ### Describe it, draw it, or bring your own — HMI platform for embedded Linux panels
 
-**EmbeddedDisplay Studio** turns a written brief, a drawing on a canvas, or an existing Qt 5/6 application into a screen running on an embedded Linux panel — previewed live at the panel's real geometry, validated, and deployed atomically over SSH with automatic rollback.
+**EmbeddedDisplay Studio** turns a written brief or a drawing on a canvas into a screen running on an embedded Linux panel — previewed at the panel's real geometry by the panel's own renderer, validated, and deployed atomically over SSH with automatic rollback. The panel carries no Qt and no compositor: it interprets the design file directly.
 Built for industrial, vehicle, marine, avionics, instrumentation and kiosk HMIs — with tag-driven data, no image reflash, and no hardware code in the app.
 
 <br />
@@ -16,7 +16,7 @@ Built for industrial, vehicle, marine, avionics, instrumentation and kiosk HMIs 
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/PySide6-6.8.1-41CD52?style=flat-square&logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
-[![QML](https://img.shields.io/badge/QML-Qt%20Quick-41CD52?style=flat-square&logo=qt&logoColor=white)](ui/qml/)
+[![Runtime](https://img.shields.io/badge/Panel%20runtime-C11%20%C2%B7%20LVGL%20%C2%B7%20DRM%2FKMS-1A5FB4?style=flat-square)](native/hmi-ui/)
 [![Yocto](https://img.shields.io/badge/Yocto-Embedded%20Linux-1A5FB4?style=flat-square&logo=yocto&logoColor=white)](yocto/)
 [![AI](https://img.shields.io/badge/AI%20Design-Ollama_%7C_OpenAI_%7C_Anthropic_%7C_Gemini_%7C_vLLM-FF6F00?style=flat-square)](#ai-design)
 
@@ -37,15 +37,28 @@ first.</em>
 
 <br /><br />
 
-<img src="docs/assets/screenshot-designer.png" alt="The Designer workspace with the engine-dashboard project open and the Studio connected to the panel: widget library and layer tree, the canvas drawing the cluster with the panel's own renderer, the logo image selected with its eight resize handles, and the property, tag-binding, actions and chat inspectors" width="900" />
+<img src="docs/assets/screenshot-designer.png" alt="The Designer workspace with the trip-and-maintenance cockpit board open and the Studio connected to a panel: widget library and layer tree on the left, the canvas drawing an attitude indicator, altitude tape, VSI, fuel and engine cards with the panel's own renderer, and the property, tag-binding, actions and chat inspectors on the right" width="900" />
 
-<em>The engine dashboard open in the Studio's own Designer, connected to the
-panel at the top of the window — library and layers to the left, the canvas
-inside a bezel of the real glass with every widget drawn by its own QML, the
-logo image selected with its eight resize handles, and the property,
-tag-binding (with its warning and critical thresholds), actions and chat
-inspectors to the right. The canvas is 1024 × 768 because that is what the
-connected panel reported.</em>
+<em><strong>The Designer.</strong> A cockpit board open in the Studio, connected
+to the panel named in the header — library and layers to the left, the canvas
+inside a bezel of the real glass, and the property, tag-binding (with its
+warning and critical thresholds), actions and chat inspectors to the right.
+Every widget on that canvas is drawn by <strong>the panel's own renderer</strong>,
+not by a desktop stand-in, so what you arrange here is what the glass draws.
+The canvas is 1024 × 768 because that is what the connected panel reported.</em>
+
+<br /><br />
+
+<img src="docs/assets/screenshot-panel-live.png" alt="The same cockpit board running on the panel: attitude indicator banked in a climbing turn, altitude tape scrolling past 7194 feet, VSI up, Mach and true airspeed, both oil pressure gauges at 85 PSI, engine temperatures at 822 C with two active alarms listed, and fuel quantity falling" width="900" />
+
+<em><strong>The same board, running.</strong> Read off the glass itself — the
+runtime writes what it is displaying on request, so this is the panel, not a
+render of it. Mid-climb through a turn: the horizon is banked and the turn
+coordinator agrees with it, the altitude tape is scrolling past 7194 ft, both
+oil pressure gauges are live, the engine temperatures have crossed their
+limits and put two alarms in the table, and the fuel is going down. Every
+number comes from tags; on a bench with no aircraft behind it, they come from
+<a href="#bench-data-without-an-aircraft"><code>hmi-tagsim</code></a>.</em>
 
 </div>
 
@@ -93,6 +106,180 @@ provisioned or packaged.
 
 ---
 
+## Architecture
+
+The platform is three programs and one file. The file is the deliverable; the
+programs are deliberately ignorant of each other.
+
+### The deployable is the design
+
+There is no build step for the target. `project.edsui` is JSON: a screen size
+and theme, pages, and a tree of widgets with a geometry, properties, tag
+bindings and actions. The Designer writes it, the panel **interprets** it, and
+a deploy moves that file, its `assets/` and a `manifest.json` — nothing is
+generated, cross-compiled or code-generated per design.
+
+That one decision buys most of the rest. A design can be diffed, reviewed and
+rolled back as text. The same file renders identically on a laptop and on the
+glass because the same renderer reads it in both places. And a panel image
+never has to be rebuilt to change a screen.
+
+```
+trip-and-maintenance/
+├── manifest.json     runtime: edsui, screen, tags_required, alarms
+├── project.edsui     the screen itself
+└── assets/           images the design refers to
+```
+
+### The widget kit is written twice, on purpose
+
+A widget exists in two forms that must agree pixel for pixel:
+
+| | Where | What it is | Who reads it |
+|---|---|---|---|
+| **Spec** | `ui/qml/Shadcn/*.qml` | the reference drawing, in QML | the desktop Live Preview; humans |
+| **Port** | `native/hmi-ui/src/widgets/w_*.c` | the same drawing in C on LVGL | the panel, and every still image the Studio shows |
+
+`tests/ui/test_widget_parity.py` renders both and compares them. The catch,
+learned the hard way, is that a parity suite proves only what it renders: for a
+long time it drew every widget at its **defaults**, and four faults hid behind
+that — an attitude indicator whose sky and ground were inverted in both axes, a
+tape whose scale travelled with the needle instead of scrolling past it, a VSI
+with hard-coded labels, and a gauge that ignored any range a design set. All
+four were invisible at pitch 0, roll 0 and a 0..100 scale. Render a widget with
+a non-default range and a non-zero attitude, or the suite is agreeing with
+itself.
+
+`hmi-ui --render-widget <Type> --props '{...}' --headless out.png` draws one
+widget in isolation, which is the fast way to settle any of this.
+
+### The tag link
+
+The application never touches hardware. It binds to **tags**, which arrive on a
+loopback UDP socket as JSON (CONTRACT section 2):
+
+```
+hmi-ui  --->  {"cmd":"subscribe","ttl":5}              every 2 s
+        <---  {"t":"tags","seq":41,"tags":{"eng1.n1":92.4,"gear.warning":false}}
+        --->  {"id":"gui-7","cmd":"set","tag":"do.relay1","value":true}
+        <---  {"t":"ack","id":"gui-7","ok":true}
+```
+
+`hmi-hwd` (`daemon/hmi_hwd.py`) owns GPIO through libgpiod, analogue inputs
+through IIO, serial and Modbus, and publishes them as tags on port 5000. It
+knows nothing about pixels. `hmi-ui` keeps a tag map with a 2.5 s watchdog,
+runs the bindings, and goes visibly offline rather than showing a value that
+stopped arriving. Widget signals travel the other way as commands, so a button
+on the glass can pulse an output without the design containing a line of
+hardware code.
+
+Tag names are lowercase dotted (`^[a-z][a-z0-9]*(\.[a-z0-9_]+)+$`) — the
+manifest validator enforces it, which is worth knowing because a generated
+design that invents `eng1.eGT` will fail to deploy until it is renamed.
+
+### Bindings, thresholds and alarms
+
+A binding is more than a wire. It carries the unit the value is in and,
+optionally, a `warning` and a `critical` threshold written as `"> 650"` or
+`"< 20"`. The Designer collects every threshold in the design into the
+manifest's `alarms` list; the runtime's alarm engine evaluates them on each tag
+it receives and raises, clears and timestamps entries that any `ShAlarmTable`
+in the design displays.
+
+The trap is units. Thresholds are absolute (`> 650` degrees), so the dial the
+value is drawn on has to be in the same units — a gauge left on the kit's
+default 0..100 can never reach 650, and the alarm will never fire no matter how
+hot the engine gets.
+
+### What runs on the panel
+
+No Qt, no compositor, no X, no Wayland. `hmi-ui` opens the DRM/KMS device
+itself.
+
+| Unit | What it does |
+|---|---|
+| `hmi-ui.service` | C11 + LVGL 9 on DRM/KMS: interprets the design, all 46 widget types, bindings, actions, the alarm engine and touch |
+| `hmi-hwd.service` | GPIO, ADC, UART, Modbus → tags; safe states on shutdown |
+| `hmi-tagsim.service` | bench only, optional: flies the deployed design so a panel with nothing wired to it still moves |
+
+| Path | Holds |
+|---|---|
+| `/opt/hmi_apps/current` | symlink to the running release (`project.edsui` + `assets/`) |
+| `/opt/hmi_apps/previous` | what a rollback returns to |
+| `/usr/lib/hmi/kit` | Inter fonts and Tabler icons as PNGs |
+| `/etc/default/hmi-ui` | display, touch node, log level, extra arguments |
+| `/run/hmi/gui-ready` | touched once the first page is on the glass |
+| `/run/hmi/screen.png` | what the panel is showing, written on `SIGUSR1` |
+
+`/opt/hmi_apps/current` is a **symlink into the release directory**: writing
+through it edits that release in place, which is not what a deploy does and not
+what a rollback expects.
+
+### Seeing what the panel sees
+
+Two different problems, two mechanisms:
+
+**Before deploying** — the Studio renders the design with a headless build of
+`hmi-ui` that travels inside the executable, so the Designer canvas, the bezel
+and the Code section are drawn by the panel's own renderer rather than by an
+approximation of it. `native/hmi-ui/win64/check.sh` proves the Windows build
+renders identically to the Linux one.
+
+**After deploying** — a still render cannot show values that are moving, so the
+Display Console's **Mirror the panel** signals the runtime, copies
+`/run/hmi/screen.png` and paints it at a frame a second. One snapshot and one
+`scp` per second, and nothing installed on the target that is not there
+already. By hand, the same trick is:
+
+```bash
+ssh <panel> 'kill -USR1 $(pidof hmi-ui)' && scp <panel>:/run/hmi/screen.png .
+```
+
+### Bench data without an aircraft
+
+`hmi-hwd --sim` fakes the *hardware* channels — `ai.pot`, `di.button`, the tags
+a wiring loom would provide. It knows nothing of the tags a design invents, so
+a cockpit screen on a bench sits at zero on every instrument.
+
+`daemon/tagsim.py` fills that gap. It speaks the same link, reads the tag list
+out of the **deployed design**, and fills it from a single flight: one aircraft
+that taxis, rotates, climbs, cruises, turns, descends and lands, on a table of
+keyframes interpolated linearly. Altitude, vertical speed, pitch, bank, Mach,
+N1, EGT, oil pressure, OAT, fuel and heading all come from that one state, so
+the screen agrees with itself — the nose is up while the altimeter climbs, the
+wing is down only while the heading changes, fuel only ever falls, and ramps
+that cross a binding's thresholds put real entries in the alarm table.
+
+Each tag is matched to a quantity by what its name measures, then mapped onto
+the scale of the widget that draws it — the design's own min/max first, then
+the kit's default for the type, then the quantity's natural range — so a needle
+sweeps the dial it is drawn on instead of pegging past the end of it.
+
+It serves on 5010 and leaves `hmi-hwd` on 5000 for the real inputs:
+
+```bash
+scp daemon/tagsim.py          root@<panel>:/usr/lib/hmi/tagsim.py
+scp daemon/hmi-tagsim.service root@<panel>:/etc/systemd/system/
+echo 'HMI_UI_EXTRA_ARGS=--daemon-port 5010' >> /etc/default/hmi-ui
+systemctl daemon-reload && systemctl enable --now hmi-tagsim
+systemctl restart hmi-ui          # the journal should say "daemon link online"
+```
+
+Remove that one line from `/etc/default/hmi-ui` to put the panel back on its
+real inputs. Full details in [`daemon/README.md`](daemon/README.md) section 8.
+
+### Deployment
+
+Covered in full under [From a design to the glass](#from-a-design-to-the-glass).
+In one paragraph: the bundle is validated locally, packed by a packer shared
+with the CLI so the tarball is byte-identical either way, uploaded, checksummed,
+extracted to a staging directory, promoted by `rename(2)`, and the GUI is
+restarted. If `/run/hmi/gui-ready` does not appear within 25 s the symlink swaps
+back and the previous release is restarted — the deploy fails and the machine
+still has its UI.
+
+---
+
 ## Three ways to a screen
 
 Every path ends in the same place: a **bundle** — a directory with a
@@ -104,12 +291,12 @@ the bundle comes to exist.
 |---|---|---|---|
 | **Describe it** — [AI Design](#ai-design) | A sentence: *"engine data summary with RPM, coolant and oil gauges, fuel quantity and start/stop"* | Sends the brief to a local or cloud model with a system prompt built from the widget library, streams the answer, parses it into widgets in sections, and puts them on the canvas with the live preview refreshed | Tune in the Designer, bind to tags, **Deploy** |
 | **Draw it** — [Visual Designer](#visual-designer) | An empty canvas the size of the panel's glass | Library, layers, inspector, tag bindings, undo; generates the QML and the manifest for you | **Preview**, **Deploy** |
-| **Bring your own** — [Writing an app](#writing-an-app) | An existing Qt Quick or Qt Widgets application, Qt5 or Qt6 (*legacy: needs a panel provisioned with the Qt loader, `deploy/provision_native.sh`*) | Detects the entry point and Qt binding, proposes the manifest, previews the real app live, checks its imports against the panel | **Deploy** |
+| **Bring your own** — [legacy](#legacy-qt-bundles) | An existing Qt Quick or Qt Widgets application | Detects the entry point and Qt binding, proposes the manifest, previews the real app live, checks its imports against the panel | **Deploy** — *only to a panel provisioned with the Qt loader; the current image does not carry one* |
 
-The three are not silos. A described screen is a Designer project the moment
-it lands; a drawn screen is an ordinary bundle the moment it is generated; an
-imported application can sit beside a designed one on the same panel and be
-rolled back to.
+The first two are not silos: a described screen is a Designer project the
+moment it lands, and a drawn screen is an ordinary bundle the moment it is
+generated. Both produce the same `runtime: edsui` bundle and deploy to the
+image as shipped.
 
 ---
 
@@ -353,7 +540,7 @@ Then, for an application you already have:
 3. **Connect** — proves the link, reports the panel's real display size and
    which release is live on it. The badge beside it carries the link state,
    and the bezel re-composes itself at the resolution the panel reported.
-4. **Deploy to Target** — everything in [the pipeline below](#from-a-python-app-to-the-panel).
+4. **Deploy to Target** — everything in [the pipeline below](#from-a-design-to-the-glass).
    The bar names the stage it is in, and the console carries the panel's own
    words.
 5. **Rollback** returns to the previous release. **Installed Releases** reaches
@@ -365,7 +552,7 @@ Then, for an application you already have:
 
 ```bash
 ssh-copy-id root@<panel-ip>                       # once
-./deploy/deploy_to_hmi.sh -H <panel-ip> -b ./my-qt-app
+./deploy/deploy_to_hmi.sh -H <panel-ip> -b ./trip-and-maintenance
 ```
 
 If the panel is running a stock image rather than one built from
@@ -473,7 +660,7 @@ the Code section's render in step 3.</em>
 
 ---
 
-## From a Python app to the panel
+## From a design to the glass
 
 What happens between pressing **Deploy to Target** and the application being the
 panel's boot default. Every step is the same whether it is driven from the
@@ -511,42 +698,49 @@ and the machine still has its UI.
 
 ---
 
-## Writing an app
+## Writing a bundle
 
-A bundle is a directory. Two files are enough.
+A bundle is a directory. `manifest.json` plus the thing it names is enough.
 
 ```
-my-qt-app/
+trip-and-maintenance/
 ├── manifest.json
-└── main.qml
+├── project.edsui
+└── assets/
 ```
 
 ```json
 {
   "schema": 1,
-  "name": "line-controller",
-  "version": "1.4.0",
-  "entry": "main.qml",
-  "runtime": "qml",
-  "screen": { "width": 1280, "height": 800 },
-  "tags_required": ["ai.pot", "di.estop", "do.relay1"]
+  "name": "trip-and-maintenance",
+  "version": "1.6.0",
+  "entry": "project.edsui",
+  "runtime": "edsui",
+  "screen": { "width": 1024, "height": 768 },
+  "theme": "dark",
+  "tags_required": ["alt.current", "eng1.egt", "nav.pitch"],
+  "alarms": [
+    { "tag": "eng1.egt", "label": "ENG 1 TEMP", "unit": "°C",
+      "warning": { "op": ">", "value": 650 },
+      "critical": { "op": ">", "value": 700 } }
+  ]
 }
 ```
 
 Only four fields are required — `schema`, `name`, `version` and `entry`. The
-rest are optional: `screen` defaults to 1280x800, `tags_required` to none,
-`runtime` to `qml`. This is the smallest manifest that validates:
+Designer writes the rest for you: `screen` from the panel it is connected to,
+`tags_required` from the bindings in the design, and `alarms` from the
+thresholds on those bindings. The smallest manifest that validates is:
 
 ```json
-{ "schema": 1, "name": "line-controller", "version": "1.4.0", "entry": "main.qml" }
+{ "schema": 1, "name": "line-controller", "version": "1.4.0", "entry": "project.edsui" }
 ```
-
-`runtime` is optional and defaults to `qml`:
 
 | runtime | entry | How it runs on the panel |
 | --- | --- | --- |
-| `qml` | `*.qml` | Loaded into the shell that is already running. Gets `Tags`/`Bus` injected, previews live in Studio. |
-| `python` | `*.py` | Exec'd as the GUI process itself — for an existing Qt Widgets application that owns its own window. |
+| `edsui` | `project.edsui` | Interpreted by `hmi-ui`. What the Studio writes, and the only runtime the current panel image can run. |
+| `qml`, `python` | `*.qml`, `*.py` | **Legacy.** Still accepted by the validator, but they need a panel provisioned with the Qt loader — see [Legacy: Qt bundles](#legacy-qt-bundles). |
+
 
 ### What makes a bundle acceptable
 
@@ -559,10 +753,10 @@ point somewhere inside it. No build step, no layout convention, no imports from
 this repository — the application does not know it is being deployed.
 
 ```
-my-qt-app/
+my-screen/
 ├── manifest.json          required, at the root
-├── main.py                the entry named by the manifest
-├── ui/  assets/  ...      whatever else the app needs
+├── project.edsui          the entry named by the manifest
+├── assets/  ...           whatever else the design refers to
 └── .hmiignore             optional, extra exclusions
 ```
 
@@ -597,76 +791,41 @@ you. QML is preferred when a project contains both.
 serial port. It binds to tags. That is the whole contract, and it is what lets
 the same bundle run on a bench, in a preview and on a panel.
 
-### Qt5 and Qt6 applications on the same panel
+### Legacy: Qt bundles
 
-A native Python app also declares which binding it imports, because the two
-cannot share an interpreter — PySide2 is Qt5-only and was never built past
-Python 3.11:
+Before the panel runtime was written, a bundle was a Qt Quick or Qt Widgets
+application and the panel carried a Qt loader to run it. That path still exists
+in the repository (`gui/hmi_loader`, `native/hmi-gui`) and the manifest
+validator still accepts `runtime: qml` and `runtime: python`, but **the current
+panel image does not ship it**: there is no Qt, no compositor and no Qt loader
+on the target, and provisioning removes them if it finds them.
+
+It is kept for panels already in the field that were provisioned that way, and
+for anyone who needs to bring an existing Qt application across. Those panels
+need `deploy/provision_native.sh`, and a Python bundle also has to declare
+which binding it imports, because the two cannot share an interpreter —
+PySide2 is Qt5-only and was never built past Python 3.11:
 
 ```json
 { "runtime": "python", "entry": "main.py", "qt_binding": "pyside2", "qt": ">=5.15" }
 ```
 
-| qt_binding | Runtime on the panel | For |
+| qt_binding | Runtime on such a panel | For |
 | --- | --- | --- |
 | `pyside6` (default) | `/opt/hmi-python` — CPython 3.12 + PySide6 | Qt6 apps, and the QML loader |
 | `pyside2` | `/opt/hmi-python-qt5` — CPython 3.11 + PySide2 + a private Qt 5.15 | Existing Qt5 apps |
 
-The Qt5 runtime is not installed by default. Add it once per panel:
+A QML bundle gets two context properties injected: **`Tags`** for live values
+(dots become underscores, so `ai.pot` reads as `Tags.ai_pot`, and `Tags.online`
+tracks the hardware link) and **`Bus`** for commands (`Bus.write()`,
+`Bus.pulse()`, `Bus.uart_tx()`, `Bus.value(name, fallback)`).
 
-```bash
-./deploy/provision_pyside2.sh --host <panel-ip>     # run from Linux or WSL
-```
-
-It ships its own Qt 5.15 rather than using the one already on the panel
-image, because that is a **GLES** build while every available aarch64
-PySide2 binary is compiled against desktop GL — loading one against the other
-fails with `undefined symbol: _ZTI18QOpenGLTimeMonitor`. The panel's own Qt5 is
-left untouched.
-
-Already have a Qt app? Open it in Studio; it detects the entry point **and
-the binding**, and writes the manifest for you.
-
-Build outputs, caches and VCS metadata are left out of the bundle
-automatically, by both the CLI and Studio — they share one packer, so the
-same folder produces a byte-identical tarball either way. For anything else that
-lives in the folder but is not part of the running application — source
-archives, packaged installers, capture logs — add a `.hmiignore` next to the
-manifest, one glob per line.
-
-```qml
-import QtQuick
-import Shadcn 1.0          // the design kit ships on the device
-
-ShCard {
-    ShGauge {
-        label: "Input Voltage"
-        value: Bus.value("ai.pot", 0)     // missing tags degrade, never crash
-        minValue: 0; maxValue: 3.3; unit: "V"
-        thresholdWarning: 2.5; thresholdFault: 3.0
-    }
-
-    ShSwitch { onToggled: Bus.write("do.relay1", checked) }
-
-    ShBadge {
-        text: Tags.online ? "ONLINE" : "LINK LOST"
-        variant: Tags.online ? "success" : "destructive"
-    }
-}
-```
-
-Two context properties are injected for you:
-
-* **`Tags`** — live values, bound declaratively. Dots become underscores, so
-  `ai.pot` reads as `Tags.ai_pot`. `Tags.online` tracks the hardware link.
-* **`Bus`** — commands and safe reads: `Bus.write()`, `Bus.pulse()`,
-  `Bus.uart_tx()`, `Bus.value(name, fallback)`.
-
-`Bus.value()` is the habit worth forming: it returns your fallback for a tag that
-is missing, null, or not published yet, so a screen written against a sensor that
-isn't fitted still renders.
+New work should use the Designer and `runtime: edsui`: it deploys to the image
+as shipped, renders the same on the desktop as on the glass, and needs no Qt on
+the panel at all.
 
 ---
+
 
 ## EmbeddedDisplay Studio
 
@@ -917,6 +1076,18 @@ worse than one that fails everywhere.
 
 **Both libgpiod generations.** BSP 6 ships libgpiod 1.6, BSP 7 ships 2.x, and
 their Python APIs are incompatible. Both are implemented and selected at import.
+
+**The panel can be watched, not guessed at.** `SIGUSR1` makes the runtime write
+what it is displaying — live values and all — to `/run/hmi/screen.png`. The
+Display Console's **Mirror the panel** shows that at a frame a second, so a
+screen can be checked against the bench rather than against a render of it, and
+a bug report can carry the glass instead of a description of it.
+
+**A bench panel can be made to move.** `hmi-tagsim` reads the deployed design
+and flies it — one aircraft state driving every instrument, alarms included —
+so a demo, a soak test or a design review does not need the machine the panel
+was built for. It sits beside `hmi-hwd` rather than replacing it, and one line
+in `/etc/default/hmi-ui` switches back.
 
 ---
 
@@ -1369,6 +1540,33 @@ or deploy it to a bench panel as a demonstrator. The full list of values is
 `CAR_TAGS` in `designer/generators/qml_generator.py`.
 
 ### What changed recently
+
+**Unreleased**
+
+* `hmi-tagsim`: a bench feed that reads the deployed design and fills every
+  tag it binds from one flight — one aircraft state, so the screen agrees
+  with itself — with each quantity mapped onto the scale of the widget that
+  draws it. Master-warning lamps are driven from the design's own alarm
+  limits rather than blinking to their own tune.
+* **Mirror the panel** in the Display Console: the panel's own screen at a
+  frame a second, instead of a still render that cannot show values moving.
+* `hmi-ui` honours the Designer's `z`. Card backgrounds sent behind the
+  instruments were painted over them on the panel while the preview showed
+  them correctly behind.
+* Four kit widgets brought back to their spec, all of them wrong only away
+  from the defaults the parity suite rendered: `ShAttitude` (sky and ground
+  inverted in both axes, and a horizon line that escaped the widget),
+  `ShTape` (ticks anchored to the reading rather than to whole steps, labels
+  clipped to a pixel, tick dashes missing), `ShVSI` (hard-coded labels) and
+  `ShGauge` (a range set in the Designer never reached the panel).
+* `ShTurnCoordinator`'s aeroplane sits on its own arc again.
+* AI Design: the reasoning pass is off by default — a thinking model spent
+  the whole output budget on it and could return no design at all.
+* The packaged Studio ships `designer/templates`, and uncaught exceptions
+  reach `studio.log`: a missing template hung a run at "Sending request"
+  with nothing written anywhere.
+* The Designer's property panel no longer deletes an editor inside its own
+  signal, which crashed the Studio outright when a font size was typed.
 
 **0.1.0**
 

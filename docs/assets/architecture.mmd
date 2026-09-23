@@ -12,6 +12,7 @@ graph LR
         kit["/usr/lib/hmi/kit<br/>Inter fonts, Tabler icon PNGs"]
         display["Connected display<br/>DRM reports its real geometry"]
         hwd["hmi-hwd.service<br/>libgpiod, IIO, UART, Modbus"]
+        sim["hmi-tagsim.service<br/>bench only: flies the deployed design"]
     end
     designer --> studio
     designer --> code
@@ -22,5 +23,8 @@ graph LR
     ui --> kit
     ui -->|draws to| display
     hwd -->|tags, UDP/JSON on loopback| ui
+    sim -.->|the same link, port 5010| ui
     ui -->|commands| hwd
+    sim -.->|reads the deployed design| current
+    ui -.->|SIGUSR1 screenshot: Mirror the panel| studio
     display -.->|probed on connect; the bezel and the canvas follow it| studio
