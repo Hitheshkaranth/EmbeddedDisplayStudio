@@ -200,13 +200,31 @@ class _ReasoningBlock(_StreamBlock):
         self._header.setCursor(Qt.PointingHandCursor)
         self._header.toggled.connect(self._body.setVisible)
         self._body.setVisible(False)
-        self._column.addWidget(self._header)
+        # While the thought streams, a thinking orb (ui/python/fx/orb.py)
+        # sits before the header; it stops when the reply settles (flush).
+        from ui.python.fx.orb import ThinkingOrb
+        self._orb = ThinkingOrb(state="breathing", size=20)
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(6)
+        head.addWidget(self._orb)
+        head.addWidget(self._header, 1)
+        self._column.addLayout(head)
         self._column.addWidget(self._body)
         self._update_header()
+        self._orb.start()
 
     def append(self, delta: str) -> None:
         super().append(delta)
         self._update_header()
+
+    def flush(self) -> None:
+        super().flush()
+        self._orb.stop()
+        self._orb.hide()
+
+    def set_theme(self, theme: str) -> None:
+        self._orb.set_theme(theme)
 
     def _update_header(self) -> None:
         words = len(self._text.split())
@@ -343,6 +361,7 @@ class AgentPanel(QWidget):
         self._fill_models(backend.models())
         self._state_changed(backend.state(), backend.detail())
         self.apply_theme("dark")
+        self.avatar.start()
 
     # ---------------------------------------------------------------- API
 
@@ -426,6 +445,11 @@ class AgentPanel(QWidget):
         """'dark' or 'light'."""
         self._theme = theme = "light" if theme == "light" else "dark"
         c = lambda name: color(name, theme)  # noqa: E731
+        for effect in (self.avatar, self.glow, self._input_beam):
+            effect.set_theme(theme)
+        for block in self._blocks:
+            if hasattr(block, "set_theme"):
+                block.set_theme(theme)
         self.setStyleSheet(f"""
             QWidget#agentPanel {{ background: {c('background')}; }}
             QLabel {{ color: {c('foreground')}; font-size: 12px; background: transparent; }}
@@ -461,6 +485,13 @@ class AgentPanel(QWidget):
         column.setSpacing(6)
 
         header = QHBoxLayout()
+        # The agent's face (ui/python/fx/avatar.py, Libraries.dev bot-avatars):
+        # working while it runs, asleep when it stopped or failed.
+        from ui.python.fx.avatar import BotAvatar
+        self.avatar = BotAvatar(shape="clover", size=42, state="default", seed=0.61)
+        self.avatar.fps = 30.0
+        self.avatar.setToolTip("The coding agent")
+        header.addWidget(self.avatar)
         caption = QLabel("Agent")
         caption.setObjectName("agentCaption")
         header.addWidget(caption)
@@ -479,6 +510,10 @@ class AgentPanel(QWidget):
         self.new_chat_button.clicked.connect(self.new_chat)
         header.addWidget(self.new_chat_button)
         column.addLayout(header)
+        # A colour sweep under the header while the agent works.
+        from ui.python.fx.glow import WorkingGlow
+        self.glow = WorkingGlow(height=6)
+        column.addWidget(self.glow)
         # Model ids run long ('provider/vendor/Model-35B-A3B-NVFP4'): a row
         # of their own, the full label on hover.
         column.addWidget(self.model_combo)
@@ -515,6 +550,8 @@ class AgentPanel(QWidget):
         self.input.setFixedHeight(84)
         self.input.installEventFilter(self)
         column.addWidget(self.input)
+        from ui.python.fx.beam import BorderBeam
+        self._input_beam = BorderBeam(self.input, size="md", variant="colorful", radius=6)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         self.stop_button = QPushButton("Stop")
@@ -556,6 +593,7 @@ class AgentPanel(QWidget):
             self._show_state("")
         self.send_button.setEnabled(state == READY and not self._busy)
         self.state_label.setToolTip(detail if state == READY else "")
+        self._set_mood()
 
     def _show_state(self, text: str, error: bool = False) -> None:
         self.state_label.setText(text)
@@ -627,10 +665,24 @@ class AgentPanel(QWidget):
         self._busy = busy
         self.stop_button.setVisible(busy)
         self.send_button.setEnabled(not busy and self._backend.state() == READY)
+        # The effects say the same thing: the face works, the bar sweeps and
+        # the message box glows while a reply is under way.
+        (self.glow.start if busy else self.glow.stop)()
+        self._input_beam.set_active(busy)
+        self._set_mood()
+
+    def _set_mood(self) -> None:
+        state = self._backend.state()
+        if state in (ERROR, STOPPED):
+            self.avatar.set_state("sleeping")
+        else:
+            self.avatar.set_state("working" if self._busy else "default")
 
     def _add(self, block: _Block) -> _Block:
         # Blocks go above the trailing stretch so the transcript stays packed
         # at the top.
         self._transcript_layout.insertWidget(self._transcript_layout.count() - 1, block)
         self._blocks.append(block)
+        if hasattr(block, "set_theme"):
+            block.set_theme(self._theme)
         return block

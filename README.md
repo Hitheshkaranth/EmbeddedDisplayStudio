@@ -832,10 +832,11 @@ the panel at all.
 The desktop tool. Describe, draw or import a screen, watch it run inside a
 photo-real mock-up of the panel, then push it.
 
-One window, six workspaces across the top — **Designer**, **AI Design**,
-**Display Console**, **Tag Lab**, **Panel Logs**, **System Profile** — over a
-header that holds the panel's address, port, **Connect** and **Disconnect**.
-Everything below is about the panel that header points at.
+One window, seven workspaces across the top — **Designer**, **AI Design**,
+**Code**, **Display Console**, **Tag Lab**, **Panel Logs**, **System
+Profile** — over a header that holds the panel's address, port, **Connect**
+and **Disconnect**. Everything below is about the panel that header points
+at.
 
 **Authoring**
 
@@ -852,6 +853,15 @@ Everything below is about the panel that header points at.
   scale, unit and threshold expressions, and an offline Design Chat for
   text commands. The same toolbar previews, generates and deploys. Details
   in [Visual Designer](#visual-designer).
+* **Code** — the project as code, in one tab: the bundle's folder as a
+  tree, a Widgets list with a live thumbnail of each widget, tabbed editors
+  for any file (C, Python, QML, JSON, `.edsui`) with Ctrl+Z / Ctrl+Y /
+  Ctrl+S, and the design itself pinned first — pick a widget and its
+  `.edsui` sits beside `hmi-ui`'s render of it. On the right a coding agent
+  ([opencode](https://opencode.ai) driven over its HTTP server) reads and
+  edits the project on your configured model; files it changes reload in
+  their tabs. Details in [Code](#code-section) and
+  [docs/CODE_SECTION.md](docs/CODE_SECTION.md).
 * **No bundle required to start** — an empty Studio, a brief or a blank
   canvas is enough. The first Preview or Deploy provisions a bundle under
   `Documents/EmbeddedDisplay Studio/projects/<name>/`, never on top of an
@@ -982,13 +992,18 @@ panel reaches them.</em>
 
 <br /><br />
 
-<img src="docs/assets/screenshot-code.png" alt="The Code section: the whole screen's design JSON on the left, and the same screen rendered by hmi-ui on the right" width="880" />
+<a id="code-section"></a>
+<img src="docs/assets/screenshot-code.png" alt="The Code section: the Widgets list with thumbnails on the left and the attitude indicator picked, its .edsui in the pinned Design tab, the attitude indicator rendered by hmi-ui beside it, and the coding agent's panel with its bot avatar and model picker on the right" width="880" />
 
-<em><strong>Code section.</strong> The <code>.edsui</code> of the whole screen —
-exactly what the panel interprets — with the same screen rendered by
-<code>hmi-ui</code> beside it. Switch the scope to the selected widget and the
-text and the preview follow the canvas selection; edit the JSON and
-<strong>Apply</strong> puts it back into the design as one undo step.</em>
+<em><strong>Code section.</strong> The attitude indicator picked in the
+Widgets list: its <code>.edsui</code> — exactly what the panel interprets — in
+the pinned <strong>Design</strong> tab, and <code>hmi-ui</code>'s render of it
+beside. <strong>Files</strong> shows the bundle's folder; any file opens in its
+own tab with undo, redo and save. Edit the JSON and <strong>Apply</strong> puts
+it back into the design as one undo step. The agent on the right runs
+<a href="https://opencode.ai">opencode</a> in the project folder: its thinking,
+each tool it runs, the files it touches (links that open them) and permission
+prompts show in the transcript, and an edited file reloads in its tab.</em>
 
 <br /><br />
 
@@ -1114,6 +1129,30 @@ re-rendered in the new palette on every switch, so nothing goes black-on-black.
 ever drifts from it.
 
 ---
+
+## Look and feel
+
+The Studio's motion comes from [Libraries.dev](https://github.com/Jakubantalik/Libraries.dev)
+(MIT, © 2026 Jakub Antalik), a set of React effects for AI-agent interfaces,
+ported to plain QPainter in `ui/python/fx/` — no web engine, no OpenGL and no
+numpy (the packaged Studio ships none of them), keeping the originals' tuned
+numbers:
+
+| Effect | Where it shows |
+|---|---|
+| **Liquid tabs** (liquid-gooey) | the navigation: the selection flows between workspaces, stretching and trailing a droplet |
+| **Border beam** | a glow travelling the edge of what is working: **Connect** while it connects, **Refresh profile**, the Deployment card during a deploy, the AI Design composer and the agent's message box while a model writes |
+| **Thinking orbs** | the AI Design run orb (connecting, thinking, writing, parsing each look different) and a streaming thought in the agent panel |
+| **Bot avatar** | the coding agent's face: idle, hopping while it works, asleep when it stopped or failed |
+| **Liquid metal** | the rim of the Studio mark |
+| **Pixel mosaic** (img-fx) | the Code preview while `hmi-ui` renders, dissolving cell by cell into the result |
+| **Working glow** (voice-glow) | a colour sweep under the agent's header while it works |
+
+All of them run from one timer that stops when nothing moves; a hidden tab
+costs nothing. The sparkles button beside the theme toggle turns motion off —
+every effect then shows a still frame. `python tools/fx_gallery.py out.png`
+renders each effect in both themes; the design notes are in
+[docs/UI_FX.md](docs/UI_FX.md).
 
 ## Layout
 
@@ -1543,6 +1582,16 @@ or deploy it to a bench panel as a demonstrator. The full list of values is
 
 **Unreleased**
 
+* The **Code** workspace is a project editor: the bundle's files and folders,
+  a Widgets list with live thumbnails, tabbed editors with undo / redo / save
+  on every platform, the design pinned first, and an
+  [opencode](https://opencode.ai) coding agent that works in the project
+  folder on the configured model. Studio projects hide `generated/` (the
+  desktop preview's regenerated QML).
+* A new look, from [Libraries.dev](https://github.com/Jakubantalik/Libraries.dev)
+  ported to QPainter: liquid navigation, border beams on work in progress,
+  thinking orbs, a bot avatar for the agent, a liquid-metal mark and a
+  pixel-mosaic preview loader — with an **Animations** switch in the header.
 * `hmi-tagsim`: a bench feed that reads the deployed design and fills every
   tag it binds from one flight — one aircraft state, so the screen agrees
   with itself — with each quantity mapped onto the scale of the widget that

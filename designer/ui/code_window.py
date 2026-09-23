@@ -39,7 +39,7 @@ import hashlib
 import json
 import re
 
-from PySide6.QtCore import QSettings, QSize, Qt, Signal
+from PySide6.QtCore import QRect, QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QLabel, QMainWindow, QMessageBox, QSizePolicy,
@@ -105,7 +105,12 @@ def _rgba(hex_color: str, alpha: float) -> str:
 
 class _PreviewPane(QWidget):
     """The right-hand pane: one QImage fitted to whatever room it has, or a
-    line of text saying why there is no image yet."""
+    line of text saying why there is no image yet.
+
+    While a render is on its way (the RENDERING message) a pixel-mosaic
+    loader fills the pane (ui/python/fx/mosaic.py, Libraries.dev img-fx);
+    when the image lands it dissolves into it at the image's final size and
+    place, then the plain label takes over again."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -124,16 +129,54 @@ class _PreviewPane(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.addWidget(self._label)
+        from ui.python.fx.mosaic import MosaicView
+        self._mosaic = MosaicView(self, radius=10)
+        self._mosaic.hide()
+
+    def set_theme(self, theme: str) -> None:
+        self._mosaic.set_theme(theme)
 
     def set_image(self, image) -> None:
         self._image = image
         self._label.setText("")
-        self._fit()
+        if self._mosaic.isVisible() and self._mosaic.loading() and image is not None and not image.isNull():
+            self._mosaic.setGeometry(self._image_rect(image))
+            self._mosaic.set_image(image)
+            from ui.python.fx.mosaic import REVEAL_S
+            QTimer.singleShot(int(REVEAL_S * 1000) + 120, self._settle)
+            return
+        self._settle()
 
     def set_message(self, text: str) -> None:
         self._image = None
         self._label.setPixmap(QPixmap())
+        if text == RENDERING:
+            self._label.setText("")
+            self._mosaic.setGeometry(self._label.geometry())
+            self._mosaic.show()
+            self._mosaic.raise_()
+            self._mosaic.set_loading()
+            return
+        self._mosaic.set_message("")
+        self._mosaic.hide()
         self._label.setText(text)
+
+    def _settle(self) -> None:
+        if self._mosaic.revealing():
+            return
+        self._mosaic.set_message("")
+        self._mosaic.hide()
+        self._fit()
+
+    def _image_rect(self, image):
+        """Where _fit will put `image` inside the label (the reveal lands there)."""
+        area = self._label.geometry()
+        size = image.size()
+        if size.width() > area.width() or size.height() > area.height():
+            size = size.scaled(area.size(), Qt.KeepAspectRatio)
+        x = area.x() + (area.width() - size.width()) // 2
+        y = area.y() + (area.height() - size.height()) // 2
+        return QRect(x, y, size.width(), size.height())
 
     def _fit(self) -> None:
         if self._image is None or self._image.isNull():
@@ -321,6 +364,7 @@ class CodeWindow(QMainWindow):
         theme = "light" if theme == "light" else "dark"
         self._theme = theme
         self.editor.apply_theme(theme)
+        self.preview.set_theme(theme)
         t = lambda name: color(name, theme)
         # W2's editor palette, when it says what its surface is, wins for
         # the panes that touch the editor so code and preview sit on one
