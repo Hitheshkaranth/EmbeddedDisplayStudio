@@ -167,5 +167,95 @@ class WorkingGlowTests(unittest.TestCase):
         self.assertGreater(coverage(glow.render_at(t), step=2), 0.03)
 
 
+class BeamGlowWorkerTests(unittest.TestCase):
+    """W-A's additions: still frames, corners, strength, the time base."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = app()
+
+    def setUp(self):
+        fx.set_animations_enabled(True)
+        self.addCleanup(fx.set_animations_enabled, True)
+
+    def _beam(self, **kw):
+        card = _card()
+        self.addCleanup(card.deleteLater)
+        return BorderBeam(card, **kw)
+
+    def test_nothing_outside_the_rounded_corners(self):
+        from PySide6.QtGui import QColor, QImage
+        for size in SIZES:
+            beam = self._beam(size=size)
+            beam.set_active(True)
+            t = _run(beam, 1.4)
+            for dt in (0.0, 0.5, 1.0, 1.5):
+                image = beam.render_at(t + dt).convertToFormat(QImage.Format_ARGB32)
+                w, h = image.width(), image.height()
+                for x, y in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1), (1, 1), (w - 2, h - 2)):
+                    self.assertEqual(QColor.fromRgba(image.pixel(x, y)).alpha(), 0, (size, x, y))
+
+    def test_animations_off_still_frame_and_no_clock(self):
+        fx.set_animations_enabled(False)
+        beam = self._beam()
+        beam.set_active(True)
+        self.assertFalse(clock_has(beam))
+        self.assertEqual(beam.fade(), 1.0)
+        self.assertGreater(coverage(beam.render_at(beam.still_time()), step=2), 0.01)
+        beam.set_active(False)
+        self.assertEqual(beam.fade(), 0.0)
+        self.assertLess(coverage(beam.render_at(beam.still_time()), step=3), 0.001)
+
+    def test_strength_zero_draws_nothing(self):
+        beam = self._beam(strength=0.0)
+        beam.set_active(True)
+        t = _run(beam, 1.0)
+        self.assertLess(coverage(beam.render_at(t), step=3), 0.001)
+
+    def test_foreign_time_base_still_fades_in(self):
+        # The gallery drives from t=1000 while set_active stamps fx.now().
+        beam = self._beam()
+        beam.set_active(True)
+        _run(beam, FADE_IN_S + 0.2, base=1000.0)
+        self.assertAlmostEqual(beam.fade(), 1.0, places=3)
+
+    def test_variant_and_radius_setters(self):
+        beam = self._beam()
+        beam.set_active(True)
+        t = _run(beam, 1.0)
+        a = beam.render_at(t)
+        beam.set_variant("sunset")
+        beam.set_radius(4)
+        self.assertGreater(difference(a, beam.render_at(t)), 0.05)
+
+    def test_line_every_moment_stays_at_the_bottom(self):
+        beam = self._beam(size="line")
+        beam.set_active(True)
+        t = _run(beam, 0.7)
+        for dt in (0.0, 0.8, 1.6, 2.4):
+            image = beam.render_at(t + dt)
+            self.assertLess(region_alpha(image, 0, 0, 1, .3), 3)
+
+    def test_glow_animations_off(self):
+        fx.set_animations_enabled(False)
+        glow = WorkingGlow(height=8)
+        glow.resize(360, 8)
+        self.addCleanup(glow.deleteLater)
+        glow.start()
+        self.assertFalse(clock_has(glow))
+        self.assertAlmostEqual(glow.level(), 0.55)
+        self.assertGreater(coverage(glow.render_at(0.0), step=2), 0.03)
+        glow.stop()
+        self.assertEqual(glow.level(), 0.0)
+        self.assertLess(coverage(glow.render_at(0.0)), 0.001)
+
+    def test_glow_paint_budget(self):
+        glow = WorkingGlow(height=10)
+        glow.resize(600, 10)
+        self.addCleanup(glow.deleteLater)
+        glow.start()
+        _run(glow, 0.5)
+        self.assertLess(paint_ms(glow), 10.0)
+
 if __name__ == "__main__":
     unittest.main()
