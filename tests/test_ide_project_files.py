@@ -246,6 +246,11 @@ class _FakeRenderer:
         self.requests.append(widget.id)
         return self.cache.get(widget.id)
 
+    def clear(self):
+        # The workspace clears its renderer when a page reloads (part of the
+        # renderer interface, like image_for and ready).
+        self.cache.clear()
+
     def land(self, widget_id):
         image = QImage(40, 20, QImage.Format_ARGB32)
         image.fill(Qt.red)
@@ -645,6 +650,33 @@ class W1PickerQualityTests(unittest.TestCase):
         kept = bar.value()
         self.picker.rebuild()
         self.assertEqual(bar.value(), kept)
+
+
+class TreeLockTests(unittest.TestCase):
+    """Coordinator QC: watching a folder must not lock it or its parents
+    (on Windows QFileSystemWatcher does; git and the agent then fail)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication(sys.argv)
+
+    def test_outside_programs_can_rename_expanded_folders(self):
+        root = os.path.realpath(tempfile.mkdtemp(prefix="ide-treelock-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        os.makedirs(os.path.join(root, "src", "deep"))
+        with open(os.path.join(root, "src", "deep", "x.c"), "w") as f:
+            f.write("x\n")
+        tree = ProjectTree()
+        self.addCleanup(tree.deleteLater)
+        tree.set_root(root)
+        tree.expand(os.path.join(root, "src", "deep"))
+        os.rename(os.path.join(root, "src"), os.path.join(root, "moved"))   # WinError 5 when locked
+        waited = 0
+        while os.path.join(root, "moved") not in tree.visible_paths() and waited < 4000:
+            QTest.qWait(100)
+            waited += 100
+        self.assertIn(os.path.join(root, "moved"), tree.visible_paths())
+        self.assertNotIn(os.path.join(root, "src"), tree.visible_paths())
 
 
 if __name__ == "__main__":

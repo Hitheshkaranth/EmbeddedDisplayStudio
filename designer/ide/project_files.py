@@ -13,7 +13,7 @@ import tempfile
 from dataclasses import dataclass
 
 from PySide6.QtCore import (
-    QEvent, QFileSystemWatcher, QSortFilterProxyModel, Qt, QTimer, QUrl, Signal,
+    QEvent, QFileSystemWatcher, QObject, QSortFilterProxyModel, Qt, QTimer, QUrl, Signal,
 )
 from PySide6.QtGui import (
     QColor, QDesktopServices, QGuiApplication, QStandardItem, QStandardItemModel,
@@ -234,6 +234,99 @@ def _rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({c.red()},{c.green()},{c.blue()},{alpha:.2f})"
 
 
+# How often watched paths are stat'ed on Windows (see _PollingWatcher).
+_POLL_MS = 1000
+
+
+class _PollingWatcher(QObject):
+    """QFileSystemWatcher's API (addPath(s), removePath(s), files,
+    directories, fileChanged, directoryChanged) by polling once a second.
+
+    Used on Windows, where QFileSystemWatcher keeps a handle open on each
+    watched folder, and on each watched file's folder: renaming a folder
+    above a watched one then fails with "Access is denied" -- for the tree's
+    own rename, for git, for the agent -- and so do ~2 % of other programs'
+    atomic replaces of a watched file. A stat per path per second holds
+    nothing open. A file's stamp is (size, mtime); a folder's is its mtime,
+    which NTFS moves whenever an entry is added, removed or renamed."""
+
+    fileChanged = Signal(str)
+    directoryChanged = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._files: dict[str, tuple | None] = {}
+        self._dirs: dict[str, int | None] = {}
+        self._timer = QTimer(self)
+        self._timer.setInterval(_POLL_MS)
+        self._timer.timeout.connect(self._poll)
+
+    def addPath(self, path: str) -> bool:
+        return not self.addPaths([path])
+
+    def addPaths(self, paths) -> list[str]:
+        failed = []
+        for path in paths:
+            if os.path.isdir(path):
+                self._dirs[path] = self._dir_stamp(path)
+            elif os.path.isfile(path):
+                self._files[path] = self._file_stamp(path)
+            else:
+                failed.append(path)
+        if self._files or self._dirs:
+            self._timer.start()
+        return failed
+
+    def removePath(self, path: str) -> bool:
+        return not self.removePaths([path])
+
+    def removePaths(self, paths) -> list[str]:
+        failed = [p for p in paths if self._files.pop(p, False) is False
+                  and self._dirs.pop(p, False) is False]
+        if not self._files and not self._dirs:
+            self._timer.stop()
+        return failed
+
+    def files(self) -> list[str]:
+        return list(self._files)
+
+    def directories(self) -> list[str]:
+        return list(self._dirs)
+
+    @staticmethod
+    def _file_stamp(path: str):
+        try:
+            info = os.stat(path)
+        except OSError:
+            return None
+        return info.st_size, info.st_mtime_ns
+
+    @staticmethod
+    def _dir_stamp(path: str):
+        try:
+            return os.stat(path).st_mtime_ns
+        except OSError:
+            return None
+
+    def _poll(self) -> None:
+        for path, before in list(self._files.items()):
+            now = self._file_stamp(path)
+            if now != before and path in self._files:
+                self._files[path] = now
+                self.fileChanged.emit(path)
+        for path, before in list(self._dirs.items()):
+            now = self._dir_stamp(path)
+            if now != before and path in self._dirs:
+                self._dirs[path] = now
+                self.directoryChanged.emit(path)
+
+
+def _file_watcher(parent) -> QObject:
+    """The watcher the tree and the editors use: Qt's own, or on Windows the
+    poller that locks nothing."""
+    return _PollingWatcher(parent) if os.name == "nt" else QFileSystemWatcher(parent)
+
+
 class _FilterProxy(QSortFilterProxyModel):
     """Keeps the files whose name contains the filter text; a folder stays
     only through recursive filtering, i.e. when something below it matches."""
@@ -254,7 +347,8 @@ class ProjectTree(QWidget):
     set_root / refresh / new_file / new_folder / rename / delete return,
     visible_paths() already reflects the file system. Folders come first,
     then files, each case-insensitively by name; IGNORED_DIRS are hidden.
-    A QFileSystemWatcher on the root and the expanded folders calls refresh()
+    A QFileSystemWatcher (on Windows a poller that locks nothing) on the
+    root and the expanded folders calls refresh()
     (debounced, ~200 ms) when something changes outside the Studio; refresh
     keeps the expanded folders and the selection.
 
@@ -334,7 +428,7 @@ class ProjectTree(QWidget):
         layout.addWidget(self.view, 1)
         layout.addWidget(self.empty_label, 1)
 
-        self._watcher = QFileSystemWatcher(self)
+        self._watcher = _file_watcher(self)
         self._watcher.directoryChanged.connect(self._on_directory_changed)
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)

@@ -30,7 +30,7 @@ while dirty; the tooltip is the path relative to root(). dirtyChanged fires
 on every transition.
 
 Changes on disk: a QFileSystemWatcher (on Windows a poller that holds no
-handles -- see _PollingWatcher) watches every open file (re-adding the
+handles -- see project_files._PollingWatcher) watches every open file (re-adding the
 path after an atomic replace, which drops it from the watcher). When one
 changes, file_changed_on_disk runs: a clean tab reloads silently (scroll and
 cursor kept); a dirty tab shows a banner above its editor -- "<name> changed
@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QEvent, QFileSystemWatcher, QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QTabBar, QTabWidget, QVBoxLayout,
@@ -61,8 +61,6 @@ except ImportError:                                     # icons are a nicety, no
 # some editors and tools save); look again after this long before calling it
 # deleted.
 _GONE_RECHECK_MS = 250
-# How often open files are stat'ed on Windows (see _PollingWatcher).
-_POLL_MS = 1000
 
 _NBSP, _LINE_SEP, _PARAGRAPH_SEP = chr(0xA0), chr(0x2028), chr(0x2029)
 
@@ -105,55 +103,6 @@ class _Banner(QFrame):
 
     def set_name(self, name: str) -> None:
         self.label.setText(f"{name} changed on disk.")
-
-
-class _PollingWatcher(QObject):
-    """QFileSystemWatcher's file API (addPath, removePath, files,
-    fileChanged) by polling size and mtime once a second.
-
-    Used on Windows, where QFileSystemWatcher keeps a handle open on each
-    watched file's folder: renaming or deleting a folder above an open file
-    then fails with "Access is denied", and so do ~2 % of other programs'
-    atomic replaces of the file (the agent's edits among them). A stat per
-    open file per second costs nothing and holds nothing open."""
-
-    fileChanged = Signal(str)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._stamps: dict[str, tuple | None] = {}
-        self._timer = QTimer(self)
-        self._timer.setInterval(_POLL_MS)
-        self._timer.timeout.connect(self._poll)
-
-    def addPath(self, path: str) -> bool:
-        self._stamps[path] = self._stamp(path)
-        self._timer.start()
-        return True
-
-    def removePath(self, path: str) -> bool:
-        found = self._stamps.pop(path, False) is not False
-        if not self._stamps:
-            self._timer.stop()
-        return found
-
-    def files(self) -> list[str]:
-        return list(self._stamps)
-
-    @staticmethod
-    def _stamp(path: str):
-        try:
-            info = os.stat(path)
-        except OSError:
-            return None
-        return info.st_size, info.st_mtime_ns
-
-    def _poll(self) -> None:
-        for path, before in list(self._stamps.items()):
-            now = self._stamp(path)
-            if now != before and path in self._stamps:
-                self._stamps[path] = now
-                self.fileChanged.emit(path)
 
 
 class _FileTab:
@@ -200,7 +149,7 @@ class EditorTabs(QTabWidget):
         self._files: dict[QWidget, _FileTab] = {}       # tab page -> file
         self._pinned: dict[QWidget, dict] = {}          # pinned widget -> handlers
         self._pinned_icons: dict[QWidget, str] = {}
-        self._watcher = _PollingWatcher(self) if os.name == "nt" else QFileSystemWatcher(self)
+        self._watcher = project_files._file_watcher(self)
         self._watcher.fileChanged.connect(self._on_watched_file_changed)
         self._gone: set[str] = set()
         self._gone_timer = QTimer(self)
