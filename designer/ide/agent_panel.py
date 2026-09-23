@@ -488,7 +488,7 @@ class AgentPanel(QWidget):
         # The agent's face (ui/python/fx/avatar.py, Libraries.dev bot-avatars):
         # working while it runs, asleep when it stopped or failed.
         from ui.python.fx.avatar import BotAvatar
-        self.avatar = BotAvatar(shape="clover", size=34, state="default", seed=0.61)
+        self.avatar = BotAvatar(shape="clover", size=42, state="default", seed=0.61)
         self.avatar.fps = 30.0
         self.avatar.setToolTip("The coding agent")
         header.addWidget(self.avatar)
