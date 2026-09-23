@@ -83,6 +83,37 @@ static lv_obj_t *placeholder_create(hmi_widget_t *w, lv_obj_t *parent)
     return box;
 }
 
+static void build_widget(hmi_runtime_t *rt, hmi_widget_t *w, lv_obj_t *parent);
+
+// LVGL paints children in creation order, so the Designer's z (which the
+// QML preview honours, qml_generator.py) had no effect on the panel: a
+// card sent behind an instrument still covered it, because it came later
+// in the document. Build low z first, keeping document order within a z.
+static void build_in_z_order(hmi_runtime_t *rt, hmi_widget_t **widgets, size_t n,
+                             lv_obj_t *parent)
+{
+    if (n == 0) return;
+    size_t *order = lv_malloc(n * sizeof *order);
+    if (!order) {                       // no memory: document order still draws
+        for (size_t i = 0; i < n; ++i) build_widget(rt, widgets[i], parent);
+        return;
+    }
+    for (size_t i = 0; i < n; ++i) order[i] = i;
+    // Insertion sort: a page holds tens of widgets, and it is stable, which
+    // is what keeps two widgets at the same z in the order they were written.
+    for (size_t i = 1; i < n; ++i) {
+        size_t cur = order[i];
+        size_t j = i;
+        while (j > 0 && widgets[order[j - 1]]->z > widgets[cur]->z) {
+            order[j] = order[j - 1];
+            --j;
+        }
+        order[j] = cur;
+    }
+    for (size_t i = 0; i < n; ++i) build_widget(rt, widgets[order[i]], parent);
+    lv_free(order);
+}
+
 static void build_widget(hmi_runtime_t *rt, hmi_widget_t *w, lv_obj_t *parent)
 {
     own(w, rt);
@@ -107,8 +138,7 @@ static void build_widget(hmi_runtime_t *rt, hmi_widget_t *w, lv_obj_t *parent)
     // Children of a plain container are placed by the container's own
     // implementation when it is a positioner (Row/Column/Grid); otherwise
     // they are absolute inside the parent.
-    for (size_t i = 0; i < w->nchildren; ++i)
-        build_widget(rt, w->children[i], obj);
+    build_in_z_order(rt, w->children, w->nchildren, obj);
 }
 
 static void destroy_widget(hmi_widget_t *w)
@@ -164,8 +194,7 @@ static bool show_page(hmi_runtime_t *rt, hmi_page_t *page)
     lv_opa_t opa;
     lv_obj_set_style_bg_color(rt->page_obj, hmi_colour_hex(rt->project->background, &opa), 0);
     lv_obj_set_style_bg_opa(rt->page_obj, opa, 0);
-    for (size_t i = 0; i < page->nwidgets; ++i)
-        build_widget(rt, page->widgets[i], rt->page_obj);
+    build_in_z_order(rt, page->widgets, page->nwidgets, rt->page_obj);
     hmi_bind_page(rt->bind, page);
     hmi_page_visit(page, deliver_alarms_cb, rt);
     // Re-deliver every known tag so bound widgets start from live values.

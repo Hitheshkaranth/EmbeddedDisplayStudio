@@ -144,7 +144,15 @@ def state_at(t: float, duration: float) -> dict:
     ahead = _interpolate(((t + step) / duration) % 1.0)
     turn = ahead["hdg"] - base["hdg"]
     turn = (turn + 180.0) % 360.0 - 180.0
-    roll = max(-BANK_LIMIT, min(BANK_LIMIT, (turn / step) * BANK_PER_TURN_RATE))
+    turn_rate = turn / step                      # degrees per second
+    roll = max(-BANK_LIMIT, min(BANK_LIMIT, turn_rate * BANK_PER_TURN_RATE))
+
+    # The ball stays centred in a coordinated turn; it is rolling in and out
+    # that throws it, so slip follows the change in bank, not the bank.
+    later = _interpolate(((t + 2 * step) / duration) % 1.0)
+    turn_later = (later["hdg"] - ahead["hdg"] + 180.0) % 360.0 - 180.0
+    roll_rate = (turn_later / step - turn_rate) * BANK_PER_TURN_RATE
+    slip = max(-1.0, min(1.0, -roll_rate * 0.12))
 
     # Thrust drives the hot end; the oil pressure follows the shaft.
     n1 = base["n1"]
@@ -162,6 +170,8 @@ def state_at(t: float, duration: float) -> dict:
         "vertical_speed": base["vs"],
         "pitch": base["pitch"],
         "roll": roll,
+        "turn_rate": turn_rate,
+        "slip": slip,
         "heading": base["hdg"] % 360.0,
         "airspeed": ias,
         "tas": tas,
@@ -183,10 +193,61 @@ def state_at(t: float, duration: float) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Alarms
+# ---------------------------------------------------------------------------
+
+def load_alarms(project_path: str) -> list:
+    """The alarm limits the design declares, from the manifest beside it.
+
+    A cockpit's master warning is not a lamp with a mind of its own: it
+    lights because something is out of limits. Reading the same alarm list
+    the panel evaluates lets the simulated lamps agree with the alarm table
+    instead of blinking to their own tune.
+    """
+    manifest = os.path.join(os.path.dirname(project_path) or ".", "manifest.json")
+    try:
+        with open(manifest, encoding="utf-8") as handle:
+            return list(json.load(handle).get("alarms") or [])
+    except (OSError, ValueError) as exc:
+        logger.info("no alarm limits to read (%s)", exc)
+        return []
+
+
+_OPS = {
+    ">": lambda v, t: v > t, ">=": lambda v, t: v >= t,
+    "<": lambda v, t: v < t, "<=": lambda v, t: v <= t,
+    "==": lambda v, t: v == t, "!=": lambda v, t: v != t,
+}
+
+
+def _breached(limit, value) -> bool:
+    if not isinstance(limit, dict) or not isinstance(value, (int, float)):
+        return False
+    op = _OPS.get(str(limit.get("op") or ">"))
+    threshold = limit.get("value")
+    if op is None or not isinstance(threshold, (int, float)):
+        return False
+    return op(float(value), float(threshold))
+
+
+def active_alarms(alarms: list, values: dict) -> list:
+    """Which of the design's alarms these values are currently breaching."""
+    out = []
+    for alarm in alarms:
+        value = values.get(alarm.get("tag"))
+        if _breached(alarm.get("critical"), value):
+            out.append((alarm.get("label") or alarm.get("tag"), "critical"))
+        elif _breached(alarm.get("warning"), value):
+            out.append((alarm.get("label") or alarm.get("tag"), "warning"))
+    return out
+
+
 #: What each quantity naturally spans, for mapping onto a widget's dial.
 QUANTITY_RANGE = {
     "altitude": (0.0, 38000.0), "vertical_speed": (-2600.0, 2600.0),
     "pitch": (-15.0, 15.0), "roll": (-BANK_LIMIT, BANK_LIMIT),
+    "turn_rate": (-6.0, 6.0), "slip": (-1.0, 1.0),
     "heading": (0.0, 360.0), "airspeed": (0.0, 320.0), "tas": (0.0, 520.0),
     "mach": (0.0, 0.92), "n1": (20.0, 100.0), "egt": (300.0, 860.0),
     "oil_press": (18.0, 86.0), "oat": (-57.0, 15.0), "flaps": (0.0, 4.0),
@@ -202,6 +263,8 @@ LEAF_QUANTITY = {
     "rate": "vertical_speed", "vs": "vertical_speed", "vsi": "vertical_speed",
     "climb": "vertical_speed",
     "pitch": "pitch", "roll": "roll", "bank": "roll",
+    "turn": "turn_rate", "turn_rate": "turn_rate", "rate_of_turn": "turn_rate",
+    "slip": "slip", "skid": "slip", "ball": "slip",
     "heading": "heading", "hdg": "heading", "track": "heading",
     "ias": "airspeed", "speed": "airspeed", "airspeed": "airspeed",
     "tas": "tas", "gs": "tas", "mach": "mach",
@@ -233,7 +296,8 @@ TYPE_RANGES = {
     "ShFuelQuantity":  {"leftValue": (0.0, 80.0), "rightValue": (0.0, 80.0),
                         "value": (0.0, 80.0)},
     "ShCompass":       {"value": (0.0, 360.0)},
-    "ShTurnCoordinator": {"value": (-30.0, 30.0)},
+    "ShTurnCoordinator": {"turnRate": (-6.0, 6.0), "slip": (-1.0, 1.0),
+                          "value": (-6.0, 6.0)},
 }
 
 #: Widget types whose bound value is a lamp, not a number.
@@ -249,6 +313,15 @@ HEALTHY_WORDS = ("ok", "fix", "healthy", "ready", "valid", "avail", "good",
 #: Lamps that report trouble: dark, because nothing is going wrong today.
 FAULT_WORDS = ("warn", "fire", "fault", "alarm", "alert", "fail", "required",
                "caution", "overspeed", "err", "smoke", "ice")
+#: The backdrop fades from ground to sky as the aeroplane climbs away from
+#: it. Same two colours the attitude indicator paints with (efisGround,
+#: efisSky), so a screen-wide backdrop and the horizon agree.
+GROUND_COLOUR, SKY_COLOUR = (0x7a, 0x52, 0x30), (0x2b, 0x6f, 0xb5)
+SKY_FULL_FT = 8000.0
+
+#: Lamps that summarise the alarm state rather than report one thing.
+MASTER_WORDS = ("master_warning", "master_caution", "masterwarn", "master_alarm",
+                "annunciator", "alarm_active")
 
 
 def _leaf(tag: str) -> str:
@@ -271,8 +344,10 @@ def quantity_for(tag: str, prop: str) -> str:
     """Which part of the flight this tag reports."""
     lowered = tag.lower()
     leaf = _leaf(tag)
-    if prop.lower() in ("pitch", "roll"):
+    if prop.lower() in ("pitch", "roll", "slip"):
         return prop.lower()
+    if prop == "turnRate":
+        return "turn_rate"
     if leaf in LEAF_QUANTITY:
         quantity = LEAF_QUANTITY[leaf]
         # Left and right tanks come from the same leaf ("qty"); the side is
@@ -304,6 +379,12 @@ class Signal:
             # going wrong on this flight, so it stays dark.
             return bool(state[self.state_key]) if self.state_key else False
         raw = float(state[self.quantity])
+        if self.kind == "colour":
+            span = (self.hi - self.lo) or 1.0
+            unit = min(max((raw - self.lo) / span, 0.0), 1.0)
+            return "#%02x%02x%02x" % tuple(
+                int(round(g + (sk - g) * unit))
+                for g, sk in zip(GROUND_COLOUR, SKY_COLOUR))
         if self.kind == "text":
             return format(int(round(raw)), ",d").replace(",", " ")
         q_lo, q_hi = QUANTITY_RANGE.get(self.quantity, (0.0, 1.0))
@@ -325,12 +406,23 @@ def signal_for(tag: str, widget_type: str, prop: str, props: dict) -> Signal:
             return Signal(tag, "bool", state_key="gear_down")
         if "autopilot" in lowered or lowered.endswith(".ap"):
             return Signal(tag, "bool", state_key="autopilot")
+        if any(word in lowered for word in MASTER_WORDS):
+            # Lit exactly while one of the design's own alarms is breached.
+            return Signal(tag, "bool", state_key="alarm_active")
         leaf = _leaf(tag)
         if any(word in leaf for word in FAULT_WORDS):
             return Signal(tag, "bool", state_key="")           # steady dark
         if any(word in leaf for word in HEALTHY_WORDS):
             return Signal(tag, "bool", state_key="engaged_true")
         return Signal(tag, "bool", state_key="climbing")
+
+    if prop.lower() in ("color", "colour", "bordercolor", "backgroundcolor"):
+        # The property decides the type: a bound colour is a colour, and a
+        # backdrop's colour is about how far off the ground it is.
+        quantity = quantity_for(tag, prop)
+        if quantity == "progress":
+            quantity = "altitude"
+        return Signal(tag, "colour", quantity, 0.0, SKY_FULL_FT)
 
     quantity = quantity_for(tag, prop)
     span = (_explicit_range(props, prop)
@@ -370,22 +462,37 @@ def plan(project: dict) -> dict:
     return signals
 
 
-def values_at(signals: dict, t: float, duration: float) -> dict:
-    """Every tag's value at one instant of one flight."""
+def values_at(signals: dict, t: float, duration: float, alarms: list = None) -> dict:
+    """Every tag's value at one instant of one flight.
+
+    Two passes, because a master warning lamp reports on the other tags: the
+    readings are produced first, the design's alarm limits are evaluated
+    against exactly what is about to be sent, and the summarising lamps are
+    filled in from that.
+    """
     state = dict(state_at(t, duration))
     state["engaged_true"] = True
-    return {tag: sig.at(state) for tag, sig in signals.items()}
+    state["alarm_active"] = False
+
+    summary = {tag: sig for tag, sig in signals.items() if sig.state_key == "alarm_active"}
+    values = {tag: sig.at(state) for tag, sig in signals.items() if tag not in summary}
+    if summary:
+        state["alarm_active"] = bool(active_alarms(alarms or [], values))
+        for tag, sig in summary.items():
+            values[tag] = sig.at(state)
+    return values
 
 
-def frame(signals: dict, t: float, seq: int, duration: float = 240.0) -> bytes:
+def frame(signals: dict, t: float, seq: int, duration: float = 240.0,
+          alarms: list = None) -> bytes:
     """One telemetry datagram, in the daemon's wire format."""
     return json.dumps({"t": "tags", "seq": seq, "ts": round(time.time(), 3),
-                       "src": "tagsim", "tags": values_at(signals, t, duration)},
+                       "src": "tagsim", "tags": values_at(signals, t, duration, alarms)},
                       separators=(",", ":")).encode("utf-8")
 
 
 def serve(signals: dict, port: int, hz: float, host: str = "127.0.0.1",
-          seconds: float = 0.0, duration: float = 240.0) -> int:
+          seconds: float = 0.0, duration: float = 240.0, alarms: list = None) -> int:
     """Answer subscribers and fly the panel until stopped.
 
     The runtime subscribes with a ttl and re-subscribes every 2 s; a
@@ -439,7 +546,7 @@ def serve(signals: dict, port: int, hz: float, host: str = "127.0.0.1",
 
             if now >= next_send:
                 next_send = now + interval
-                payload = frame(signals, now - started, seq, duration)
+                payload = frame(signals, now - started, seq, duration, alarms)
                 seq += 1
                 for addr, expiry in list(subscribers.items()):
                     if expiry < now:
@@ -512,7 +619,8 @@ def main(argv=None) -> int:
                     tag, sig.kind, sig.quantity, sig.lo, sig.hi))
         return 0
 
-    return serve(signals, args.port, args.hz, args.host, args.seconds, args.duration)
+    return serve(signals, args.port, args.hz, args.host, args.seconds,
+                 args.duration, load_alarms(args.project))
 
 
 if __name__ == "__main__":

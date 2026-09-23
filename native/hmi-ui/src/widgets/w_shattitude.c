@@ -36,6 +36,15 @@ static void draw_cb(lv_event_t *e)
     hmi_widget_t *w = lv_event_get_user_data(e);
     state_t *st = w->state;
     hmi_draw_t d = hmi_draw_begin(e);
+    // The horizon line is struck well past the widget so that a rolled
+    // horizon still reaches the corners. QML clips that to the item; LVGL
+    // does not clip a custom draw at all, so the line ran across the rest
+    // of the screen. Draw inside the widget and put the clip back after.
+    lv_area_t clip_before = d.layer->_clip_area;
+    lv_area_t clip;
+    if (!lv_area_intersect(&clip, &d.coords, &clip_before)) return;
+    d.layer->_clip_area = clip;
+
     double W = w->width, H = w->height, cx = W / 2, cy = H / 2;
     double R = -st->roll * M_PI / 180, sinR = sin(R), cosR = cos(R);
     lv_color_t sky = hmi_colour("efisSky"), ground = hmi_colour("efisGround");
@@ -92,6 +101,8 @@ static void draw_cb(lv_event_t *e)
     hmi_draw_line(&d, cx - 46, cy, cx - 16, cy, 3, aircraft, LV_OPA_COVER);
     hmi_draw_line(&d, cx + 16, cy, cx + 46, cy, 3, aircraft, LV_OPA_COVER);
     hmi_draw_disc(&d, cx, cy, 3, aircraft, LV_OPA_COVER);
+
+    d.layer->_clip_area = clip_before;
 }
 
 static void layout(hmi_widget_t *w)

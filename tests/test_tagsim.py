@@ -274,6 +274,80 @@ class ScreenTests(unittest.TestCase):
         self.assertGreater(after["nav.pitch"], 0)
 
 
+class TurnTests(unittest.TestCase):
+    """The turn coordinator reports the turn the heading is making."""
+
+    def test_the_turn_rate_is_the_heading_changing(self):
+        for t, state in _samples(1.0):
+            ahead = tagsim.state_at(t + 1.0, DURATION)
+            turn = ahead["heading"] - state["heading"]
+            if abs(turn) > 0.5:
+                self.assertEqual(state["turn_rate"] > 0, turn > 0,
+                                 "turn rate disagrees with the heading at %.0fs" % t)
+
+    def test_the_bank_and_the_turn_rate_agree(self):
+        for _, state in _samples(1.0):
+            if abs(state["turn_rate"]) > 0.1:
+                self.assertEqual(state["roll"] > 0, state["turn_rate"] > 0)
+
+    def test_the_ball_stays_in_the_middle_of_a_steady_turn(self):
+        # Slip comes from rolling in and out, not from being banked.
+        steady = [s for _, s in _samples(1.0) if abs(s["turn_rate"]) > 0.3]
+        self.assertTrue(steady, "no turn in the profile to test")
+        self.assertLess(max(abs(s["slip"]) for s in steady), 1.0)
+
+    def test_the_properties_name_their_own_quantity(self):
+        self.assertEqual(tagsim.quantity_for("x.y", "turnRate"), "turn_rate")
+        self.assertEqual(tagsim.quantity_for("x.y", "slip"), "slip")
+
+
+class AlarmTests(unittest.TestCase):
+    """A master warning lights because something is out of limits."""
+
+    ALARMS = [{"tag": "eng1.egt", "label": "ENG 1 TEMP",
+               "warning": {"op": ">", "value": 650.0},
+               "critical": {"op": ">", "value": 700.0}}]
+
+    def test_a_breach_is_found(self):
+        self.assertEqual(tagsim.active_alarms(self.ALARMS, {"eng1.egt": 704.0}),
+                         [("ENG 1 TEMP", "critical")])
+        self.assertEqual(tagsim.active_alarms(self.ALARMS, {"eng1.egt": 660.0}),
+                         [("ENG 1 TEMP", "warning")])
+        self.assertEqual(tagsim.active_alarms(self.ALARMS, {"eng1.egt": 400.0}), [])
+
+    def test_a_missing_or_odd_value_is_not_an_alarm(self):
+        self.assertEqual(tagsim.active_alarms(self.ALARMS, {}), [])
+        self.assertEqual(tagsim.active_alarms(self.ALARMS, {"eng1.egt": "hot"}), [])
+
+    def test_the_master_warning_follows_the_alarms(self):
+        signals = tagsim.plan(_project([
+            _widget("ShGauge", "egt", {"value": {"tag": "eng1.egt"}},
+                    {"minimum": 300.0, "maximum": 900.0}),
+            _widget("ShTelltale", "mw", {"value": {"tag": "sys.master_warning"}}),
+        ]))
+        lit = any(tagsim.values_at(signals, t, DURATION, self.ALARMS)["sys.master_warning"]
+                  for t in range(0, int(DURATION), 2))
+        dark = any(not tagsim.values_at(signals, t, DURATION, self.ALARMS)["sys.master_warning"]
+                   for t in range(0, int(DURATION), 2))
+        self.assertTrue(lit, "the master warning never lit during a whole flight")
+        self.assertTrue(dark, "the master warning never went out")
+
+    def test_without_limits_the_lamp_stays_dark(self):
+        signals = tagsim.plan(_project([
+            _widget("ShTelltale", "mw", {"value": {"tag": "sys.master_warning"}})]))
+        self.assertFalse(tagsim.values_at(signals, 30.0, DURATION, [])["sys.master_warning"])
+
+
+class ColourTests(unittest.TestCase):
+    def test_a_bound_colour_is_a_colour(self):
+        sig = tagsim.signal_for("env.sky_colour", "Rectangle", "color", {})
+        self.assertEqual(sig.kind, "colour")
+        ground = dict(tagsim.state_at(0.0, DURATION), engaged_true=True)
+        cruise = dict(tagsim.state_at(DURATION * 0.45, DURATION), engaged_true=True)
+        self.assertRegex(sig.at(ground), r"^#[0-9a-f]{6}$")
+        self.assertNotEqual(sig.at(ground), sig.at(cruise))
+
+
 class FrameTests(unittest.TestCase):
     def test_a_frame_is_what_the_runtime_expects(self):
         signals = {"alt.current": tagsim.signal_for("alt.current", "ShTape", "value", {})}

@@ -92,7 +92,13 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     lv_obj_t *acContainer = lv_obj_create(bg);
     lv_obj_remove_style_all(acContainer);
     lv_obj_set_size(acContainer, (int32_t)(w->width * 0.42), 26);
-    lv_obj_align(acContainer, LV_ALIGN_CENTER, 0, (int32_t)lround(w->height * 0.43) - 13 - 13);
+    // The spec puts the symbol's top at 0.43*h - 13, so its centre sits on
+    // 0.43*h -- the same point the bank arc is struck from. LV_ALIGN_CENTER
+    // offsets from the widget's centre, so the offset is 0.43*h - h/2;
+    // subtracting 26 instead dropped the aeroplane clear of its own arc and
+    // down onto the slip tube.
+    lv_obj_align(acContainer, LV_ALIGN_CENTER, 0,
+                 (int32_t)lround(w->height * 0.43 - w->height / 2.0));
     lv_obj_remove_flag(acContainer, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_opa(acContainer, LV_OPA_TRANSP, 0);
 
