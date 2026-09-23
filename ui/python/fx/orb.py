@@ -732,7 +732,8 @@ class ThinkingOrb(FxWidget):
 
     Orb time is now() * preset_speed(state, size) * speed, so all orbs on
     screen stay in phase. The still frame (not running, or animations off)
-    is t = 0.6 * preset speed, as the web version's reduced-motion frame.
+    lands on orb time 0.6 (clock t = 0.6 / preset speed), as the web
+    version's reduced-motion frame.
     """
 
     def __init__(self, parent=None, state: str = "working", size: int = 20,
