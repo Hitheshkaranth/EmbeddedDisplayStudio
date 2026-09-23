@@ -12,7 +12,7 @@ next/previous, Esc closes).
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, QRegularExpression, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QRect, QRegularExpression, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor, QFont, QFontDatabase, QKeySequence, QPainter, QSyntaxHighlighter, QTextCharFormat,
     QTextCursor, QTextDocument, QTextFormat, QTransform,
@@ -27,7 +27,7 @@ except ImportError:                                     # Studio icons are a nic
     from PySide6.QtGui import QIcon
     def _tabler_icon(_name, _size=16, _color=None): return QIcon()
 
-LANGUAGES = ("qml", "json", "c", "plain")
+LANGUAGES = ("qml", "json", "c", "python", "plain")
 
 # Editor surfaces and token colours per Studio theme. The surface keys are
 # the editor's; the token keys (keyword ... property) are the highlighter
@@ -88,6 +88,13 @@ _FONT_PX = 12
 _TAB_SPACES = 4
 _GUTTER_PAD = 6          # px either side of the digits
 _MIN_DIGITS = 3          # the gutter does not jitter when a file crosses 99 lines
+
+# Ctrl+Z undo; Ctrl+Y and Ctrl+Shift+Z redo, on every platform.
+_UNDO_REDO_KEYS = (
+    (Qt.Key_Z, Qt.ControlModifier),
+    (Qt.Key_Y, Qt.ControlModifier),
+    (Qt.Key_Z, Qt.ControlModifier | Qt.ShiftModifier),
+)
 
 _IN_COMMENT = 1          # block state: an unterminated /* */ comment runs into the next line
 
@@ -245,6 +252,17 @@ class CHighlighter(_RuleHighlighter):
     _quotes = "\"'"
 
 
+class PythonHighlighter(_RuleHighlighter):
+    """Python 3 (FROZEN CONTRACT, Code IDE swarm 2026-09-23; owner W2):
+    keywords ("keyword"), builtins and capitalised class names ("type"),
+    decorators ("property"), numbers, strings (single, double and triple
+    quoted; a triple-quoted string may span lines), and # comments to the end
+    of the line ("comment"). A '#' inside a string is not a comment. Same
+    set_palette contract as the others."""
+
+    _rules = ()
+
+
 class JsonHighlighter(_RuleHighlighter):
     """Keys, strings, numbers, true/false/null. Same `set_palette` contract."""
 
@@ -378,7 +396,7 @@ class CodeEditor(QPlainTextEdit):
     # ---------------------------------------------------------------- API
 
     def set_language(self, language: str) -> None:
-        """'qml', 'json' or 'plain'. Swaps the highlighter."""
+        """One of LANGUAGES. Swaps the highlighter."""
         if language not in LANGUAGES:
             raise ValueError(f"unknown language {language!r}; expected one of {LANGUAGES}")
         if language == self._language and (self._highlighter is not None or language == "plain"):
@@ -390,7 +408,8 @@ class CodeEditor(QPlainTextEdit):
             self._highlighter.setDocument(None)
             self._highlighter.setParent(None)
             self._highlighter = None
-        cls = {"qml": QmlHighlighter, "json": JsonHighlighter, "c": CHighlighter}.get(language)
+        cls = {"qml": QmlHighlighter, "json": JsonHighlighter, "c": CHighlighter,
+               "python": PythonHighlighter}.get(language)
         if cls is not None:
             self._highlighter = cls(self.document())
             self._highlighter.set_palette(self._palette)
@@ -502,6 +521,17 @@ class CodeEditor(QPlainTextEdit):
 
     # ------------------------------------------------------------ Qt hooks
 
+    def event(self, event) -> bool:
+        # Claim undo/redo before an enclosing QShortcut does: the Code section
+        # binds Ctrl+Z/Ctrl+Y to the design's undo stack, and an editable
+        # editor with focus must undo its own text instead.
+        if event.type() == QEvent.ShortcutOverride and not self.isReadOnly():
+            mods = event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier | Qt.AltModifier)
+            if (event.key(), mods) in _UNDO_REDO_KEYS:
+                event.accept()
+                return True
+        return super().event(event)
+
     def keyPressEvent(self, event) -> None:
         key = event.key()
         if event.matches(QKeySequence.Find):
@@ -510,6 +540,16 @@ class CodeEditor(QPlainTextEdit):
         if key == Qt.Key_Escape and self._find.isVisible():
             self._hide_find()
             return
+        if not self.isReadOnly():
+            # One set of keys on every platform: Qt binds Redo to Ctrl+Y only
+            # on Windows and to Ctrl+Shift+Z elsewhere; the Studio promises both.
+            mods = event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier | Qt.AltModifier)
+            if (key, mods) == _UNDO_REDO_KEYS[0]:
+                self.undo()
+                return
+            if (key, mods) in _UNDO_REDO_KEYS[1:]:
+                self.redo()
+                return
         if key == Qt.Key_F3 and self._find.field.text():
             self._find_from_bar(bool(event.modifiers() & Qt.ShiftModifier))
             return

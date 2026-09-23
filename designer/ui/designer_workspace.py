@@ -1996,6 +1996,19 @@ class DesignerWorkspace(QWidget):
         models = self.scene.selected_models()
         return models[0] if len(models) == 1 else None
 
+    def select_widget(self, widget_id):
+        """Makes the widget with this id the only selection on the canvas and
+        scrolls the view to it (the Code section's widget picker); False when
+        the current page has no such widget."""
+        item = self.scene.item_for_id(widget_id)
+        if item is None:
+            return False
+        self.scene.clearSelection()
+        item.setSelected(True)
+        for view in self.scene.views():
+            view.ensureVisible(item)
+        return True
+
     def _slot_of(self, widget_id):
         """The list on the current page holding this widget, and its index
         there; (None, -1) when the page has no such widget.
