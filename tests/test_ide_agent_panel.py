@@ -200,5 +200,126 @@ class AgentPanelTests(unittest.TestCase):
         self.panel.apply_theme("dark")
 
 
+class AgentPanelQcTests(unittest.TestCase):
+    """Coordinator QC: defects the frozen gate did not catch."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication(sys.argv)
+
+    def setUp(self):
+        QSettings("MIL-HMI", "Deployer").remove(SETTINGS_MODEL_KEY)
+        self.backend = ScriptedBackend({"add sub": REPLY}, interval_ms=30)
+        self.panel = AgentPanel(self.backend)
+        self.panel.resize(420, 700)
+        self.addCleanup(self.panel.deleteLater)
+        self.panel.set_directory("/proj")
+
+    def _drain(self, backend=None, panel=None):
+        backend, panel = backend or self.backend, panel or self.panel
+        waited = 0
+        while (backend._pending or panel.is_busy()) and waited < 5000:
+            QTest.qWait(20)
+            waited += 20
+        QTest.qWait(120)
+
+    def _panel(self, script, interval_ms=0):
+        backend = ScriptedBackend(script, interval_ms=interval_ms)
+        panel = AgentPanel(backend)
+        panel.resize(420, 700)
+        self.addCleanup(panel.deleteLater)
+        panel.set_directory("/proj")
+        panel.show()
+        return backend, panel
+
+    def test_busy_while_hidden(self):
+        # The Code tab is often not the current tab: busy must not depend on
+        # a button being visible on screen.
+        self.assertFalse(self.panel.isVisible())
+        self.assertTrue(self.panel.send("add sub"))
+        QTest.qWait(60)
+        self.assertTrue(self.panel.is_busy())
+        self.assertFalse(self.panel.send("second"))
+        self._drain()
+        self.assertFalse(self.panel.is_busy())
+
+    def test_reply_renders_while_streaming(self):
+        # A throttle, not a debounce: deltas 10 ms apart must show up before
+        # the stream pauses.
+        from PySide6.QtWidgets import QLabel
+        backend, panel = self._panel({"go": [{"type": "text", "id": "x", "delta": f"w{i} "}
+                                             for i in range(60)]}, interval_ms=10)
+        panel.send("go")
+        QTest.qWait(300)
+        self.assertTrue(backend._pending, "the stream is still going")
+        shown = [w for w in panel.findChildren(QLabel) if "w1 " in w.text()]
+        self.assertTrue(shown, "streamed text is on screen before the stream ends")
+
+    def test_tool_file_link_visible_and_output_escaped(self):
+        from PySide6.QtWidgets import QLabel
+        _backend, panel = self._panel({"t": [{"type": "tool", "id": "t1", "tool": "bash",
+                                              "status": "completed", "title": "run",
+                                              "input": {"path": "/proj/a.c"},
+                                              "output": "<b>bold</b> & more", "error": ""}]})
+        panel.send("t")
+        QTest.qWait(150)
+        links = [w for w in panel.findChildren(QLabel) if "href" in w.text()]
+        self.assertTrue(any(w.isVisibleTo(panel) for w in links),
+                        "the file link is visible without expanding the block")
+        holders = [w for w in panel.findChildren(QLabel) if "bold" in w.text()]
+        self.assertTrue(holders)
+        for label in holders:
+            self.assertTrue(label.textFormat() == Qt.PlainText or "<b>bold</b>" not in label.text(),
+                            "tool output is shown as text, never rendered as HTML")
+
+    def test_user_text_is_plain(self):
+        from PySide6.QtWidgets import QLabel
+        self.panel.send("a *b* <i>c</i>")
+        labels = [w for w in self.panel.findChildren(QLabel) if "a *b*" in w.text()]
+        self.assertTrue(labels)
+        self.assertEqual(labels[0].textFormat(), Qt.PlainText)
+
+    def test_usage_is_visible(self):
+        self.panel.show()
+        self.panel.send("add sub")
+        self._drain()
+        self.assertFalse(self.panel.state_label.isHidden())
+        self.assertIn("150", self.panel.state_label.text())
+
+    def test_saved_model_survives_when_not_offered(self):
+        QSettings("MIL-HMI", "Deployer").setValue(SETTINGS_MODEL_KEY, "fake/elsewhere")
+        panel = AgentPanel(ScriptedBackend())
+        self.addCleanup(panel.deleteLater)
+        panel.set_directory("/proj")
+        self.assertEqual(panel.selected_model(), ModelRef("fake", "coder"))
+        self.assertEqual(QSettings("MIL-HMI", "Deployer").value(SETTINGS_MODEL_KEY), "fake/elsewhere")
+
+    def test_blocks_do_not_shadow_qwidget_methods(self):
+        from PySide6.QtWidgets import QWidget
+        import designer.ide.agent_panel as ap
+        for name in dir(ap):
+            cls = getattr(ap, name)
+            if isinstance(cls, type) and issubclass(cls, QWidget) and cls.__module__ == ap.__name__:
+                for attr in ("update", "show", "hide", "close", "repaint"):
+                    self.assertNotIn(attr, cls.__dict__, f"{name}.{attr} shadows QWidget.{attr}")
+
+    def test_scrolls_to_bottom(self):
+        backend, panel = self._panel({"long": [{"type": "text", "id": f"x{i}", "delta": "line\n\nline"}
+                                               for i in range(30)]})
+        panel.send("long")
+        self._drain(backend, panel)
+        bar = panel._transcript_scroll.verticalScrollBar()
+        self.assertGreater(bar.maximum(), 0)
+        self.assertEqual(bar.value(), bar.maximum())
+
+    def test_error_state_is_shown(self):
+        from designer.ide.agent_backend import STARTING
+        self.backend._set_state(STARTING, "Starting opencode...")
+        self.assertIn("Starting", self.panel.state_label.text())
+        self.backend._set_state(ERROR, "opencode is not installed")
+        self.assertIn("#", self.panel.state_label.styleSheet() + self.panel.styleSheet(),
+                      "the error line is coloured")
+
+
 if __name__ == "__main__":
     unittest.main()
