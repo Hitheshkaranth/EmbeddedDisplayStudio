@@ -12,7 +12,7 @@ next/previous, Esc closes).
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, QRegularExpression, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QRect, QRegularExpression, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor, QFont, QFontDatabase, QKeySequence, QPainter, QSyntaxHighlighter, QTextCharFormat,
     QTextCursor, QTextDocument, QTextFormat, QTransform,
@@ -27,7 +27,7 @@ except ImportError:                                     # Studio icons are a nic
     from PySide6.QtGui import QIcon
     def _tabler_icon(_name, _size=16, _color=None): return QIcon()
 
-LANGUAGES = ("qml", "json", "c", "plain")
+LANGUAGES = ("qml", "json", "c", "python", "plain")
 
 # Editor surfaces and token colours per Studio theme. The surface keys are
 # the editor's; the token keys (keyword ... property) are the highlighter
@@ -88,6 +88,13 @@ _FONT_PX = 12
 _TAB_SPACES = 4
 _GUTTER_PAD = 6          # px either side of the digits
 _MIN_DIGITS = 3          # the gutter does not jitter when a file crosses 99 lines
+
+# Ctrl+Z undo; Ctrl+Y and Ctrl+Shift+Z redo, on every platform.
+_UNDO_REDO_KEYS = (
+    (Qt.Key_Z, Qt.ControlModifier),
+    (Qt.Key_Y, Qt.ControlModifier),
+    (Qt.Key_Z, Qt.ControlModifier | Qt.ShiftModifier),
+)
 
 _IN_COMMENT = 1          # block state: an unterminated /* */ comment runs into the next line
 
@@ -245,6 +252,106 @@ class CHighlighter(_RuleHighlighter):
     _quotes = "\"'"
 
 
+class PythonHighlighter(_RuleHighlighter):
+    """Python 3 (FROZEN CONTRACT, Code IDE swarm 2026-09-23; owner W2):
+    keywords ("keyword"), builtins and capitalised class names ("type"),
+    decorators ("property"), numbers, strings (single, double and triple
+    quoted; a triple-quoted string may span lines), and # comments to the end
+    of the line ("comment"). A '#' inside a string is not a comment. Same
+    set_palette contract as the others."""
+
+    _KEYWORDS = (
+        "False", "None", "True", "and", "as", "assert", "async", "await",
+        "break", "class", "continue", "def", "del", "elif", "else", "except",
+        "finally", "for", "from", "global", "if", "import", "in", "is",
+        "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
+        "while", "with", "yield",
+    )
+    _BUILTINS = (
+        "self", "cls", "abs", "all", "any", "bool", "bytearray", "bytes", "callable",
+        "chr", "classmethod", "complex", "dict", "dir", "divmod", "enumerate", "filter",
+        "float", "format", "frozenset", "getattr", "hasattr", "hash", "id", "input", "int",
+        "isinstance", "issubclass", "iter", "len", "list", "map", "max", "min", "next",
+        "object", "open", "ord", "pow", "print", "property", "range", "repr", "reversed",
+        "round", "set", "setattr", "slice", "sorted", "staticmethod", "str", "sum", "super",
+        "tuple", "type", "vars", "zip",
+    )
+    _rules = (
+        # CapWords names are classes; an ALL_CAPS name is a constant, not a type.
+        (r"\b_*[A-Z][A-Za-z0-9_]*[a-z][A-Za-z0-9_]*\b", "type"),
+        (r"\b(?:" + "|".join(_BUILTINS) + r")\b", "type"),
+        # After the type rules, so True/False/None stay keywords.
+        (r"\b(?:" + "|".join(_KEYWORDS) + r")\b", "keyword"),
+        (r"\b(?:0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+"
+         r"|\d[\d_]*(?:\.[\d_]*)?(?:[eE][+-]?\d+)?[jJ]?)\b", "number"),
+        # \K keeps the indent out of the match, so only '@name' is coloured.
+        (r"^\s*\K@[A-Za-z_][\w.]*", "property"),
+    )
+
+    # Block states: a triple-quoted string runs into the next line. Which
+    # quote opened it matters -- ''' does not close """.
+    _IN_TRIPLE_DOUBLE = 1
+    _IN_TRIPLE_SINGLE = 2
+    _TRIPLE_STATE = {'"""': _IN_TRIPLE_DOUBLE, "'''": _IN_TRIPLE_SINGLE}
+    _STATE_TRIPLE = {_IN_TRIPLE_DOUBLE: '"""', _IN_TRIPLE_SINGLE: "'''"}
+    _PREFIXES = frozenset({"r", "u", "b", "f", "br", "rb", "fr", "rf"})
+
+    def _highlight_literals(self, text: str) -> None:
+        # One left-to-right scan decides what is string and what is comment,
+        # so a '#' inside a string, or quotes inside a comment, never mislead.
+        string, comment = self._formats["string"], self._formats["comment"]
+        n = len(text)
+        i = 0
+        self.setCurrentBlockState(0)
+        quote = self._STATE_TRIPLE.get(self.previousBlockState())
+        if quote is not None:
+            end = self._string_end(text, 0, quote)
+            if end < 0:
+                self.setFormat(0, n, string)
+                self.setCurrentBlockState(self._TRIPLE_STATE[quote])
+                return
+            self.setFormat(0, end, string)
+            i = end                       # after the closing quotes, not on them
+        while i < n:
+            ch = text[i]
+            if ch == "#":
+                self.setFormat(i, n - i, comment)
+                return
+            if ch not in "\"'":
+                i += 1
+                continue
+            start = i
+            p = i
+            while p > 0 and (text[p - 1].isalnum() or text[p - 1] == "_"):
+                p -= 1
+            if text[p:i].lower() in self._PREFIXES:
+                start = p                 # r"..", f'..', rb"..": the prefix is part of it
+            quote = ch * 3 if text.startswith(ch * 3, i) else ch
+            end = self._string_end(text, i + len(quote), quote)
+            if end < 0:
+                self.setFormat(start, n - start, string)
+                if len(quote) == 3:
+                    self.setCurrentBlockState(self._TRIPLE_STATE[quote])
+                return
+            self.setFormat(start, end - start, string)
+            i = end
+
+    @staticmethod
+    def _string_end(text: str, i: int, quote: str) -> int:
+        """Index just past the `quote` closing a string whose body starts at
+        i, or -1 when the line ends first. A backslash escapes the next
+        character (in raw strings too, as far as finding the end goes)."""
+        n = len(text)
+        while i < n:
+            if text[i] == "\\":
+                i += 2
+            elif text.startswith(quote, i):
+                return i + len(quote)
+            else:
+                i += 1
+        return -1
+
+
 class JsonHighlighter(_RuleHighlighter):
     """Keys, strings, numbers, true/false/null. Same `set_palette` contract."""
 
@@ -378,7 +485,7 @@ class CodeEditor(QPlainTextEdit):
     # ---------------------------------------------------------------- API
 
     def set_language(self, language: str) -> None:
-        """'qml', 'json' or 'plain'. Swaps the highlighter."""
+        """One of LANGUAGES. Swaps the highlighter."""
         if language not in LANGUAGES:
             raise ValueError(f"unknown language {language!r}; expected one of {LANGUAGES}")
         if language == self._language and (self._highlighter is not None or language == "plain"):
@@ -390,7 +497,8 @@ class CodeEditor(QPlainTextEdit):
             self._highlighter.setDocument(None)
             self._highlighter.setParent(None)
             self._highlighter = None
-        cls = {"qml": QmlHighlighter, "json": JsonHighlighter, "c": CHighlighter}.get(language)
+        cls = {"qml": QmlHighlighter, "json": JsonHighlighter, "c": CHighlighter,
+               "python": PythonHighlighter}.get(language)
         if cls is not None:
             self._highlighter = cls(self.document())
             self._highlighter.set_palette(self._palette)
@@ -502,6 +610,17 @@ class CodeEditor(QPlainTextEdit):
 
     # ------------------------------------------------------------ Qt hooks
 
+    def event(self, event) -> bool:
+        # Claim undo/redo before an enclosing QShortcut does: the Code section
+        # binds Ctrl+Z/Ctrl+Y to the design's undo stack, and an editable
+        # editor with focus must undo its own text instead.
+        if event.type() == QEvent.ShortcutOverride and not self.isReadOnly():
+            mods = event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier | Qt.AltModifier)
+            if (event.key(), mods) in _UNDO_REDO_KEYS:
+                event.accept()
+                return True
+        return super().event(event)
+
     def keyPressEvent(self, event) -> None:
         key = event.key()
         if event.matches(QKeySequence.Find):
@@ -510,6 +629,16 @@ class CodeEditor(QPlainTextEdit):
         if key == Qt.Key_Escape and self._find.isVisible():
             self._hide_find()
             return
+        if not self.isReadOnly():
+            # One set of keys on every platform: Qt binds Redo to Ctrl+Y only
+            # on Windows and to Ctrl+Shift+Z elsewhere; the Studio promises both.
+            mods = event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier | Qt.AltModifier)
+            if (key, mods) == _UNDO_REDO_KEYS[0]:
+                self.undo()
+                return
+            if (key, mods) in _UNDO_REDO_KEYS[1:]:
+                self.redo()
+                return
         if key == Qt.Key_F3 and self._find.field.text():
             self._find_from_bar(bool(event.modifiers() & Qt.ShiftModifier))
             return

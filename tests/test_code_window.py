@@ -389,9 +389,15 @@ class StudioCodeTabTests(unittest.TestCase):
         self.assertEqual(names[:3], ["Designer", "AI Design", "Code"])
         self.assertEqual([window.primary_nav.tabText(i) for i in range(window.primary_nav.count())], names)
         tabs.setCurrentWidget(window.designer_workspace)
+        # Since the Code IDE (docs/CODE_SECTION.md) the Code tab is the
+        # CodeSection; the Code window is its pinned Design tab, and the
+        # Designer's action opens the section on that tab.
+        section = window._code_tab
+        section.tabs.setCurrentIndex(section.tabs.count() - 1)
         code = window.designer_workspace.open_code_window()
-        self.assertIs(code, window._code_tab)
-        self.assertIs(tabs.currentWidget(), code)
+        self.assertIs(code, section.design)
+        self.assertIs(tabs.currentWidget(), section)
+        self.assertIs(section.tabs.currentWidget(), code)
         self.assertFalse(code.isWindow())
         # The tab follows the design like the window did.
         window.designer_workspace.add_widget("ShGauge")
