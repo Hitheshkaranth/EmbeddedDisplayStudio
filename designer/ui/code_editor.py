@@ -260,7 +260,82 @@ class PythonHighlighter(_RuleHighlighter):
     of the line ("comment"). A '#' inside a string is not a comment. Same
     set_palette contract as the others."""
 
-    _rules = ()
+    _KEYWORDS = (
+        "False", "None", "True", "and", "as", "assert", "async", "await",
+        "break", "class", "continue", "def", "del", "elif", "else", "except",
+        "finally", "for", "from", "global", "if", "import", "in", "is",
+        "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
+        "while", "with", "yield",
+    )
+    _TYPES = (
+        "self", "cls",
+        "bool", "bytearray", "bytes", "complex", "dict", "enumerate", "float",
+        "frozenset", "int", "iter", "list", "map", "object", "range", "reversed",
+        "set", "slice", "staticmethod", "str", "super", "tuple", "type",
+        "zip", "property", "classmethod", "staticmethod",
+        "Exception", "ValueError", "TypeError", "KeyError", "IndexError",
+        "AttributeError", "ImportError", "OSError", "IOError", "FileNotFoundError",
+        "StopIteration", "RuntimeError", "NotImplementedError", "OverflowError",
+        "ZeroDivisionError", "MemoryError", "GeneratorExit", "SystemExit",
+        "KeyboardInterrupt", "ArithmeticError", "LookupError", "EnvironmentError",
+    )
+    _rules = (
+        (r"^(\s*)(@[\w.]+)", "property"),
+        (r"\b(?:" + "|".join(_KEYWORDS) + r")\b", "keyword"),
+        (r"\b(?:" + "|".join(_TYPES) + r")\b", "type"),
+        (r"\b(?:0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?[jJ]?)\b", "number"),
+    )
+
+    def highlightBlock(self, text: str) -> None:
+        super().highlightBlock(text)
+
+        comment_fmt = self._formats["comment"]
+
+        # Handle triple-quoted strings that may span multiple lines.
+        state = self.previousBlockState()
+        if state == 1:
+            end = text.find('"""')
+            if end < 0:
+                end = text.find("'''")
+            if end < 0:
+                self.setFormat(0, len(text), self._formats["string"])
+                self.setCurrentBlockState(1)
+                return
+            if end > 0:
+                self.setFormat(0, end, self._formats["string"])
+            self.setFormat(end, 3, self._formats["string"])
+            self.setCurrentBlockState(0)
+
+        i = 0
+        n = len(text)
+        while i < n:
+            if text[i:i + 3] in ('"""', "'''"):
+                quote = text[i:i + 3]
+                end = text.find(quote, i + 3)
+                if end < 0:
+                    self.setFormat(i, n - i, self._formats["string"])
+                    self.setCurrentBlockState(1)
+                    return
+                self.setFormat(i, end + 3 - i, self._formats["string"])
+                i = end + 3
+            elif text[i] in ('"', "'"):
+                quote = text[i]
+                j = i + 1
+                while j < n and text[j] != quote:
+                    if text[j] == "\\":
+                        j += 1
+                    j += 1
+                self.setFormat(i, min(j + 1, n) - i, self._formats["string"])
+                i = min(j + 1, n)
+            else:
+                i += 1
+
+        self.setCurrentBlockState(0)
+
+        # Handle # comments (not inside strings, which the loop above handled).
+        hash_pos = text.find("#")
+        if hash_pos >= 0:
+            self.setFormat(hash_pos, n - hash_pos, comment_fmt)
 
 
 class JsonHighlighter(_RuleHighlighter):
