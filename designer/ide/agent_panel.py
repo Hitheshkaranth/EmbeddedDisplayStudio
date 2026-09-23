@@ -464,13 +464,13 @@ class AgentPanel(QWidget):
         caption = QLabel("Agent")
         caption.setObjectName("agentCaption")
         header.addWidget(caption)
+        header.addStretch(1)
         self.model_combo = QComboBox()
         self.model_combo.setObjectName("agentModel")
         self.model_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.model_combo.setMinimumContentsLength(14)
         self.model_combo.setToolTip("The model the agent uses")
         self.model_combo.currentIndexChanged.connect(self._model_picked)
-        header.addWidget(self.model_combo, 1)
         self.new_chat_button = QToolButton()
         self.new_chat_button.setObjectName("agentNewChat")
         self.new_chat_button.setText("New chat")
@@ -479,6 +479,9 @@ class AgentPanel(QWidget):
         self.new_chat_button.clicked.connect(self.new_chat)
         header.addWidget(self.new_chat_button)
         column.addLayout(header)
+        # Model ids run long ('provider/vendor/Model-35B-A3B-NVFP4'): a row
+        # of their own, the full label on hover.
+        column.addWidget(self.model_combo)
 
         self.state_label = _label("", Qt.PlainText, "agentState")
         self.state_label.setVisible(False)
@@ -581,6 +584,7 @@ class AgentPanel(QWidget):
 
     def _model_picked(self, _index: int) -> None:
         model = self.selected_model()
+        self.model_combo.setToolTip(model.label if model is not None else "The model the agent uses")
         if not self._filling_models and model is not None:
             QSettings("MIL-HMI", "Deployer").setValue(SETTINGS_MODEL_KEY, model.label)
 

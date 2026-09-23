@@ -65,7 +65,7 @@ class CodeSection(QWidget):
         self.tree = ProjectTree()
         self.picker = WidgetPicker(workspace)
         self.tabs = EditorTabs()
-        self.tabs.add_pinned(self.design, "Design", "palette", handlers={
+        self.tabs.add_pinned(self.design, "Design", "components", handlers={
             "save": workspace.save,
             "undo": workspace.undo_stack.undo,
             "redo": workspace.undo_stack.redo,
@@ -174,10 +174,10 @@ class CodeSection(QWidget):
         self.undo_action = action("Undo", self.tabs.undo, "arrow-back-up", "Undo (Ctrl+Z)")
         self.redo_action = action("Redo", self.tabs.redo, "arrow-forward-up", "Redo (Ctrl+Y)")
         self.save_action = action("Save", lambda: self.tabs.save(), "device-floppy", "Save (Ctrl+S)")
-        self.save_all_action = action("Save all", self.tabs.save_all, "files", "Save all (Ctrl+Shift+S)")
+        self.save_all_action = action("Save all", self.tabs.save_all, "device-floppy", "Save all (Ctrl+Shift+S)")
         bar.addSeparator()
-        self.files_action = action("Files", self._toggle_left, "folder", "Show the Files and Widgets pane", True)
-        self.agent_action = action("Agent", self._toggle_agent, "message-chatbot", "Show the coding agent", True)
+        self.files_action = action("Files", self._toggle_left, "list-tree", "Show the Files and Widgets pane", True)
+        self.agent_action = action("Agent", self._toggle_agent, "sparkles", "Show the coding agent", True)
         layout.addWidget(bar)
 
         self.left = QTabWidget()
@@ -252,9 +252,10 @@ class CodeSection(QWidget):
         self.message.emit(f"Saved {os.path.basename(path)}")
 
     def _tab_changed(self, _index: int) -> None:
+        # The navigator shows what the editor is about: widgets beside the
+        # design, the files beside a file.
         on_design = self.tabs.currentWidget() is self.design
-        if on_design and self.left.currentIndex() == FILES_TAB and not self.tabs.open_paths():
-            self.left.setCurrentIndex(WIDGETS_TAB)
+        self.left.setCurrentIndex(WIDGETS_TAB if on_design else FILES_TAB)
 
     def _choose_folder(self) -> None:
         start = self.root() or os.path.expanduser("~")
