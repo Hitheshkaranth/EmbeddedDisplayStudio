@@ -499,7 +499,112 @@ if __name__ == "__main__":
 
 ---
 
-## 8. Known Deviations and Implementation Notes
+## 8. `tagsim` - Flying a Panel That Has No Aircraft Behind It
+
+`hmi-hwd --sim` fakes the **hardware** channels: `ai.pot` ramps, `di.button`
+toggles, the tags a wiring loom would provide. It knows nothing of the tags a
+Studio design invents (`nav.pitch`, `eng1.egt`, `fuel.left.qty`), so a bench
+panel running a designed screen sits at zero on every instrument.
+
+`daemon/tagsim.py` fills that gap. It speaks the same link as the daemon
+(Section 2: UDP, `subscribe`, `{"t":"tags"}` frames), takes its tag list from
+the **deployed design**, and fills those tags from **one flight**.
+
+### One aeroplane, not twenty dials
+
+There is a single aircraft state. It taxis, rotates, climbs, cruises, turns,
+descends and lands, then starts again. Altitude, vertical speed, pitch,
+airspeed, Mach, N1, EGT, oil pressure, OAT, fuel, heading and bank are all
+read from that one state, so the screen agrees with itself:
+
+* the nose is up while the altimeter climbs, and down while it unwinds;
+* the wing is down **only** while the heading is changing, and on the side
+  it is turning towards;
+* true airspeed and Mach follow the indicated speed and the altitude;
+* EGT and oil pressure follow N1;
+* OAT falls with altitude at the standard lapse rate;
+* fuel only ever falls, and the trip distance is the area under the speed.
+
+The profile is a table of keyframes (`KEYFRAMES`) interpolated linearly, so
+every value varies linearly between the points of the flight -- which is what
+makes a needle look driven rather than eased. `state_at(t, duration)` is a
+pure function of the time, so a restarted simulator picks the flight up
+exactly where the old one left it.
+
+    python3 daemon/tagsim.py --print-flight 20     # the profile, as a table
+
+### Putting a quantity on a dial
+
+Each tag is matched to a part of the flight by what its name measures
+(`nav.heading` -> heading, `eng1.egt` -> EGT, `fuel.right.qty` -> the right
+tank), then mapped onto the scale of the widget that draws it, in this order:
+
+| Order | Source | Example |
+|---|---|---|
+| 1 | The design's own scale | `minimumValue`/`maximumValue` on the widget |
+| 2 | The kit's default for that widget type | `ShTape` 0-250, `ShEngineBar` 0-100 |
+| 3 | The quantity's natural range | altitude 0-38 000 ft, Mach 0-0.92 |
+
+So a needle always sweeps the dial it is actually drawn on. If an altimeter
+should read real feet rather than a fraction of its tape, give the tape that
+range in the Designer: rule 1 wins, and tagsim follows.
+
+Lamps are steady rather than blinking: a tag that reads like a state
+(`sys.elec_ok`, `nav.gps1_fix`) is lit, one that reads like a fault
+(`sys.fire_detected`) is dark, and `gear.*` and `autopilot.*` follow the
+flight. Ramps that cross a binding's `warning`/`critical` threshold raise
+real alarms, so the alarm table fills by itself.
+
+### Running it
+
+```bash
+# What each tag will report, without sending anything
+python3 daemon/tagsim.py --project /opt/hmi_apps/current/project.edsui --print-plan
+
+# Serve on 5010, leaving hmi-hwd on 5000 for the real inputs
+python3 daemon/tagsim.py --project /opt/hmi_apps/current/project.edsui --port 5010
+```
+
+On the panel, install it as a unit beside the daemon. Note the interpreter:
+the image `python3` is `python3-core` only, so use the complete CPython at
+`/opt/hmi-python`.
+
+```bash
+scp daemon/tagsim.py          root@<panel>:/usr/lib/hmi/tagsim.py
+scp daemon/hmi-tagsim.service root@<panel>:/etc/systemd/system/
+
+# Point the runtime at the simulator instead of the hardware daemon
+echo 'HMI_UI_EXTRA_ARGS=--daemon-port 5010' >> /etc/default/hmi-ui
+
+systemctl daemon-reload
+systemctl enable --now hmi-tagsim
+systemctl restart hmi-ui          # journal should say "daemon link online"
+```
+
+To go back to real inputs, drop the `HMI_UI_EXTRA_ARGS` line from
+`/etc/default/hmi-ui`, `systemctl disable --now hmi-tagsim`, and restart
+`hmi-ui`. Nothing else on the panel is touched: `hmi-hwd` keeps running on
+5000 throughout.
+
+### Options
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--project PATH` | `/opt/hmi_apps/current/project.edsui` | the design whose tags should fly |
+| `--port N` | `5010` | UDP port to serve on (`5000` stands in for `hmi-hwd`) |
+| `--host ADDR` | `127.0.0.1` | interface to bind |
+| `--hz N` | `20` | frames per second |
+| `--duration N` | `240` | seconds for one taxi-to-landing flight |
+| `--seconds N` | `0` | stop after this long; 0 runs until stopped |
+| `--print-plan` | - | print what each tag reports, then exit |
+| `--print-flight N` | - | print N samples of the flight, then exit |
+
+A new deploy rewrites `/opt/hmi_apps/current`; `systemctl restart hmi-tagsim`
+picks up the new design's tags.
+
+---
+
+## 9. Known Deviations and Implementation Notes
 
 1. **ADC Linear Transformation (`gain` and `transform_offset`):**
    * *Contract Section 8* states ADC values are calculated as `(raw + offset) * scale`.

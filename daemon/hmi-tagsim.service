@@ -1,0 +1,28 @@
+[Unit]
+# Bench demo: drives every tag the deployed design binds, so a panel with
+# no aircraft behind it still looks like it is flying. It stands beside
+# hmi-hwd (port 5000) rather than replacing it; point the runtime at this
+# port in /etc/default/hmi-ui:
+#
+#     HMI_UI_EXTRA_ARGS=--daemon-port 5010
+#
+# and remove that line to go back to the real inputs.
+Description=HMI tag simulator (bench demo feed)
+After=network.target
+Before=hmi-ui.service
+
+[Service]
+Type=simple
+# The image python3 is python3-core only; /opt/hmi-python is the complete
+# CPython the installer puts there.
+ExecStart=/opt/hmi-python/bin/python3 /usr/lib/hmi/tagsim.py \
+          --project /opt/hmi_apps/current/project.edsui \
+          --port 5010 --hz 20
+Restart=on-failure
+RestartSec=2
+# A new deploy rewrites /opt/hmi_apps/current: restarting picks up the new
+# design's tags without anyone remembering to.
+ExecStartPre=/bin/sh -c 'test -f /opt/hmi_apps/current/project.edsui'
+
+[Install]
+WantedBy=multi-user.target
