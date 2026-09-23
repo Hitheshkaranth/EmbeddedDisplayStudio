@@ -2,6 +2,7 @@
 //
 // Spec: ui/qml/Shadcn/ShTape.qml (moving scale, fixed value box, caption).
 // Default size 80x260.
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -16,6 +17,7 @@ typedef struct {
     char side[8];
     lv_obj_t *bg, *valueBox, *valueLabel, *captionLabel;
     lv_obj_t *tickLabels[MAX_TICKS];
+    lv_obj_t *tickMarks[MAX_TICKS];
     int nTicks;
 } state_t;
 
@@ -39,43 +41,62 @@ static void update_scale(hmi_widget_t *w)
     int nModel = (int)(st->span / st->step) + 3;
     if (nModel > MAX_TICKS) nModel = MAX_TICKS;
 
-    // Center tick value around clamped value
-    int centerIdx = (int)(st->span / st->step / 2);
-    double centerValue = clamped - centerIdx * st->step;
+    // Ticks sit on whole steps, not on offsets from the current reading, so
+    // the numbers stay round and the tape scrolls past them. Anchoring them
+    // to the value instead made the scale travel with the needle, which
+    // reads as a value that merely changes rather than a moving tape.
+    bool leftSide = strcmp(st->side, "left") == 0;
+    double firstTick = floor(clamped / st->step + 0.5)
+                       - floor(st->span / st->step / 2.0) - 1;
 
     st->nTicks = 0;
     for (int i = 0; i < nModel; i++) {
-        double tickValue = (centerValue + i * st->step);
-        if (tickValue < st->minimumValue || tickValue > st->maximumValue) continue;
-
-        // y = scaleH / 2 - (tickValue - clamped) * pxPerUnit
+        double tickValue = (firstTick + i) * st->step;
         int32_t y = (int32_t)(scaleH / 2.0 - (tickValue - clamped) * pxPerUnit);
 
         lv_obj_t *lbl = st->tickLabels[i];
         if (!lbl) {
             lbl = hmi_make_label(bg, hmi_font_size("fontSizeXs"), 400, hmi_colour("efisText"), "");
-            lv_obj_set_width(lbl, 30);
-            lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
             st->tickLabels[i] = lbl;
         }
+        lv_obj_t *mark = st->tickMarks[i];
+        if (!mark) {
+            mark = lv_obj_create(bg);
+            lv_obj_remove_style_all(mark);
+            lv_obj_set_size(mark, 10, 2);
+            lv_obj_set_style_bg_color(mark, hmi_colour("efisLine"), 0);
+            lv_obj_set_style_bg_opa(mark, LV_OPA_COVER, 0);
+            st->tickMarks[i] = mark;
+        }
 
-        // Position
-        lv_obj_set_pos(lbl, 0, y - 6);
-        lv_obj_set_height(lbl, 1);
+        bool shown = tickValue >= st->minimumValue && tickValue <= st->maximumValue
+                     && y >= -20 && y <= (int32_t)scaleH + 20;
+        if (!shown) {
+            lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(mark, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        lv_obj_remove_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(mark, LV_OBJ_FLAG_HIDDEN);
 
-        // Text
         char buf[16];
         snprintf(buf, sizeof buf, "%.0f", tickValue);
         lv_label_set_text(lbl, buf);
-
-        // Hide if outside visible area (with margin)
-        if (y < -20 || y > (int32_t)scaleH + 20)
-            lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
-        else
-            lv_obj_remove_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+        // The label needs its own height: clipped to a single pixel (which
+        // is what the QML delegate's height means, since QML does not clip
+        // its children) nothing was ever drawn.
+        lv_obj_set_width(lbl, (int32_t)W - 14);
+        lv_obj_set_height(lbl, LV_SIZE_CONTENT);
+        lv_obj_set_style_text_align(lbl, leftSide ? LV_TEXT_ALIGN_RIGHT : LV_TEXT_ALIGN_LEFT, 0);
+        lv_obj_update_layout(lbl);
+        lv_obj_set_pos(lbl, leftSide ? 0 : 14,
+                       (int32_t)lround(y - lv_obj_get_height(lbl) / 2.0));
+        lv_obj_set_pos(mark, leftSide ? (int32_t)W - 10 : 0, y - 1);
 
         st->nTicks++;
     }
+    // Ticks are created after the box, so they would otherwise draw over it.
+    lv_obj_move_foreground(st->valueBox);
 
     // Value box: centered vertically in scale area, full width
     lv_obj_set_pos(st->valueBox, 0, (int32_t)(scaleH / 2.0 - 13));
@@ -126,8 +147,10 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     state_t *st = lv_malloc_zeroed(sizeof *st);
     w->state = st;
     st->bg = bg;
-    for (int i = 0; i < MAX_TICKS; i++)
+    for (int i = 0; i < MAX_TICKS; i++) {
         st->tickLabels[i] = NULL;
+        st->tickMarks[i] = NULL;
+    }
 
     // Value box
     st->valueBox = lv_obj_create(bg);
@@ -170,8 +193,10 @@ static void destroy(hmi_widget_t *w)
 {
     state_t *st = w->state;
     if (!st) return;
-    for (int i = 0; i < MAX_TICKS; i++)
+    for (int i = 0; i < MAX_TICKS; i++) {
         if (st->tickLabels[i]) lv_obj_del(st->tickLabels[i]);
+        if (st->tickMarks[i]) lv_obj_del(st->tickMarks[i]);
+    }
     if (st->valueBox) lv_obj_del(st->valueBox);
     if (st->captionLabel) lv_obj_del(st->captionLabel);
     lv_free(st);

@@ -98,8 +98,14 @@ static void read_model(hmi_widget_t *w)
 {
     state_t *st = w->state;
     st->value = hmi_widget_num(w, "value", 0);
-    st->minValue = hmi_widget_num(w, "minValue", 0);
-    st->maxValue = hmi_widget_num(w, "maxValue", 100);
+    // Two spellings are in circulation: ShGauge.qml (and this port) call the
+    // range minValue/maxValue, while the palette and the generated schema
+    // call it minimum/maximum -- so a range set in the Designer never
+    // reached the panel, the gauge silently kept 0..100, and every reading
+    // outside that showed as "--". Accept either rather than pick a winner
+    // and break the designs that already use the other one.
+    st->minValue = hmi_widget_num(w, "minValue", hmi_widget_num(w, "minimum", 0));
+    st->maxValue = hmi_widget_num(w, "maxValue", hmi_widget_num(w, "maximum", 100));
     st->thresholdWarning = hmi_widget_num(w, "thresholdWarning", 75);
     st->thresholdFault = hmi_widget_num(w, "thresholdFault", 90);
 }
@@ -128,8 +134,10 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
     state_t *st = w->state;
     if (!st) return;
     if (strcmp(prop, "value") == 0) st->value = hmi_value_as_num(value, st->value);
-    else if (strcmp(prop, "minValue") == 0) st->minValue = hmi_value_as_num(value, st->minValue);
-    else if (strcmp(prop, "maxValue") == 0) st->maxValue = hmi_value_as_num(value, st->maxValue);
+    else if (strcmp(prop, "minValue") == 0 || strcmp(prop, "minimum") == 0)
+        st->minValue = hmi_value_as_num(value, st->minValue);
+    else if (strcmp(prop, "maxValue") == 0 || strcmp(prop, "maximum") == 0)
+        st->maxValue = hmi_value_as_num(value, st->maxValue);
     else if (strcmp(prop, "thresholdWarning") == 0) st->thresholdWarning = hmi_value_as_num(value, st->thresholdWarning);
     else if (strcmp(prop, "thresholdFault") == 0) st->thresholdFault = hmi_value_as_num(value, st->thresholdFault);
     else if (strcmp(prop, "label") == 0) { lv_label_set_text(st->label, hmi_value_as_str(value, "")); return; }

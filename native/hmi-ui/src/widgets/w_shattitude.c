@@ -38,20 +38,27 @@ static void draw_cb(lv_event_t *e)
     hmi_draw_t d = hmi_draw_begin(e);
     double W = w->width, H = w->height, cx = W / 2, cy = H / 2;
     double R = -st->roll * M_PI / 180, sinR = sin(R), cosR = cos(R);
-    double pitchOff = st->pitch * st->pixelsPerDegree;
     lv_color_t sky = hmi_colour("efisSky"), ground = hmi_colour("efisGround");
     lv_color_t line = hmi_colour("efisLine"), aircraft = hmi_colour("efisAircraft");
 
-    // 1. sky / ground, row by row: y' = (x-cx) sinR + (y-cy) cosR + pitchOff; sky where y' < 0
+    // 1. sky / ground. The boundary is the horizon line itself -- the same
+    // point and direction the ladder and the drawn line use -- so the fill
+    // cannot drift away from the line it is supposed to meet. Taking the
+    // frame from anywhere else inverted both axes here: a climb showed
+    // ground and a right bank dropped the wrong wing, while the line and
+    // the ladder over the top of it moved correctly.
+    //   y'' = -(x - hx) sinR + (y - hy) cosR, and the sky is y'' < 0.
+    double hx, hy;
+    ladder_point(w, st, 0, &hx, &hy);
     for (int yi = 0; yi < (int)H; ++yi) {
         double y = yi + 0.5;
-        double base = (y - cy) * cosR + pitchOff;           // y' at x = cx
+        double base = -(cx - hx) * sinR + (y - hy) * cosR;    // y'' at x = cx
         if (fabs(sinR) < 1e-6) {
             hmi_draw_fill(&d, 0, yi, W, 1, base < 0 ? sky : ground, LV_OPA_COVER, 0);
             continue;
         }
-        double xh = cx - base / sinR;                         // where y' crosses 0 on this row
-        bool skyLeft = sinR > 0;                              // for x < xh, y' has the sign of -sinR*(xh-x)... sky on the left when sinR > 0
+        double xh = hx + (y - hy) * cosR / sinR;               // where y'' crosses 0
+        bool skyLeft = sinR < 0;                               // y'' falls with x when sinR > 0
         if (xh <= 0) hmi_draw_fill(&d, 0, yi, W, 1, skyLeft ? ground : sky, LV_OPA_COVER, 0);
         else if (xh >= W) hmi_draw_fill(&d, 0, yi, W, 1, skyLeft ? sky : ground, LV_OPA_COVER, 0);
         else {

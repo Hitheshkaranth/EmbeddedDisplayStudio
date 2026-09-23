@@ -3,6 +3,7 @@
 // Spec: ui/qml/Shadcn/ShVSI.qml (scale, needle, units).
 // Default size 70x220.
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
 
 #include "draw_util.h"
@@ -55,21 +56,28 @@ static void update_scale(hmi_widget_t *w)
             lv_obj_set_height(st->ticks[i], 2);
         }
 
-        // Label: only for ±2000 (i=0, i=4), show "2" or "-2"
+        // Labels are the rung's rate in thousands, unsigned, as the spec
+        // has them. The port hard-coded "2" and "-2", so the half-range
+        // rungs were never labelled -- the needle swept a scale with only
+        // its two ends written on it -- and any VSI whose range was not
+        // 2000 was labelled with someone else's numbers.
+        double tickValue = range * tv;
+        char buf[16] = "";
+        if (fabs(tickValue) >= 1000)
+            snprintf(buf, sizeof buf, "%.0f", fabs(tickValue) / 1000.0);
         if (!st->tickLabels[i]) {
             st->tickLabels[i] = hmi_make_label(bg, hmi_font_size("fontSizeXs"), 400,
                                                  hmi_colour("efisText"), "");
-            lv_obj_set_pos(st->tickLabels[i], 20, y - 6);
         }
-        if (i == 0) {
-            lv_label_set_text(st->tickLabels[i], "2");
+        lv_label_set_text(st->tickLabels[i], buf);
+        lv_obj_set_height(st->tickLabels[i], LV_SIZE_CONTENT);
+        lv_obj_update_layout(st->tickLabels[i]);
+        lv_obj_set_pos(st->tickLabels[i], 20,
+                       (int32_t)lround(y - lv_obj_get_height(st->tickLabels[i]) / 2.0));
+        if (buf[0])
             lv_obj_remove_flag(st->tickLabels[i], LV_OBJ_FLAG_HIDDEN);
-        } else if (i == 4) {
-            lv_label_set_text(st->tickLabels[i], "-2");
-            lv_obj_remove_flag(st->tickLabels[i], LV_OBJ_FLAG_HIDDEN);
-        } else {
+        else
             lv_obj_add_flag(st->tickLabels[i], LV_OBJ_FLAG_HIDDEN);
-        }
     }
 
     // Needle: width = parent.width - 26, height = 3
