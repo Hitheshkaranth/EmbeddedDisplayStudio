@@ -19,6 +19,7 @@ from PySide6.QtQml import QQmlComponent, QQmlContext
 
 from schema.manifest import THEMES, preview_entry, theme_of
 from .native_preview import NativePreview
+from .panel_mirror import PanelMirror
 from .bezel import BEZEL_MARGIN_PCT, bezel_logo, paint_device_bezel
 
 # Add repo's gui/ to sys.path to import tagengine
@@ -194,6 +195,12 @@ class DevicePanel(QWidget):
         self._qml_capture_timer = QTimer(self)
         self._qml_capture_timer.setInterval(33)
         self._qml_capture_timer.timeout.connect(self._capture_qml_frame)
+
+        # The panel's own screen, when one is connected and running: the
+        # still render above cannot show values that are moving.
+        self.mirror = PanelMirror(self)
+        self.mirror.frame.connect(self._on_preview_frame)
+        self.mirror.failed.connect(self.previewMessage.emit)
 
         self.native_preview = NativePreview(self)
         self.native_preview.frameReady.connect(self._on_preview_frame)

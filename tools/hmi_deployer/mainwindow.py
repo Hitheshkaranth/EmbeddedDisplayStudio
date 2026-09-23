@@ -380,6 +380,13 @@ class MainWindow(QMainWindow):
         `linkState` property, which the stylesheet colours.
         """
         text, icon_name, enabled = self.LINK_STATES.get(state, self.LINK_STATES["idle"])
+        # Mirroring needs a panel on the other end; losing the link also
+        # stops a mirror that is already running.
+        if hasattr(self, "btn_mirror"):
+            connected = state == "connected"
+            self.btn_mirror.setEnabled(connected)
+            if not connected and self.btn_mirror.isChecked():
+                self.btn_mirror.setChecked(False)
         self.btn_test.setText(text)
         self.btn_test.setEnabled(enabled)
         self._themed_icon(self.btn_test, icon_name)
@@ -1115,6 +1122,23 @@ class MainWindow(QMainWindow):
         self.btn_live_preview.setFixedHeight(28)
         deploy_body_layout.addWidget(self.btn_live_preview)
         self._live_preview = None
+
+        # The bezel above draws the design as hmi-ui would render it, once,
+        # with nothing behind it. Once an application is actually running on
+        # a panel that still frame disagrees with the glass, whose values are
+        # moving; this mirrors the panel itself, a frame a second.
+        self.btn_mirror = QPushButton("Mirror the panel")
+        self.btn_mirror.setToolTip(
+            "Shows what the connected panel is displaying right now, live "
+            "values and all, refreshed once a second."
+        )
+        self.btn_mirror.setProperty("variant", "secondary")
+        self.btn_mirror.setCheckable(True)
+        self._themed_icon(self.btn_mirror, "device-desktop")
+        self.btn_mirror.toggled.connect(self.toggle_panel_mirror)
+        self.btn_mirror.setEnabled(False)
+        self.btn_mirror.setFixedHeight(28)
+        deploy_body_layout.addWidget(self.btn_mirror)
 
         # Deployment progress. A deploy spends most of its wall clock inside
         # one silent scp, so without this the tool looks frozen for minutes on
@@ -2060,6 +2084,35 @@ class MainWindow(QMainWindow):
         self.load_bundle(bundle_dir)
         self.log("Designer preview loaded.")
         self.open_live_preview()
+
+    def toggle_panel_mirror(self, on: bool):
+        """Show the connected panel's own screen in the bezel, or stop.
+
+        The runtime writes what it is displaying on SIGUSR1; the mirror
+        signals, copies and paints that at a frame a second.
+        """
+        mirror = self.device_panel.mirror
+        if not on:
+            if mirror.is_running():
+                mirror.stop()
+                self.log("Panel mirror stopped.")
+            return
+        host = self.inp_host.text().strip()
+        if not host:
+            self.btn_mirror.setChecked(False)
+            QMessageBox.information(self, "Mirror the panel",
+                                    "Connect to a panel first.")
+            return
+        self.log(f"Mirroring {host}: one frame a second from the panel.")
+        mirror.start(host, self.inp_user.text().strip(),
+                     self.ssh_port(), self.inp_key.text().strip())
+
+    def _on_mirror_stopped(self):
+        if self.btn_mirror.isChecked():
+            self.btn_mirror.setChecked(False)
+
+    def _on_mirror_failed(self, message: str):
+        self.log(f"Panel mirror: {message}")
 
     def open_live_preview(self) -> None:
         """Run the loaded bundle in its own window on the Studio's tag engine.
