@@ -169,11 +169,30 @@ class PropertyEditor(QWidget):
         self.form.setRowWrapPolicy(QFormLayout.DontWrapRows)
         self.form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
 
+    def _clear_form(self):
+        """Empty the form without deleting an editor that is still talking.
+
+        QFormLayout.removeRow deletes the row's widgets there and then. Every
+        editor here reports edits through propertyEdited, and handling one
+        rebuilds this panel -- so typing in the font size spin box asked Qt
+        to destroy that spin box in the middle of its own valueChanged, and
+        the process died in Qt6Widgets the moment the signal returned into
+        the freed object. Taking the rows and deferring the delete lets the
+        editor finish speaking before it goes.
+        """
+        while self.form.rowCount():
+            row = self.form.takeRow(0)
+            for item in (row.labelItem, row.fieldItem):
+                widget = item.widget() if item is not None else None
+                if widget is not None:
+                    widget.hide()
+                    widget.setParent(None)
+                    widget.deleteLater()
+
     def set_widget(self, widget, positioned=False):
         self.widget_model = widget
         self.setMinimumHeight(0)
-        while self.form.rowCount():
-            self.form.removeRow(0)
+        self._clear_form()
         if widget is None:
             empty = _EmptyState("pointer", "Nothing selected",
                                 "Click a widget on the canvas, or pick one in Layers, to edit it here.")
