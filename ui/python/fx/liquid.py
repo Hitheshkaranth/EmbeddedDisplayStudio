@@ -5,7 +5,8 @@ packages/liquid-gooey, effect="move" on a tab bar (the Tabs demo in
 sites/gooey/playground/demos/Tabs.tsx + styles.css). The web goo is an SVG
 blur + alpha-threshold filter; with no numpy this port builds the goo
 geometrically: the selected pill (a rounded rect, radius h/2) is a body on
-a spring (k=380, c=18, semi-implicit Euler, substeps <= 1/60 s) chasing a
+a spring (k=380, c=24.5 -- the Tabs demo's damping; observer.ts's generic
+18 overshoots a whole tab -- semi-implicit Euler, substeps <= 1/60 s) chasing a
 carrier that tweens x and width over 250 ms with cubic-bezier(.3,1.05,.4,1);
 velocity stretch (st = min(.18, speed*.0006), scale (1+st, 1/(1+.65st))
 along the motion); a tail droplet on its own spring (k=170, c=22) with two
@@ -30,7 +31,7 @@ from PySide6.QtWidgets import QStyle, QStyleOptionTab, QTabBar
 
 from . import FxClock, animations_enabled, clamp01, cubic_bezier
 
-SPRING_K, SPRING_C = 380.0, 18.0
+SPRING_K, SPRING_C = 380.0, 24.5
 TAIL_K, TAIL_C = 170.0, 22.0
 SLIDE_MS = 250
 
