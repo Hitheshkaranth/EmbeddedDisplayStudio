@@ -12,9 +12,17 @@ network work happens elsewhere.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, QTimer, Signal, QThread
 
-from designer.ide.opencode_client import ModelRef
+from designer.ide.opencode_client import (
+    ModelRef,
+    OpencodeClient,
+    OpencodeError,
+    OpencodeServer,
+    EventNormalizer,
+    find_opencode,
+    INSTALL_HINT,
+)
 
 STOPPED, STARTING, READY, ERROR = "stopped", "starting", "ready", "error"
 
