@@ -40,6 +40,79 @@ class TestAIDesignGenerator(unittest.TestCase):
         # The widget id is a QML id, not a tag: camelCase stays.
         self.assertIn("pumpA_runToggle", by_id)
 
+    def test_a_binding_on_the_wrong_property_moves_to_the_only_one_there_is(self):
+        """The model bound ShAlarmTable "data"; the table takes "alarms"."""
+        from tools.hmi_deployer.ai_generator import AIDesignGenerator
+        gen = AIDesignGenerator()
+        table, lamp = gen._convert_widgets([
+            {"type": "ShAlarmTable", "id": "alarms",
+             "geometry": {"x": 0, "y": 0, "width": 400, "height": 200},
+             "bindings": {"data": {"tag": "*"}}},
+            {"type": "ShAnnunciator", "id": "lamp",
+             "geometry": {"x": 0, "y": 220, "width": 175, "height": 48},
+             "bindings": {"value": {"tag": "di.fault", "critical": "> 3"}}},
+        ])
+        self.assertEqual(list(table.bindings), ["alarms"])
+        # Two bindable properties (lit, severity): no single guess to make.
+        # The threshold binding stays where the model put it and drives both.
+        self.assertEqual(list(lamp.bindings), ["value"])
+
+    def test_an_action_on_a_signal_the_widget_lacks_is_dropped(self):
+        """ShAlert "clicked": the alert cannot fire it, and validation then
+        refused the whole design at deploy."""
+        from tools.hmi_deployer.ai_generator import AIDesignGenerator
+        alert, button = AIDesignGenerator()._convert_widgets([
+            {"type": "ShAlert", "id": "engineAlert",
+             "geometry": {"x": 0, "y": 0, "width": 300, "height": 60},
+             "actions": {"clicked": {"kind": "navigate", "page": "alarms"}}},
+            {"type": "ShButton", "id": "start",
+             "geometry": {"x": 0, "y": 80, "width": 120, "height": 48},
+             "actions": {"clicked": {"kind": "write", "tag": "do.start"}}},
+        ])
+        self.assertEqual(alert.actions, {})
+        self.assertEqual(list(button.actions), ["clicked"])
+
+    def test_links_to_pages_the_design_never_made_are_dropped(self):
+        from designer.model import DesignerAction, DesignerProject, DesignerWidget
+        from tools.hmi_deployer.ai_generator import drop_dangling_navigation
+        project = DesignerProject()
+        project.pages[0].widgets = [
+            DesignerWidget("ShButton", "toAlarms", {"x": 0, "y": 0, "width": 100, "height": 48}, {},
+                           actions={"clicked": DesignerAction("navigate", page="alarms")}),
+            DesignerWidget("ShButton", "toMain", {"x": 0, "y": 60, "width": 100, "height": 48}, {},
+                           actions={"clicked": DesignerAction("navigate", page=project.pages[0].id)}),
+        ]
+        self.assertEqual(drop_dangling_navigation(project), ["toAlarms -> alarms"])
+        widgets = {w.id: w for w in project.all_widgets()}
+        self.assertEqual(widgets["toAlarms"].actions, {})
+        self.assertEqual(list(widgets["toMain"].actions), ["clicked"])
+
+    def test_merged_sections_are_laid_out_together(self):
+        """Each section was composed alone and their heroes shared a slot."""
+        import copy
+        from designer.model import DesignerProject, DesignerWidget
+        from tools.hmi_deployer.ai_generator import AIDesignGenerator, merge_project_section
+
+        def section(ids):
+            project = DesignerProject()
+            project.screen.width, project.screen.height = 1024, 768
+            project.pages[0].widgets = [
+                DesignerWidget("ShGauge", wid, {"x": 312, "y": 184, "width": 400, "height": 400}, {})
+                for wid in ids]
+            return project
+
+        merged = merge_project_section(section(["rpm"]), section(["coolant"]))
+        merged = merge_project_section(merged, section(["oil"]))
+        gen = AIDesignGenerator()
+        gen.brief = "engine dashboard"
+        composed = gen.compose(copy.deepcopy(merged))
+        boxes = [w.geometry for w in composed.pages[0].widgets]
+        for i, a in enumerate(boxes):
+            for b in boxes[i + 1:]:
+                overlap_x = min(a["x"] + a["width"], b["x"] + b["width"]) - max(a["x"], b["x"])
+                overlap_y = min(a["y"] + a["height"], b["y"] + b["height"]) - max(a["y"], b["y"])
+                self.assertFalse(overlap_x > 0 and overlap_y > 0, (a, b))
+
     def test_a_tag_that_cannot_be_repaired_is_left_for_validation_to_name(self):
         from tools.hmi_deployer.ai_generator import _coerce_tag
         self.assertEqual(_coerce_tag("Relay"), "Relay")   # no dot: not a guess to make

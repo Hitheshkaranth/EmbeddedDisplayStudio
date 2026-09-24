@@ -477,7 +477,9 @@ class AiActionsTests(unittest.TestCase):
              "actions": {"toggled": {"kind": "write", "tag": "do.pump"}, "broken": 42}},
         ])
         self.assertEqual(widgets[0].actions["clicked"], DesignerAction("pulse", "do.start", ms=300))
-        self.assertEqual(widgets[0].actions["bogus"], DesignerAction("write", "not a dict or tag"))
+        # A signal the widget does not have can never fire; kept, it made
+        # validation refuse the whole design at deploy.
+        self.assertNotIn("bogus", widgets[0].actions)
         self.assertEqual(widgets[1].actions, {"toggled": DesignerAction("write", "do.pump")})
 
 

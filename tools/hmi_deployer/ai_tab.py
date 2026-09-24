@@ -45,7 +45,8 @@ from PySide6.QtWidgets import (
 
 from tools.hmi_deployer.ai_design import BYOK_PRESETS, ProviderConfig
 from tools.hmi_deployer.ai_generator import (
-    build_system_prompt, diff_projects, merge_project_section, summarize_widgets,
+    build_system_prompt, diff_projects, drop_dangling_navigation, merge_project_section,
+    summarize_widgets,
 )
 
 try:
@@ -2468,9 +2469,17 @@ class AIDesignTab(QWidget):
                 section_complete = bool(getattr(project, "_section_complete", True))
                 was_truncated = shell.truncated or bool(getattr(project, "_truncated", False))
                 if sectioned:
-                    project = (project if self._section_project is None
-                               else merge_project_section(self._section_project, project))
+                    if self._section_project is not None:
+                        # Each section was laid out alone; lay out the page
+                        # they make together, or their heroes share a slot.
+                        project = merge_project_section(self._section_project, project)
+                        if self.generator is not None and hasattr(self.generator, "compose"):
+                            project = self.generator.compose(project)
+                            shell.note_polish(getattr(self.generator, "last_polish", None))
                     self._section_project = project
+                if not sectioned or section_complete:
+                    for link in drop_dangling_navigation(project):
+                        self.statusMessage.emit(f"AI Design: dropped a link to a page it never made ({link})")
                 diff = diff_projects(self._canvas_project(), project)
                 applied = self.auto_apply.isChecked()
                 shell.note_changes(diff, applied)

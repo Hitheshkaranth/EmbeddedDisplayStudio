@@ -13,7 +13,7 @@ from typing import Optional
 from PySide6.QtCore import Signal, QObject
 from designer.model import DesignerAction, DesignerBinding, DesignerProject, DesignerPage, DesignerWidget
 from designer.model.project import TAG_RE
-from designer.palette.widget_registry import WidgetDefinition, WidgetRegistry
+from designer.palette.widget_registry import WidgetDefinition, WidgetRegistry, default_registry
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +228,26 @@ def merge_project_section(base, section):
     return merged
 
 
+def drop_dangling_navigation(project) -> list:
+    """Remove navigate actions whose target page the design never made.
+
+    Returns the "widget -> page" pairs removed. Run once the design is
+    complete: in a sectioned run a later section may still add the page.
+    A model links a button to an "alarms" page it then never builds, and
+    validation refused the whole design at deploy.
+    """
+    if project is None:
+        return []
+    page_ids = {page.id for page in project.pages}
+    removed = []
+    for widget in project.all_widgets():
+        for signal, action in list(widget.actions.items()):
+            if action.kind == "navigate" and action.page not in page_ids:
+                del widget.actions[signal]
+                removed.append(f"{widget.id} -> {action.page}")
+    return removed
+
+
 def summarize_widgets(project) -> str:
     """``7 widgets: ShGauge x2, ShButton x3, Text x2`` -- for the turn conclusion."""
     if project is None:
@@ -383,7 +403,10 @@ class AIDesignGenerator:
     """Parse AI output (QML code or JSON design spec) into DesignerProject."""
 
     def __init__(self, registry: Optional[WidgetRegistry] = None):
-        self.registry = registry or WidgetRegistry()
+        # Not an empty WidgetRegistry(): with no types in it every per-type
+        # safeguard below (unknown properties, bindings, actions, layout
+        # rules) silently does nothing.
+        self.registry = registry or default_registry()
         self.progress = GeneratorProgress()
         # Every parsed section goes through designer.layout.polish before it is
         # returned, so what reaches the canvas is composed, not a draft.
@@ -409,6 +432,19 @@ class AIDesignGenerator:
         before it is returned, and the PolishReport is kept in `last_polish`.
         """
         project = self._parse_output(ai_output, screen_width, screen_height)
+        self.last_polish = None
+        if project is None or not self.polish_enabled:
+            return project
+        return self.compose(project)
+
+    def compose(self, project):
+        """Lay out every page of `project` in place; returns it.
+
+        Also run on a sectioned design after each section is merged: every
+        section is composed as if it had the screen to itself, so merging
+        them put each section's hero in the same slot -- an RPM gauge, a
+        coolant gauge and a status lamp stacked in the middle of the panel.
+        """
         self.last_polish = None
         if project is None or not self.polish_enabled:
             return project
@@ -551,7 +587,16 @@ class AIDesignGenerator:
                     continue
                 if binding.tag:
                     binding.tag = _coerce_tag(binding.tag)
-                    bindings[str(prop)] = binding
+                    prop = str(prop)
+                    # A model binds the name it guesses ("data" on an alarm
+                    # table, "value" on an annunciator). Where the widget
+                    # takes exactly one bound property, that is what it meant.
+                    if definition is not None:
+                        declared = set(definition.properties) | set(definition.bindable_properties)
+                        only = definition.bindable_properties
+                        if prop not in declared and len(only) == 1 and only[0] not in bindings:
+                            prop = only[0]
+                    bindings[prop] = binding
 
             children = []
             for child_data in wdata.get("children", []):
@@ -566,6 +611,11 @@ class AIDesignGenerator:
                 try:
                     action = DesignerAction.from_data(value)
                 except (ValueError, TypeError):
+                    continue
+                # A signal the widget cannot emit ("clicked" on an ShAlert)
+                # can never run the action, and validation then refused the
+                # whole design at deploy.
+                if definition is not None and str(signal) not in definition.action_signals:
                     continue
                 if action.kind in ("write", "pulse", "navigate"):
                     if action.tag:
