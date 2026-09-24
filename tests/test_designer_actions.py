@@ -189,6 +189,18 @@ class ActionModelTests(unittest.TestCase):
         self.assertTrue(any(".g." in m and "warning threshold 'hot'" in m for m in messages), messages)
         self.assertFalse(any(".a." in m for m in messages), messages)
 
+    def test_capitalised_tags_in_a_saved_design_load_lowercase(self):
+        """A design AI Design saved with "do.pumpA.run" failed validation on
+        every open; the daemon would reject the capitals anyway."""
+        action = DesignerAction.from_data({"kind": "write", "tag": "do.pumpA.run", "value": True})
+        binding = DesignerBinding.from_data({"tag": "pumpA.pressure", "unit": "bar"})
+        self.assertEqual(action.tag, "do.pumpa.run")
+        self.assertEqual(binding.tag, "pumpa.pressure")
+        # Only case is repaired; a tag that is wrong another way stays as
+        # written, so validation can name it.
+        self.assertEqual(DesignerAction.from_data({"tag": "NotATag"}).tag, "NotATag")
+        self.assertEqual(DesignerBinding.from_data("*").tag, "*")
+
     def test_registry_declares_signals_for_controls(self):
         for kind, signals, state in (("ShButton", ("clicked",), ""), ("ShToggle", ("toggled",), "checked"),
                                      ("ShCheckbox", ("checkedChanged",), "checked"),

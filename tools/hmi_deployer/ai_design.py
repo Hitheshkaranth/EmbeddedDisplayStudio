@@ -155,11 +155,12 @@ def redact_url(url: str) -> str:
     return _SECRET_QUERY_RE.sub(r"\1***", url or "")
 
 
+# A placeholder only: AIDesignTab sets ai_generator.build_system_prompt(),
+# which asks for a Studio design (.edsui JSON) for the panel's LVGL runtime,
+# before every run. This used to ask for QML, which nothing here renders.
 DEFAULT_SYSTEM_PROMPT = (
-    "You are an expert Qt/QML UI designer for embedded HMI panels. "
-    "Generate clean, production-ready QML code using Shadcn-inspired "
-    "widget styles. Focus on clarity, proper layout containers, and "
-    "data binding to tag sources. Output ONLY QML code blocks."
+    "You design screens for embedded HMI panels as Studio designs "
+    "(.edsui JSON), which the panel's LVGL runtime draws."
 )
 
 

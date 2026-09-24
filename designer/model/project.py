@@ -49,6 +49,19 @@ def parse_threshold(text):
     return op, number
 
 
+def _lowercase_tag(tag: str) -> str:
+    """Lowercase a tag whose only fault is case ("do.pumpA.run").
+
+    Tags are lowercase by CONTRACT 2.5 and the daemon rejects anything else,
+    so no working design can depend on the capitals; AI Design wrote such
+    tags before it lowercased them itself, and those designs failed
+    validation on every open. Anything else is left as written, for
+    validation to name.
+    """
+    lowered = tag.lower()
+    return lowered if lowered != tag and TAG_RE.fullmatch(lowered) else tag
+
+
 @dataclass
 class DesignerBinding:
     tag: str
@@ -80,6 +93,8 @@ class DesignerBinding:
         for key in ("tag", "format", "unit", "warning", "critical"):
             if key in data:
                 data[key] = str(data[key])
+        if "tag" in data:
+            data["tag"] = _lowercase_tag(data["tag"])
         return cls(**data)
 
 
@@ -111,6 +126,8 @@ class DesignerAction:
         data = {k: value[k] for k in cls.__dataclass_fields__ if k in value}
         if "ms" in data:
             data["ms"] = int(data["ms"])
+        if isinstance(data.get("tag"), str):
+            data["tag"] = _lowercase_tag(data["tag"])
         return cls(**data)
 
     def to_dict(self) -> dict[str, Any]:
