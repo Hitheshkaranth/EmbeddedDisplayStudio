@@ -20,6 +20,8 @@ import importlib.util
 import os
 import sys
 
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
 
 def _stdlib_modules():
     """Every importable top-level standard-library module.
@@ -47,6 +49,26 @@ def _stdlib_modules():
         except (ImportError, ValueError, AttributeError):
             continue
     return found
+
+
+# Qt modules too large to carry for an application that might use them
+# (WebEngine is ~200 MB with its resources; WebView sits on it), and the
+# Designer plugin API, which applications do not import (QUiLoader is in
+# QtUiTools).
+_PYSIDE6_SKIP = ("QtWebEngine", "QtWebView", "QtDesigner")
+
+
+def _pyside6_modules():
+    """Every installed PySide6 Qt module but the ones in _PYSIDE6_SKIP.
+
+    The same gap as the standard library: the Studio's own imports decide
+    which Qt modules PyInstaller collects, so a customer application loading
+    a .ui file died in the preview on `No module named 'PySide6.QtUiTools'`.
+    """
+    import pkgutil
+    import PySide6
+    return [f"PySide6.{m.name}" for m in pkgutil.iter_modules(PySide6.__path__)
+            if m.name.startswith("Qt") and not m.name.startswith(_PYSIDE6_SKIP)]
 
 
 # SPECPATH is injected by PyInstaller and is this file's directory. Deriving
@@ -84,6 +106,9 @@ datas = [
     # hand-written brief raised FileNotFoundError inside the send path.
     (os.path.join(REPO_ROOT, "designer", "templates"),
      os.path.join("designer", "templates")),
+    # pip's vendored CA bundle (pip/_vendor/certifi/cacert.pem): without it
+    # the preview's installer cannot reach PyPI over HTTPS.
+    *collect_data_files("pip"),
 ]
 
 a = Analysis(
@@ -94,9 +119,13 @@ a = Analysis(
     # tagengine is reached through a sys.path insert at import time, and
     # schema.deps only through main.py's --deps-scan dispatch; neither is
     # visible to the dependency graph.
-    # ...and the standard library in full, for the customer application the
-    # preview hosts, whose imports nothing can see ahead of time.
-    hiddenimports=["hmi_loader.tagengine", "schema.deps", "pip", *_stdlib_modules()],
+    # pip in full, because it picks its commands by name through importlib
+    # ("pip" alone carried none of them, and the preview's installer died on
+    # `No module named 'pip._internal.commands.install'`). And the standard
+    # library and PySide6 in full, for the customer application the preview
+    # hosts, whose imports nothing can see ahead of time.
+    hiddenimports=["hmi_loader.tagengine", "schema.deps", *collect_submodules("pip"),
+                   *_stdlib_modules(), *_pyside6_modules()],
     hookspath=[],
     runtime_hooks=[],
     # The Studio drives the panel over ssh and previews Qt Widgets and QML.
@@ -104,6 +133,11 @@ a = Analysis(
     # download to something a machine builder will actually wait for.
     excludes=["tkinter", "matplotlib", "numpy", "PIL", "pytest", "PySide2"],
     noarchive=False,
+    # pip as source files on disk rather than inside the archive: its
+    # vendored distlib finds its resources through the module's loader and
+    # has no finder for PyInstaller's ("Unable to locate finder for
+    # 'pip._vendor.distlib'").
+    module_collection_mode={"pip": "py"},
 )
 
 pyz = PYZ(a.pure)

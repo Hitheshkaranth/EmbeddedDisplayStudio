@@ -871,7 +871,25 @@ class NativePreview(QObject):
                 self._proc.wait(timeout=1)
             except (OSError, subprocess.SubprocessError):
                 pass
+        self._cancel_installer()
         self._teardown()
+
+    def _cancel_installer(self) -> None:
+        """Kill a package install still running, without its callbacks.
+
+        Left running, it outlived the window: when this object was destroyed
+        the dying QProcess reported finished / errorOccurred into callbacks
+        whose objects were already gone, which raised and could crash the
+        Studio on exit. It would also restart a preview the user had since
+        moved away from. The signals are cut before the kill so neither fires.
+        """
+        process, self._installer = self._installer, None
+        if process is None:
+            return
+        process.blockSignals(True)
+        process.kill()
+        process.waitForFinished(2000)
+        process.deleteLater()
 
     def is_running(self) -> bool:
         """True while a child process is alive."""

@@ -1,6 +1,6 @@
 """
 tests/test_native_preview.py
-Layer: Test (W11)
+Layer: Test
 
 Pins the live bezel preview for runtime=python bundles (CONTRACT 4.1, 10).
 
@@ -481,6 +481,42 @@ class InterpreterResolution(unittest.TestCase):
             "A pyside2 bundle must never be previewed in App Studio's own "
             "interpreter.",
         )
+
+
+@unittest.skipUnless(HAVE_QT, "PySide6 not installed")
+class StopCancelsTheInstaller(unittest.TestCase):
+    """stop() -- which the window runs as it closes -- ends a running install.
+
+    A pip left running outlived the window, and its finished / errorOccurred
+    callbacks then ran against deleted objects: "Internal C++ object
+    (PySide6.QtCore.QProcess) already deleted" in the log, and at times a
+    crash on exit.
+    """
+
+    def setUp(self):
+        self.app = QCoreApplication.instance() or QCoreApplication([])
+
+    def test_stop_kills_the_install_and_reports_nothing(self):
+        preview = NativePreview()
+        self.addCleanup(preview.deleteLater)
+        failures = []
+        preview.failed.connect(failures.append)
+        slow_install = [sys.executable, "-c", "import time; time.sleep(30)"]
+        with mock.patch(
+            "tools.hmi_deployer.native_preview.pip_install_argv",
+            return_value=slow_install,
+        ):
+            preview._install_and_retry("serial", "")
+        installer = preview._installer
+        self.assertIsNotNone(installer)
+        self.assertTrue(installer.waitForStarted(5000))
+
+        preview.stop()
+
+        self.assertIsNone(preview._installer)
+        self.assertEqual(installer.state(), installer.ProcessState.NotRunning)
+        QCoreApplication.processEvents()
+        self.assertEqual(failures, [])
 
 
 if __name__ == "__main__":

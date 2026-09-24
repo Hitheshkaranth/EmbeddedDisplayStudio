@@ -14,6 +14,8 @@
 
 #include "draw_util.h"
 #include "registry.h"
+// lv_area_intersect is only declared here in LVGL 9.3, not through lvgl.h.
+#include "src/misc/lv_area_private.h"
 
 typedef struct {
     double pitch, roll, pixelsPerDegree;
