@@ -106,13 +106,15 @@ BYOK_PRESETS = {
     },
     "vllm": {
         "label": "vLLM (Tailscale)",
-        "baseUrl": "http://spark-ba51:8000",
+        # The lab server moved to 8080 with Qwen3.8 on 2026-09-24, behind an
+        # API key; nothing listens on 8000 any more.
+        "baseUrl": "http://spark-ba51:8080",
         "apiVersion": "",
-        "requiresApiKey": False,
+        "requiresApiKey": True,
         "apiKey": "",
         "protocol": "openai",
         "models": [
-            "nvidia/Qwen3.6-35B-A3B-NVFP4",
+            "qwen3.8-35b-a3b",
         ],
     },
     "anthropic": {
@@ -609,7 +611,12 @@ class ODConnector:
                 url = f"{base}/v1/models"
                 if self.byok.apiKey:
                     headers["Authorization"] = f"Bearer {self.byok.apiKey}"
-                data = self._http_get(url, headers)
+                status, data = self._http_get_status(url, headers)
+                if status in (401, 403):
+                    # The server answered: calling it unreachable sent people
+                    # to check the network when the key was the problem.
+                    detail = "API key rejected" if self.byok.apiKey else "API key required"
+                    return self._probe_result(False, started, f"{label}: {detail}", [])
                 models = [m.get("id") for m in (data or {}).get("data", []) if m.get("id")]
                 return self._probe_result(data is not None, started, label if data is not None else unreachable, models)
             if prov == "anthropic":
@@ -1022,6 +1029,23 @@ class ODConnector:
         except Exception as exc:
             logger.error("daemon POST %s failed: %s", path, exc)
             return None
+
+    def _http_get_status(self, url: str, headers: Optional[dict] = None,
+                         timeout: float = 5) -> tuple:
+        """GET url as JSON; return (HTTP status or None, parsed body or None).
+
+        Unlike _http_get, an HTTP error keeps its status, so a server that
+        answered 401 is not reported as one that did not answer.
+        """
+        try:
+            req = urllib.request.Request(url, headers=headers or {})
+            ctx = ssl.create_default_context()
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+                return resp.status, json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            return exc.code, None
+        except Exception:
+            return None, None
 
     def _http_get(self, url: str, headers: Optional[dict] = None, timeout: float = 5) -> Optional[dict]:
         try:

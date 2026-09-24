@@ -2140,12 +2140,19 @@ class AIDesignTab(QWidget):
         served = result.get("models") or []
         if self._probe_ok:
             text = f"Connected · {result.get('detail', '')} · {result.get('latency_ms', 0):.0f} ms"
+            current = self.model_combo.currentText()
             if served:
                 text += f" · {len(served)} models"
                 if model and model not in served:
-                    text += f" · '{model}' not listed"
+                    # Keeping a model the server no longer serves only moves
+                    # the failure to the first request (a server swapped to a
+                    # new model left the saved one behind).
+                    text += f" · '{model}' not served, using '{served[0]}'"
+                    current = served[0]
             self._probe_models = served
-            self._fill_models(self.model_combo.currentText())
+            self._fill_models(current)
+            if current != model:
+                self._on_model_changed(current)
         else:
             text = f"Not connected · {result.get('detail', 'unreachable')}"
         self._render_status(text)
