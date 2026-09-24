@@ -527,12 +527,11 @@ _RESOLVE_PYTHON = (
 )
 
 # A PySide2 bundle runs under the separate Qt5 runtime, which has its own
-# site-packages. See the runtime-selection section of hmi-hwd-launch.
-_RESOLVE_PYTHON_QT5 = (
-    'P=/opt/hmi-python-qt5/bin/python3; '
-    '[ -x "$P" ] || P="${HMI_PYTHON:-}"; '
-    '[ -x "$P" ] || P="$(command -v python3)"; '
-)
+# site-packages (see the runtime selection in hmi-gui-launch). There is no
+# fallback: the image's python3 is python3-core, with no pip and no json, and
+# falling through to it reported a missing Qt5 runtime as "No module named
+# pip". qt_deploy.py installs the runtime before this is asked.
+_RESOLVE_PYTHON_QT5 = 'P=/opt/hmi-python-qt5/bin/python3; '
 
 
 def _resolver(qt_binding: str) -> str:
@@ -567,37 +566,6 @@ def build_dep_check_command(modules: Sequence[str], qt_binding: str = "pyside6")
         + 'then echo "DEP $m ok"; else echo "DEP $m missing"; fi; '
         + "done"
     )
-
-
-def build_dep_install_command(
-    distributions: Sequence[str], qt_binding: str = "pyside6"
-) -> str:
-    """
-    Build a remote command that pip-installs these distributions.
-
-    Args:
-        distributions: pip requirement specifiers.
-        qt_binding: the bundle's binding, which selects the interpreter.
-
-    Returns:
-        A shell command printing `PIP_START`, then pip's own output, then
-        `PIP_OK <name>` or `PIP_FAIL <name>` for each.
-
-    One pip run per distribution, deliberately. A single run is all-or-nothing,
-    so one name a scan got wrong -- and a scan reads names out of source, so it
-    will sometimes get one wrong -- would take every other package down with
-    it, including the ones the application genuinely cannot start without.
-    """
-    lines = [_resolver(qt_binding)]
-    for distribution in distributions:
-        quoted = shlex.quote(distribution)
-        lines.append(
-            f"echo PIP_START {quoted}; "
-            f'if "$P" -m pip install --no-input --disable-pip-version-check '
-            f"--root-user-action=ignore {quoted}; "
-            f"then echo PIP_OK {quoted}; else echo PIP_FAIL {quoted}; fi; "
-        )
-    return "".join(lines)
 
 
 def build_scp_cmd(host: str, user: str, port: int, key_path: str, src: str, dest: str) -> List[str]:

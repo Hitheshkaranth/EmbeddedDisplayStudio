@@ -203,6 +203,7 @@ if [ "$_qt_present" = 1 ]; then
     else
         rm -rf /usr/lib/hmi/gui /usr/lib/hmi/shell /usr/lib/hmi/qml /usr/lib/hmi/qt6 \
                /usr/bin/hmi-gui-launch /etc/systemd/system/hmi-gui.service /etc/default/hmi-gui \
+               /etc/systemd/system/weston.service.d/hmi-x11-unix.conf \
                /opt/hmi-python-qt5 /usr/share/hmi/boot-banner.png \
                /usr/share/hmi/boot-banner-light.png
         # The interpreter stays; the Qt bindings inside it go (~200 MB).

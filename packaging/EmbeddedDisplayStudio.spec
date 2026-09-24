@@ -106,6 +106,13 @@ datas = [
     # hand-written brief raised FileNotFoundError inside the send path.
     (os.path.join(REPO_ROOT, "designer", "templates"),
      os.path.join("designer", "templates")),
+    # What a Qt bundle's deploy installs on a Qt-free panel: the Qt app
+    # launcher, its unit and defaults, and the runtime-aware hmi-install
+    # (tools/hmi_deployer/qt_deploy.py, LAUNCHER_FILES).
+    (os.path.join(REPO_ROOT, "native", "hmi-gui", "target"),
+     os.path.join("native", "hmi-gui", "target")),
+    (os.path.join(REPO_ROOT, "target", "bin", "hmi-install"),
+     os.path.join("target", "bin")),
     # pip's vendored CA bundle (pip/_vendor/certifi/cacert.pem): without it
     # the preview's installer cannot reach PyPI over HTTPS.
     *collect_data_files("pip"),

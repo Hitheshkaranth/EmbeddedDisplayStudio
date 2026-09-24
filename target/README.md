@@ -47,6 +47,7 @@ Host deployment tools (`deploy_to_hmi.sh` and `HMI App Studio`) parse these line
 | STEP Tag | Status | Description and Detail Content |
 |---|---|---|
 | `install-start` | `ok` | Emitted at the start of `cmd_install`. Detail contains `bundle=<path>`. |
+| `gui` | `ok` / `fail` | The GUI service the bundle runs under, chosen from its manifest `runtime` (see 3.5): `ok <service> (runtime=<rt>)`. `fail` when that unit is not installed on the panel -- a `runtime: python` bundle on a Qt-free panel -- emitted before anything is changed (exit 5). |
 | `validate-path` | `ok` / `fail` | Verifies bundle exists, is a regular file (not a symlink), resolves under `UPLOAD_DIR`, and size is $\le 500\text{ MB}$ (`MAX_BUNDLE_SIZE`). |
 | `verify-sha256` | `ok` / `fail` | Verifies the computed SHA-256 matches the `<bundle>.sha256` sidecar file. Detail contains the SHA-256 digest on success or mismatch error on failure. |
 | `extract` | `ok` / `fail` | Extracts the tarball into staging directory (`/opt/hmi_apps/releases/<release_name>`). Detail contains the staging path. |
@@ -88,7 +89,8 @@ Host deployment tools (`deploy_to_hmi.sh` and `HMI App Studio`) parse these line
 * `1`: General validation or runtime failure (e.g. SHA-256 mismatch, invalid manifest, GUI timeout).
 * `2`: Command-line usage or syntax error.
 * `3`: Lock contention (`flock` failed because another installation is in progress).
-* `4`: Installed, running and verified, but **not** made the boot default — `HMI_ENABLE_CMD` failed. This is not a failed deployment: the release is live and was deliberately *not* rolled back, because replacing a working UI with an older one is worse than the problem. It will not come back after a power cycle until `systemctl enable hmi-ui.service` is run on the panel. Callers that treat any non-zero status as "roll back and page someone" must special-case this one.
+* `4`: Installed, running and verified, but **not** made the boot default — enabling its GUI service (or disabling the other one) failed. This is not a failed deployment: the release is live and was deliberately *not* rolled back, because replacing a working UI with an older one is worse than the problem. It will not come back after a power cycle until its service is enabled by hand. Callers that treat any non-zero status as "roll back and page someone" must special-case this one. `rollback` and `activate` return it too when they could not move the boot default.
+* `5`: The bundle's GUI service is not installed on this panel (`STEP gui fail`); nothing was changed. The Studio installs the Qt runtime and `hmi-gui.service` before deploying a Qt bundle (tools/hmi_deployer/qt_deploy.py).
 
 ### 3.3 Environment Overrides
 
@@ -97,9 +99,10 @@ Host deployment tools (`deploy_to_hmi.sh` and `HMI App Studio`) parse these line
 | Variable | Default Value | Purpose |
 |---|---|---|
 | `HMI_ROOT` | *(empty)* | Filesystem path prefix prepended to all paths (`${HMI_ROOT}/opt/hmi_apps`, `${HMI_ROOT}/run/hmi`, etc.). Enables running the installer inside a temporary directory on a dev host. |
-| `HMI_RESTART_CMD` | `systemctl restart hmi-ui.service` | Shell command executed to restart the user interface. Can be overridden with a mock command (e.g. `true` or a test script) when systemd is unavailable. |
-| `HMI_ENABLE_CMD` | `systemctl enable hmi-ui.service` | Command run after a verified install to make the release the panel's boot default. See the `enable-boot` step. |
-| `HMI_ENABLE_CHECK_CMD` | `systemctl is-enabled hmi-ui.service` | Command that confirms `HMI_ENABLE_CMD` took effect. Exit 0 means enabled; anything else is treated as not enabled, whatever the enable command reported. |
+| `HMI_RESTART_CMD` | *(empty: `systemctl restart <service>`)* | Shell command executed to restart the user interface; by default the service chosen for the bundle (3.5). When set, it is used for every runtime, with `HMI_GUI_SERVICE` exported so it can tell which. Can be a mock (e.g. `true` or a test script) when systemd is unavailable. |
+| `HMI_ENABLE_CMD` | *(empty: `systemctl enable <service>`)* | Command run after a verified install to make the release the panel's boot default. See the `enable-boot` step. |
+| `HMI_DISABLE_CMD` | *(empty: `systemctl disable <other service>`)* | Disables the other GUI service, when its unit exists: with both enabled, systemd resolves their `Conflicts=` at boot in favour of `hmi-ui`. Skipped when `HMI_ENABLE_CMD` is overridden and this is not. |
+| `HMI_ENABLE_CHECK_CMD` | *(empty: `systemctl is-enabled <service>`)* | Command that confirms `HMI_ENABLE_CMD` took effect. Exit 0 means enabled; anything else is treated as not enabled, whatever the enable command reported. |
 | `HMI_SKIP_GUI_WAIT` | `0` | When set to `"1"`, skips executing `HMI_RESTART_CMD`, skips waiting for `/run/hmi/gui-ready`, and skips `HMI_ENABLE_CMD`. |
 | `HMI_PYTHON` | *(auto)* | Python interpreter used by both scripts. See below. |
 
@@ -133,6 +136,16 @@ Both scripts therefore resolve an interpreter in this order:
 * `KEEP_RELEASES`: `3`. Number of recent releases retained during pruning (in addition to `current` and `previous`).
 
 ---
+
+### 3.5 GUI Service per Runtime
+
+| Manifest `runtime` | Service | Notes |
+|---|---|---|
+| `edsui` | `hmi-ui.service` | The Qt-free runtime; what the Studio's Designer produces. |
+| `python`, `qml` | `hmi-gui.service` | Qt applications, through `hmi-gui-launch` under weston (`Requires=weston.service`). |
+| *(absent)* | `hmi-gui.service` | The manifest schema defaults `runtime` to `qml`. |
+
+`hmi-ui.service` declares `Conflicts=weston.service hmi-gui.service`, and systemd applies `Conflicts=` both ways: starting either GUI stops the other, so deploying a Designer bundle after a Qt one hands the display back to `hmi-ui`. A rollback restarts the service of the release it returns to.
 
 ## 4. Testing the Installer on a Development Host
 

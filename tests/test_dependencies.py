@@ -11,10 +11,7 @@ from schema.deps import (
     imported_names,
     local_modules,
 )
-from tools.hmi_deployer.ssh import (
-    build_dep_check_command,
-    build_dep_install_command,
-)
+from tools.hmi_deployer.ssh import build_dep_check_command
 
 
 def write(path, text=""):
@@ -159,19 +156,13 @@ class TestRemoteCommands(unittest.TestCase):
 
         self.assertIn("/opt/hmi-python-qt5/bin/python3", command)
 
-    def test_install_runs_pip_once_per_distribution(self):
-        """One bad name must not take the others down with it."""
-        command = build_dep_install_command(["reportlab", "pyserial"])
+    def test_pyside2_bundles_never_fall_back_to_the_image_python(self):
+        """The image's python3 has no pip and no json; answering from it
+        reported a missing Qt5 runtime as "No module named pip"."""
+        command = build_dep_check_command(["serial"], qt_binding="pyside2")
 
-        self.assertEqual(command.count("pip install"), 2)
-        self.assertIn("PIP_OK", command)
-        self.assertIn("PIP_FAIL", command)
-
-    def test_names_are_quoted_for_the_remote_shell(self):
-        """Scanned names come from someone else's source code."""
-        command = build_dep_install_command(["evil; rm -rf /"])
-
-        self.assertNotIn("; rm -rf /", command.replace("'evil; rm -rf /'", ""))
+        self.assertNotIn("command -v python3", command)
+        self.assertNotIn("HMI_PYTHON", command)
 
     def test_hid_import_installs_self_contained_hidapi_distribution(self):
         from schema.deps import IMPORT_TO_DISTRIBUTION

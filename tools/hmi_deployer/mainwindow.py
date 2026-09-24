@@ -24,10 +24,11 @@ from .deployer import (
 from .telemetry import TelemetrySimulator, TelemetryRelay
 from .ssh import (
     LOG_UNITS, SshWorker, UploadWorker, build_activate_command,
-    build_dep_check_command, build_dep_install_command, build_logs_command,
+    build_dep_check_command, build_logs_command,
     build_release_list_command, build_ssh_cmd, build_upload_cmd,
     parse_release_line,
 )
+from .qt_deploy import QtRuntimeDeployMixin
 from .scaffold import create_bundle
 from .taglab import TagLabSender
 from .readiness_core import audit_readiness
@@ -211,11 +212,6 @@ INSTALL_TIMEOUT_S = 300
 SCP_BASE_TIMEOUT_S = 60
 SCP_MIN_BYTES_PER_S = 256 * 1024
 
-# Installing packages on the panel is a download over the field link, from an
-# index that may be far away, onto a board that unpacks wheels slowly. It is
-# nothing like the other commands and gets its own allowance.
-DEP_INSTALL_TIMEOUT_S = 900
-
 # Asked of the panel when an install is cut off before it reported a result.
 #
 # `hmi-install` rolls a release that will not render back on its own, but only
@@ -275,7 +271,7 @@ INSTALL_STEP_LABEL = {
 }
 
 
-class MainWindow(QMainWindow):
+class MainWindow(QtRuntimeDeployMixin, QMainWindow):
     def __init__(self, exit_after_ms=0):
         super().__init__()
         self.setWindowTitle("EmbeddedDisplay Studio")
@@ -2856,7 +2852,10 @@ class MainWindow(QMainWindow):
         # Nothing else disables the button until the first SSH step starts, and
         # the checks before it take seconds.
         self.btn_deploy.setEnabled(False)
-        self._start_dependency_scan()
+        # A Qt application first makes sure the panel can run it at all (see
+        # qt_deploy.py); that stage goes on to the dependency scan itself.
+        if not self._start_qt_runtime_stage():
+            self._start_dependency_scan()
 
     # ------------------------------------------------------------------
     # Dependency pre-flight
@@ -2973,18 +2972,10 @@ class MainWindow(QMainWindow):
         self._pip_failed = []
         self._pip_done = 0
         self._pip_total = len(wanted)
-        self._progress_busy(f"Installing {self._pip_total} package(s) on the panel...")
         self.log(f"Installing on the panel: {', '.join(wanted)}")
-        self.run_ssh_worker(
-            build_ssh_cmd(
-                self.inp_host.text().strip(), self.inp_user.text().strip(),
-                self.ssh_port(), self.inp_key.text().strip(),
-                build_dep_install_command(wanted, self._qt_binding()),
-            ),
-            "Install packages", self._on_deps_installed,
-            timeout_s=DEP_INSTALL_TIMEOUT_S, heartbeat_s=10,
-            line_hook=self._note_pip_line,
-        )
+        # The panel has no route to an index, so the wheels are fetched here
+        # and installed there with pip --no-index (qt_deploy.py).
+        self._start_offline_dep_install(wanted)
 
     def _note_pip_line(self, line: str) -> None:
         """Drive the stage line from pip's progress through the list."""
@@ -3019,9 +3010,8 @@ class MainWindow(QMainWindow):
         names = ", ".join(self._pip_failed) or "the packages"
         self._progress_fail(f"Could not install {names} on the panel.")
         self.log(
-            "The console above has pip's own output. A panel with no route to "
-            "an index needs the packages installed by hand; deploying without "
-            "them would only crash-loop and roll back."
+            "The console above has pip's own output. Deploying without them "
+            "would only crash-loop and roll back."
         )
         self.btn_deploy.setEnabled(self.bundle_dir is not None)
 

@@ -1,5 +1,10 @@
 #!/bin/sh
 # /usr/bin/hmi-install
+# HMI_INSTALL_FEATURES: runtime-service
+#   ^ Grep marker for host tools.  "runtime-service" = the GUI unit is chosen
+#     from the bundle's manifest runtime (see gui_service_for_runtime).  An
+#     installer without it always restarts hmi-ui.service, so a python/qml
+#     bundle crash-loops and is rolled back; the host must replace it first.
 # =====================================================================
 # HMI Atomic Bundle Installer
 # =====================================================================
@@ -25,6 +30,22 @@
 #   4  -- installed and running, but NOT made the boot default (see
 #         enable_boot).  The release is live and was deliberately not rolled
 #         back; the panel comes up without it after a power cycle.
+#   5  -- the bundle's GUI service is not installed on this panel (e.g. a
+#         runtime "python"/"qml" bundle on a Qt-free panel with no
+#         hmi-gui.service).  Refused before `current` is touched; nothing
+#         changed.  Also returned by `rollback`/`activate` for the same reason.
+#
+# GUI SERVICE SELECTION
+#   The manifest's "runtime" picks the unit restarted and made boot default:
+#     edsui        -> hmi-ui.service   (Qt-free, DRM/KMS, no compositor)
+#     qml, python  -> hmi-gui.service  (Qt loader under weston)
+#     (absent)     -> "qml", the schema/manifest.py default -> hmi-gui.service
+#   The two units are mutually exclusive through hmi-ui.service's
+#   Conflicts=weston.service hmi-gui.service.  Conflicts= is symmetric in
+#   systemd (starting either unit stops the other), so `systemctl restart
+#   <chosen>` alone performs the switch in both directions: starting
+#   hmi-gui stops hmi-ui and pulls weston in through its Requires=; starting
+#   hmi-ui stops hmi-gui and weston.
 #
 # MACHINE-READABLE OUTPUT
 #   Every step prints a line:  STEP <tag> <ok|fail> [detail]
@@ -33,12 +54,19 @@
 #
 # ENVIRONMENT
 #   HMI_ROOT          -- path prefix for all fs paths (empty in prod)
-#   HMI_RESTART_CMD   -- override for `systemctl restart hmi-ui.service`
-#                        (for off-target testing without systemd)
-#   HMI_ENABLE_CMD    -- override for `systemctl enable hmi-ui.service`,
-#                        the step that makes the app the boot default
-#   HMI_ENABLE_CHECK_CMD -- override for `systemctl is-enabled hmi-ui.service`,
+#   HMI_RESTART_CMD   -- override for `systemctl restart <gui-service>`
+#                        (for off-target testing without systemd).  When
+#                        set it is used for EVERY runtime, and the "is the
+#                        unit installed" check is skipped: the caller owns
+#                        the service.  $HMI_GUI_SERVICE (exported) names the
+#                        unit the installer would have used.
+#   HMI_ENABLE_CMD    -- override for `systemctl enable <gui-service>`,
+#                        the step that makes the app the boot default.  When
+#                        set, the other GUI unit is NOT disabled unless
+#                        HMI_DISABLE_CMD is also set.
+#   HMI_ENABLE_CHECK_CMD -- override for `systemctl is-enabled <gui-service>`,
 #                        which confirms HMI_ENABLE_CMD actually took effect
+#   HMI_DISABLE_CMD   -- override for `systemctl disable <other-gui-service>`
 #   HMI_SKIP_GUI_WAIT -- if set to "1", skip waiting for gui-ready and
 #                        skip enabling autostart (for off-target testing)
 #   HMI_GUI_READY_TIMEOUT -- seconds to wait for gui-ready (default 25);
@@ -107,17 +135,40 @@ GUI_READY_TIMEOUT="${HMI_GUI_READY_TIMEOUT:-25}"
 # legitimately larger.
 MAX_BUNDLE_SIZE=524288000
 
-# Command used to restart the GUI service.  Overridable for off-target
-# testing where systemd is unavailable.
-HMI_RESTART_CMD="${HMI_RESTART_CMD:-systemctl restart hmi-ui.service}"
+# The two GUI units a bundle can run under (see GUI SERVICE SELECTION above).
+# Named once so the runtime mapping, the enable/disable pair and the messages
+# cannot drift apart.
+UI_SERVICE="hmi-ui.service"     # runtime edsui: Qt-free, DRM/KMS
+QT_SERVICE="hmi-gui.service"    # runtime qml/python: Qt loader under weston
+
+# The unit chosen for the release being activated; set by select_gui_service
+# and exported so an HMI_*_CMD override can refer to it.  Empty until then.
+HMI_GUI_SERVICE=""
+
+# Command used to restart the GUI service.  Empty means "systemctl restart
+# <the unit matching the bundle's runtime>", resolved per call because a
+# rollback may need a different unit than the install that preceded it.
+# Overridable for off-target testing where systemd is unavailable; an
+# explicit value is honoured for every runtime (backward compatible with the
+# single-unit installer, whose tests and stand-in panel set it).
+HMI_RESTART_CMD="${HMI_RESTART_CMD:-}"
 
 # Command that makes the GUI start at boot.  A deploy that only restarts the
 # service leaves a panel that shows the application now and nothing at all
 # after the next power cycle, which on a machine that is normally power-cycled
 # rather than shut down is the only state that matters.  `systemctl enable` is
 # idempotent, so running it on every install costs nothing and removes the
-# assumption that somebody enabled the unit by hand once.
-HMI_ENABLE_CMD="${HMI_ENABLE_CMD:-systemctl enable hmi-ui.service}"
+# assumption that somebody enabled the unit by hand once.  Empty means
+# "systemctl enable <chosen unit>".
+HMI_ENABLE_CMD="${HMI_ENABLE_CMD:-}"
+
+# Command that removes the OTHER GUI unit from boot.  Empty means "systemctl
+# disable <other unit>" -- unless HMI_ENABLE_CMD is overridden, in which case
+# there is no systemd to talk to and the disable is skipped.  Required rather
+# than cosmetic: with both units enabled, multi-user.target wants both, and
+# systemd resolves the Conflicts= by starting the unit that declares it
+# (hmi-ui) -- so a python deploy would boot into hmi-ui.
+HMI_DISABLE_CMD="${HMI_DISABLE_CMD:-}"
 
 # How the result of HMI_ENABLE_CMD is confirmed.  The enable command's exit
 # status is not evidence on its own: it is documented as overridable, and any
@@ -127,7 +178,8 @@ HMI_ENABLE_CMD="${HMI_ENABLE_CMD:-systemctl enable hmi-ui.service}"
 # and costs one cheap call on a path that already runs systemctl twice.
 # `systemctl is-enabled` exits 0 only for an enabled unit; disabled, masked and
 # static all exit non-zero, which is the answer we want in each of those cases.
-HMI_ENABLE_CHECK_CMD="${HMI_ENABLE_CHECK_CMD:-systemctl is-enabled hmi-ui.service}"
+# Empty means "systemctl is-enabled <chosen unit>".
+HMI_ENABLE_CHECK_CMD="${HMI_ENABLE_CHECK_CMD:-}"
 
 # When set to "1", skip waiting for the gui-ready file and skip
 # restarting the GUI.  Used only in off-target testing.
@@ -768,6 +820,132 @@ except Exception as e:
     fi
 }
 
+# ---- bundle_runtime() ----
+# Print the manifest "runtime" of a release (or staging) directory.
+#
+# Uses $PYTHON -- the interpreter the validator just ran under, so json is
+# known to import on the install path.  Falls back to a sed parse because this
+# is also called on the rollback path, the one path that must work even if
+# the interpreter is gone or broken (/opt/hmi-python removed, python3-core
+# without json): losing the rollback over a missing stdlib module would be the
+# worst trade in the file.  The fallback is safe enough here because the
+# manifest was validated by manifest.py when the release was installed, and
+# "runtime" is a top-level string whose values are plain lowercase words.
+#
+# Args:    $1 -- release directory containing manifest.json
+# Returns: 0; prints the runtime, or "qml" (the schema/manifest.py default)
+#          when the key -- or the whole manifest -- is absent
+# Exits:   never
+bundle_runtime() {
+    _mf="$1/manifest.json"
+    if [ ! -f "$_mf" ]; then
+        echo "qml"
+        return 0
+    fi
+    _rt=$("$PYTHON" -c 'import json, sys
+v = json.load(open(sys.argv[1])).get("runtime", "qml")
+print(v if isinstance(v, str) else "")' "$_mf" 2>/dev/null) || _rt=""
+    if [ -z "$_rt" ]; then
+        # tr: a pretty-printed manifest spans lines; sed works on one.
+        _rt=$(tr -d '\n\r' < "$_mf" \
+            | sed -n 's/.*"runtime"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9_-]*\)".*/\1/p')
+        [ -n "$_rt" ] || _rt="qml"
+    fi
+    echo "$_rt"
+}
+
+# ---- gui_service_for_runtime() ----
+# Map a manifest runtime to the systemd unit that runs it.
+#
+# Anything that is not edsui/qml/python cannot have passed manifest.py, so it
+# only reaches here from an old release on the rollback path; hmi-ui, the
+# panel's default runtime, is the least surprising answer there.
+#
+# Args:    $1 -- runtime string (edsui | qml | python)
+# Returns: 0; prints UI_SERVICE or QT_SERVICE
+# Exits:   never
+gui_service_for_runtime() {
+    case "$1" in
+        qml|python) echo "$QT_SERVICE" ;;
+        *)          echo "$UI_SERVICE" ;;
+    esac
+}
+
+# ---- other_gui_service() ----
+# The GUI unit that is NOT the given one -- the one to remove from boot.
+#
+# Args:    $1 -- UI_SERVICE or QT_SERVICE
+# Returns: 0; prints the other unit
+# Exits:   never
+other_gui_service() {
+    if [ "$1" = "$QT_SERVICE" ]; then echo "$UI_SERVICE"; else echo "$QT_SERVICE"; fi
+}
+
+# ---- unit_installed() ----
+# True if systemd has a unit file for the given unit.
+#
+# `systemctl cat` exits non-zero ("No files found") for a unit with no file,
+# and needs no root and no running unit.  Run with 9>&- like every systemctl
+# call here so nothing inherits the install lock.
+#
+# Args:    $1 -- unit name
+# Returns: 0 if the unit file exists, non-zero otherwise
+# Exits:   never
+unit_installed() {
+    systemctl cat "$1" 9>&- >/dev/null 2>&1
+}
+
+# ---- select_gui_service() ----
+# Choose the GUI unit for a release and refuse it if the panel lacks it.
+#
+# Sets and exports HMI_GUI_SERVICE.  Must be called BEFORE `current` is
+# swapped: once the symlink points at a bundle the panel cannot run, the
+# restart would crash-loop for GUI_READY_TIMEOUT seconds and then roll back --
+# the exact failure this check replaces with an immediate, explained refusal.
+#
+# The installed-unit check is skipped when HMI_RESTART_CMD is overridden (the
+# caller owns the service -- tests, the WSL stand-in panel) or when
+# HMI_SKIP_GUI_WAIT=1 (nothing is restarted or enabled at all).
+#
+# Args:    $1 -- release or staging directory
+# Returns: 0 when the unit is usable
+# Exits:   5 (STEP gui fail) when the unit is not installed on this panel
+select_gui_service() {
+    _sel_rt=$(bundle_runtime "$1")
+    HMI_GUI_SERVICE=$(gui_service_for_runtime "$_sel_rt")
+    export HMI_GUI_SERVICE
+
+    if [ -z "$HMI_RESTART_CMD" ] && [ "$HMI_SKIP_GUI_WAIT" != "1" ] \
+        && ! unit_installed "$HMI_GUI_SERVICE"; then
+        if [ "$HMI_GUI_SERVICE" = "$QT_SERVICE" ]; then
+            die 5 "gui" "${HMI_GUI_SERVICE} not installed: this panel runs Qt-free; the Studio installs the Qt runtime before deploying a runtime=${_sel_rt} bundle"
+        fi
+        die 5 "gui" "${HMI_GUI_SERVICE} not installed: this panel has no Qt-free runtime for a runtime=${_sel_rt} bundle; re-provision it"
+    fi
+
+    step "gui" "ok" "${HMI_GUI_SERVICE} (runtime=${_sel_rt})"
+}
+
+# ---- run_restart() ----
+# Restart the selected GUI unit, or run the HMI_RESTART_CMD override.
+#
+# 9>&- closes the flock file descriptor for the child. Without it the GUI
+# process inherits FD 9 and, because it is meant to run forever, holds the
+# install lock forever: every later install and rollback dies with "another
+# hmi-install is already running" until the panel is rebooted. Under systemd
+# the restart is a D-Bus call and PID 1 spawns the service with clean
+# descriptors, which hides this -- but HMI_RESTART_CMD is documented as
+# overridable, and any override that forks the GUI directly hits it.
+#
+# Args:    none (reads HMI_GUI_SERVICE, HMI_RESTART_CMD)
+# Returns: the restart command's status
+# Exits:   never
+run_restart() {
+    _rs_cmd="${HMI_RESTART_CMD:-systemctl restart ${HMI_GUI_SERVICE}}"
+    log "INFO" "restarting GUI via: ${_rs_cmd}"
+    eval "$_rs_cmd" 9>&-
+}
+
 ##
 # restart_gui -- restart the GUI service and wait for readiness
 #
@@ -778,7 +956,7 @@ except Exception as e:
 # If HMI_SKIP_GUI_WAIT is "1", the restart and wait are skipped entirely.
 # This is used for off-target testing where systemd is not available.
 #
-# Args:   none
+# Args:   none (restarts HMI_GUI_SERVICE; select_gui_service must have run)
 # Returns:
 #   0 if the GUI came up within the timeout (or wait was skipped)
 #   1 if the GUI did not come up
@@ -795,16 +973,9 @@ restart_gui() {
     # instance creates it.
     rm -f "$READY_FILE"
 
-    log "INFO" "restarting GUI via: ${HMI_RESTART_CMD}"
-    # 9>&- closes the flock file descriptor for the child. Without it the GUI
-    # process inherits FD 9 and, because it is meant to run forever, holds the
-    # install lock forever: every later install and rollback dies with "another
-    # hmi-install is already running" until the panel is rebooted. Under systemd
-    # the restart is a D-Bus call and PID 1 spawns the service with clean
-    # descriptors, which hides this -- but HMI_RESTART_CMD is documented as
-    # overridable, and any override that forks the GUI directly hits it.
-    if ! eval "$HMI_RESTART_CMD" 9>&-; then
-        step "restart-gui" "fail" "restart command failed"
+    # run_restart closes the lock fd for the child; see there.
+    if ! run_restart; then
+        step "restart-gui" "fail" "restart of ${HMI_GUI_SERVICE} failed"
         return 1
     fi
 
@@ -828,13 +999,22 @@ restart_gui() {
 #
 # Installing a release sets `current` and restarts the GUI, which covers
 # "running now".  It does not cover "running after the next boot": that needs
-# hmi-ui.service to be enabled, and on a panel where it never was, the
-# operator sees a working HMI that comes up blank the next morning.
+# the release's GUI unit (HMI_GUI_SERVICE) to be enabled, and on a panel where
+# it never was, the operator sees a working HMI that comes up blank the next
+# morning.
 #
-# The symlink itself is already persistent -- it lives on flash -- so enabling
-# the unit is the only missing piece.  Enabling hmi-ui.service also pulls in
-# weston.service at boot through the unit's Requires=, so the whole display
-# chain follows from this one call.
+# The symlink itself is already persistent -- it lives on flash -- so the unit
+# is the only missing piece.  Two halves:
+#   * enable HMI_GUI_SERVICE;
+#   * disable the other GUI unit.  With both enabled, multi-user.target wants
+#     both and systemd settles the Conflicts= by starting hmi-ui (the unit
+#     that declares it), so a stale hmi-ui enable would boot a python panel
+#     into the wrong runtime.  A unit with no file is already "disabled".
+# weston.service is deliberately left alone in both directions.  hmi-ui needs
+# no compositor and its Conflicts= stops weston even if weston is enabled
+# (the conflicting unit wins a same-transaction clash).  hmi-gui does not need
+# weston enabled either: its Requires=weston.service starts weston whenever
+# hmi-gui starts, enabled or not.  (hmi-ui.service has no Requires= at all.)
 #
 # The enable command is run and then verified, because its exit status alone is
 # not evidence that anything was linked -- see HMI_ENABLE_CHECK_CMD.  A command
@@ -853,10 +1033,11 @@ restart_gui() {
 # 4 is distinct from 1 precisely so a caller can tell "deployed, not persistent"
 # from "not deployed" and choose whether to stop the line.
 #
-# Args:   none
+# Args:   none (reads HMI_GUI_SERVICE; select_gui_service must have run)
 # Returns: 0 if the unit was enabled (or the step was skipped), 1 otherwise
 # Exits:   never (the caller decides what a 1 means for the run's exit status)
-# Side effects: runs HMI_ENABLE_CMD
+# Side effects: runs HMI_ENABLE_CMD and HMI_DISABLE_CMD (or their systemctl
+#               defaults)
 ##
 enable_boot() {
     if [ "$HMI_SKIP_GUI_WAIT" = "1" ]; then
@@ -864,26 +1045,52 @@ enable_boot() {
         return 0
     fi
 
-    log "INFO" "enabling GUI at boot via: ${HMI_ENABLE_CMD}"
-    # 9>&- for the same reason as restart_gui: never leak the install lock.
-    if ! eval "$HMI_ENABLE_CMD" 9>&- >/dev/null 2>&1; then
-        step "enable-boot" "fail" "could not enable hmi-ui.service; the app runs now but will NOT start after a reboot"
-        log "WARN" "autostart could not be configured -- run '${HMI_ENABLE_CMD}' on the panel"
+    _eb_svc="$HMI_GUI_SERVICE"
+    _eb_other=$(other_gui_service "$_eb_svc")
+    _eb_enable="${HMI_ENABLE_CMD:-systemctl enable ${_eb_svc}}"
+    _eb_check="${HMI_ENABLE_CHECK_CMD:-systemctl is-enabled ${_eb_svc}}"
+
+    log "INFO" "enabling GUI at boot via: ${_eb_enable}"
+    # 9>&- for the same reason as run_restart: never leak the install lock.
+    if ! eval "$_eb_enable" 9>&- >/dev/null 2>&1; then
+        step "enable-boot" "fail" "could not enable ${_eb_svc}; the app runs now but will NOT start after a reboot"
+        log "WARN" "autostart could not be configured -- run '${_eb_enable}' on the panel"
         return 1
+    fi
+
+    # Remove the other GUI unit from boot (why: see the header).  Explicit
+    # HMI_DISABLE_CMD wins; an overridden HMI_ENABLE_CMD without one means no
+    # systemd to talk to, so there is nothing to disable.
+    if [ -n "$HMI_DISABLE_CMD" ]; then
+        _eb_disable="$HMI_DISABLE_CMD"
+    elif [ -n "$HMI_ENABLE_CMD" ]; then
+        _eb_disable=""
+    elif unit_installed "$_eb_other"; then
+        _eb_disable="systemctl disable ${_eb_other}"
+    else
+        _eb_disable=""
+    fi
+    if [ -n "$_eb_disable" ]; then
+        log "INFO" "removing ${_eb_other} from boot via: ${_eb_disable}"
+        if ! eval "$_eb_disable" 9>&- >/dev/null 2>&1; then
+            step "enable-boot" "fail" "could not disable ${_eb_other}; it may start at boot instead of ${_eb_svc}"
+            log "WARN" "run '${_eb_disable}' on the panel"
+            return 1
+        fi
     fi
 
     # The command said it worked.  Ask the system whether it agrees, because
     # the two answers can differ and only this one is checked at power-on.
-    log "INFO" "confirming autostart via: ${HMI_ENABLE_CHECK_CMD}"
-    if eval "$HMI_ENABLE_CHECK_CMD" 9>&- >/dev/null 2>&1; then
-        step "enable-boot" "ok" "hmi-ui.service will start at boot (confirmed)"
+    log "INFO" "confirming autostart via: ${_eb_check}"
+    if eval "$_eb_check" 9>&- >/dev/null 2>&1; then
+        step "enable-boot" "ok" "${_eb_svc} will start at boot (confirmed)"
         return 0
     fi
 
     # The worst of the three cases, and the reason the check exists: the deploy
     # would otherwise report a clean success on a panel that comes up blank.
-    step "enable-boot" "fail" "enable reported success but hmi-ui.service is still not enabled; the app runs now but will NOT start after a reboot"
-    log "WARN" "autostart is unconfirmed -- check '${HMI_ENABLE_CHECK_CMD}' on the panel"
+    step "enable-boot" "fail" "enable reported success but ${_eb_svc} is still not enabled; the app runs now but will NOT start after a reboot"
+    log "WARN" "autostart is unconfirmed -- check '${_eb_check}' on the panel"
     return 1
 }
 
@@ -891,13 +1098,25 @@ enable_boot() {
 # rollback_to_previous -- restore the previous release after a failed deploy
 #
 # Reads the `previous` symlink and swaps `current` back to it.
-# Then restarts the GUI (best-effort; if this also fails, the operator
-# must intervene manually).
+# Then restarts the GUI unit matching the PREVIOUS release's runtime -- which
+# may differ from the release that failed (a python bundle failing on a panel
+# that ran an edsui one must bring hmi-ui back, not restart hmi-gui again).
+# Best-effort; if this also fails, the operator must intervene manually.
+#
+# Boot enablement is NOT touched here.  On the auto-rollback path it never
+# moved: enable_boot runs only after the readiness check passes, so the unit
+# enabled at boot is still the previous release's.  cmd_rollback, where the
+# release being left may have been made the boot default, calls enable_boot
+# itself after this returns.
+#
+# No installed-unit check either: on the auto path the previous release was
+# running moments ago, and refusing to go back would strand the panel on the
+# release that just failed.  cmd_rollback checks before calling this.
 #
 # Args:   none
 # Returns: 0 on success, 1 if no previous release exists
 # Exits:   never (caller decides whether to exit)
-# Side effects: replaces CURRENT_LINK; restarts GUI
+# Side effects: replaces CURRENT_LINK; sets HMI_GUI_SERVICE; restarts GUI
 ##
 rollback_to_previous() {
     if [ ! -L "$PREVIOUS_LINK" ]; then
@@ -909,13 +1128,16 @@ rollback_to_previous() {
     log "INFO" "rolling back current -> ${_prev_target}"
     swap_current_symlink "$_prev_target"
 
-    step "rollback" "ok" "current -> ${_prev_target}"
+    # Read through the link, not the raw target, so a relative target resolves.
+    HMI_GUI_SERVICE=$(gui_service_for_runtime "$(bundle_runtime "$CURRENT_LINK")")
+    export HMI_GUI_SERVICE
+
+    step "rollback" "ok" "current -> ${_prev_target} (${HMI_GUI_SERVICE})"
 
     # Best-effort restart after rollback.
     if [ "$HMI_SKIP_GUI_WAIT" != "1" ]; then
         rm -f "$READY_FILE"
-        # 9>&- as in restart_gui: never let the GUI inherit the install lock.
-        eval "$HMI_RESTART_CMD" 9>&- || true
+        run_restart || true
     fi
 
     return 0
@@ -1008,10 +1230,11 @@ for mtime, full in entries:
 # Args:
 #   $1  bundle_path  -- path to the bundle tarball
 #
-# Returns: 0 on success
-# Exits:   1 on any failure (after rollback attempt)
+# Returns: 0 on success, 4 if running but not made the boot default
+# Exits:   1 on any failure (after rollback attempt); 5 if the bundle's GUI
+#          unit is not installed (before anything is changed)
 # Side effects: modifies RELEASES_DIR, CURRENT_LINK, PREVIOUS_LINK;
-#               restarts GUI service; cleans UPLOAD_DIR
+#               restarts GUI service; changes boot enablement; cleans UPLOAD_DIR
 ##
 cmd_install() {
     if [ $# -lt 1 ]; then
@@ -1036,6 +1259,11 @@ cmd_install() {
     # -- Validate manifest ---
     validate_manifest
     # STAGING_DIR is now set by extract_bundle.
+
+    # -- Pick the GUI unit from the bundle's runtime; refuse if absent ---
+    # Before promote and swap, so a refusal (exit 5) leaves no release
+    # directory and `current` untouched; the EXIT trap drops the staging dir.
+    select_gui_service "$STAGING_DIR"
 
     # -- Rename the staging dir to its unique release id ---
     # Only now, after validation, does anything appear in the releases tree
@@ -1113,22 +1341,38 @@ cmd_install() {
 ##
 # cmd_rollback -- the `rollback` subcommand
 #
-# Manually rolls back to the previous release.
+# Manually rolls back to the previous release.  Unlike the automatic
+# rollback, the release being left may already be the boot default (it passed
+# its readiness check), so boot enablement is moved back too -- possibly to
+# the other GUI unit, if the two releases have different runtimes.
 #
 # Args:   none
-# Returns: 0 on success
-# Exits:   1 if no previous release exists
-# Side effects: modifies CURRENT_LINK; restarts GUI; cleans UPLOAD_DIR
+# Returns: 0 on success, 4 if rolled back but boot enablement not restored
+# Exits:   1 if no previous release exists; 5 if the previous release's GUI
+#          unit is not installed (checked before the swap)
+# Side effects: modifies CURRENT_LINK; restarts GUI; changes boot enablement;
+#               cleans UPLOAD_DIR
 ##
 cmd_rollback() {
     step "rollback-start" "ok" ""
+
+    if [ -L "$PREVIOUS_LINK" ]; then
+        select_gui_service "$PREVIOUS_LINK"
+    fi
 
     if ! rollback_to_previous; then
         cleanup_upload_dir
         die 1 "rollback-complete" "rollback FAILED -- no previous release"
     fi
 
+    _rb_boot_rc=0
+    enable_boot || _rb_boot_rc=$?
+
     cleanup_upload_dir
+    if [ "$_rb_boot_rc" -ne 0 ]; then
+        step "rollback-complete" "ok" "rolled back to $(readlink "$CURRENT_LINK"), autostart NOT configured"
+        return 4
+    fi
     step "rollback-complete" "ok" "rolled back to $(readlink "$CURRENT_LINK")"
 }
 
@@ -1144,9 +1388,17 @@ cmd_rollback() {
 # anything, it only re-points `current`.  The outgoing release becomes
 # `previous`, so a mistaken activation is itself undoable by `rollback`.
 #
+# The GUI unit follows the activated release's runtime, and is checked before
+# the swap exactly as an install is.  Boot enablement follows too: otherwise
+# activating an edsui release on a panel booting hmi-gui would come back
+# after a power cycle under a unit that cannot run it.  Activation has no
+# readiness wait of its own, but every release still on disk passed one at
+# install time (a release that failed it is deleted by the auto-rollback).
+#
 # Args:   $1 -- release directory name (not a path)
-# Returns: 0
-# Exits:   2 on a missing or malformed name, 1 on an unknown release
+# Returns: 0, or 4 if activated but boot enablement could not be moved
+# Exits:   2 on a missing or malformed name, 1 on an unknown release,
+#          5 if the release's GUI unit is not installed
 # Side effects: swaps the current symlink, rewrites previous, restarts the GUI
 ##
 cmd_activate() {
@@ -1182,6 +1434,8 @@ cmd_activate() {
         return 0
     fi
 
+    select_gui_service "$_target"
+
     # Recorded before the swap, exactly as an install does, so `rollback`
     # returns to whatever was running before this activation.
     save_previous
@@ -1189,10 +1443,13 @@ cmd_activate() {
 
     if [ "$HMI_SKIP_GUI_WAIT" != "1" ]; then
         rm -f "$READY_FILE"
-        # 9>&- as in restart_gui: never let the GUI inherit the install lock.
-        eval "$HMI_RESTART_CMD" 9>&- || true
+        run_restart || true
     fi
 
+    if ! enable_boot; then
+        step "activate-complete" "ok" "current -> ${_target}, autostart NOT configured"
+        return 4
+    fi
     step "activate-complete" "ok" "current -> ${_target}"
 }
 
@@ -1300,18 +1557,25 @@ USAGE
 
 ENVIRONMENT
   HMI_ROOT           Path prefix for all filesystem paths (testing only)
-  HMI_RESTART_CMD    Override the systemctl restart command (testing)
+  HMI_RESTART_CMD    Override the systemctl restart command, for every runtime
+                     (testing; also skips the unit-installed check)
   HMI_ENABLE_CMD     Override the systemctl enable command (testing)
   HMI_ENABLE_CHECK_CMD  Override the command confirming the unit is enabled
+  HMI_DISABLE_CMD    Override the systemctl disable of the other GUI unit
   HMI_SKIP_GUI_WAIT  Set to "1" to skip GUI restart/wait and autostart (testing)
   HMI_GUI_READY_TIMEOUT  Seconds to wait for gui-ready (default 25)
 
 NOTES
-  A successful `install` also enables hmi-ui.service, so the release becomes
-  the application the panel starts at boot.  If that step reports "fail" the
-  app is running but will not survive a power cycle, and `install` exits 4
-  rather than 0.  Exit 4 is not a failed deploy: the release is live and is
-  deliberately not rolled back.  Enable the unit by hand to clear it.
+  The bundle's manifest "runtime" picks the GUI unit: edsui -> hmi-ui.service,
+  qml/python (or no runtime: default qml) -> hmi-gui.service.  If that unit is
+  not installed the install is refused before anything changes (exit 5).
+
+  A successful `install` also enables that unit and disables the other, so
+  the release becomes the application the panel starts at boot.  If that step
+  reports "fail" the app is running but will not survive a power cycle, and
+  `install` exits 4 rather than 0.  Exit 4 is not a failed deploy: the release
+  is live and is deliberately not rolled back.  Enable the unit by hand to
+  clear it.
 
 EXIT CODES
   0  Success
@@ -1319,6 +1583,7 @@ EXIT CODES
   2  Usage error
   3  Lock contention (another install is running)
   4  Installed and running, but not made the boot default
+  5  The bundle's GUI service is not installed on this panel (nothing changed)
 EOF
 }
 
