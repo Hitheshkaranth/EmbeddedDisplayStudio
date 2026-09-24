@@ -262,6 +262,9 @@ def apply_style(project, page, registry, grid=None) -> list[str]:
     The background of the screen is left alone: it is the design's own.
     """
     notes: list[str] = []
+    notes.extend(sane_ranges(page, registry))
+    notes.extend(paired_ranges(page, registry))
+    notes.extend(live_readouts(page, registry))
     notes.extend(sane_scales(page, registry))
     if grid is None:
         grid = _grid.grid_for(project.screen.width, project.screen.height)
@@ -601,6 +604,167 @@ def _walk(widgets):
     for widget in widgets:
         yield widget
         yield from _walk(widget.children)
+
+
+RANGE_PROPERTIES = (("minimumValue", "maximumValue"), ("minimum", "maximum"),
+                    ("minValue", "maxValue"))
+# The widget's own limits: a dial whose redline or warning sits past its end
+# cannot show it.
+LIMIT_PROPERTIES = ("value", "redlineFrom", "thresholdWarning", "thresholdFault",
+                    "cautionValue", "warningValue", "warnHigh", "warningHigh")
+RANGE_HEADROOM = 1.2
+
+
+def _nice_ceiling(value: float) -> float:
+    """The smallest 1-2-5 x 10^k at or above `value` (value > 0)."""
+    magnitude = 10.0 ** math.floor(math.log10(value))
+    for factor in (1.0, 2.0, 2.5, 5.0, 10.0):
+        if factor * magnitude >= value - 1e-9:
+            return factor * magnitude
+    return 10.0 * magnitude
+
+
+def _nice_ceiling_fine(value: float) -> float:
+    """Like _nice_ceiling on a finer series, for a full scale (120 000 RPM)."""
+    magnitude = 10.0 ** math.floor(math.log10(value))
+    for factor in (1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0):
+        if factor * magnitude >= value - 1e-9:
+            return factor * magnitude
+    return 10.0 * magnitude
+
+
+def _fixed_readout(widget):
+    """The number a static `readout` text shows, or None."""
+    text = str(widget.properties.get("readout", "") or "").replace(",", "").strip()
+    try:
+        return float(text) if text else None
+    except ValueError:
+        return None
+
+
+def paired_ranges(page, registry) -> list:
+    """Give instruments that form a pair one scale; one note per pair.
+
+    Two gauges of one type with the same label and unit are the same reading
+    twice (engine 1 and engine 2 RPM); on different scales -- 0..120 000 and
+    0..150 000 after repairing each from its own sample -- the mirrored dials
+    cannot be compared at a glance. Both take the wider range.
+    """
+    notes = []
+    groups: dict = {}
+    for widget in _walk(page.widgets):
+        definition = registry.get(widget.type) if registry is not None else None
+        if definition is None:
+            continue
+        for low_key, high_key in RANGE_PROPERTIES:
+            if high_key in definition.properties and high_key in widget.properties:
+                key = (widget.type, str(widget.properties.get("label", "")),
+                       str(widget.properties.get("readoutUnit", widget.properties.get("unit", ""))),
+                       low_key, high_key)
+                groups.setdefault(key, []).append(widget)
+                break
+    for (_type, label, _unit, low_key, high_key), members in groups.items():
+        if len(members) < 2:
+            continue
+        widest = max(float(w.properties[high_key]) for w in members)
+        changed = [w for w in members if float(w.properties[high_key]) != widest]
+        for widget in changed:
+            old = float(widget.properties[high_key])
+            ratio = widest / old if old else 1.0
+            widget.properties[high_key] = widest
+            # A redline set as a fraction of the old end stays where it was on
+            # the dial's face only if it moves with the end.
+            if isinstance(widget.properties.get("redlineFrom"), (int, float)):
+                widget.properties["redlineFrom"] = round(min(widest, float(widget.properties["redlineFrom"]) * ratio), 6)
+        if changed:
+            notes.append(f"{', '.join(w.id for w in members)}: one {label or _type} scale, "
+                         f"0..{widest:g}")
+    return notes
+
+
+def live_readouts(page, registry) -> list:
+    """Clear a fixed `readout` on a gauge whose value is bound; one note each.
+
+    The readout text overrides the live value for good (ShClusterGauge shows
+    value.toFixed(decimals) only while readout is empty); a model writing a
+    sample "98400" there made a live RPM gauge show 98400 forever.
+    """
+    notes = []
+    for widget in _walk(page.widgets):
+        if "value" not in widget.bindings or not widget.properties.get("readout"):
+            continue
+        definition = registry.get(widget.type) if registry is not None else None
+        if definition is None or "readout" not in definition.properties:
+            continue
+        notes.append(f"{widget.id}: fixed readout {widget.properties['readout']!r} hid the "
+                     "bound value; cleared")
+        widget.properties["readout"] = ""
+    return notes
+
+
+def sane_ranges(page, registry) -> list:
+    """Widen a range that cannot show the widget's own values; one note each.
+
+    A model sets a gauge's thresholds or sample value in the tag's units and
+    leaves the kit's range (ShClusterGauge is 0..8) behind, so the redline or
+    the reading sits off the end of the dial. The evidence is only what the
+    widget carries: its value and limit properties and its binding's
+    warning/critical thresholds. The new maximum is the next 1-2-5 step
+    above the largest of them with RANGE_HEADROOM to spare.
+    """
+    from designer.model.project import parse_threshold
+
+    notes = []
+    for widget in _walk(page.widgets):
+        definition = registry.get(widget.type) if registry is not None else None
+        if definition is None:
+            continue
+        for low_key, high_key in RANGE_PROPERTIES:
+            if high_key not in definition.properties:
+                continue
+            defaults = definition.defaults or {}
+            try:
+                low = float(widget.properties.get(low_key, defaults.get(low_key, 0.0)))
+                high = float(widget.properties.get(high_key, defaults.get(high_key, 0.0)))
+            except (TypeError, ValueError):
+                break
+            evidence = []
+            for key in LIMIT_PROPERTIES:
+                value = widget.properties.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    evidence.append(float(value))
+            for binding in widget.bindings.values():
+                for text in (binding.warning, binding.critical):
+                    parsed = parse_threshold(text) if text else None
+                    if parsed:
+                        evidence.append(float(parsed[1]))
+            # The fraction pattern: range 0..1, value 0.82 and a readout of
+            # "98400" say full scale is about 98400 / 0.82 in the tag's units.
+            readout = _fixed_readout(widget)
+            value = widget.properties.get("value")
+            if (low == 0 and 0 < high <= 1 and readout and isinstance(value, (int, float))
+                    and 0 < value <= high and readout > 10 * high):
+                full = _nice_ceiling_fine(readout / (value / high))
+                scale = full / high
+                widget.properties[high_key] = full
+                # The reading is the readout itself; only the limits were
+                # fractions of the scale (0.81 x 150000 is not 97800).
+                widget.properties["value"] = readout
+                for key in ("redlineFrom", "thresholdWarning", "thresholdFault",
+                            "cautionValue", "warningValue"):
+                    if isinstance(widget.properties.get(key), (int, float)):
+                        widget.properties[key] = round(float(widget.properties[key]) * scale, 6)
+                notes.append(f"{widget.id}: range 0..{high:g} with a readout of {readout:g} is a "
+                             f"fraction of the real scale; range -> 0..{full:g}")
+                break
+            needed = max(evidence, default=high)
+            if needed > high and needed > low:
+                better = low + _nice_ceiling((needed - low) * RANGE_HEADROOM)
+                widget.properties[high_key] = better
+                notes.append(f"{widget.id}: {needed:g} is past the end of {low:g}..{high:g}; "
+                             f"range -> {low:g}..{better:g}")
+            break
+    return notes
 
 
 def sane_scales(page, registry) -> list:

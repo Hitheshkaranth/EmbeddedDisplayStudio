@@ -12,6 +12,8 @@ say, in numbers, how well composed any screen is:
     style       surfaces, typography scale and semantic colour
     critic      measurable composition quality, geometry and pixels
     polish      the loop: archetype -> arrange -> style -> critique -> fix
+    fit         pages for what one screen cannot hold, then polish, then
+                move whatever still overlaps
 
 Nothing here talks to a model: the AI tab calls `polish` on whatever the
 model produced, and the same functions serve the Designer's own

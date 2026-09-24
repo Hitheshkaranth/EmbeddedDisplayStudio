@@ -1,0 +1,1027 @@
+{
+  "version": 1,
+  "name": "fighter-jet-engine-monitoring-dashboard-section-4",
+  "screen": {
+    "width": 1024,
+    "height": 768,
+    "background": "#101418",
+    "theme": "dark"
+  },
+  "pages": [
+    {
+      "id": "main",
+      "name": "Main",
+      "widgets": [
+        {
+          "type": "Text",
+          "id": "dashboardTitle",
+          "geometry": {
+            "x": 466,
+            "y": 575,
+            "width": 84,
+            "height": 24
+          },
+          "properties": {
+            "text": "FIGHTER JET ENGINE MONITORING DASHBOARD",
+            "fontSize": 12,
+            "color": "#ffffff"
+          },
+          "bindings": {},
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShClusterGauge",
+          "id": "engine1Rpm",
+          "geometry": {
+            "x": 200,
+            "y": 150,
+            "width": 280,
+            "height": 290
+          },
+          "properties": {
+            "label": "RPM",
+            "readout": "98400",
+            "readoutUnit": "RPM",
+            "caption": "ENG 1",
+            "value": 0.82,
+            "minimumValue": 0.0,
+            "maximumValue": 1.0,
+            "redlineFrom": 0.95,
+            "sweep": 220.0,
+            "decimals": 0,
+            "showInnerDial": true,
+            "majorStep": 0.1
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.rpm1",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "RPM",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShClusterGauge",
+          "id": "engine2Rpm",
+          "geometry": {
+            "x": 500,
+            "y": 150,
+            "width": 320,
+            "height": 280
+          },
+          "properties": {
+            "label": "RPM",
+            "readout": "97800",
+            "readoutUnit": "RPM",
+            "caption": "ENG 2",
+            "value": 0.81,
+            "minimumValue": 0.0,
+            "maximumValue": 1.0,
+            "redlineFrom": 0.95,
+            "sweep": 220.0,
+            "decimals": 0,
+            "showInnerDial": true,
+            "majorStep": 0.1
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.rpm2",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "RPM",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShNumDisplay",
+          "id": "egt1",
+          "geometry": {
+            "x": 700,
+            "y": 420,
+            "width": 108,
+            "height": 48
+          },
+          "properties": {
+            "value": 685,
+            "unit": "°C",
+            "label": "EGT ENG 1",
+            "normalColor": "#17c964",
+            "warningColor": "#f5a524",
+            "faultColor": "#f31260"
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.egt1",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "°C",
+              "warning": "> 750",
+              "critical": "> 850"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShNumDisplay",
+          "id": "egt2",
+          "geometry": {
+            "x": 560,
+            "y": 470,
+            "width": 108,
+            "height": 48
+          },
+          "properties": {
+            "value": 672,
+            "unit": "°C",
+            "label": "EGT ENG 2",
+            "normalColor": "#17c964",
+            "warningColor": "#f5a524",
+            "faultColor": "#f31260"
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.egt2",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "°C",
+              "warning": "> 750",
+              "critical": "> 850"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShSegmentBar",
+          "id": "thrust1",
+          "geometry": {
+            "x": 570,
+            "y": 110,
+            "width": 192,
+            "height": 24
+          },
+          "properties": {
+            "value": 87,
+            "minimumValue": 0,
+            "maximumValue": 100,
+            "label": "THRUST ENG 1",
+            "segments": 20
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.thrust1",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "%",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShSegmentBar",
+          "id": "thrust2",
+          "geometry": {
+            "x": 230,
+            "y": 110,
+            "width": 192,
+            "height": 25
+          },
+          "properties": {
+            "value": 85,
+            "minimumValue": 0,
+            "maximumValue": 100,
+            "label": "THRUST ENG 2",
+            "segments": 20
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.thrust2",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "%",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShStatDot",
+          "id": "eng1Status",
+          "geometry": {
+            "x": 360,
+            "y": 640,
+            "width": 36,
+            "height": 36
+          },
+          "properties": {},
+          "bindings": {
+            "state": {
+              "tag": "eng.status1",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShFuelQuantity",
+          "id": "fuelFlowEng2",
+          "geometry": {
+            "x": 840,
+            "y": 330,
+            "width": 178,
+            "height": 106
+          },
+          "properties": {},
+          "bindings": {
+            "value": {
+              "tag": "eng.fuelflow2",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "kg/h",
+              "warning": "> 60",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShNumDisplay",
+          "id": "totalFuelQty",
+          "geometry": {
+            "x": 430,
+            "y": 410,
+            "width": 108,
+            "height": 48
+          },
+          "properties": {
+            "value": 12450,
+            "unit": "kg",
+            "label": "TOTAL FUEL QUANTITY",
+            "normalColor": "#17c964",
+            "warningColor": "#f5a524",
+            "faultColor": "#f31260"
+          },
+          "bindings": {
+            "value": {
+              "tag": "fuel.total",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "kg",
+              "warning": "< 2000",
+              "critical": "< 500"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShNumDisplay",
+          "id": "fuelPressure",
+          "geometry": {
+            "x": 110,
+            "y": 27,
+            "width": 121,
+            "height": 48
+          },
+          "properties": {
+            "value": 28.5,
+            "unit": "bar",
+            "label": "FUEL PRESSURE",
+            "normalColor": "#17c964",
+            "warningColor": "#f5a524",
+            "faultColor": "#f31260"
+          },
+          "bindings": {
+            "value": {
+              "tag": "fuel.pressure",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "bar",
+              "warning": "< 20",
+              "critical": "< 15"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShNumDisplay",
+          "id": "fuelEndurance",
+          "geometry": {
+            "x": 275,
+            "y": 27,
+            "width": 108,
+            "height": 48
+          },
+          "properties": {
+            "value": 3.8,
+            "unit": "h",
+            "label": "EST. ENDURANCE"
+          },
+          "bindings": {
+            "value": {
+              "tag": "fuel.endurance",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "h",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShNumDisplay",
+          "id": "oilPressureEng1",
+          "geometry": {
+            "x": 150,
+            "y": 470,
+            "width": 108,
+            "height": 48
+          },
+          "properties": {
+            "value": 42.5,
+            "unit": "bar",
+            "label": "OIL PRESS ENG 1",
+            "normalColor": "#17c964",
+            "warningColor": "#f5a524",
+            "faultColor": "#f31260"
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.oilpressure1",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "bar",
+              "warning": "< 25",
+              "critical": "< 15"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShNumDisplay",
+          "id": "oilTempEng1",
+          "geometry": {
+            "x": 290,
+            "y": 410,
+            "width": 108,
+            "height": 48
+          },
+          "properties": {
+            "value": 89,
+            "unit": "°C",
+            "label": "OIL TEMP ENG 1",
+            "normalColor": "#17c964",
+            "warningColor": "#f5a524",
+            "faultColor": "#f31260"
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.oiltemp1",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "°C",
+              "warning": "> 110",
+              "critical": "> 130"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShStatDot",
+          "id": "eng2Status",
+          "geometry": {
+            "x": 290,
+            "y": 630,
+            "width": 45,
+            "height": 45
+          },
+          "properties": {},
+          "bindings": {
+            "state": {
+              "tag": "eng.status2",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShTrendChart",
+          "id": "rpmTrend",
+          "geometry": {
+            "x": 30,
+            "y": 270,
+            "width": 83,
+            "height": 166
+          },
+          "properties": {
+            "maxPoints": 60,
+            "minValue": 0,
+            "maxValue": 100000
+          },
+          "bindings": {
+            "data": {
+              "tag": "eng.rpm_trend",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShTrendChart",
+          "id": "egtTrend",
+          "geometry": {
+            "x": 30,
+            "y": 90,
+            "width": 83,
+            "height": 167
+          },
+          "properties": {
+            "maxPoints": 60,
+            "minValue": 0,
+            "maxValue": 900
+          },
+          "bindings": {
+            "data": {
+              "tag": "eng.egt_trend",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShTrendChart",
+          "id": "fuelTrend",
+          "geometry": {
+            "x": 920,
+            "y": 100,
+            "width": 80,
+            "height": 167
+          },
+          "properties": {
+            "maxPoints": 60,
+            "minValue": 0,
+            "maxValue": 80
+          },
+          "bindings": {
+            "data": {
+              "tag": "eng.fuel_trend",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShAlarmTable",
+          "id": "alarmPanel",
+          "geometry": {
+            "x": 790,
+            "y": 610,
+            "width": 210,
+            "height": 130
+          },
+          "properties": {
+            "title": "ACTIVE ALERTS"
+          },
+          "bindings": {
+            "alarms": {
+              "tag": "alarm.active",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShAlert",
+          "id": "alertOverspeed",
+          "geometry": {
+            "x": 280,
+            "y": 690,
+            "width": 156,
+            "height": 54
+          },
+          "properties": {
+            "title": "OVERSPEED WARNING"
+          },
+          "bindings": {
+            "visible": {
+              "tag": "eng.overspeed",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            },
+            "acknowledged": {
+              "tag": "alarm.ack.overspeed",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShAlert",
+          "id": "alertOvertemp",
+          "geometry": {
+            "x": 407,
+            "y": 27,
+            "width": 210,
+            "height": 54
+          },
+          "properties": {
+            "title": "OVERTEMPERATURE"
+          },
+          "bindings": {
+            "visible": {
+              "tag": "eng.overtemp",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            },
+            "acknowledged": {
+              "tag": "alarm.ack.overtemp",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShAlert",
+          "id": "alertLowOil",
+          "geometry": {
+            "x": 20,
+            "y": 640,
+            "width": 232,
+            "height": 112
+          },
+          "properties": {
+            "title": "LOW OIL PRESSURE"
+          },
+          "bindings": {
+            "visible": {
+              "tag": "eng.low_oil_pressure",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            },
+            "acknowledged": {
+              "tag": "alarm.ack.low_oil",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShAlert",
+          "id": "alertVibration",
+          "geometry": {
+            "x": 642,
+            "y": 27,
+            "width": 156,
+            "height": 54
+          },
+          "properties": {
+            "title": "ABNORMAL VIBRATION"
+          },
+          "bindings": {
+            "visible": {
+              "tag": "eng.abnormal_vibration",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            },
+            "acknowledged": {
+              "tag": "alarm.ack.vibration",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShNumDisplay",
+          "id": "vibrationEng1",
+          "geometry": {
+            "x": 849,
+            "y": 27,
+            "width": 108,
+            "height": 48
+          },
+          "properties": {
+            "value": 0.04,
+            "unit": "g",
+            "label": "VIBRATION ENG 1",
+            "normalColor": "#17c964",
+            "warningColor": "#f5a524",
+            "faultColor": "#f31260"
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.vibration1",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "g",
+              "warning": "> 0.1",
+              "critical": "> 0.2"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShNumDisplay",
+          "id": "vibrationEng2",
+          "geometry": {
+            "x": 150,
+            "y": 410,
+            "width": 108,
+            "height": 48
+          },
+          "properties": {
+            "value": 0.03,
+            "unit": "g",
+            "label": "VIBRATION ENG 2",
+            "normalColor": "#17c964",
+            "warningColor": "#f5a524",
+            "faultColor": "#f31260"
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.vibration2",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "g",
+              "warning": "> 0.1",
+              "critical": "> 0.2"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShNumDisplay",
+          "id": "nozzlePosEng1",
+          "geometry": {
+            "x": 570,
+            "y": 410,
+            "width": 108,
+            "height": 48
+          },
+          "properties": {
+            "value": 72,
+            "unit": "%",
+            "label": "NOZZLE POS ENG 1"
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.nozzlepos1",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "%",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShNumDisplay",
+          "id": "nozzlePosEng2",
+          "geometry": {
+            "x": 430,
+            "y": 470,
+            "width": 108,
+            "height": 48
+          },
+          "properties": {
+            "value": 70,
+            "unit": "%",
+            "label": "NOZZLE POS ENG 2"
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.nozzlepos2",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "%",
+              "warning": "",
+              "critical": ""
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShNumDisplay",
+          "id": "oilTempEng2",
+          "geometry": {
+            "x": 290,
+            "y": 470,
+            "width": 108,
+            "height": 48
+          },
+          "properties": {
+            "value": 91,
+            "unit": "°C",
+            "label": "OIL TEMP ENG 2",
+            "normalColor": "#17c964",
+            "warningColor": "#f5a524",
+            "faultColor": "#f31260"
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.oiltemp2",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "°C",
+              "warning": "> 110",
+              "critical": "> 130"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShNumDisplay",
+          "id": "oilPressureEng2",
+          "geometry": {
+            "x": 690,
+            "y": 470,
+            "width": 108,
+            "height": 48
+          },
+          "properties": {
+            "value": 41.0,
+            "unit": "bar",
+            "label": "OIL PRESS ENG 2",
+            "normalColor": "#17c964",
+            "warningColor": "#f5a524",
+            "faultColor": "#f31260"
+          },
+          "bindings": {
+            "value": {
+              "tag": "eng.oilpressure2",
+              "format": "",
+              "multiplier": 1.0,
+              "offset": 0.0,
+              "unit": "bar",
+              "warning": "< 25",
+              "critical": "< 15"
+            }
+          },
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShIconTile",
+          "id": "engineSelect",
+          "geometry": {
+            "x": 470,
+            "y": 690,
+            "width": 66,
+            "height": 66
+          },
+          "properties": {
+            "icon": "power-off",
+            "label": "ENG SEL"
+          },
+          "bindings": {},
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "ShIconTile",
+          "id": "acknowledgeAlerts",
+          "geometry": {
+            "x": 560,
+            "y": 630,
+            "width": 125,
+            "height": 125
+          },
+          "properties": {
+            "icon": "check-circle",
+            "label": "ACK ALL"
+          },
+          "bindings": {},
+          "children": [],
+          "locked": false,
+          "z": 0,
+          "actions": {
+            "clicked": {
+              "kind": "write",
+              "tag": "alarm.ack.all",
+              "value": true
+            }
+          }
+        },
+        {
+          "type": "Text",
+          "id": "fuelFlowEng1Caption",
+          "geometry": {
+            "x": 560,
+            "y": 540,
+            "width": 230,
+            "height": 24
+          },
+          "properties": {
+            "text": "Fuelflow1",
+            "fontSize": 12,
+            "bold": false,
+            "color": "#a1a1aa",
+            "horizontalAlignment": "Text.AlignLeft",
+            "verticalAlignment": "Text.AlignVCenter",
+            "_composedCaption": true
+          },
+          "bindings": {},
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "Text",
+          "id": "fuelFlowEng2Caption",
+          "geometry": {
+            "x": 53,
+            "y": 567,
+            "width": 178,
+            "height": 24
+          },
+          "properties": {
+            "text": "Fuelflow2",
+            "fontSize": 12,
+            "bold": false,
+            "color": "#a1a1aa",
+            "horizontalAlignment": "Text.AlignLeft",
+            "verticalAlignment": "Text.AlignVCenter",
+            "_composedCaption": true
+          },
+          "bindings": {},
+          "children": [],
+          "locked": false,
+          "z": 0
+        },
+        {
+          "type": "Text",
+          "id": "eng2StatusCaption",
+          "geometry": {
+            "x": 410,
+            "y": 660,
+            "width": 84,
+            "height": 24
+          },
+          "properties": {
+            "text": "Status2",
+            "fontSize": 12,
+            "bold": false,
+            "color": "#a1a1aa",
+            "horizontalAlignment": "Text.AlignLeft",
+            "verticalAlignment": "Text.AlignVCenter",
+            "_composedCaption": true
+          },
+          "bindings": {},
+          "children": [],
+          "locked": false,
+          "z": 0
+        }
+      ]
+    }
+  ]
+}

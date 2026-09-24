@@ -113,6 +113,22 @@ class TestAIDesignGenerator(unittest.TestCase):
                 overlap_y = min(a["y"] + a["height"], b["y"] + b["height"]) - max(a["y"], b["y"])
                 self.assertFalse(overlap_x > 0 and overlap_y > 0, (a, b))
 
+    def test_the_brief_resolution_is_read_when_it_names_one(self):
+        from tools.hmi_deployer.ai_generator import brief_resolution
+        self.assertEqual(brief_resolution("a 1920×1080 avionics display"), (1920, 1080))
+        self.assertEqual(brief_resolution("for the 1024 x 768 panel"), (1024, 768))
+        self.assertIsNone(brief_resolution("ranges 0..100 x 5 steps"))
+        self.assertIsNone(brief_resolution(""))
+
+    def test_the_prompt_gives_a_page_budget_and_real_unit_ranges(self):
+        from designer.palette.widget_registry import default_registry
+        from tools.hmi_deployer.ai_generator import build_system_prompt, page_budget
+        prompt = build_system_prompt(default_registry(), 1024, 768)
+        self.assertIn(f"about {page_budget(1024, 768)} widgets", prompt)
+        self.assertIn("never as a 0..1 fraction", prompt)
+        self.assertNotIn("Qt/QML panels", prompt)
+        self.assertGreater(page_budget(1920, 1080), page_budget(1024, 768))
+
     def test_a_tag_that_cannot_be_repaired_is_left_for_validation_to_name(self):
         from tools.hmi_deployer.ai_generator import _coerce_tag
         self.assertEqual(_coerce_tag("Relay"), "Relay")   # no dot: not a guess to make

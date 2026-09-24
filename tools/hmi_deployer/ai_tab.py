@@ -45,8 +45,8 @@ from PySide6.QtWidgets import (
 
 from tools.hmi_deployer.ai_design import BYOK_PRESETS, ProviderConfig
 from tools.hmi_deployer.ai_generator import (
-    build_system_prompt, diff_projects, drop_dangling_navigation, merge_project_section,
-    summarize_widgets,
+    brief_resolution, build_system_prompt, diff_projects, drop_dangling_navigation,
+    merge_project_section, summarize_widgets,
 )
 
 try:
@@ -1423,6 +1423,7 @@ class AIDesignTab(QWidget):
         self._section_project = None
         self._queued_section_request = None
         self._root_brief = ""
+        self._resolution_noted = False
         # The panel's own renderer, for the variant thumbnails: None until
         # asked for, False when there is no hmi-ui binary to ask.
         self._variant_renderer_cache = None
@@ -2307,6 +2308,7 @@ class AIDesignTab(QWidget):
         if not brief or self.streaming:
             return
         self._root_brief = brief
+        self._resolution_noted = False
         self._section_run = 1
         self._section_project = None
         self._queued_section_request = None
@@ -2339,6 +2341,15 @@ class AIDesignTab(QWidget):
             width, height = self._screen_size()
             registry = getattr(self.generator, "registry", None)
             self.connector.system_prompt = build_system_prompt(registry, width, height, brief=self._root_brief)
+            asked = brief_resolution(self._root_brief)
+            if asked and asked != (width, height) and not self._resolution_noted:
+                # The brief's size is not the glass; saying so once beats a
+                # design composed for a screen twice the size of the panel.
+                self._resolution_noted = True
+                self.statusMessage.emit(
+                    f"AI Design: the brief asks for {asked[0]}×{asked[1]}; designing for the "
+                    f"panel's {width}×{height}. Change the design target to design for "
+                    f"{asked[0]}×{asked[1]}.")
             # The brief picks the composition archetype when the section is polished.
             if self.generator is not None:
                 self.generator.brief = self._root_brief
@@ -2477,6 +2488,10 @@ class AIDesignTab(QWidget):
                             project = self.generator.compose(project)
                             shell.note_polish(getattr(self.generator, "last_polish", None))
                     self._section_project = project
+                # Say where widgets went when the screen could not hold them all,
+                # or a design that grew pages reads as one that lost widgets.
+                for note in getattr(self.generator, "last_fit_notes", None) or []:
+                    self.statusMessage.emit(f"AI Design: {note}")
                 if not sectioned or section_complete:
                     for link in drop_dangling_navigation(project):
                         self.statusMessage.emit(f"AI Design: removed an action that could never run: {link}")
@@ -2600,6 +2615,7 @@ class AIDesignTab(QWidget):
         self._section_run = 0
         self._section_project = None
         self._root_brief = ""
+        self._resolution_noted = False
         for turn in self.turns:
             self.chat_layout.removeWidget(turn)
             turn.deleteLater()

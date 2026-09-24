@@ -30,6 +30,9 @@ FACE_TYPES = (
     "ShEngineGauge", "ShEngineBar", "ShFuelQuantity", "ShAutoLevel", "ShVehicleStatus",
     "ShTurnCoordinator", "ShFlightDirector", "ShTrendChart", "ShAnalogDisplay",
 )
+# Round instruments a screen is built around; two of one kind make a twin page.
+_DIAL_TYPES = ("ShClusterGauge", "ShGauge", "ShEngineGauge", "ShAttitude", "ShCompass",
+               "ShAnalogDisplay")
 # Lamps and annunciators: small, and read as a group rather than one at a time.
 STATUS_TYPES = ("ShStatDot", "ShTelltale", "ShAlert", "ShAnnunciator", "ShProgress")
 # Rows of records.
@@ -216,7 +219,31 @@ _SPLIT = Archetype(
               "history", "journal", "list", "split"),
 )
 
-_CATALOGUE = (_HERO_CENTRE, _THIRDS, _HEADER_HERO_RAIL, _CARD_GRID, _SPLIT)
+_TWIN = Archetype(
+    id="twin",
+    name="Twin",
+    description="Two equal instruments side by side -- two engines, two "
+                "channels -- a narrow centre strip for status, their readings "
+                "under each and the alarm table at the foot.",
+    slots=(
+        Slot("caption-band", 0, 0, 12, 1, "caption", 0),
+        Slot("hero-left", 0, 1, 5, 6, "hero", 0),
+        # The second instrument is "primary" (only the largest face on a page
+        # is its hero); the slot is the hero's mirror image all the same.
+        Slot("hero-right", 7, 1, 5, 6, "primary", 1),
+        Slot("centre-1", 5, 1, 2, 3, "status", 5),
+        Slot("centre-2", 5, 4, 2, 3, "control", 6),
+        Slot("left-1", 0, 7, 5, 2, "secondary", 2),
+        Slot("right-1", 7, 7, 5, 2, "secondary", 3),
+        Slot("left-2", 0, 9, 4, 3, "secondary", 7),
+        Slot("foot-centre", 4, 9, 4, 3, "table", 4),
+        Slot("right-2", 8, 9, 4, 3, "secondary", 8),
+    ),
+    keywords=("dual", "twin", "twins", "pair", "symmetric", "symmetrical", "mirrored",
+              "both", "left", "right"),
+)
+
+_CATALOGUE = (_HERO_CENTRE, _THIRDS, _HEADER_HERO_RAIL, _CARD_GRID, _SPLIT, _TWIN)
 
 
 def archetypes() -> tuple:
@@ -244,6 +271,17 @@ def archetype_for(brief: str, widget_count: int, page=None) -> Archetype:
     "table" -> split; "menu", "tiles", "overview" -> card-grid); otherwise by
     count: <= 4 hero-centre, <= 8 thirds, <= 12 header-hero-rail, else card-grid.
     """
+    # Two instruments of one kind are a pair whatever the brief said: one
+    # hero and one corner dial read as a mistake on a dual-engine screen.
+    if page is not None:
+        faces = [w.type for w in getattr(page, "widgets", ()) if w.type in _DIAL_TYPES]
+        if any(faces.count(kind) == 2 for kind in set(faces)):
+            return _TWIN
+        # Only readouts, lamps and controls: a hero layout leaves its big
+        # slot empty and scatters them to the corners. Tiles in a grid.
+        if widgets := list(getattr(page, "widgets", ())):
+            if not any(w.type in FACE_TYPES or w.type in TABLE_TYPES for w in widgets):
+                return _CARD_GRID
     words = set(_WORD_RE.findall(str(brief or "").lower()))
     best, best_hits = None, 0
     for archetype in _CATALOGUE:
@@ -251,7 +289,9 @@ def archetype_for(brief: str, widget_count: int, page=None) -> Archetype:
         # a menu; the composition its words point at most often wins, and the
         # catalogue's own order settles a tie.
         hits = len(words & set(archetype.keywords))
-        if hits > best_hits:
+        # "dual" and "twin" say more than "engine" or "dashboard" beside
+        # them: the twin wins any tie it is part of.
+        if hits > best_hits or (hits and hits == best_hits and archetype is _TWIN):
             best, best_hits = archetype, hits
     if best is not None:
         return best

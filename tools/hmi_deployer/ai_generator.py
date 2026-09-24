@@ -323,6 +323,27 @@ def compose_section(registry, screen_width: int, screen_height: int, brief: str 
     return section
 
 
+_RESOLUTION_RE = re.compile(r"\b(\d{3,4})\s*[x×X*]\s*(\d{3,4})\b")
+
+
+def brief_resolution(brief: str):
+    """The screen size a brief names ("1920x1080", "1920 × 1080"), or None."""
+    match = _RESOLUTION_RE.search(str(brief or ""))
+    if not match:
+        return None
+    width, height = int(match.group(1)), int(match.group(2))
+    return (width, height) if 160 <= width <= 7680 and 120 <= height <= 4320 else None
+
+
+def page_budget(screen_width: int, screen_height: int) -> int:
+    """About how many widgets one page of this screen holds before they collide.
+
+    Measured on a real 35-widget design at 1024x768: 16-17 widgets composed
+    with no overlaps (designer/layout/fit.py, FILL_LIMIT). Scaled by area.
+    """
+    return max(6, int(16 * (screen_width * screen_height) / (1024 * 768)))
+
+
 def build_system_prompt(registry: Optional[WidgetRegistry] = None,
                         screen_width: int = 1280, screen_height: int = 800,
                         brief: str = "") -> str:
@@ -341,10 +362,15 @@ def build_system_prompt(registry: Optional[WidgetRegistry] = None,
     if not types:
         types = sorted(set(_AI_TYPE_ALIASES.values()))
     prompt = (
-        "You are an expert HMI designer for embedded Qt/QML panels built with the "
+        "You are an expert HMI designer for embedded panels built with the "
         "EmbeddedDisplay Studio widget set (Shadcn-styled). "
         f"The target screen is {screen_width}x{screen_height} px; place every widget "
-        "inside it with absolute geometry.\n\n"
+        "inside it with absolute geometry. "
+        f"One page of this screen holds about {page_budget(screen_width, screen_height)} widgets; "
+        "when a brief asks for more, keep the most important on the first page and put the "
+        "rest on further pages (one per engine, system or topic), each linked by a navigate "
+        "button. Every gauge, bar or tape bound to a tag sets its range in the tag's own units "
+        '("minimumValue": 0, "maximumValue": 110000 for an RPM), never as a 0..1 fraction.\n\n'
         "Build large designs in small, independently valid sections of at most 8 widgets. "
         "Return exactly one section per response; never start another section in the same response. "
         "A container and all of its children count as one section and must stay together.\n\n"
@@ -405,6 +431,7 @@ class AIDesignGenerator:
         # False (tests, a caller that polishes itself) returns it raw.
         self.polish_enabled = True
         self.last_polish = None      # the PolishReport of the last generate()
+        self.last_fit_notes = []     # what compose() moved to other pages, and why
         # The brief the section was asked for, when the caller knows it: it
         # picks the composition archetype. Empty is fine -- the widget count
         # then decides.
@@ -438,17 +465,18 @@ class AIDesignGenerator:
         coolant gauge and a status lamp stacked in the middle of the panel.
         """
         self.last_polish = None
+        self.last_fit_notes = []
         if project is None or not self.polish_enabled:
             return project
         try:
+            from designer.layout.fit import compose_project
             from designer.layout.polish import polish
             self.progress.progress.emit("Composing the design...")
-            report = None
-            for page in project.pages:
-                page_report = polish(project, page, self.registry,
-                                     brief=self.brief or project.name, renderer=self.renderer)
-                report = report or page_report
-            self.last_polish = report
+            # Fit first (pages for what the screen cannot hold), then polish,
+            # then move whatever still overlaps: see designer/layout/fit.py.
+            self.last_polish, self.last_fit_notes = compose_project(
+                project, self.registry, polish,
+                brief=self.brief or project.name, renderer=self.renderer)
         except Exception as exc:
             # A design in a draft's clothes beats no design at all: whatever
             # the layout pipeline did, the model's work reaches the canvas.
