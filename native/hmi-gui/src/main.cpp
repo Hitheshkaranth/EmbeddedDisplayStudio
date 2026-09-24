@@ -24,8 +24,6 @@
 //   walking up from the executable looking for ui/qml/Shadcn/qmldir), and
 //   always /usr/lib/hmi/qml. Shell default: /usr/lib/hmi/shell/Shell.qml on
 //   the panel, <repo>/gui/shell/Shell.qml from a checkout.
-//
-// Owner: W3. The flag set is frozen; the body may be refined.
 
 #include "busshim.h"
 #include "faces/nativefaces.h"

@@ -1,7 +1,6 @@
-"""The Studio draws its previews with hmi-ui when the binary is at hand (W3 gate).
+"""The Studio draws its previews with hmi-ui when the binary is at hand.
 
-FROZEN: the tests below are the minimum W3 must pass; add more below them,
-never change these. They need the Linux hmi-ui binary
+They need the Linux hmi-ui binary
 (native/hmi-ui/out/hmi-ui) -- run in WSL.
 """
 import json
@@ -141,7 +140,7 @@ class BezelUsesNativeRenderer(unittest.TestCase):
 # =========================================================================
 
 
-# ------------------------------------------------------------ W3 additions
+# ------------------------------------------------------------ further tests
 def _edsui_bundle(root):
     bundle = os.path.join(root, "engine-dashboard")
     shutil.copytree(FIXTURE, bundle)

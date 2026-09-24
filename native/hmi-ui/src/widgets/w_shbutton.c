@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/ShButton.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): text, variant, size, enabled, backgroundColor, textColor, borderColor, borderWidth, cornerRadius, opacity, visible.
 // Default size 120x40. Signals: clicked.
-// Owner: W3.
 #include <string.h>
 #include "registry.h"
 #include "theme.h"

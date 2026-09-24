@@ -2,7 +2,7 @@
 //
 // Paints: gradient fill under the trace, the trace, the current-value dot.
 // The Canvas file is the drawing specification; the spec keys are listed in
-// its header comment. Owner: W4 (swarm/briefs/faces/W4-*.md).
+// its header comment.
 #pragma once
 
 #include "faceitem.h"

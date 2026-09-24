@@ -1,6 +1,6 @@
 """
 tests/verify_smoke_capture.py
-Layer: Test (W11)
+Layer: Test
 
 Checks that a bezel grab taken from the packaged executable actually contains
 the smoke fixture's application.

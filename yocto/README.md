@@ -1,6 +1,6 @@
 # Yocto Integrator Guide (meta-hmi)
 
-Comprehensive integration guide for building the HMI stack into the native Toradex Yocto Reference Multimedia Image for the **Toradex Verdin i.MX8M Plus** System on Module (SoM). The stack is Qt-free: the panel GUI is `native/hmi-ui` (C + LVGL) drawing to DRM/KMS with no compositor.
+Integration guide for building the HMI stack into the native Toradex Yocto Reference Multimedia Image for the **Toradex Verdin i.MX8M Plus** System on Module (SoM). The stack is Qt-free: the panel GUI is `native/hmi-ui` (C + LVGL) drawing to DRM/KMS with no compositor.
 
 ---
 

@@ -1,9 +1,5 @@
 """designer/ui/code_editor.py -- the Code window's editor widget.
 
-FROZEN CONTRACT (Code window swarm, 2026-09-22). Owner: W2. Public names,
-signatures and signals below are the contract; W2 fills them in and may add
-private helpers and private classes.
-
 A QPlainTextEdit with what a code view needs and nothing more: line numbers
 in a gutter, current-line highlight, a monospace font, QML and JSON syntax
 colouring that follows the Studio theme, a read-only mode that still allows
@@ -253,7 +249,7 @@ class CHighlighter(_RuleHighlighter):
 
 
 class PythonHighlighter(_RuleHighlighter):
-    """Python 3 (FROZEN CONTRACT, Code IDE swarm 2026-09-23; owner W2):
+    """Python 3:
     keywords ("keyword"), builtins and capitalised class names ("type"),
     decorators ("property"), numbers, strings (single, double and triple
     quoted; a triple-quoted string may span lines), and # comments to the end

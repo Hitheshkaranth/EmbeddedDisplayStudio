@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/ShNumInput.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): value, minValue, maxValue, step, unit, label, enabled, decimalPlaces, opacity, visible.
 // Default size 240x64. Signals: valueChanged.
-// Owner: W3 (wave 2).
 #include <stdio.h>
 #include <string.h>
 #include <math.h>

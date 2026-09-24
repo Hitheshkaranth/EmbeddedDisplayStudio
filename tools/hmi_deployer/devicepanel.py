@@ -746,7 +746,7 @@ class DevicePanel(QWidget):
             renderer.shutdown()
             renderer.deleteLater()
 
-    # -- FROZEN CONTRACT (native previews swarm, 2026-09-22; owner W3) --------
+    # -- preview mode ------------------------------------------------------------
     def preview_mode(self) -> str:
         """What the bezel is showing for the loaded bundle: 'hmi-ui' when it is
         a still of the page rendered by the panel's own renderer

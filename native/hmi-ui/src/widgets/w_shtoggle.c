@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/ShToggle.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): checked, label, onLabel, offLabel, enabled, opacity, visible.
 // Default size 160x40. Signals: toggled.
-// Owner: W3 (wave 2).
 #include <string.h>
 #include "draw_util.h"
 #include "registry.h"

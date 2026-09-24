@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/ShAlert.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): title, description, variant, opacity, visible.
 // Default size 260x90. Signals: none.
-// Owner: W3 (wave 2).
 #include <string.h>
 
 #include "draw_util.h"

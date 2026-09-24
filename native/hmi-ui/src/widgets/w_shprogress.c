@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/ShProgress.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): value, indeterminate, opacity, visible.
 // Default size 200x24. Signals: none.
-// Owner: W3.
 #include <string.h>
 #include "registry.h"
 #include "theme.h"

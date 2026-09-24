@@ -1,5 +1,5 @@
 // native/hmi-gui/tests/tst_alarms.cpp
-// QTest case for AlarmEngine. Owner: W2.
+// QTest case for AlarmEngine.
 #include "alarmengine.h"
 
 #include <QSignalSpy>

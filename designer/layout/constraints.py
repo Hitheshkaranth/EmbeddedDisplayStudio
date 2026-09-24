@@ -1,7 +1,5 @@
 """designer/layout/constraints.py -- what each widget type needs to look right.
 
-FROZEN CONTRACT (AI beauty swarm, 2026-09-22). Owner: W1.
-
 A cluster gauge is a dial: square, and useless below ~140 px. A tape is a
 tall strip. A button has a minimum touch height. The registry knows each
 type's design size (`default_width` / `default_height`); these rules turn

@@ -528,10 +528,9 @@ class DesignerWorkspace(QWidget):
     previewRequested = Signal(str)
     deployRequested = Signal(str)
     message = Signal(str)
-    # FROZEN CONTRACT (Code window swarm, 2026-09-22; owner W4): emitted after
-    # any change to the design the Code window should re-read -- an undo
-    # stack index change, a page switch/add/delete, a bundle load, a
-    # replace_widget/replace_page. Never emitted for selection changes
+    # Emitted after any change to the design the Code window should re-read
+    # -- an undo stack index change, a page switch/add/delete, a bundle load,
+    # a replace_widget/replace_page. Never emitted for selection changes
     # (those are scene.selectionIdsChanged).
     designChanged = Signal()
     # The current page's index changed (page switch/add/delete/load).
@@ -869,10 +868,9 @@ class DesignerWorkspace(QWidget):
 
         # -- centre: the canvas ------------------------------------------------
         self.scene = DesignerScene(self.registry); self.view = DesignerView(self.scene); self.view.setObjectName("designerCanvas")
-        # FROZEN CONTRACT (native previews swarm, 2026-09-22; owner W3): the
-        # scene's renderer is designer.preview.NativeRenderer (the panel's own
-        # hmi-ui, headless) when designer.preview.find_hmi_ui() finds a binary,
-        # else this Qt/QML fallback; `preview_renderer_name` says which
+        # The scene's renderer is designer.preview.NativeRenderer (the panel's
+        # own hmi-ui, headless) when designer.preview.find_hmi_ui() finds a
+        # binary, else this Qt/QML fallback; `preview_renderer_name` says which
         # ("hmi-ui" / "qml"). Its `background` follows the design's screen.
         self.preview_renderer_name = "qml"
         self.scene.qml_previews = self._make_preview_renderer()
@@ -1960,7 +1958,7 @@ class DesignerWorkspace(QWidget):
             self.message.emit(f"Generated {len(paths)} QML page(s) in {output_dir}"); return paths
         except (OSError, QmlGenerationError, ValueError) as exc:
             QMessageBox.critical(self, "Generation failed", str(exc)); return []
-    # -- Code window (FROZEN CONTRACT, Code window swarm 2026-09-22; owner W4) --
+    # -- Code window --
     def host_code_window(self, window, activate):
         """The Studio embeds the Code window as a tab beside the Designer:
         `window` is that instance and `activate` switches to the tab.

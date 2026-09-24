@@ -1,8 +1,8 @@
 // alarms.h -- manifest-driven alarm evaluation on every telemetry frame.
 //
 // The C port of native/hmi-gui/src/alarmengine.{h,cpp} (itself the port of
-// gui/hmi_loader/tagengine.py lines 478-660). Read alarmengine.h's header
-// comment: the rules there are frozen and apply here verbatim. Alarm
+// gui/hmi_loader/tagengine.py's _evaluate_alarms). Read alarmengine.h's header
+// comment: the rules there apply here verbatim. Alarm
 // definitions come from the bundle's manifest.json "alarms" array:
 //   {"tag": "ai.pot", "label": "Input Voltage", "unit": "V",
 //    "warning":  {"op": ">", "value": 2.5},
@@ -18,8 +18,6 @@
 // an HMI_V_LIST of lists [tag, label, severity, value, message, timestamp,
 // acknowledged] (fixed order), delivered on the widget's "alarms" property
 // by the runtime whenever the set changes.
-//
-// FROZEN (wave 2 contract). Owner of alarms.c: W4.
 #pragma once
 
 #include <stdbool.h>

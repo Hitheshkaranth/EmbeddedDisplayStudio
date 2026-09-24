@@ -1,7 +1,6 @@
-# Host Deployer GUI (W5)
+# Host Deployer GUI
 
 **Layer:** 3 (Deploy)
-**Owner:** W5
 
 This tool is the "Bring Your Own App" (BYOA) HMI system deployer for the Toradex Verdin i.MX8M Plus. 
 It provides a commercial-grade desktop experience for engineers to import their Qt application, view a live preview, and deploy it to the target panel.

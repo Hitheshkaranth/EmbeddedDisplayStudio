@@ -1,7 +1,5 @@
 # UI effects: Libraries.dev ported to QPainter
 
-Status: design frozen 2026-09-23 (branch `feat/ui-fx`).
-
 [Libraries.dev](https://github.com/Jakubantalik/Libraries.dev) (MIT, (c) 2026
 Jakub Antalik) is a set of React effects for AI-agent interfaces. The Studio
 is PySide6, so nothing can be dropped in; each effect is re-implemented in
@@ -63,7 +61,7 @@ The clone lives at
 * voice-glow: `src/presets.ts` (processing), `src/styles.ts` (colours),
   `src/voiceDriver.ts`.
 
-## Gates
+## Tests
 
 `tests/test_fx_core.py` (shared), `test_fx_beam.py` (beam + glow),
 `test_fx_orb.py`, `test_fx_avatar.py`, `test_fx_metal_mosaic.py`,

@@ -1,8 +1,7 @@
 // value.h -- the runtime's variant: what a property, a binding result or a
 // tag value is. Small, copyable by hmi_value_copy, freed by hmi_value_free.
 //
-// FROZEN (Phase 3 contract): every worker reads and writes hmi_value_t through
-// these calls; nobody adds fields.
+// Everything reads and writes hmi_value_t through these calls.
 #pragma once
 
 #include <stdbool.h>

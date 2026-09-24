@@ -1,4 +1,4 @@
-"""Tests for the design presets mechanism (W5).
+"""Tests for the design presets mechanism.
 
 Verifies template loading, validation, preset matching, prompt sections,
 the system-prompt integration, and the CLI.

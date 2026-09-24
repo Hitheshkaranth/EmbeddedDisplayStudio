@@ -2,7 +2,7 @@
 // property names, both modes), fonts (the kit's Inter, by pixel size and
 // weight, cached) and the kit directory (fonts/, icons/).
 //
-// FROZEN (Phase 3 contract). Widgets never hard-code a colour: they ask for
+// Widgets never hard-code a colour: they ask for
 // the token the QML widget reads (`Theme.autoAccent` -> hmi_colour("autoAccent")).
 #pragma once
 

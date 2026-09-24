@@ -1,6 +1,6 @@
 // native/hmi-gui/src/hmi.cpp
 // Layer: 2 (GUI Loader)
-// Owner: W3. See hmi.h for the contract.
+// See hmi.h for the contract.
 #include "hmi.h"
 
 #include "log.h"

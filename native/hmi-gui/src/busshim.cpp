@@ -1,6 +1,6 @@
 // native/hmi-gui/src/busshim.cpp
 // Layer: 2 (GUI Loader)
-// Owner: W3. See busshim.h for the contract.
+// See busshim.h for the contract.
 #include "busshim.h"
 #include "log.h"
 #include "tagengine.h"

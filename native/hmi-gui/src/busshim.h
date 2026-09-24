@@ -10,7 +10,7 @@
 // and whose every other member forwards to `BusImpl` (the TagEngine).
 // kBusQml must stay byte-for-byte equivalent in behaviour to BUS_QML.
 //
-// Owner: W3 (implementation in busshim.cpp). Frozen.
+// Implementation in busshim.cpp.
 #pragma once
 
 #include <QObject>

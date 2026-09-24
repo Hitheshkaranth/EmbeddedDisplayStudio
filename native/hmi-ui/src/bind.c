@@ -1,4 +1,4 @@
-// bind.c -- the binding engine. Owner: W2.
+// bind.c -- the binding engine.
 //
 // Implements all rules from bind.h: scaling, format, units, thresholds,
 // state levels, series, two-way state, sim tags, ShTripInfo formatting.

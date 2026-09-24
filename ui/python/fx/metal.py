@@ -1,17 +1,16 @@
 """ui/python/fx/metal.py -- liquid-metal surfaces.
 
-FROZEN CONTRACT (UI FX swarm, 2026-09-23). Owner: W-D. Port of libdev
-packages/metal-fx. The web version renders Paper Shaders' liquidMetal
-fragment shader (WebGL); here it is the pure-gradient approximation (no
-numpy, no GL): a repeating stripe QLinearGradient ~20 deg off vertical whose
-stops follow the shader's colorChanges band (bright white band, thin dark
-line, thin white line, dark, long white->near-black fade, hard jump back),
-scrolling 0.3 periods per second; chromatic dispersion by painting the
-stripe three times, one channel each, offset, with CompositionMode_Plus;
-the dome "bump" as a white radial highlight low-centre; the preset tint as
-a colour-burn applied to the stop colours. Presets: chromatic (default),
-silver, gold, each with dark / light values (engine/presets.ts). Metal runs
-at 15 fps like the web renderer.
+Port of libdev packages/metal-fx. The web version renders Paper Shaders'
+liquidMetal fragment shader (WebGL); here it is the pure-gradient
+approximation (no numpy, no GL): a repeating stripe QLinearGradient ~20 deg
+off vertical whose stops follow the shader's colorChanges band (bright white
+band, thin dark line, thin white line, dark, long white->near-black fade,
+hard jump back), scrolling 0.3 periods per second; chromatic dispersion by
+painting the stripe three times, one channel each, offset, with
+CompositionMode_Plus; the dome "bump" as a white radial highlight
+low-centre; the preset tint as a colour-burn applied to the stop colours.
+Presets: chromatic (default), silver, gold, each with dark / light values
+(engine/presets.ts). Metal runs at 15 fps like the web renderer.
 
 paint_metal() fills any path; MetalRing wraps a widget in a metal rim.
 """

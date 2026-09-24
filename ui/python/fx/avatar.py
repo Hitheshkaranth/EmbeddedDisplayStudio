@@ -1,18 +1,18 @@
 """ui/python/fx/avatar.py -- Bot Avatars: an animated agent face.
 
-FROZEN CONTRACT (UI FX swarm, 2026-09-23). Owner: W-C. Port of libdev
-packages/bot-avatars (canvas 2D: draw.ts, engine.ts, shapes.ts, color.ts,
-presets.ts; the React Native Skia port in ports/react-native maps nearly
-1:1 onto QGradient). Shading: the 'smooth' mode (17 depth slices of the
-outline, the multiply shadow and white highlight radial overlays) and
-'crisp' -- NOT 'plastic', which needs per-texel numpy work the packaged
-Studio does not ship. The face (eyes: open / shut / laugh / sleep lids,
-blink, darts, gaze) and the engine's idle motion (wander, breathing, jelly,
-blinks, the working-state hops, the sleeping nod) are ported; the pointer
-follow is optional (enable with interactive=True, uses mouse tracking);
-clicks call poke() (a hop). Canvas-to-Qt: an affine (a,b,c,d,e,f) is
-QTransform(a,b,c,d,e,f); SVG endpoint arcs need a small converter (or
-rebuild the shape from the generator formulas in scripts/gen-shapes.mjs).
+Port of libdev packages/bot-avatars (canvas 2D: draw.ts, engine.ts,
+shapes.ts, color.ts, presets.ts; the React Native Skia port in
+ports/react-native maps nearly 1:1 onto QGradient). Shading: the 'smooth'
+mode (17 depth slices of the outline, the multiply shadow and white
+highlight radial overlays) and 'crisp' -- NOT 'plastic', which needs
+per-texel numpy work the packaged Studio does not ship. The face (eyes: open
+/ shut / laugh / sleep lids, blink, darts, gaze) and the engine's idle
+motion (wander, breathing, jelly, blinks, the working-state hops, the
+sleeping nod) are ported; the pointer follow is optional (enable with
+interactive=True, uses mouse tracking); clicks call poke() (a hop).
+Canvas-to-Qt: an affine (a,b,c,d,e,f) is QTransform(a,b,c,d,e,f); SVG
+endpoint arcs need a small converter (or rebuild the shape from the
+generator formulas in scripts/gen-shapes.mjs).
 
 The widget is square; the body occupies size / 1.5 of it (OVERSCAN 1.5, as
 the source) so hops and spins stay inside.

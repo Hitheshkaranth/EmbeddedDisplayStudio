@@ -3,7 +3,7 @@
 // core (and of native/hmi-gui/src/tagengine.cpp), minus the QML shim:
 // consumers are callbacks, not properties.
 //
-// FROZEN (Phase 3 contract). Owner of tags.c: W1. Behaviour to match, from
+// Behaviour of tags.c, matching
 // the Python/C++ engines and tests/native (which are the acceptance tests):
 //   * bind UDP 127.0.0.1:rx_port; 0 = any free port; bind failure is logged
 //     "Could not bind telemetry port N (...); UI will run offline" and the

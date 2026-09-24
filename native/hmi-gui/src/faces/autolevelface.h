@@ -2,7 +2,7 @@
 //
 // Paints: curved bar clipped to its outline: track, red zone, gradient fill, glow, ticks.
 // The Canvas file is the drawing specification; the spec keys are listed in
-// its header comment. Owner: W2 (swarm/briefs/faces/W2-*.md).
+// its header comment.
 #pragma once
 
 #include "faceitem.h"

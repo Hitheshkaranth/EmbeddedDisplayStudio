@@ -1,4 +1,4 @@
-"""Automotive W4 widget tests — ShTripInfo, ShSegmentBar, ShVehicleStatus.
+"""Automotive widget tests: ShTripInfo, ShSegmentBar, ShVehicleStatus.
 
 Functional assertions that the contract tests do not already cover,
 plus preview matching.
@@ -24,7 +24,7 @@ from designer.palette import default_registry
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-class W4WidgetTests(unittest.TestCase):
+class TripStatusWidgetTests(unittest.TestCase):
     """Functional tests for ShTripInfo, ShSegmentBar, ShVehicleStatus."""
 
     @classmethod
@@ -123,7 +123,7 @@ class W4WidgetTests(unittest.TestCase):
                    if image.pixelColor(x, y).alpha() > 0 and image.pixelColor(x, y).lightness() > 90)
 
 
-class TestShSegmentBar(W4WidgetTests):
+class TestShSegmentBar(TripStatusWidgetTests):
     """Tests for the segment bar widget."""
 
     def test_value100_has_more_accent_than_value50(self):
@@ -174,7 +174,7 @@ class TestShSegmentBar(W4WidgetTests):
         self.assertGreater(accent_full, accent_half)
 
 
-class TestShVehicleStatus(W4WidgetTests):
+class TestShVehicleStatus(TripStatusWidgetTests):
     """Tests for the vehicle status widget."""
 
     def test_low_tyre_shows_red(self):
@@ -204,7 +204,7 @@ class TestShVehicleStatus(W4WidgetTests):
         self.assertGreater(red, 0)
 
 
-class TestShTripInfo(W4WidgetTests):
+class TestShTripInfo(TripStatusWidgetTests):
     """Tests for the trip info widget."""
 
     def test_empty_row2_draws_less_ink(self):
@@ -238,8 +238,8 @@ class TestShTripInfo(W4WidgetTests):
         self.assertGreater(ink_qml, 20, "QML of trip info should have content")
 
 
-class TestPreviewMatching(W4WidgetTests):
-    """Preview painters react the same as QML for W4 widgets."""
+class TestPreviewMatching(TripStatusWidgetTests):
+    """Preview painters react the same as QML for these widgets."""
 
     def test_segment_bar_qml_vs_preview_accent(self):
         """Both QML and preview show more accent at value=100 than value=50."""

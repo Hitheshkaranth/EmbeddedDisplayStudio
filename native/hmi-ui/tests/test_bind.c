@@ -1,4 +1,4 @@
-// tests/test_bind.c -- the binding engine (W2's acceptance test, part 1;
+// tests/test_bind.c -- the binding engine (acceptance test, part 1;
 // part 2 is tests/ui/test_conformance_ui.py through a real process).
 //
 // Uses the engine against the engine-dashboard fixture with a recording

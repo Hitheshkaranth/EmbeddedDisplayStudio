@@ -2,7 +2,7 @@
 //
 // Paints: fixed bank scale and aircraft symbol.
 // The Canvas file is the drawing specification; the spec keys are listed in
-// its header comment. Owner: W3 (swarm/briefs/faces/W3-*.md).
+// its header comment.
 #pragma once
 
 #include "faceitem.h"

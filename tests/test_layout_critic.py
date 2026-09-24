@@ -1,6 +1,4 @@
-"""designer/layout/critic.py -- composition measured (W2 gate).
-
-FROZEN: the minimum W2 must pass; add more below, never change these.
+"""designer/layout/critic.py -- composition measured.
 
 The bar that matters: the hand-built dashboard must score well above the
 real AI draft, and every defect visible in that draft must be named.

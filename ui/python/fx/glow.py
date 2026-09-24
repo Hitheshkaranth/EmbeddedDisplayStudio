@@ -1,14 +1,13 @@
 """ui/python/fx/glow.py -- a coloured beam sweeping a bar while work runs.
 
-FROZEN CONTRACT (UI FX swarm, 2026-09-23). Owner: W-A. Port of libdev
-packages/voice-glow's "processing" mode with no audio: the seven colour
-lobes gather into one compact beam that sweeps left <-> right along the
-bottom edge (1.1 s per pass, ping-pong with power-2.1 easing at the ends)
-with colours flowing inside it, glow held at level 0.55. Drawn as
+Port of libdev packages/voice-glow's "processing" mode with no audio: the
+seven colour lobes gather into one compact beam that sweeps left <-> right
+along the bottom edge (1.1 s per pass, ping-pong with power-2.1 easing at
+the ends) with colours flowing inside it, glow held at level 0.55. Drawn as
 horizontally offset radial gradients of the seven "colorful" lobe colours
 (rgb(255,70,120) rgb(60,190,255) rgb(175,70,255) rgb(60,220,130)
-rgb(255,150,40) rgb(90,100,255) rgb(40,200,190)), plus a 1 px edge line
-and a soft bloom above it.
+rgb(255,150,40) rgb(90,100,255) rgb(40,200,190)), plus a 1 px edge line and
+a soft bloom above it.
 
 A thin widget (default fixed height 6 px) placed under a header or across
 the top of a card: start() while work runs, stop() when it ends (the glow

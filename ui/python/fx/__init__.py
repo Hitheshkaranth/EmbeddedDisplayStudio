@@ -15,8 +15,6 @@ packaged Studio excludes it), no OpenGL, no web engine. See docs/UI_FX.md.
 This module is the shared part: one clock that drives every running effect
 (so a dozen effects cost one timer, and no timer runs when nothing
 animates), the user's "Animations" switch, and small helpers.
-
-FROZEN CONTRACT (UI FX swarm, 2026-09-23): the coordinator owns this file.
 """
 from __future__ import annotations
 

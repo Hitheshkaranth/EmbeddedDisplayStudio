@@ -1,6 +1,6 @@
 // native/hmi-gui/src/manifest.cpp
 // Layer: 2 (GUI Loader)
-// Owner: W3. See manifest.h for the contract.
+// See manifest.h for the contract.
 #include "manifest.h"
 
 #include <QCoreApplication>

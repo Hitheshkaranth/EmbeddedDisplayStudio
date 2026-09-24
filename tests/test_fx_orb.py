@@ -1,7 +1,6 @@
-"""ui/python/fx/orb.py -- W-B's gate.
+"""ui/python/fx/orb.py -- the orb effect.
 
-FROZEN: the tests below are the minimum; add more in a new class at the
-bottom, never change these. Counts below are derived from the source
+Counts below are derived from the source
 presets/profiles (see docs/UI_FX.md) -- the port must match them.
 """
 import math
@@ -119,7 +118,7 @@ class ThinkingOrbWidgetTests(unittest.TestCase):
 
 
 
-# W-B: port checks against upstream spec/orbs-golden.json (thinking-orbs
+# Port checks against upstream spec/orbs-golden.json (thinking-orbs
 # 0.3.1): (state, size, t, dotCount, lineCount, first dot, last dot, first
 # line), dots as x, y, z, r, white, a; lines as x1, y1, x2, y2, white, a, w.
 _GOLDEN = [

@@ -16,10 +16,10 @@ native/hmi-ui/out/hmi-ui --render-widget ShClusterGauge --headless w.png
 native/hmi-ui/out/hmi-ui --apps-dir /opt/hmi_apps/current --display /dev/dri/card1   # the panel
 ```
 
-Gates: `ctest` (C unit tests), `tests/ui/test_conformance_ui.py` (protocol,
+Tests: `ctest` (C unit tests), `tests/ui/test_conformance_ui.py` (protocol,
 through a real process with `HMI_GUI_CMD=native/hmi-ui/out/hmi-ui`),
 `tests/ui/test_widget_parity.py` (each kit type against the QML kit; PNGs in
-`swarm/qc/ui-parity`). Swarm plan and briefs: `swarm/briefs/ui/`.
+`swarm/qc/ui-parity`).
 
 The headless Windows build (`win64/`) is the Studio's preview renderer: the
 same sources cross-compiled with `HMI_UI_WITH_DRM=OFF`, which drops the

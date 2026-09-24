@@ -1,7 +1,5 @@
 """designer/layout/arrange.py -- snap, fit, align and de-overlap a page.
 
-FROZEN CONTRACT (AI beauty swarm, 2026-09-22). Owner: W1.
-
 The deterministic half of making a draft look designed: every widget sized
 to what its type needs, every edge on the grid, peers sharing edges and
 baselines, and no two widgets on top of each other. It never invents or

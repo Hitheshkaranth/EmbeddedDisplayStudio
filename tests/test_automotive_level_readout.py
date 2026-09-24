@@ -1,9 +1,9 @@
-"""W2 acceptance tests for ShAutoLevel and ShAutoReadout.
+"""ShAutoLevel and ShAutoReadout, rendered in QML and in the canvas preview.
 
-Copies the _render_qml / _render_preview approach from test_automotive_contract.py
-without importing it.  At least: (a) red-zone red pixels appear / disappear,
-(b) curved vs straight differ, (c) warnBelow/warnAbove toggles red,
-(d) decimals change the ink.
+Checks that red-zone pixels appear and disappear with the value, that curved
+and straight levels differ, that warnBelow/warnAbove turn the readout red,
+and that decimals change the ink. Uses the same _render_qml / _render_preview
+approach as test_automotive_contract.py without importing it.
 """
 import os
 import unittest

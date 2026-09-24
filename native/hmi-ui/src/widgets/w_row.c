@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/Row.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): spacing, layoutDirection, opacity, visible.
 // Default size 300x80. Signals: none.
-// Owner: W3.
 #include <string.h>
 #include "registry.h"
 #include "theme.h"

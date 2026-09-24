@@ -1,5 +1,5 @@
 // alarms.c -- manifest-driven alarm evaluation; the C port of
-// native/hmi-gui/src/alarmengine.cpp (see alarms.h for the frozen rules).
+// native/hmi-gui/src/alarmengine.cpp (see alarms.h for the rules).
 //
 // One difference from the C++ engine, which sees a whole frame per call:
 // the runtime hands over one changed tag at a time, so every definition

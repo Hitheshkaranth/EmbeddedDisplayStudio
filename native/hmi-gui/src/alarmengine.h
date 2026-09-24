@@ -19,7 +19,7 @@
 //   timestamp ("YYYY-MM-DDTHH:MM:SS", local time, set on activation only),
 //   acknowledged (bool, false on activation).
 //
-// Rules (frozen):
+// Rules:
 //   * critical is checked first; warning only if critical did not fire.
 //   * A null frame value (invalid QVariant) or a tag absent from the frame
 //     makes that alarm inactive on this frame (it clears if it was active).
@@ -31,8 +31,7 @@
 //     newest timestamp first (string compare on the timestamp).
 //   * acknowledge() on an unknown tag does nothing and emits nothing.
 //
-// Owner: W2 (implementation in alarmengine.cpp). The public API below is
-// frozen; the private section may be extended by W2.
+// Implementation in alarmengine.cpp.
 #pragma once
 
 #include <QHash>

@@ -1,8 +1,6 @@
 """designer/ide/agent_panel.py -- the chat with the coding agent.
 
-FROZEN CONTRACT (Code IDE swarm, 2026-09-23). Owner: W4. Public names,
-signatures, signals and docstrings are the contract; W4 fills in the bodies
-and may add private helpers and private classes. See docs/CODE_SECTION.md.
+See docs/CODE_SECTION.md.
 
 Talks only to the AgentBackend interface (designer/ide/agent_backend.py);
 knows nothing about opencode. Layout, top to bottom:

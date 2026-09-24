@@ -17,7 +17,6 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# FROZEN CONTRACT (native previews swarm, 2026-09-22; owner W1).
 # HMI_UI_WITH_DRM=OFF builds the headless-only runtime (PNG rendering,
 # --render-widget/--headless) with no libdrm and no evdev: what the Studio
 # ships on Windows/macOS to preview designs with the panel's own renderer.

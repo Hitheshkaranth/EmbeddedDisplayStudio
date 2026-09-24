@@ -1,9 +1,5 @@
 """designer/ui/code_window.py -- the Studio's Code window.
 
-FROZEN CONTRACT (Code window swarm, 2026-09-22). Owner: W3. Public names,
-signatures and signals below are the contract; W3 fills them in and may add
-private helpers and private classes.
-
 A separate, non-modal window ("Code") beside the Studio that shows the code
 of what is selected in the Designer and follows the selection live:
 
@@ -334,7 +330,6 @@ class CodeWindow(QMainWindow):
         self._say("Applied")
         return True
 
-    # -- FROZEN CONTRACT additions (native previews swarm, 2026-09-22; owner W3) --
     def format_label(self, fmt: str) -> str:
         """The Format combo's label for 'edsui' / 'qml'. The design is what the
         panel runs and comes first ("Design (.edsui)"); QML is labelled as the
@@ -366,9 +361,10 @@ class CodeWindow(QMainWindow):
         self.editor.apply_theme(theme)
         self.preview.set_theme(theme)
         t = lambda name: color(name, theme)
-        # W2's editor palette, when it says what its surface is, wins for
-        # the panes that touch the editor so code and preview sit on one
-        # colour; the chrome keeps the Studio's tokens.
+        # The editor's palette (code_editor.LIGHT_PALETTE / DARK_PALETTE),
+        # when it says what its surface is, wins for the panes that touch the
+        # editor so code and preview sit on one colour; the chrome keeps the
+        # Studio's tokens.
         palette = getattr(code_editor, "LIGHT_PALETTE" if theme == "light" else "DARK_PALETTE", None)
         palette = palette if isinstance(palette, dict) else {}
         bg, fg = palette.get("background", t("background")), palette.get("foreground", t("foreground"))

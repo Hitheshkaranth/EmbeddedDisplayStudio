@@ -1,7 +1,4 @@
-"""designer/ide/project_files.py and widget_picker.py -- W1's gate.
-
-FROZEN: the tests below are the minimum W1 must pass; add more in a class
-below them, never change these.
+"""designer/ide/project_files.py and widget_picker.py.
 """
 import os
 import shutil
@@ -333,8 +330,8 @@ class WidgetPickerTests(unittest.TestCase):
         self.picker.apply_theme("dark")
 
 
-class W1QualityTests(unittest.TestCase):
-    """W1's own checks beyond the frozen gate: path safety, atomic saves,
+class ProjectFilesQualityTests(unittest.TestCase):
+    """Further project_files checks: path safety, atomic saves,
     the watcher, the filter, and no QWidget method shadowed."""
 
     @classmethod
@@ -565,7 +562,7 @@ class _SizeRecordingRenderer(_FakeRenderer):
         return super().image_for(widget, width, height, theme, scale)
 
 
-class W1PickerQualityTests(unittest.TestCase):
+class WidgetPickerQualityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication(sys.argv)
@@ -653,7 +650,7 @@ class W1PickerQualityTests(unittest.TestCase):
 
 
 class TreeLockTests(unittest.TestCase):
-    """Coordinator QC: watching a folder must not lock it or its parents
+    """Regression: watching a folder must not lock it or its parents
     (on Windows QFileSystemWatcher does; git and the agent then fail)."""
 
     @classmethod

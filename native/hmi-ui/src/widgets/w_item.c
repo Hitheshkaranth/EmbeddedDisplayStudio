@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/Item.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): clip, opacity, visible.
 // Default size 320x240. Signals: none.
-// Owner: W3.
 #include <string.h>
 #include "registry.h"
 #include "theme.h"

@@ -15,7 +15,7 @@
 // "online" (bool). QML can only read the dotted form via Tags["ai.pot"];
 // the alias is what bindings use.
 //
-// Owner: W1 (implementation in tagmap.cpp). Frozen.
+// Implementation in tagmap.cpp.
 #pragma once
 
 #include <QQmlPropertyMap>

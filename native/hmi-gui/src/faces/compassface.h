@@ -2,7 +2,7 @@
 //
 // Paints: 72 tick marks and the rotated N/E/S/W and tens labels of the heading card.
 // The Canvas file is the drawing specification; the spec keys are listed in
-// its header comment. Owner: W3 (swarm/briefs/faces/W3-*.md).
+// its header comment.
 #pragma once
 
 #include "faceitem.h"

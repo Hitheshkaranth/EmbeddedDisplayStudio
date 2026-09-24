@@ -6,7 +6,7 @@
 // native twin when the module is present, the Canvas one otherwise, so the
 // Python loader and the Designer keep working unchanged.
 //
-// Contract (frozen -- see swarm/briefs/faces/PLAN.md):
+// Contract:
 //   * A face is a pure function of ONE property, `spec` (QVariantMap). The
 //     wrapper widget builds it from its own properties and Theme colours;
 //     the face never reads Theme, the environment or any literal colour.

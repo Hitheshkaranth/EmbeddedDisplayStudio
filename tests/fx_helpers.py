@@ -1,4 +1,4 @@
-"""Shared helpers for the tests/test_fx_*.py gates (UI FX swarm, 2026-09-23).
+"""Shared helpers for the tests/test_fx_*.py effect tests.
 
 Effects take time only through `t`: a test drives a widget with
 widget._tick(base + dt) (FxWidget._tick) instead of sleeping, so frames are

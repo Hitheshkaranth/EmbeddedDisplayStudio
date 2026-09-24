@@ -17,7 +17,7 @@
 //     DEBUG   -> QtDebugMsg        INFO -> QtInfoMsg
 //     WARNING -> QtWarningMsg      ERROR -> QtCriticalMsg / QtFatalMsg
 //
-// Owner: W3 (implementation in log.cpp). The public API below is frozen.
+// Implementation in log.cpp.
 #pragma once
 
 #include <QLoggingCategory>

@@ -1,9 +1,5 @@
 """designer/code/code_model.py -- code texts for a design section.
 
-FROZEN CONTRACT (Code window swarm, 2026-09-22). Owner: W1. Every signature
-and docstring below is the contract the other workers build against; W1
-fills the bodies and may add private helpers, nothing else.
-
 Two scopes, two formats:
 
     scope  "widget"  the selected widget (with its children)

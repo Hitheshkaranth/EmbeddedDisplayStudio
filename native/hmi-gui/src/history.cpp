@@ -1,5 +1,5 @@
 // native/hmi-gui/src/history.cpp
-// Owner: W2. Implementation per history.h and tagengine.py lines 391-404.
+// Implementation per history.h and tagengine.py's _handle_telemetry / history().
 #include "history.h"
 
 #include <QMetaType>

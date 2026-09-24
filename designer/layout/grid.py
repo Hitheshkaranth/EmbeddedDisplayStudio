@@ -1,8 +1,5 @@
 """designer/layout/grid.py -- the grid every generated screen is laid out on.
 
-FROZEN CONTRACT (AI beauty swarm, 2026-09-22). Owner: W1. Signatures and
-docstrings are the contract; W1 fills the bodies and may add private helpers.
-
 One grid per screen size: a safe margin, a gutter, 12 columns and as many
 rows as fit at roughly the gutter's rhythm. Every geometry the pipeline
 produces lands on it, which is what makes edges line up and whitespace

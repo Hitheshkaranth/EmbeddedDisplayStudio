@@ -1,7 +1,5 @@
 """designer/layout/critic.py -- how well composed a screen is, in numbers.
 
-FROZEN CONTRACT (AI beauty swarm, 2026-09-22). Owner: W2.
-
 "Beautiful" is enforced, not requested: every candidate screen is measured,
 and the pipeline keeps the best. The measures are deliberately blunt and
 objective -- a designer would call them the difference between a draft and
@@ -299,19 +297,16 @@ def _alignment_axis(widgets, gutter, issues):
 
 def _grid_axis(widgets, grid, issues):
     """The fraction of edges sitting within GRID_TOLERANCE of a grid line."""
-    try:
-        xs = set()
-        for column in range(int(grid.columns)):
-            left = float(grid.col_x(column))
-            xs.add(left)
-            xs.add(left + float(grid.col_span(1)))
-        ys = set()
-        for row in range(int(grid.rows)):
-            top = float(grid.row_y(row))
-            ys.add(top)
-            ys.add(top + float(grid.row_span(1)))
-    except NotImplementedError:
-        return 0.0
+    xs = set()
+    for column in range(int(grid.columns)):
+        left = float(grid.col_x(column))
+        xs.add(left)
+        xs.add(left + float(grid.col_span(1)))
+    ys = set()
+    for row in range(int(grid.rows)):
+        top = float(grid.row_y(row))
+        ys.add(top)
+        ys.add(top + float(grid.row_span(1)))
     if not xs or not ys:
         return 0.0
     hits = 0
@@ -428,10 +423,7 @@ def _proportion_axis(widgets, registry, issues):
     penalties = []
     for widget in widgets:
         widget_type = getattr(widget, "type", "")
-        try:
-            rule = rule_for(registry, widget_type)
-        except NotImplementedError:
-            continue
+        rule = rule_for(registry, widget_type)
         _, _, w, h = _rect(widget)
         if w <= 0 or h <= 0:
             continue

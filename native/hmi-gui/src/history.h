@@ -3,7 +3,7 @@
 // Purpose: per-tag ring buffers behind Bus.history() (CONTRACT C3).
 // Port of the _history / history() parts of gui/hmi_loader/tagengine.py.
 //
-// Semantics (frozen):
+// Semantics:
 //   * Only tracked tags are recorded; record() on an untracked tag is a no-op.
 //   * A JSON null (invalid QVariant) is skipped: a failed hardware read leaves
 //     no sample. bool is recorded as 0 / 1. Strings and anything non-numeric
@@ -17,7 +17,7 @@
 //
 // No QObject: this is a plain value class so it is trivially unit-testable.
 //
-// Owner: W2 (implementation in history.cpp). The public API below is frozen.
+// Implementation in history.cpp.
 #pragma once
 
 #include <QHash>

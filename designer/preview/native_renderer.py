@@ -1,9 +1,5 @@
 """designer/preview/native_renderer.py -- previews rendered by hmi-ui.
 
-FROZEN CONTRACT (native previews swarm, 2026-09-22). Owner: W2. Public
-names, signatures, signals and attributes below are the contract; W2 fills
-the bodies and may add private helpers.
-
 The renderer is a drop-in for designer/canvas/qml_previews.QmlPreviewRenderer
 (same `image_for` / `ready` / `clear` / `enabled` surface, same
 `preview_key` from that module) so the Designer scene and the Code section

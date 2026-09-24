@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/Rectangle.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): color, borderColor, borderWidth, radius, opacity, visible.
 // Default size 140x90. Signals: none.
-// Owner: W3.
 #include <string.h>
 
 #include "registry.h"

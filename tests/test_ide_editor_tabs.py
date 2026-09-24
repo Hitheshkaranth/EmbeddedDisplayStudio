@@ -1,7 +1,4 @@
-"""designer/ide/editor_tabs.py and the Python highlighter -- W2's gate.
-
-FROZEN: the tests below are the minimum W2 must pass; add more in a class
-below them, never change these.
+"""designer/ide/editor_tabs.py and the Python highlighter.
 """
 import os
 import shutil
@@ -325,11 +322,7 @@ class PythonHighlighterTests(unittest.TestCase):
 
 
 
-# ------------------------------------------------------------ W2 QC tests
-# Below the frozen classes: added by the W2 QC pass, not part of the gate's
-# minimum.
-
-import tempfile as _tempfile  # noqa: E402
+# ------------------------------------------------------------ further tests
 
 from PySide6.QtGui import QShortcut  # noqa: E402
 from PySide6.QtWidgets import QTabBar, QTabWidget  # noqa: E402
@@ -337,100 +330,9 @@ from PySide6.QtWidgets import QTabBar, QTabWidget  # noqa: E402
 from designer.ide import project_files as _pf  # noqa: E402
 from designer.ui.code_editor import LIGHT_PALETTE  # noqa: E402
 
-_REAL_PROJECT_FILES = {}
-
-
-# STAND-IN until W1 lands: minimal, correct versions of the project_files
-# helpers EditorTabs uses. setUpModule installs one only while the real
-# function still raises NotImplementedError, so the real module wins as soon
-# as it is there.
-def _stand_in_language_for(path):
-    return _pf.EXTENSION_LANGUAGES.get(os.path.splitext(path)[1].lower(), "plain")
-
-
-def _stand_in_is_inside(root, path):
-    root, path = os.path.realpath(root), os.path.realpath(path)
-    try:
-        return os.path.normcase(os.path.commonpath([root, path])) == os.path.normcase(root)
-    except ValueError:                      # different drives
-        return False
-
-
-def _stand_in_relative_path(root, path):
-    if _stand_in_is_inside(root, path):
-        return os.path.relpath(os.path.realpath(path), os.path.realpath(root)).replace(os.sep, "/")
-    return os.path.abspath(path).replace(os.sep, "/")
-
-
-def _stand_in_read_text(path):
-    name = os.path.basename(path)
-    if not os.path.isfile(path):
-        raise _pf.FileReadError(f"Cannot open {name}: not a file")
-    if os.path.getsize(path) > _pf.MAX_TEXT_BYTES:
-        raise _pf.FileReadError(f"Cannot open {name}: larger than 2 MiB")
-    try:
-        with open(path, "rb") as f:
-            raw = f.read()
-    except OSError as exc:
-        raise _pf.FileReadError(f"Cannot open {name}: {exc.strerror}") from exc
-    if b"\0" in raw[:_pf.BINARY_SNIFF_BYTES]:
-        raise _pf.FileReadError(f"Cannot open {name}: binary file")
-    encoding = "utf-8-sig" if raw.startswith(b"\xef\xbb\xbf") else "utf-8"
-    try:
-        text = raw.decode(encoding)
-    except UnicodeDecodeError:
-        encoding, text = "latin-1", raw.decode("latin-1")
-    first = text.find("\n")
-    newline = "\r\n" if first > 0 and text[first - 1] == "\r" else "\n"
-    return _pf.TextFile(text.replace("\r\n", "\n").replace("\r", "\n"), encoding, newline)
-
-
-def _stand_in_write_text(path, text, encoding="utf-8", newline="\n"):
-    data = text.replace("\n", newline).encode(encoding)
-    fd, tmp = _tempfile.mkstemp(prefix=".", suffix=".tmp", dir=os.path.dirname(path) or ".")
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-        os.replace(tmp, path)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
-
-
-def _raises_not_implemented(call):
-    try:
-        call()
-    except NotImplementedError:
-        return True
-    except Exception:                       # implemented: it just did not like the probe
-        return False
-    return False
-
-
-def setUpModule():
-    nowhere = os.path.join(_tempfile.gettempdir(), "ide-w2-no-such-dir", "f.txt")
-    probes = {
-        "language_for": (_stand_in_language_for, lambda: _pf.language_for("a.c")),
-        "is_inside": (_stand_in_is_inside, lambda: _pf.is_inside(os.sep, os.sep)),
-        "relative_path": (_stand_in_relative_path, lambda: _pf.relative_path(os.sep, os.sep)),
-        "read_text": (_stand_in_read_text, lambda: _pf.read_text(nowhere)),
-        "write_text": (_stand_in_write_text, lambda: _pf.write_text(nowhere, "")),
-    }
-    for name, (stand_in, probe) in probes.items():
-        if _raises_not_implemented(probe):
-            _REAL_PROJECT_FILES[name] = getattr(_pf, name)
-            setattr(_pf, name, stand_in)
-
-
-def tearDownModule():
-    for name, real in _REAL_PROJECT_FILES.items():
-        setattr(_pf, name, real)
-    _REAL_PROJECT_FILES.clear()
-
 
 def _spans(text, theme="dark"):
-    """{span text: colour} per line, as the frozen highlighter test reads them."""
+    """{span text: colour} per line, as the highlighter tests above read them."""
     editor = CodeEditor()
     editor.set_language("python")
     editor.apply_theme(theme)
@@ -448,7 +350,7 @@ def _spans(text, theme="dark"):
 
 
 class EditorTabsQCTests(unittest.TestCase):
-    """W2 QC: the parts of the editor_tabs contract the gate does not pin."""
+    """Further editor_tabs behaviour."""
 
     @classmethod
     def setUpClass(cls):
@@ -830,7 +732,7 @@ class EditorTabsQCTests(unittest.TestCase):
 
 
 class PythonHighlighterQCTests(unittest.TestCase):
-    """W2 QC: the scanner cases the gate does not pin."""
+    """Further highlighter scanner cases."""
 
     @classmethod
     def setUpClass(cls):
@@ -888,7 +790,7 @@ class PythonHighlighterQCTests(unittest.TestCase):
 
 
 class EditorTabsWindowsLockTests(unittest.TestCase):
-    """Coordinator QC: an open file must not lock the folders above it."""
+    """Regression: an open file must not lock the folders above it."""
 
     @classmethod
     def setUpClass(cls):

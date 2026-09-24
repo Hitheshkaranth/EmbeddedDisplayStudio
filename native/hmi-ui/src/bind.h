@@ -2,7 +2,7 @@
 // semantics designer/generators/qml_generator.py gives generated QML
 // (that file is the specification; kit_schema.json carries its tables).
 //
-// FROZEN (Phase 3 contract). Owner of bind.c: W2. Rules to implement:
+// Rules, implemented in bind.c:
 //   1. Reading. display = tag * multiplier + offset. Unseen tag: a str-typed
 //      property (not "value", no scaling, no format) reads ""; anything
 //      else reads 0. A "format" ("%1 km") replaces %1 with the reading.

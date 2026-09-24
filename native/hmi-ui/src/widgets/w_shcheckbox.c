@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/ShCheckbox.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): checked, label, enabled, opacity, visible.
 // Default size 160x32. Signals: checkedChanged.
-// Owner: W3 (wave 2).
 #include <string.h>
 
 #include "draw_util.h"

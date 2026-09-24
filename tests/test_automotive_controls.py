@@ -138,7 +138,7 @@ class AutomotiveControlTests(unittest.TestCase):
         component = QQmlComponent(view.engine())
         component.setData(("import QtQuick 2.15\nimport Shadcn 1.0\nRectangle { width: %d; height: %d; "
                            "color: \"#0b0f16\"\n%s\n}" % (size[0] + 8, size[1] + 8, body)).encode(),
-                          QUrl.fromLocalFile(str(REPO_ROOT / "tests" / "w3.qml")))
+                          QUrl.fromLocalFile(str(REPO_ROOT / "tests" / "automotive_controls.qml")))
         self.assertEqual([e.toString() for e in component.errors()], [])
         obj = component.create()
         view.setContent(QUrl(), component, obj)

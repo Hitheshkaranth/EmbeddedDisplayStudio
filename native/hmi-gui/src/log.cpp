@@ -1,6 +1,6 @@
 // native/hmi-gui/src/log.cpp
 // Layer: 2 (GUI Loader)
-// Owner: W3. See log.h for the contract.
+// See log.h for the contract.
 #include "log.h"
 
 #include <QLoggingCategory>

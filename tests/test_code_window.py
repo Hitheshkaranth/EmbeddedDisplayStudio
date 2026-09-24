@@ -1,9 +1,5 @@
-"""designer/ui/code_window.py -- the Code window (W3 gate), and its
-integration with the workspace (W4 gate: the last class).
-
-FROZEN: the tests below are the minimum W3/W4 must pass; add more below
-them, never change these. W3 runs CodeWindowTests against the stubbed
-workspace API until W4 lands; the tests here use only the frozen API.
+"""designer/ui/code_window.py -- the Code window, and its integration with
+the workspace.
 """
 import os
 import sys
@@ -124,7 +120,7 @@ class CodeWindowTests(unittest.TestCase):
 
 
 class WorkspaceCodeIntegrationTests(unittest.TestCase):
-    """W4: the workspace side of the contract."""
+    """The workspace side of the Code window."""
 
     @classmethod
     def setUpClass(cls):
@@ -188,7 +184,7 @@ class WorkspaceCodeIntegrationTests(unittest.TestCase):
 
 
 # =============================================================================
-# W3's own tests (below the frozen ones).
+# Further Code window tests.
 # =============================================================================
 class CodeWindowMoreTests(unittest.TestCase):
     @classmethod
@@ -274,9 +270,9 @@ class CodeWindowMoreTests(unittest.TestCase):
         self.assertTrue(pane._image is not None or pane._label.text() in ("Rendering...", "This section did not render"))
 
 
-# ---------------------------------------------------------------- W4 extras
+# ---------------------------------------------------------------- further workspace tests
 class WorkspaceCodeIntegrationExtraTests(unittest.TestCase):
-    """W4: what the brief asks for beyond the frozen minimum."""
+    """Further workspace integration checks."""
 
     @classmethod
     def setUpClass(cls):

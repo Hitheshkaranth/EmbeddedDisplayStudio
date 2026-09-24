@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/ShSelect.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): currentIndex, placeholder, label, options, enabled, opacity, visible.
 // Default size 200x56. Signals: activated.
-// Owner: W3 (wave 2).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

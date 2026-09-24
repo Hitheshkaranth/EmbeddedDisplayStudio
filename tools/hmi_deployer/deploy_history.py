@@ -1,6 +1,6 @@
 """
 tools/hmi_deployer/deploy_history.py
-Layer: Core (W0)
+Layer: Core
 Immutable deployment history entries and timeline merging utilities.
 No filesystem persistence, Qt, network, or remote behavior.
 """

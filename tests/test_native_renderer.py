@@ -1,7 +1,6 @@
-"""designer/preview/native_renderer.py -- previews by hmi-ui (W2 gate).
+"""designer/preview/native_renderer.py -- previews by hmi-ui.
 
-FROZEN: the tests below are the minimum W2 must pass; add more below them,
-never change these. They need the Linux hmi-ui binary
+They need the Linux hmi-ui binary
 (native/hmi-ui/out/hmi-ui, built by native/hmi-ui/build.sh) -- run in WSL.
 """
 import os
@@ -120,7 +119,7 @@ class NativeRendererTests(unittest.TestCase):
         self.assertIsNone(r.render_page_sync(DesignerProject(), DesignerProject().pages[0], "dark"))
 
 
-# ---------------------------------------------------------------- W2 additions
+# ---------------------------------------------------------------- further tests
 
 def _wait_signal(renderer, key, timeout_ms=15000):
     """Both outcomes for a key: ('ready',) or ('failed', message)."""

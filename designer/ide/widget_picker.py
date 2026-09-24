@@ -1,8 +1,5 @@
 """designer/ide/widget_picker.py -- pick a widget of the current page to see its code.
 
-FROZEN CONTRACT (Code IDE swarm, 2026-09-23). Owner: W1. See
-docs/CODE_SECTION.md.
-
 A list of the current page's widgets (nested widgets indented under their
 container, in page order), each row a small preview thumbnail, the widget id
 and its type. Clicking a row selects that widget in the Designer
@@ -24,6 +21,8 @@ The list is rebuilt on workspace.designChanged and workspace.pageChanged,
 keeping the scroll position; selection highlight follows
 workspace.scene.selectionIdsChanged. A filter field on top narrows rows by id
 or type (case-insensitive substring).
+
+See docs/CODE_SECTION.md.
 """
 from __future__ import annotations
 

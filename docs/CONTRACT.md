@@ -1,9 +1,8 @@
 # BYOA HMI — Binding Interface Contract (v1)
 
 **Status: NORMATIVE.** Every component in this repository is written against this
-document. Swarm workers MUST NOT invent alternative names, ports, paths or JSON
-shapes. If something here looks wrong, implement it anyway and note the concern
-in your component README — the architect reconciles.
+document. Do not invent alternative names, ports, paths or JSON shapes; if
+something here looks wrong, change this document first.
 
 Target: Toradex Verdin **i.MX8M Plus**, **native Toradex Yocto Reference
 Multimedia Image**, systemd. **No Docker, no TorizonOS, no containers.**
@@ -449,26 +448,22 @@ Alarms are evaluated on every telemetry frame against the current tag values.
 individual value update. This prevents QML alarm bindings from re-evaluating
 10 times a second unnecessarily.
 
-## 10. Repository layout & swarm ownership
+## 10. Repository layout
 
-Each worker owns **only** its listed paths. Do not create, edit or delete files
-outside your scope — the architect owns integration.
-
-| Worker | Scope |
+| Component | Path |
 | --- | --- |
-| W1 daemon | `daemon/` |
-| W2 gui | `gui/`, `apps/demo-app/` |
-| W3 target | `target/` |
-| W4 deploy-cli | `deploy/` |
-| W5 deployer-gui | `tools/hmi_deployer/` |
-| W6 yocto | `yocto/` |
-| W7 design system | `ui/` |
-| architect | `README.md`, `docs/` |
+| Hardware daemon | `daemon/` |
+| Panel runtime (C + LVGL) | `native/hmi-ui/` |
+| Legacy Qt loaders | `gui/`, `native/hmi-gui/`, `apps/demo-app/` |
+| Target units and installer | `target/` |
+| Deploy CLI | `deploy/` |
+| Studio (deployer GUI) | `tools/hmi_deployer/` |
+| Visual Designer | `designer/` |
+| Bundle schema | `schema/` |
+| Yocto layer | `yocto/` |
+| Design system | `ui/` |
 
-Wave 1 (parallel): W1, W3, W4, W6, W7. Wave 2 (parallel, consumes `ui/`):
-W2, W5.
-
-## 11. Host deployer GUI look & feel (W5)
+## 11. Host deployer GUI look & feel
 
 The tool's centrepiece is a **centred hardware mock-up of the panel** — the
 deployment target rendered as the physical device, with the customer's Qt app
@@ -499,7 +494,7 @@ fallback screen and the host deployer tool — is built from a Qt port of
 paddings or hand-rolled buttons anywhere. If a screen needs a widget the kit
 does not have, add it *to the kit* in the shadcn idiom.
 
-W7 owns `ui/` and produces the single source of truth:
+`ui/` holds the single source of truth:
 
 ```
 ui/tokens.json                 both palettes + radii + spacing + type scale
@@ -582,7 +577,7 @@ hand-drawn shapes.
   joins, no fill. Rendered at 16 px inside `sm` controls, 18 px inside default
   controls, 20-24 px standalone.
 * Icons are **vendored, not fetched at runtime** (the target has no internet).
-  W7 downloads the needed SVGs from
+  The needed SVGs come from
   `https://unpkg.com/@tabler/icons@3.31.0/icons/outline/<name>.svg`, strips them
   to their path data, and embeds them in a registry keyed by Tabler name.
 * Colour comes from `Theme` (stroke follows the surrounding text colour), so an

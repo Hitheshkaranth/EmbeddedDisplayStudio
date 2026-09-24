@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/Column.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): spacing, opacity, visible.
 // Default size 180x260. Signals: none.
-// Owner: W3.
 #include <string.h>
 #include "registry.h"
 #include "theme.h"

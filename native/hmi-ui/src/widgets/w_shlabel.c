@@ -4,7 +4,6 @@
 // behaviour specification). Extends QtQuick Text. Properties: text, fontSize,
 // bold, color, horizontalAlignment, verticalAlignment, wrapMode, opacity, visible.
 // Default size varies. Signals: none.
-// Owner: W3.
 #include <string.h>
 #include "registry.h"
 #include "theme.h"

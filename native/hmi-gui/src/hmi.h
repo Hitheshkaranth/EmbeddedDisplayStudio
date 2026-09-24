@@ -11,7 +11,7 @@
 //     Hmi.restart()           exits the process with status 1 (systemd restarts)
 //     Hmi.log(msg)            "INFO - hmi-gui - App Log: <msg>"
 //
-// Owner: W3 (implementation in hmi.cpp). The public API below is frozen.
+// Implementation in hmi.cpp.
 #pragma once
 
 #include "manifest.h"

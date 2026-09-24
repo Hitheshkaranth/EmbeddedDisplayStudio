@@ -1,6 +1,6 @@
 // native/hmi-gui/src/alarmengine.cpp
-// Owner: W2. Port of _evaluate_alarms / get_active_alarms / acknowledge
-// from tagengine.py lines 503-657.
+// Port of _evaluate_alarms / get_active_alarms / acknowledge
+// from gui/hmi_loader/tagengine.py.
 #include "alarmengine.h"
 
 #include <QDateTime>

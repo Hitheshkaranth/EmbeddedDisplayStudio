@@ -1,7 +1,5 @@
 """designer/layout/archetypes.py -- the compositions a screen can have.
 
-FROZEN CONTRACT (AI beauty swarm, 2026-09-22). Owner: W3.
-
 Composition is the part a language model is worst at and a designer is best
 at, so it is not asked for: a handful of human-designed slot templates on
 the 12-column grid carry it, and the model's widgets are placed into the
@@ -471,11 +469,8 @@ def _make_room(cells, needed, gutter, min_size, notes):
 
 
 def _fitted_area(registry, widget, box):
-    try:
-        rule = _constraints.rule_for(registry, widget.type)
-        width, height = _constraints.fit_size(rule, box[0], box[1])
-    except NotImplementedError:  # pragma: no cover - until W1 lands
-        return float(box[0]) * float(box[1])
+    rule = _constraints.rule_for(registry, widget.type)
+    width, height = _constraints.fit_size(rule, box[0], box[1])
     return float(width) * float(height)
 
 
@@ -483,10 +478,7 @@ def _minimum_cell(registry, widgets):
     """The smallest cell any of these widgets can still be read in."""
     min_w, min_h = 0, 0
     for widget in widgets:
-        try:
-            rule = _constraints.rule_for(registry, widget.type)
-        except NotImplementedError:  # pragma: no cover - until W1 lands
-            continue
+        rule = _constraints.rule_for(registry, widget.type)
         min_w = rule.min_width if not min_w else min(min_w, rule.min_width)
         min_h = rule.min_height if not min_h else min(min_h, rule.min_height)
     return (max(min_w, _ABSOLUTE_MIN_CELL[0]), max(min_h, _ABSOLUTE_MIN_CELL[1]))
@@ -587,16 +579,13 @@ def _place(registry, widget, cell, notes):
     """Size the widget to its type's rule inside the cell and centre it."""
     box_w, box_h = cell.w, cell.h
     definition = registry.get(widget.type) if registry is not None else None
-    try:
-        rule = _constraints.rule_for(registry, widget.type)
-        # Text is the exception: a label's width is its content, so a title
-        # held to 1.25 x the registry's 140 px comes out clipped.
-        if not rule.growable and definition is not None and widget.type != "Text":
-            box_w = min(box_w, int(round(definition.default_width * _NON_GROWABLE_HEADROOM)))
-            box_h = min(box_h, int(round(definition.default_height * _NON_GROWABLE_HEADROOM)))
-        width, height = _constraints.fit_size(rule, box_w, box_h)
-    except NotImplementedError:  # pragma: no cover - until W1 lands
-        width, height = cell.w, cell.h
+    rule = _constraints.rule_for(registry, widget.type)
+    # Text is the exception: a label's width is its content, so a title
+    # held to 1.25 x the registry's 140 px comes out clipped.
+    if not rule.growable and definition is not None and widget.type != "Text":
+        box_w = min(box_w, int(round(definition.default_width * _NON_GROWABLE_HEADROOM)))
+        box_h = min(box_h, int(round(definition.default_height * _NON_GROWABLE_HEADROOM)))
+    width, height = _constraints.fit_size(rule, box_w, box_h)
     width, height = int(round(width)), int(round(height))
     if width > cell.w or height > cell.h:
         notes.append(f"{widget.id}: a {widget.type} does not fit the {cell.name} slot "

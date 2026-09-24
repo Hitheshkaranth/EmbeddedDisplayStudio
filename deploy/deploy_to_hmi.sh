@@ -14,8 +14,6 @@
 #
 # Portability: runs under bash 4+ on Linux, macOS, and Git Bash for Windows.
 #   Platform-specific paths are detected at runtime; comments mark each branch.
-#
-# Copyright (c) 2026 — BYOA HMI Swarm W4
 
 set -euo pipefail
 

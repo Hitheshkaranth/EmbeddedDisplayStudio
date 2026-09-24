@@ -1,7 +1,4 @@
-"""designer/code/code_model.py -- code texts for a design section (W1 gate).
-
-FROZEN: the tests below are the minimum W1 must pass; add more below them,
-never change these.
+"""designer/code/code_model.py -- code texts for a design section.
 """
 import json
 import os
@@ -144,8 +141,7 @@ class SectionTests(unittest.TestCase):
             section_for(self.generator, self.registry, self.project, self.page, None, "screen", "qml")
 
 
-# ---------------------------------------------------------------- W1 extras
-# Everything below is W1's own; the frozen minimum ends above.
+# ---------------------------------------------------------------- further tests
 
 class ParseValidationTests(unittest.TestCase):
     def setUp(self):

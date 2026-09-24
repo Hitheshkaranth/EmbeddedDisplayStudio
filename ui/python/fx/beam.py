@@ -1,9 +1,7 @@
 """ui/python/fx/beam.py -- Border Beam: a glow travelling a widget's border.
 
-FROZEN CONTRACT (UI FX swarm, 2026-09-23). Owner: W-A. Public names,
-signatures and docstrings are the contract; bodies and private helpers are
-the worker's. Port of libdev packages/border-beam (spec/beam-spec.json holds
-the tuned numbers; docs/UI_FX.md has the porting notes).
+Port of libdev packages/border-beam (spec/beam-spec.json holds the tuned
+numbers; docs/UI_FX.md has the porting notes).
 
 BorderBeam is an overlay: a transparent child widget laid exactly over its
 target (it follows the target's resizes through an event filter), clicks go

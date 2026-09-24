@@ -1,4 +1,4 @@
-// native/hmi-gui/src/tagmap.cpp -- STUB. Owner: W1. See tagmap.h.
+// native/hmi-gui/src/tagmap.cpp -- implementation. See tagmap.h.
 #include "tagmap.h"
 
 namespace hmi {

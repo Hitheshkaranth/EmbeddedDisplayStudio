@@ -1,6 +1,6 @@
 """
 tests/test_install_atomicity.py
-Layer: Test (W11)
+Layer: Test
 
 Pins the promises CONTRACT section 6 makes about hmi-install, none of which
 had a test:

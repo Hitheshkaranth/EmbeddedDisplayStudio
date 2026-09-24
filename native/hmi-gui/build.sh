@@ -10,7 +10,7 @@
 # The build directory is kept OFF the source tree (and off /mnt/c under WSL,
 # where ninja is an order of magnitude slower): $HOME/.cache/hmi-gui-build/
 # <path-derived name>, or $HMI_GUI_BUILD_DIR. One directory per checkout, so
-# swarm worktrees never share objects.
+# separate worktrees never share objects.
 #
 # Requires: cmake >= 3.22, ninja, g++, Qt 6 dev (qt6-base-dev,
 # qt6-declarative-dev, qml6-module-qtquick*), python3 for tests/native.

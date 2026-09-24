@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/Image.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): source, fillMode, smooth, opacity, visible.
 // Default size 160x120. Signals: none.
-// Owner: W3.
 #include <string.h>
 #include "registry.h"
 #include "theme.h"

@@ -14,5 +14,5 @@ python -m unittest discover -s tests/native -t . -v
 
 **Run against the native binary (WSL):**
 ```
-wsl -d Ubuntu -u root -- bash -c "cd /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/<WORKTREE> && HMI_GUI_CMD=native/hmi-gui/out/hmi-gui QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/native -t . -v"
+wsl -d Ubuntu -u root -- bash -c "cd /mnt/c/<path-to>/EmbeddedDisplay && HMI_GUI_CMD=native/hmi-gui/out/hmi-gui QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/native -t . -v"
 ```

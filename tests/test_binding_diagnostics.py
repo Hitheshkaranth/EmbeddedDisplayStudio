@@ -1,6 +1,6 @@
 """
 tests/test_binding_diagnostics.py
-Layer: Test (W11)
+Layer: Test
 Unit tests for designer.model.binding_diagnostics.
 """
 

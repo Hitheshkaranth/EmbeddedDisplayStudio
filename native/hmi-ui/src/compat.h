@@ -1,8 +1,7 @@
 // compat.h -- the runtime's few operating-system seams.
 //
-// FROZEN CONTRACT (native previews swarm, 2026-09-22). Owner: W1, who
-// writes compat.c (POSIX and Windows branches under #ifdef _WIN32) and
-// moves every direct use of unistd/readlink/mkstemp/localtime_r/usleep/
+// compat.c (POSIX and Windows branches under #ifdef _WIN32) puts every
+// direct use of unistd/readlink/mkstemp/localtime_r/usleep/
 // clock_gettime/BSD sockets in src/*.c behind these calls (getopt_long
 // stays: mingw-w64 provides it), so that the same sources build
 // for the Linux panel (gcc) and for the Studio's headless preview binary

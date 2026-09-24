@@ -1,5 +1,5 @@
 // native/hmi-gui/tests/tst_history.cpp
-// QTest case for History. Owner: W2.
+// QTest case for History.
 #include "history.h"
 
 #include <QMetaType>

@@ -1,14 +1,11 @@
 """designer/ide/agent_backend.py -- what the agent panel talks to.
 
-FROZEN CONTRACT (Code IDE swarm, 2026-09-23). AgentBackend, ScriptedBackend,
-build_prompt and SYSTEM_PROMPT are done (skeleton); OpencodeBackend's bodies
-are W3's. See docs/CODE_SECTION.md.
-
 A backend runs one conversation with a coding agent about one project
 folder. Everything it reports arrives as `event(dict)` in the agent event
 vocabulary (designer.ide.opencode_client.EventNormalizer lists it), always
 on the GUI thread. The panel never blocks: every method returns at once and
 network work happens elsewhere.
+See docs/CODE_SECTION.md.
 """
 from __future__ import annotations
 
@@ -188,7 +185,7 @@ class ScriptedBackend(AgentBackend):
 
 
 class OpencodeBackend(AgentBackend):
-    """The real agent: opencode (owner W3).
+    """The real agent: opencode.
 
     start(directory): in a worker thread -- use $OPENCODE_URL when set (an
     already running server), else start one OpencodeServer (cwd=directory)

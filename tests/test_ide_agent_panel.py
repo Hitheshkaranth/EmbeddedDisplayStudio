@@ -1,7 +1,6 @@
-"""designer/ide/agent_panel.py -- W4's gate.
+"""designer/ide/agent_panel.py -- the IDE agent panel.
 
-FROZEN: the tests below are the minimum W4 must pass; add more in a class
-below them, never change these. The panel runs against ScriptedBackend
+The panel runs against ScriptedBackend
 (designer/ide/agent_backend.py): no opencode, no network.
 """
 import os
@@ -201,7 +200,7 @@ class AgentPanelTests(unittest.TestCase):
 
 
 class AgentPanelQcTests(unittest.TestCase):
-    """Coordinator QC: defects the frozen gate did not catch."""
+    """Regression checks for agent panel defects."""
 
     @classmethod
     def setUpClass(cls):

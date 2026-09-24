@@ -1,6 +1,4 @@
-"""designer/layout/polish.py and the AI tab that uses it (W4 gate).
-
-FROZEN: the minimum W4 must pass; add more below, never change these.
+"""designer/layout/polish.py and the AI tab that uses it .
 
 The claim this file holds the pipeline to: polishing the real AI draft
 closes most of the gap to a hand-built screen, and never changes what the
@@ -144,11 +142,11 @@ class AITabWiringTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# W4's own tests, below the frozen gate.
+# Further polish tests.
 # ---------------------------------------------------------------------------
 
 class PolishPipelineTests(unittest.TestCase):
-    """The parts of the loop the frozen gate does not pin down: variants,
+    """The rest of the polish loop: variants,
     rounds, captions, and what happens when a pass falls over."""
 
     @classmethod

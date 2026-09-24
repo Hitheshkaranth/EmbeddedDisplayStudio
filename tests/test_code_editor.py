@@ -1,7 +1,4 @@
-"""designer/ui/code_editor.py -- the Code window's editor (W2 gate).
-
-FROZEN: the tests below are the minimum W2 must pass; add more below them,
-never change these.
+"""designer/ui/code_editor.py -- the Code window's editor.
 """
 import os
 import sys
@@ -95,7 +92,7 @@ def _highlighter(editor):
     return next((c for c in editor.document().children() if isinstance(c, QSyntaxHighlighter)), None)
 
 
-# ---------------------------------------------------------------- W2 extras
+# ---------------------------------------------------------------- further tests
 
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402

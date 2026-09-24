@@ -1,7 +1,5 @@
 """designer/layout/polish.py -- the loop that turns a draft into a screen.
 
-FROZEN CONTRACT (AI beauty swarm, 2026-09-22). Owner: W4.
-
     archetype -> arrange -> style -> critique -> (fix and repeat)
 
 and, when asked for variants, the same over several archetypes with the
@@ -130,10 +128,6 @@ def summary(report) -> str:
     return "Composed: %s, %.0f → %.0f" % (report.archetype or "as drawn",
                                                _score(report.before), _score(report.after))
 
-
-# ---------------------------------------------------------------------------
-# Everything above is the frozen contract; below is W4's own machinery.
-# ---------------------------------------------------------------------------
 
 def _modules():
     """The sibling passes, imported late so the package still imports while a

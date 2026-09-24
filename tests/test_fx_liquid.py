@@ -1,8 +1,4 @@
-"""ui/python/fx/liquid.py -- W-E's gate.
-
-FROZEN: the tests below are the minimum; add more in a new class at the
-bottom, never change these.
-"""
+"""ui/python/fx/liquid.py -- the liquid effect."""
 import os
 import sys
 import unittest
@@ -103,7 +99,7 @@ if __name__ == "__main__":
 
 
 class LiquidTabBarBehaviourTests(unittest.TestCase):
-    """W-E's extra checks: the goo stays one piece, retargeting, the switch."""
+    """Further checks: the goo stays one piece, retargeting, the switch."""
 
     @classmethod
     def setUpClass(cls):

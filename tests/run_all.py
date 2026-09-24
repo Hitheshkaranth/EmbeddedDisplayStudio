@@ -1,6 +1,6 @@
 """
 tests/run_all.py
-Layer: Test (W11)
+Layer: Test
 
 Discovers and runs every test under tests/ and ui/tests/, prints a per-module
 summary, and exits non-zero on failure.

@@ -1,6 +1,6 @@
 """
 tests/test_device_panel_geometry.py
-Layer: Test (W11)
+Layer: Test
 
 Pins how much of its pane the bezel preview occupies.
 

@@ -1,12 +1,11 @@
 """ui/python/fx/liquid.py -- a tab bar whose selection flows like liquid.
 
-FROZEN CONTRACT (UI FX swarm, 2026-09-23). Owner: W-E. Port of libdev
-packages/liquid-gooey, effect="move" on a tab bar (the Tabs demo in
-sites/gooey/playground/demos/Tabs.tsx + styles.css). The web goo is an SVG
-blur + alpha-threshold filter; with no numpy this port builds the goo
-geometrically: the selected pill (a rounded rect, radius h/2) is a body on
-a spring (k=380, c=24.5 -- the Tabs demo's damping; observer.ts's generic
-18 overshoots a whole tab -- semi-implicit Euler, substeps <= 1/60 s) chasing a
+Port of libdev packages/liquid-gooey, effect="move" on a tab bar (the Tabs
+demo in sites/gooey/playground/demos/Tabs.tsx + styles.css). The web goo is
+an SVG blur + alpha-threshold filter; with no numpy this port builds the goo
+geometrically: the selected pill (a rounded rect, radius h/2) is a body on a
+spring (k=380, c=24.5 -- the Tabs demo's damping; observer.ts's generic 18
+overshoots a whole tab -- semi-implicit Euler, substeps <= 1/60 s) chasing a
 carrier that tweens x and width over 250 ms with cubic-bezier(.3,1.05,.4,1);
 velocity stretch (st = min(.18, speed*.0006), scale (1+st, 1/(1+.65st))
 along the motion); a tail droplet on its own spring (k=170, c=22) with two

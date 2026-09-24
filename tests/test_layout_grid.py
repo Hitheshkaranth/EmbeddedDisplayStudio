@@ -1,6 +1,4 @@
-"""designer/layout: the grid, the per-type rules and arrange (W1 gate).
-
-FROZEN: the minimum W1 must pass; add more below, never change these.
+"""designer/layout: the grid, the per-type rules and arrange.
 """
 import os
 import sys
@@ -144,7 +142,7 @@ class ArrangeTests(unittest.TestCase):
         self.assertLessEqual(report.moved, max(1, len(page.widgets) // 3))
 
 
-# -- W1's own tests, below the frozen ones ---------------------------------
+# -- further tests ---------------------------------------------------------
 from designer.layout.constraints import wants_caption  # noqa: E402
 
 PANELS = ((480, 272), (800, 480), (1024, 768), (1280, 800), (1920, 1080), (2560, 1440))

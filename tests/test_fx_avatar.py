@@ -1,8 +1,4 @@
-"""ui/python/fx/avatar.py -- W-C's gate.
-
-FROZEN: the tests below are the minimum; add more in a new class at the
-bottom, never change these.
-"""
+"""ui/python/fx/avatar.py -- the agent avatar effect."""
 import os
 import sys
 import unittest
@@ -133,7 +129,7 @@ class BotAvatarTests(unittest.TestCase):
 
 
 class AvatarPortTests(unittest.TestCase):
-    """W-C's own checks on the port (engine fidelity, still frame, extras)."""
+    """Further checks on the port (engine fidelity, still frame, extras)."""
 
     @classmethod
     def setUpClass(cls):

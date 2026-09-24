@@ -1696,8 +1696,6 @@ or deploy it to a bench panel as a demonstrator. The full list of values is
 
 ---
 
----
-
 <div align="center">
 
 **MIT licensed** — see [`LICENSE`](LICENSE). Tabler Icons are MIT; their notice

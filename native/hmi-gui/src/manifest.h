@@ -9,7 +9,7 @@
 // tags to seed. Error strings are part of the contract: Fallback.qml shows
 // them and the conformance suite (tests/native/) matches on them.
 //
-// Owner: W3 (implementation in manifest.cpp). The public API below is frozen.
+// Implementation in manifest.cpp.
 #pragma once
 
 #include <QString>

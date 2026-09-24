@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/Text.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): text, fontSize, bold, color, horizontalAlignment, verticalAlignment, wrapMode, opacity, visible.
 // Default size 140x32. Signals: none.
-// Owner: W3.
 #include <string.h>
 
 #include "registry.h"

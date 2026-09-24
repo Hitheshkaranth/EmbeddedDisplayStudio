@@ -1,6 +1,6 @@
 """
 tests/test_daemon_protocol.py
-Layer: Test (W11)
+Layer: Test
 Pins CONTRACT 2 behaviour for hmi_hwd.py daemon over UDP loopback.
 """
 

@@ -1,4 +1,4 @@
-// native/hmi-gui/src/tagengine.cpp -- implementation. Owner: W1. See tagengine.h and
+// native/hmi-gui/src/tagengine.cpp -- implementation. See tagengine.h and
 // gui/hmi_loader/tagengine.py (the specification).
 #include "tagengine.h"
 

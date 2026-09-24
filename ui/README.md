@@ -1,11 +1,10 @@
 # ui/ -- shadcn/ui Design System for Qt (QML + Widgets)
 
 **Layer:** Shared design system (CONTRACT Section 11)
-**Owner:** W7
 
 A faithful port of [shadcn/ui](https://github.com/shadcn-ui/ui) (default "slate"
 theme) to Qt, usable from both QML (the on-target HMI, Layer 2) and Qt Widgets
-(the host deployer tool, W5). Reproduces shadcn's actual component semantics:
+(the host deployer tool). Reproduces shadcn's actual component semantics:
 the same variant names, size names, geometry in px, interaction states (hover,
 pressed, focus-visible ring, disabled at 50% opacity), and the same restraint.
 

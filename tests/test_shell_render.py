@@ -1,6 +1,6 @@
 """
 tests/test_shell_render.py
-Layer: Test (W11)
+Layer: Test
 
 Pins CONTRACT section 7: "if the app bundle fails to load, show the built-in
 fallback screen with the error text -- never a black screen."

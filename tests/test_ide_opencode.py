@@ -1,7 +1,6 @@
-"""designer/ide/opencode_client.py and agent_backend.OpencodeBackend -- W3's gate.
+"""designer/ide/opencode_client.py and agent_backend.OpencodeBackend.
 
-FROZEN: the tests below are the minimum W3 must pass; add more in a class
-below them, never change these. Nothing here needs opencode or a model: the
+Nothing here needs opencode or a model: the
 normalizer runs on a recorded stream (tests/fixtures/opencode_events_edit.sse)
 and the client/backend run against tests/fixtures/fake_opencode.py.
 """
@@ -401,7 +400,7 @@ class OpencodeBackendTests(unittest.TestCase):
 
 
 class OpencodeQcTests(unittest.TestCase):
-    """Coordinator QC: what the frozen gate did not pin."""
+    """Further opencode client and backend checks."""
 
     @classmethod
     def setUpClass(cls):

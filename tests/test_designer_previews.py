@@ -1,6 +1,6 @@
 """
 tests/test_designer_previews.py
-Layer: Test (W11)
+Layer: Test
 
 Pins that the Designer canvas draws each component rather than a labelled box,
 and that a Text's declared alignment is what the canvas and the generated QML

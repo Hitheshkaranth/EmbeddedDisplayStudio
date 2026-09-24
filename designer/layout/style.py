@@ -1,7 +1,5 @@
 """designer/layout/style.py -- surfaces, type scale and semantic colour.
 
-FROZEN CONTRACT (AI beauty swarm, 2026-09-22). Owner: W3.
-
 Geometry alone does not make a screen look designed: related things have to
 sit on a surface, text has to come in three or four deliberate sizes rather
 than a dozen accidental ones, and colour has to mean something. This pass
@@ -355,10 +353,7 @@ def _apply_captions(project, page, registry, grid, scale) -> list[str]:
     existing = {widget.id for widget in project.all_widgets()}
     added = []
     for widget in list(page.widgets):
-        try:
-            if not _constraints.wants_caption(registry, widget.type):
-                continue
-        except NotImplementedError:  # pragma: no cover - until W1 lands
+        if not _constraints.wants_caption(registry, widget.type):
             continue
         caption_id = f"{widget.id}Caption"
         if caption_id in existing:
@@ -386,10 +381,7 @@ def _apply_captions(project, page, registry, grid, scale) -> list[str]:
 
         top, shrink_to = y + h + gap, 0
         if not free(top):
-            try:
-                floor = _constraints.rule_for(registry, widget.type).min_height
-            except NotImplementedError:  # pragma: no cover - until W1 lands
-                floor = 24
+            floor = _constraints.rule_for(registry, widget.type).min_height
             shorter = h - (height + gap)
             if shorter >= floor and free(y + shorter + gap):
                 top, shrink_to = y + shorter + gap, shorter
@@ -561,11 +553,8 @@ def _make_card(project, page, registry, grid, role, axis, prefix, members,
             box_h = (inner_h - (count - 1) * gutter) / float(count)
             box = (inner_x, inner_y + round(index * (box_h + gutter)),
                    inner_w, int(round(box_h)))
-        try:
-            rule = _constraints.rule_for(registry, member.type)
-            width, height = _constraints.fit_size(rule, box[2], box[3])
-        except NotImplementedError:  # pragma: no cover - until W1 lands
-            width, height = box[2], box[3]
+        rule = _constraints.rule_for(registry, member.type)
+        width, height = _constraints.fit_size(rule, box[2], box[3])
         width = max(1, min(int(round(width)), box[2]))
         height = max(1, min(int(round(height)), box[3]))
         member.geometry.update({

@@ -1,8 +1,6 @@
 """designer/ide/project_files.py -- the project folder: file helpers and the tree.
 
-FROZEN CONTRACT (Code IDE swarm, 2026-09-23). Owner: W1. Public names,
-signatures, signals and docstrings are the contract; W1 fills in the bodies
-and may add private helpers and private classes. See docs/CODE_SECTION.md.
+See docs/CODE_SECTION.md.
 """
 from __future__ import annotations
 

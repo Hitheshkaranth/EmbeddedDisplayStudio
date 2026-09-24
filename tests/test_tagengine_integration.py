@@ -1,6 +1,6 @@
 """
 tests/test_tagengine_integration.py
-Layer: Test (W11)
+Layer: Test
 End-to-end integration: daemon --sim -> UDP -> TagEngine -> real QML.
 """
 

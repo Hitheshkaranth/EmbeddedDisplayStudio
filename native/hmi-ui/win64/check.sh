@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # native/hmi-ui/win64/check.sh -- the gate for the Windows preview binary.
 #
-# FROZEN (native previews swarm, 2026-09-22): W1 must make this pass; do not
-# edit it. Run from WSL Ubuntu as root, from the repository root:
+# Run from WSL Ubuntu as root, from the repository root:
 #
 #   bash native/hmi-ui/win64/check.sh
 #

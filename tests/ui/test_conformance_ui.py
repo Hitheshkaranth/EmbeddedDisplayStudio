@@ -10,7 +10,7 @@ write / pulse / navigate actions.
 
     HMI_GUI_CMD=native/hmi-ui/out/hmi-ui python -m unittest tests.ui.test_conformance_ui -v
 
-W1 (tags.c) and W2 (bind.c) turn this green; the base skeleton fails it.
+Passes once tags.c (tag intake) and bind.c (bindings) are in place.
 """
 import os
 import time

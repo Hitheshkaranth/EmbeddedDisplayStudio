@@ -1,6 +1,6 @@
 """
 tests/test_step_rendering.py
-Layer: Test (W11)
+Layer: Test
 
 Pins the one thing deploy_to_hmi.sh does with the installer's output: turn
 STEP lines into something an operator reads.

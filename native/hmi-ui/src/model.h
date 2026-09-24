@@ -6,7 +6,7 @@
 // scaling, units and thresholds) and actions (signal -> write/pulse/navigate).
 // hmi_project_load() is the only producer; nothing else allocates these.
 //
-// FROZEN (Phase 3 contract). Runtime-private per-widget state hangs off
+// Runtime-private per-widget state hangs off
 // hmi_widget_t::native / ::state; the model itself is never mutated after load.
 #pragma once
 

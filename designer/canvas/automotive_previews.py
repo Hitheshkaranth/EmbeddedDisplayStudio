@@ -24,7 +24,8 @@ def _painter_font(painter, pixel_size, weight=QFont.Normal):
 
 
 def _stub(painter, rect, props, display_name):
-    """Placeholder until the real painter lands: a panel with the type name."""
+    """The placeholder look, a panel with the type name. No type paints with it;
+    tests/test_automotive_contract.py checks that no real painter matches it."""
     _rounded(painter, rect, auto("panel"), 8, auto("tileBorder"), 1)
     _text(painter, rect, display_name, size=FONT["sm"], color=auto("muted"),
           flags=Qt.AlignCenter)

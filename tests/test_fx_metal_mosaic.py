@@ -1,8 +1,4 @@
-"""ui/python/fx/metal.py and mosaic.py -- W-D's gate.
-
-FROZEN: the tests below are the minimum; add more in a new class at the
-bottom, never change these.
-"""
+"""ui/python/fx/metal.py and mosaic.py -- the metal and mosaic effects."""
 import os
 import sys
 import unittest
@@ -159,12 +155,8 @@ class MosaicTests(unittest.TestCase):
         self.assertLess(paint_ms(view), 25.0)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class MetalMosaicExtraTests(unittest.TestCase):
-    """W-D's own checks beyond the frozen gate."""
+    """Further metal and mosaic checks."""
 
     @classmethod
     def setUpClass(cls):
@@ -281,3 +273,7 @@ class MetalMosaicExtraTests(unittest.TestCase):
         self.addCleanup(view.deleteLater)
         view.set_loading()
         self.assertLess(paint_ms(view, frames=5), 40.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

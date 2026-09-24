@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # native/hmi-ui/win64/build.sh -- cross-compile the headless preview binary for Windows.
 #
-# FROZEN CONTRACT (native previews swarm, 2026-09-22). Owner: W1 fills this
-# in. Run from WSL Ubuntu as root:
+# Run from WSL Ubuntu as root:
 #
 #   bash native/hmi-ui/win64/build.sh            -> native/hmi-ui/out/win64/hmi-ui.exe
 #
@@ -14,7 +13,7 @@
 #   hmi-ui.exe --apps-dir DIR --headless OUT.png [--kit DIR] [--theme dark|light]
 # --display is refused on this build with a clear message.
 #
-# win64/check.sh (frozen) is the gate: it builds, renders through WSL's
+# win64/check.sh is the gate: it builds, renders through WSL's
 # Windows interop, and compares against the Linux renders.
 #
 #   build.sh --clean     wipe the build directory first

@@ -21,8 +21,7 @@
 // Correlation ids are "gui-<n>" from a counter starting at 1. Datagrams over
 // kMaxDatagramBytes are drained and counted as rx errors, never parsed.
 //
-// Owner: W1 (implementation in tagengine.cpp). Public / slots / signals are
-// frozen; W1 may extend the private section.
+// Implementation in tagengine.cpp.
 #pragma once
 
 #include "alarmengine.h"

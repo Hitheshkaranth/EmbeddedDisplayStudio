@@ -1,8 +1,4 @@
-"""ui/python/fx/beam.py and glow.py -- W-A's gate.
-
-FROZEN: the tests below are the minimum; add more in a new class at the
-bottom, never change these.
-"""
+"""ui/python/fx/beam.py and glow.py -- the border beam and working glow."""
 import os
 import sys
 import unittest
@@ -168,7 +164,7 @@ class WorkingGlowTests(unittest.TestCase):
 
 
 class BeamGlowWorkerTests(unittest.TestCase):
-    """W-A's additions: still frames, corners, strength, the time base."""
+    """Further checks: still frames, corners, strength, the time base."""
 
     @classmethod
     def setUpClass(cls):

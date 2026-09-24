@@ -4,8 +4,6 @@
 // to <kit>/icons/<name>.png (96 px, white on transparent). A widget asks
 // for an icon by the same name the QML uses (`icon: "temperature"`), at a
 // pixel size, in a colour; the runtime scales and recolours the PNG.
-//
-// FROZEN (wave 2 contract).
 #pragma once
 
 #include <stdbool.h>

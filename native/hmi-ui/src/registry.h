@@ -5,8 +5,6 @@
 // runtime tells it to (a binding delivered a new value). It never reads
 // tags, never talks to the daemon, never touches another widget: the runtime
 // does all of that through this interface.
-//
-// FROZEN (Phase 3 contract).
 #pragma once
 
 #include "lvgl/lvgl.h"

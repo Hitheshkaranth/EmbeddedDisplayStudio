@@ -1,9 +1,6 @@
 // runtime.h -- ties the model, the kit, the binding engine and the daemon
 // link together: builds a page's LVGL tree, routes tag changes into
 // bindings, runs actions for widget signals, navigates between pages.
-//
-// FROZEN (Phase 3 contract). Owner of runtime.c: the architect (skeleton
-// complete); W2 extends hmi_runtime_signal / navigation if bind.c needs it.
 #pragma once
 
 #include <stdbool.h>

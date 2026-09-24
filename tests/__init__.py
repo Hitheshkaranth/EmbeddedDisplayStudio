@@ -1,5 +1,5 @@
 """
 tests/__init__.py
-Layer: Test (W11)
+Layer: Test
 Test package initialization.
 """

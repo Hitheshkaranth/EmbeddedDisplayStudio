@@ -1,9 +1,7 @@
 # Code section: project editor and coding agent
 
-Status: design frozen 2026-09-23 (branch `feat/code-ide`).
-
 The Studio's **Code** tab used to show one thing: the code of the design
-(`.edsui` or the hmi-ui C of the selected widget). It becomes a small IDE
+(`.edsui` or the hmi-ui C of the selected widget). It is now a small IDE
 for the project folder: a file tree, tabbed editors for any file in the
 project, the old design view kept as a pinned tab, and a chat agent that
 reads and writes the project's files. The agent is **opencode**, driven over
@@ -29,21 +27,21 @@ re-implementing any of it.
 
 ## Components
 
-| Module | Class | Owner | Depends on |
-|---|---|---|---|
-| `designer/ide/project_files.py` | file helpers, `ProjectTree` | W1 | PySide6, stdlib |
-| `designer/ide/editor_tabs.py` | `EditorTabs` | W2 | `project_files` helpers, `designer/ui/code_editor.CodeEditor` |
-| `designer/ui/code_editor.py` | `PythonHighlighter` (added) | W2 | - |
-| `designer/ide/opencode_client.py` | `OpencodeServer`, `OpencodeClient`, `EventNormalizer` | W3 | stdlib only (no Qt) |
-| `designer/ide/agent_backend.py` | `AgentBackend` (frozen base), `ScriptedBackend` (done), `OpencodeBackend` | W3 | `opencode_client`, QtCore |
-| `designer/ide/agent_panel.py` | `AgentPanel` | W4 | `AgentBackend` interface only |
-| `designer/ide/code_section.py` | `CodeSection` (composition) | integration | all of the above |
-| `tools/hmi_deployer/mainwindow.py` | hosts `CodeSection` as the Code tab | integration | |
+| Module | Class | Depends on |
+|---|---|---|
+| `designer/ide/project_files.py` | file helpers, `ProjectTree` | PySide6, stdlib |
+| `designer/ide/editor_tabs.py` | `EditorTabs` | `project_files` helpers, `designer/ui/code_editor.CodeEditor` |
+| `designer/ui/code_editor.py` | `PythonHighlighter` | - |
+| `designer/ide/opencode_client.py` | `OpencodeServer`, `OpencodeClient`, `EventNormalizer` | stdlib only (no Qt) |
+| `designer/ide/agent_backend.py` | `AgentBackend` (base), `ScriptedBackend`, `OpencodeBackend` | `opencode_client`, QtCore |
+| `designer/ide/agent_panel.py` | `AgentPanel` | `AgentBackend` interface only |
+| `designer/ide/code_section.py` | `CodeSection` (composition) | all of the above |
+| `tools/hmi_deployer/mainwindow.py` | hosts `CodeSection` as the Code tab | |
 
 Dependency rule: arrows only point down the table. `AgentPanel` knows the
 `AgentBackend` interface and nothing about opencode; `opencode_client` knows
 nothing about Qt. So the panel is tested with `ScriptedBackend`, the client
-with a recorded event stream and a fake HTTP server, and nothing in the gate
+with a recorded event stream and a fake HTTP server, and nothing in the test
 suite needs opencode or a model.
 
 ## Data flow
@@ -61,7 +59,7 @@ Designer    --designChanged--> CodeWindow (pinned "Design" tab, unchanged)
 workspace.bundle_dir changes --> CodeSection.set_root -> tree root, backend.start(directory)
 ```
 
-## The agent event vocabulary (frozen)
+## The agent event vocabulary
 
 `AgentBackend.event` carries one dict per event. `EventNormalizer` produces
 exactly these from opencode's raw bus events; any other backend must too.
@@ -135,13 +133,11 @@ commands in the project directory with the user's rights, as opencode does in
 a terminal; permission requests opencode raises are shown in the panel and
 nothing is auto-approved by the Studio.
 
-## Gates
+## Tests
 
-| Gate | Owner |
-|---|---|
-| `tests/test_ide_project_files.py` | W1 |
-| `tests/test_ide_editor_tabs.py` | W2 |
-| `tests/test_ide_opencode.py` (recorded stream `tests/fixtures/opencode_events_edit.sse`, fake server) | W3 |
-| `tests/test_ide_agent_panel.py` | W4 |
-| `tests/test_ide_code_section.py` (composition; live opencode test when `OPENCODE_LIVE=1`) | integration |
-| existing `tests/test_code_window.py`, `tests/test_code_editor.py` stay green | everyone |
+* `tests/test_ide_project_files.py`
+* `tests/test_ide_editor_tabs.py`
+* `tests/test_ide_opencode.py` (recorded stream `tests/fixtures/opencode_events_edit.sse`, fake server)
+* `tests/test_ide_agent_panel.py`
+* `tests/test_ide_code_section.py` (composition; live opencode test when `OPENCODE_LIVE=1`)
+* `tests/test_code_window.py`, `tests/test_code_editor.py`

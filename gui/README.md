@@ -6,7 +6,6 @@
 > still imported by the desktop Studio for its live previews.
 
 **Layer:** 2 (GUI Loader)
-**Owner:** W2
 
 This directory contains the pure UDP client GUI Loader for the BYOA (Bring Your Own App) HMI system. It is responsible for loading the customer's QML application, providing it with real-time hardware data, and maintaining the system's reliability contract.
 
@@ -39,7 +38,7 @@ ShGauge {
 
 Hardware tag names are dot-separated (e.g., `do.relay1`), which is illegal for QML properties. The Tag Engine automatically exposes an underscored alias for every tag (e.g., `do_relay1`).
 
-When you assign a value to an underscored tag property in QML, the `TagEngine` intercepts the assignment, resolves it back to the dotted name, and seamlessly transmits a JSON `set` command to the hardware daemon.
+When you assign a value to an underscored tag property in QML, the `TagEngine` intercepts the assignment, resolves it back to the dotted name, and sends a JSON `set` command to the hardware daemon.
 
 ```qml
 ShSwitch {

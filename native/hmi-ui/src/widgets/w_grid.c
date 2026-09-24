@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/Grid.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): columns, rows, spacing, flow, opacity, visible.
 // Default size 320x220. Signals: none.
-// Owner: W3.
 #include <string.h>
 #include "registry.h"
 #include "theme.h"

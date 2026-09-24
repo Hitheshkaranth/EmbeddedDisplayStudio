@@ -1,6 +1,4 @@
-"""designer/layout: archetypes and the style pass (W3 gate).
-
-FROZEN: the minimum W3 must pass; add more below, never change these.
+"""designer/layout: archetypes and the style pass.
 """
 import os
 import sys

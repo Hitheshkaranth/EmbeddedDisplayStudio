@@ -2,7 +2,7 @@
 //
 // Paints: four coloured arc bands, needle and hub.
 // The Canvas file is the drawing specification; the spec keys are listed in
-// its header comment. Owner: W1 (swarm/briefs/faces/W1-*.md).
+// its header comment.
 #pragma once
 
 #include "faceitem.h"

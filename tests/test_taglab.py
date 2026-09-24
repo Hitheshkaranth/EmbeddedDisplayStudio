@@ -1,7 +1,6 @@
 """
 tests/test_taglab.py
-Layer: Test (W11)
-Comprehensive tests for the Tag Lab feature (tools/hmi_deployer/taglab.py).
+Tests for the Tag Lab feature (tools/hmi_deployer/taglab.py).
 
 Coverage:
 - Waveform validation and boundary conditions for all five waveform types

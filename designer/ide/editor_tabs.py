@@ -1,8 +1,6 @@
 """designer/ide/editor_tabs.py -- the tabbed editors of the Code section.
 
-FROZEN CONTRACT (Code IDE swarm, 2026-09-23). Owner: W2. Public names,
-signatures, signals and docstrings are the contract; W2 fills in the bodies
-and may add private helpers and private classes. See docs/CODE_SECTION.md.
+See docs/CODE_SECTION.md.
 
 One tab per open file, each a designer.ui.code_editor.CodeEditor holding
 the file's text in the language project_files.language_for gives. Pinned

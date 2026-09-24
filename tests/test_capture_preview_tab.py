@@ -1,6 +1,6 @@
 """
 tests/test_capture_preview_tab.py
-Layer: Test (W11)
+Layer: Test
 
 Pins the one thing a bezel capture depends on that nothing else does: that the
 Studio is showing a workspace where the runtime preview is loaded.

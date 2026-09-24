@@ -1,6 +1,6 @@
 """
 tests/test_deploy_history.py
-Layer: Test (W11)
+Layer: Test
 Unit tests for tools/hmi_deployer/deploy_history.
 """
 

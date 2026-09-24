@@ -1,6 +1,6 @@
 """
 tests/test_bundle_validation.py
-Layer: Test (W11)
+Layer: Test
 Pins CONTRACT 4 behaviour: ensures deployer GUI, deploy CLI, and target installer agree.
 """
 

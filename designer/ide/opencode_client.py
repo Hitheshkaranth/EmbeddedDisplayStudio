@@ -1,10 +1,8 @@
 """designer/ide/opencode_client.py -- talk to an opencode server (no Qt here).
 
-FROZEN CONTRACT (Code IDE swarm, 2026-09-23). Owner: W3. Public names,
-signatures and docstrings are the contract; W3 fills in the bodies and may
-add private helpers. Standard library only (urllib, subprocess, threading,
-json) -- no requests, no Qt. See docs/CODE_SECTION.md, "opencode integration"
-and "The agent event vocabulary".
+Standard library only (urllib, subprocess, threading, json) -- no requests,
+no Qt. See docs/CODE_SECTION.md, "opencode integration" and "The agent event
+vocabulary".
 
 opencode (https://opencode.ai, `npm i -g opencode-ai`) is a coding agent
 with a headless HTTP server, `opencode serve`. The endpoints used here (all

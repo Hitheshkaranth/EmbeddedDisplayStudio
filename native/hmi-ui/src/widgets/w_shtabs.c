@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/ShTabs.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): tabs, currentIndex, opacity, visible.
 // Default size 360x240. Signals: none.
-// Owner: W3 (wave 2).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

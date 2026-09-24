@@ -3,7 +3,6 @@
 // Spec: ui/qml/Shadcn/ShInput.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): placeholderText, text, enabled, readOnly, opacity, visible.
 // Default size 180x40. Signals: none.
-// Owner: W3 (wave 2).
 #include <string.h>
 
 #include "draw_util.h"

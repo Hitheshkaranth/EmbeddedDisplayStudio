@@ -1,11 +1,10 @@
 """ui/python/fx/orb.py -- Thinking Orbs: nine "thinking" states drawn from dots.
 
-FROZEN CONTRACT (UI FX swarm, 2026-09-23). Owner: W-B. Port of libdev
-packages/thinking-orbs: engine/*.ts is pure maths (no DOM) and translates
-line for line; presets.ts / profiles.ts (and spec/orbs-spec.json) hold the
-tuned numbers per state and size. No physics: every state is a pure
-function of time. Canvas 2D only (filled circles; straight lines for
-'connecting'), so QPainter reproduces it exactly.
+Port of libdev packages/thinking-orbs: engine/*.ts is pure maths (no DOM)
+and translates line for line; presets.ts / profiles.ts (and
+spec/orbs-spec.json) hold the tuned numbers per state and size. No physics:
+every state is a pure function of time. Canvas 2D only (filled circles;
+straight lines for 'connecting'), so QPainter reproduces it exactly.
 
 States -> engine modes:
     working->orbits  searching->globe  solving->rubik  listening->wave

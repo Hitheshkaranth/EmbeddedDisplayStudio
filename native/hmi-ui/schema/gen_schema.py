@@ -1,4 +1,4 @@
-"""Generate the C runtime's frozen contract from the Designer's own tables.
+"""Generate the C runtime's widget schema from the Designer's own tables.
 
     python native/hmi-ui/schema/gen_schema.py          # writes the files below
     python native/hmi-ui/schema/gen_schema.py --check  # exit 1 if they are stale
