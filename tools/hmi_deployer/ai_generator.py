@@ -229,23 +229,15 @@ def merge_project_section(base, section):
 
 
 def drop_dangling_navigation(project) -> list:
-    """Remove navigate actions whose target page the design never made.
+    """Remove navigate actions to pages the finished design never made.
 
-    Returns the "widget -> page" pairs removed. Run once the design is
-    complete: in a sectioned run a later section may still add the page.
-    A model links a button to an "alarms" page it then never builds, and
-    validation refused the whole design at deploy.
+    Run once the design is complete: in a sectioned run a later section may
+    still add the page. See designer.model.project.drop_unrunnable_actions.
     """
     if project is None:
         return []
-    page_ids = {page.id for page in project.pages}
-    removed = []
-    for widget in project.all_widgets():
-        for signal, action in list(widget.actions.items()):
-            if action.kind == "navigate" and action.page not in page_ids:
-                del widget.actions[signal]
-                removed.append(f"{widget.id} -> {action.page}")
-    return removed
+    from designer.model.project import drop_unrunnable_actions
+    return drop_unrunnable_actions(project)
 
 
 def summarize_widgets(project) -> str:

@@ -201,6 +201,24 @@ class ActionModelTests(unittest.TestCase):
         self.assertEqual(DesignerAction.from_data({"tag": "NotATag"}).tag, "NotATag")
         self.assertEqual(DesignerBinding.from_data("*").tag, "*")
 
+    def test_actions_that_can_never_run_are_removed_on_open(self):
+        """An AI design gave ShAlert "clicked" -> page "alarms"; it opened fine
+        and then failed validation at every Generate and Deploy."""
+        from designer.model.project import drop_unrunnable_actions
+        project = DesignerProject()
+        project.pages[0].widgets = [
+            widget("ShAlert", "engineAlert",
+                   actions={"clicked": DesignerAction("navigate", page="alarms")}),
+            widget("ShButton", "toNowhere",
+                   actions={"clicked": DesignerAction("navigate", page="alarms")}),
+            widget("ShButton", "start", actions={"clicked": DesignerAction("write", "do.start")}),
+        ]
+        removed = drop_unrunnable_actions(project, self.registry)
+        self.assertEqual(removed, ["engineAlert.clicked: ShAlert has no signal 'clicked'",
+                                   "toNowhere.clicked: no page 'alarms'"])
+        self.assertEqual([str(i) for i in project.validate(self.registry)], [])
+        self.assertEqual(list(project.pages[0].widgets[2].actions), ["clicked"])
+
     def test_registry_declares_signals_for_controls(self):
         for kind, signals, state in (("ShButton", ("clicked",), ""), ("ShToggle", ("toggled",), "checked"),
                                      ("ShCheckbox", ("checkedChanged",), "checked"),

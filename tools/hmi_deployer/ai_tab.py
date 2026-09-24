@@ -2479,7 +2479,7 @@ class AIDesignTab(QWidget):
                     self._section_project = project
                 if not sectioned or section_complete:
                     for link in drop_dangling_navigation(project):
-                        self.statusMessage.emit(f"AI Design: dropped a link to a page it never made ({link})")
+                        self.statusMessage.emit(f"AI Design: removed an action that could never run: {link}")
                 diff = diff_projects(self._canvas_project(), project)
                 applied = self.auto_apply.isChecked()
                 shell.note_changes(diff, applied)

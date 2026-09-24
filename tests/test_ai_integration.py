@@ -82,7 +82,7 @@ class TestAIDesignGenerator(unittest.TestCase):
             DesignerWidget("ShButton", "toMain", {"x": 0, "y": 60, "width": 100, "height": 48}, {},
                            actions={"clicked": DesignerAction("navigate", page=project.pages[0].id)}),
         ]
-        self.assertEqual(drop_dangling_navigation(project), ["toAlarms -> alarms"])
+        self.assertEqual(drop_dangling_navigation(project), ["toAlarms.clicked: no page 'alarms'"])
         widgets = {w.id: w for w in project.all_widgets()}
         self.assertEqual(widgets["toAlarms"].actions, {})
         self.assertEqual(list(widgets["toMain"].actions), ["clicked"])

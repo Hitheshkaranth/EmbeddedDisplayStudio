@@ -62,6 +62,35 @@ def _lowercase_tag(tag: str) -> str:
     return lowered if lowered != tag and TAG_RE.fullmatch(lowered) else tag
 
 
+def drop_unrunnable_actions(project, registry=None) -> list:
+    """Remove actions that can never run; return what was removed.
+
+    Two kinds: a navigate action to a page the project does not have, and
+    (with a registry) an action on a signal the widget cannot emit. Neither
+    can be made in the inspector, which offers only the widget's signals and
+    existing pages; they come from AI output or a hand-edited file ("clicked"
+    on an ShAlert, to an "alarms" page never built) and made validation
+    refuse the whole design at deploy.
+
+    Returns:
+        "<widget>.<signal>: <reason>" per removed action.
+    """
+    page_ids = {page.id for page in project.pages}
+    removed = []
+    for widget in project.all_widgets():
+        definition = registry.get(widget.type) if registry is not None else None
+        for signal, action in list(widget.actions.items()):
+            if definition is not None and signal not in definition.action_signals:
+                reason = f"{widget.type} has no signal {signal!r}"
+            elif action.kind == "navigate" and action.page not in page_ids:
+                reason = f"no page {action.page!r}"
+            else:
+                continue
+            del widget.actions[signal]
+            removed.append(f"{widget.id}.{signal}: {reason}")
+    return removed
+
+
 @dataclass
 class DesignerBinding:
     tag: str

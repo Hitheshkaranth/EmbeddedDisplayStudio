@@ -24,6 +24,7 @@ from designer.canvas.qml_previews import QmlPreviewRenderer
 from designer.commands import CallbackCommand
 from designer.generators import QmlGenerationError, QmlGenerator
 from designer.model import DesignerAction, DesignerBinding, DesignerPage, DesignerProject, DesignerWidget
+from designer.model.project import drop_unrunnable_actions
 from designer.palette.widget_palette import WidgetPalette
 from designer.palette.widget_registry import PROPERTY_MINIMUMS, clamp_property
 from designer.palette.widget_registry import default_registry
@@ -1379,6 +1380,7 @@ class DesignerWorkspace(QWidget):
     def load_file(self, path):
         try:
             self.project = DesignerProject.load(path); self.file_path = os.path.abspath(path); self.bundle_dir = os.path.dirname(self.file_path)
+            self._drop_unrunnable_actions(self.project)
             self.scene.project_dir = self.bundle_dir
             self.current_page_index = 0; self.undo_stack.clear(); self._load_page(); self.message.emit(f"Opened {path}")
             self.designChanged.emit()
@@ -1394,6 +1396,7 @@ class DesignerWorkspace(QWidget):
         set its own, so a design keeps targeting the connected glass.
         """
         previous = self.project
+        self._drop_unrunnable_actions(project)
         # AI titles ("AI Design (partial)") are not manifest names; coerce
         # them here so Preview/Deploy never trip over the contract later.
         project.name = deployable_name(
@@ -1405,6 +1408,15 @@ class DesignerWorkspace(QWidget):
             self.project = value; self.current_page_index = 0; self._load_page()
         self.undo_stack.push(CallbackCommand(label, lambda: apply(project), lambda: apply(previous)))
         self.message.emit(f"{label}: {sum(1 for _ in project.all_widgets())} widgets on canvas")
+
+    def _drop_unrunnable_actions(self, project):
+        """Remove actions that can never run, saying so in the console.
+
+        Otherwise the design opens fine and then fails validation at every
+        Generate and Deploy.
+        """
+        for removed in drop_unrunnable_actions(project, self.registry):
+            self.message.emit(f"Removed an action that could never run: {removed}")
 
     def save(self):
         if not self.file_path:
