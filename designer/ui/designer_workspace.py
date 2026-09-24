@@ -24,7 +24,7 @@ from designer.canvas.qml_previews import QmlPreviewRenderer
 from designer.commands import CallbackCommand
 from designer.generators import QmlGenerationError, QmlGenerator
 from designer.model import DesignerAction, DesignerBinding, DesignerPage, DesignerProject, DesignerWidget
-from designer.model.project import drop_unrunnable_actions
+from designer.model.project import drop_unrunnable_actions, ensure_unique_ids
 from designer.palette.widget_palette import WidgetPalette
 from designer.palette.widget_registry import PROPERTY_MINIMUMS, clamp_property
 from designer.palette.widget_registry import default_registry
@@ -1417,6 +1417,10 @@ class DesignerWorkspace(QWidget):
         """
         for removed in drop_unrunnable_actions(project, self.registry):
             self.message.emit(f"Removed an action that could never run: {removed}")
+        # Same reason: a design saved with a reused widget id failed validation
+        # on every Generate and Deploy until the id was changed by hand.
+        for renamed in ensure_unique_ids(project):
+            self.message.emit(renamed)
 
     def save(self):
         if not self.file_path:

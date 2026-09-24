@@ -129,6 +129,26 @@ class TestAIDesignGenerator(unittest.TestCase):
         self.assertNotIn("Qt/QML panels", prompt)
         self.assertGreater(page_budget(1920, 1080), page_budget(1024, 768))
 
+    def test_a_later_section_corrects_a_widget_that_was_moved_to_another_page(self):
+        """Composing moved "eng1status" to the Engine 1 page; the next section's
+        eng1status was then added to the overview as a second widget with the
+        same id, and validation refused the design."""
+        from designer.model import DesignerPage, DesignerProject, DesignerWidget
+        from tools.hmi_deployer.ai_generator import merge_project_section
+
+        def lamp(kind):
+            return DesignerWidget(kind, "eng1status", {"x": 0, "y": 0, "width": 40, "height": 40}, {})
+
+        base = DesignerProject()
+        base.pages[0].widgets = []
+        base.pages.append(DesignerPage("engine1", "Engine 1", [lamp("ShTelltale")]))
+        section = DesignerProject()
+        section.pages[0].widgets = [lamp("ShStatDot")]
+        merged = merge_project_section(base, section)
+        holders = [(page.id, w.type) for page in merged.pages for w in page.widgets
+                   if w.id == "eng1status"]
+        self.assertEqual(holders, [("engine1", "ShStatDot")])
+
     def test_a_tag_that_cannot_be_repaired_is_left_for_validation_to_name(self):
         from tools.hmi_deployer.ai_generator import _coerce_tag
         self.assertEqual(_coerce_tag("Relay"), "Relay")   # no dot: not a guess to make

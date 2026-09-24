@@ -62,6 +62,40 @@ def _lowercase_tag(tag: str) -> str:
     return lowered if lowered != tag and TAG_RE.fullmatch(lowered) else tag
 
 
+def ensure_unique_ids(project) -> list:
+    """Rename the second and later holders of a widget id; return notes.
+
+    Ids are unique across the whole design, not per page. A model reuses an
+    id for a different widget in a later section ("eng1status" a telltale on
+    the overview, then a status dot for the Engine 1 page), and validation
+    then refused the design at every Generate and Deploy. Nothing in a design
+    refers to a widget by its id -- actions and bindings name tags and pages
+    -- so the later one takes the next free "<id>2", "<id>3", ...
+    """
+    seen, notes = set(), []
+    all_ids = {w.id for w in project.all_widgets()}
+    for page in project.pages:
+        for widget in _walk_widgets(page.widgets):
+            if widget.id not in seen:
+                seen.add(widget.id)
+                continue
+            n, candidate = 2, f"{widget.id}2"
+            while candidate in all_ids:
+                n += 1
+                candidate = f"{widget.id}{n}"
+            notes.append(f"{page.name}: a second widget was called {widget.id!r}; renamed {candidate!r}")
+            widget.id = candidate
+            all_ids.add(candidate)
+            seen.add(candidate)
+    return notes
+
+
+def _walk_widgets(widgets):
+    for widget in widgets:
+        yield widget
+        yield from _walk_widgets(widget.children)
+
+
 def drop_unrunnable_actions(project, registry=None) -> list:
     """Remove actions that can never run; return what was removed.
 

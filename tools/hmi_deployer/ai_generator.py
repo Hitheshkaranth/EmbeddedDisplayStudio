@@ -197,9 +197,12 @@ def diff_projects(old, new) -> dict:
 def merge_project_section(base, section):
     """Merge one staged AI response into the live design by stable widget id.
 
-    Sections are page-level slices. A repeated id replaces the earlier widget,
-    which lets a later section deliberately correct an item without creating a
-    duplicate. New pages and widgets retain the order the model emitted.
+    Sections are page-level slices. A repeated id replaces the earlier widget
+    wherever it now is, which lets a later section deliberately correct an item
+    without creating a duplicate -- including one that composing moved to
+    another page (looked up on the incoming page only, the correction was
+    added beside it as a second widget with the same id). New pages and
+    widgets retain the order the model emitted.
     """
     if base is None:
         return copy.deepcopy(section)
@@ -216,15 +219,15 @@ def merge_project_section(base, section):
             merged.pages.append(target)
             pages[target.id] = target
             continue
-        existing = {widget.id: index for index, widget in enumerate(target.widgets)}
         for widget in incoming_page.widgets:
             incoming = copy.deepcopy(widget)
-            index = existing.get(incoming.id)
-            if index is None:
-                existing[incoming.id] = len(target.widgets)
+            home = next((page for page in merged.pages
+                         if any(w.id == incoming.id for w in page.widgets)), None)
+            if home is None:
                 target.widgets.append(incoming)
             else:
-                target.widgets[index] = incoming
+                index = next(i for i, w in enumerate(home.widgets) if w.id == incoming.id)
+                home.widgets[index] = incoming
     return merged
 
 
@@ -477,6 +480,10 @@ class AIDesignGenerator:
             self.last_polish, self.last_fit_notes = compose_project(
                 project, self.registry, polish,
                 brief=self.brief or project.name, renderer=self.renderer)
+            # A model reuses an id for a new widget; unique ids are a
+            # precondition of a design that validates.
+            from designer.model.project import ensure_unique_ids
+            self.last_fit_notes += ensure_unique_ids(project)
         except Exception as exc:
             # A design in a draft's clothes beats no design at all: whatever
             # the layout pipeline did, the model's work reaches the canvas.

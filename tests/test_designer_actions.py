@@ -219,6 +219,21 @@ class ActionModelTests(unittest.TestCase):
         self.assertEqual([str(i) for i in project.validate(self.registry)], [])
         self.assertEqual(list(project.pages[0].widgets[2].actions), ["clicked"])
 
+    def test_a_reused_widget_id_is_renamed_on_open(self):
+        """"clock" on the overview and on Details: every Generate and Deploy
+        failed with "duplicate widget id"."""
+        from designer.model import DesignerPage
+        from designer.model.project import ensure_unique_ids
+        project = DesignerProject()
+        project.pages[0].widgets = [widget("Text", "clock"), widget("Text", "clock2")]
+        project.pages.append(DesignerPage("details", "Details", [widget("Text", "clock")]))
+        self.assertEqual(ensure_unique_ids(project),
+                         ["Details: a second widget was called 'clock'; renamed 'clock3'"])
+        ids = [w.id for w in project.all_widgets()]
+        self.assertEqual(sorted(ids), ["clock", "clock2", "clock3"])
+        self.assertEqual([str(i) for i in project.validate(self.registry)], [])
+        self.assertEqual(ensure_unique_ids(project), [])
+
     def test_registry_declares_signals_for_controls(self):
         for kind, signals, state in (("ShButton", ("clicked",), ""), ("ShToggle", ("toggled",), "checked"),
                                      ("ShCheckbox", ("checkedChanged",), "checked"),
