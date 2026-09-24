@@ -12,6 +12,7 @@ from typing import Optional
 
 from PySide6.QtCore import Signal, QObject
 from designer.model import DesignerAction, DesignerBinding, DesignerProject, DesignerPage, DesignerWidget
+from designer.model.project import TAG_RE
 from designer.palette.widget_registry import WidgetDefinition, WidgetRegistry
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,21 @@ QML_BLOCK_RE = re.compile(r"```(?:qml|QML)?\s*\n(.*?)```", re.DOTALL)
 JSON_DESIGN_RE = re.compile(r"\{[\s\S]*\"pages\"[\s\S]*\}")
 # A legal QML id: lowercase start, then word characters.
 _QML_ID_RE = re.compile(r"[a-z_][A-Za-z0-9_]*")
+
+
+def _coerce_tag(tag: str) -> str:
+    """Bring a model-written tag name to CONTRACT 2.5's lowercase dotted form.
+
+    The prompt says tags are lowercase; models still write "do.pumpA.run",
+    which the Designer rejects and the daemon would never answer to. Case
+    and stray characters are fixed; anything still not a tag afterwards is
+    returned unchanged, so validation names it rather than a guess.
+    """
+    if tag == "*":  # ShAlarmTable's "every alarm"
+        return tag
+    fixed = re.sub(r"[^a-z0-9_.]", "_", str(tag).strip().lower())
+    fixed = re.sub(r"\.{2,}", ".", fixed).strip(".")
+    return fixed if TAG_RE.fullmatch(fixed) else tag
 # Fenced ```json block -- what build_system_prompt() asks the model for.
 JSON_BLOCK_RE = re.compile(r"```(?:json|JSON)\s*\n(.*?)```", re.DOTALL)
 
@@ -534,6 +550,7 @@ class AIDesignGenerator:
                 except (ValueError, TypeError):
                     continue
                 if binding.tag:
+                    binding.tag = _coerce_tag(binding.tag)
                     bindings[str(prop)] = binding
 
             children = []
@@ -551,6 +568,8 @@ class AIDesignGenerator:
                 except (ValueError, TypeError):
                     continue
                 if action.kind in ("write", "pulse", "navigate"):
+                    if action.tag:
+                        action.tag = _coerce_tag(action.tag)
                     actions[str(signal)] = action
 
             # Keep the model's own id when it is a legal QML id: stable ids

@@ -383,7 +383,12 @@ class DesignerProject:
                         pass  # the table supplies the alarm; the action acknowledges it
                     else:
                         if not TAG_RE.fullmatch(action.tag or ""):
-                            issues.append(ValidationIssue(apath, f"action tag {action.tag!r} is not a dotted tag name"))
+                            lowered = (action.tag or "").lower()
+                            # "do.pumpA.run" is dotted; saying it was not sent
+                            # people looking for the wrong fault.
+                            reason = (f"must be lowercase ({lowered!r})" if TAG_RE.fullmatch(lowered)
+                                      else "is not a lowercase dotted tag name")
+                            issues.append(ValidationIssue(apath, f"action tag {action.tag!r} {reason}"))
                         if action.kind == "pulse" and not (PULSE_MS_MIN <= int(action.ms) <= PULSE_MS_MAX):
                             issues.append(ValidationIssue(apath, f"pulse ms must be {PULSE_MS_MIN}..{PULSE_MS_MAX}"))
         return issues

@@ -171,6 +171,7 @@ class ActionModelTests(unittest.TestCase):
         project.pages[0].widgets = [
             widget("Text", "t", actions={"clicked": DesignerAction("write", "do.x")}),
             widget("ShButton", "b1", actions={"clicked": DesignerAction("write", "NotATag")}),
+            widget("ShToggle", "b5", actions={"toggled": DesignerAction("write", "do.pumpA.run")}),
             widget("ShButton", "b2", actions={"clicked": DesignerAction("pulse", "do.x", ms=0)}),
             widget("ShButton", "b3", actions={"clicked": DesignerAction("navigate", page="nowhere")}),
             widget("ShButton", "b4", actions={"clicked": DesignerAction("explode", "do.x")}),
@@ -179,7 +180,9 @@ class ActionModelTests(unittest.TestCase):
         ]
         messages = [str(issue) for issue in project.validate(self.registry)]
         self.assertTrue(any("Text has no action signal 'clicked'" in m for m in messages), messages)
-        self.assertTrue(any("b1" in m and "not a dotted tag" in m for m in messages), messages)
+        self.assertTrue(any("b1" in m and "not a lowercase dotted tag" in m for m in messages), messages)
+        # Dotted but capitalised: say so, and what it should be.
+        self.assertTrue(any("b5" in m and "must be lowercase ('do.pumpa.run')" in m for m in messages), messages)
         self.assertTrue(any("b2" in m and "pulse ms" in m for m in messages), messages)
         self.assertTrue(any("b3" in m and "'nowhere'" in m for m in messages), messages)
         self.assertTrue(any("b4" in m and "unknown action kind" in m for m in messages), messages)

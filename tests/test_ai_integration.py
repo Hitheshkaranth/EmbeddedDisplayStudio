@@ -15,6 +15,36 @@ class TestAIDesignGenerator(unittest.TestCase):
         self.assertEqual(widgets[0].type, "ShButton")
         self.assertEqual(widgets[0].properties.get("text"), "Start")
 
+    def test_model_written_tags_are_brought_to_contract_form(self):
+        """Qwen wrote "do.pumpA.run" despite the prompt; the Designer then
+        refused the design and the daemon would never answer to it."""
+        from tools.hmi_deployer.ai_generator import AIDesignGenerator
+        from designer.model.project import TAG_RE
+        gen = AIDesignGenerator()
+        widgets = gen._convert_widgets([
+            {"type": "ShToggle", "id": "pumpA_runToggle",
+             "geometry": {"x": 0, "y": 0, "width": 200, "height": 45},
+             "actions": {"toggled": {"kind": "write", "tag": "do.pumpA.run", "value": True}}},
+            {"type": "ShGauge", "id": "g",
+             "geometry": {"x": 0, "y": 60, "width": 200, "height": 200},
+             "bindings": {"value": {"tag": "PumpA.Flow Rate"}}},
+            {"type": "ShAlarmTable", "id": "alarms",
+             "geometry": {"x": 0, "y": 280, "width": 400, "height": 200},
+             "bindings": {"alarms": {"tag": "*"}}},
+        ])
+        by_id = {w.id: w for w in widgets}
+        self.assertEqual(by_id["pumpA_runToggle"].actions["toggled"].tag, "do.pumpa.run")
+        self.assertEqual(by_id["g"].bindings["value"].tag, "pumpa.flow_rate")
+        self.assertTrue(TAG_RE.fullmatch(by_id["g"].bindings["value"].tag))
+        self.assertEqual(by_id["alarms"].bindings["alarms"].tag, "*")
+        # The widget id is a QML id, not a tag: camelCase stays.
+        self.assertIn("pumpA_runToggle", by_id)
+
+    def test_a_tag_that_cannot_be_repaired_is_left_for_validation_to_name(self):
+        from tools.hmi_deployer.ai_generator import _coerce_tag
+        self.assertEqual(_coerce_tag("Relay"), "Relay")   # no dot: not a guess to make
+        self.assertEqual(_coerce_tag("DO.Relay1"), "do.relay1")
+
     def test_convert_unknown_type_falls_back_to_rectangle(self):
         from tools.hmi_deployer.ai_generator import AIDesignGenerator
         gen = AIDesignGenerator()
