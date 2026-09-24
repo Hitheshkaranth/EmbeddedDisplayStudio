@@ -2,712 +2,390 @@
 
 <img src="docs/assets/banner.jpg" alt="EmbeddedDisplay Studio" width="900" />
 
-### Describe it, draw it, or bring your own — HMI platform for embedded Linux panels
+# EmbeddedDisplay Studio
 
-**EmbeddedDisplay Studio** turns a written brief or a drawing on a canvas into a screen running on an embedded Linux panel — previewed at the panel's real geometry by the panel's own renderer, validated, and deployed atomically over SSH with automatic rollback. The panel carries no Qt and no compositor: it interprets the design file directly.
-Built for industrial, vehicle, marine, avionics, instrumentation and kiosk HMIs — with tag-driven data, no image reflash, and no hardware code in the app.
+**Describe it, draw it, or bring your own — and ship it to the glass.**
+
+A desktop studio for embedded Linux HMI panels. Write a brief and a model builds the screen, or draw it on a canvas the size of the panel, or open an existing Qt application — then preview it with the panel's own renderer and deploy it over SSH, atomically, with automatic rollback. The panel runs a 1.4 MB C + LVGL runtime that reads the design file directly: no Qt, no compositor, no per-design build.
 
 <br />
 
-[![Release](https://img.shields.io/github/v/release/Hitheshkaranth/EmbeddedDisplayStudio?style=flat-square&label=Release)](../../releases/latest)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20%C2%B7%20Windows-555555?style=flat-square&logo=linux&logoColor=white)](#the-hardware-it-runs-on)
-[![CI](https://img.shields.io/github/actions/workflow/status/Hitheshkaranth/EmbeddedDisplayStudio/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/Hitheshkaranth/EmbeddedDisplayStudio/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/License-MIT-006FEE?style=flat-square)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Hitheshkaranth/EmbeddedDisplayStudio?style=for-the-badge&label=Release&color=006FEE)](../../releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/Hitheshkaranth/EmbeddedDisplayStudio/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/Hitheshkaranth/EmbeddedDisplayStudio/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-MIT-555555?style=for-the-badge)](LICENSE)
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/PySide6-6.8.1-41CD52?style=flat-square&logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
-[![Runtime](https://img.shields.io/badge/Panel%20runtime-C11%20%C2%B7%20LVGL%20%C2%B7%20DRM%2FKMS-1A5FB4?style=flat-square)](native/hmi-ui/)
-[![Yocto](https://img.shields.io/badge/Yocto-Embedded%20Linux-1A5FB4?style=flat-square&logo=yocto&logoColor=white)](yocto/)
-[![AI](https://img.shields.io/badge/AI%20Design-Ollama_%7C_OpenAI_%7C_Anthropic_%7C_Gemini_%7C_vLLM-FF6F00?style=flat-square)](#ai-design)
+[![Runtime](https://img.shields.io/badge/Panel-C11%20%C2%B7%20LVGL%209.3%20%C2%B7%20DRM%2FKMS-1A5FB4?style=flat-square)](native/hmi-ui/)
+[![Yocto](https://img.shields.io/badge/Yocto-meta--hmi-1A5FB4?style=flat-square&logo=yocto&logoColor=white)](yocto/)
+[![Platform](https://img.shields.io/badge/Studio-Windows%20%C2%B7%20Linux-555555?style=flat-square)](#quick-start)
+[![AI](https://img.shields.io/badge/AI%20Design-Ollama%20%C2%B7%20OpenAI%20%C2%B7%20Anthropic%20%C2%B7%20Gemini%20%C2%B7%20vLLM-FF6F00?style=flat-square)](#ai-design)
+
+<br />
+
+[**Quick start**](#quick-start) &nbsp;·&nbsp; [**The Studio**](#the-studio) &nbsp;·&nbsp; [**AI Design**](#ai-design) &nbsp;·&nbsp; [**Code**](#code) &nbsp;·&nbsp; [**Deploying**](#deploying) &nbsp;·&nbsp; [**The panel runtime**](#the-panel-runtime) &nbsp;·&nbsp; [**Qt apps**](#qt-applications) &nbsp;·&nbsp; [**Changelog**](CHANGELOG.md)
 
 </div>
 
----
+<br />
 
 <div align="center">
 
-<img src="docs/assets/screenshot-ai-design.png" alt="AI Design: the run log on the left with three sectioned turns, and the panel canvas on the right showing an engine data summary with three gauges, fuel quantity bars, start/stop buttons and a status bar" width="900" />
+<img src="docs/assets/screens/designer.png" alt="The Designer with the cockpit demo open and the Studio connected to a 1024 x 768 panel: widget library and layers on the left, the canvas drawn by the panel's own renderer, and the inspectors on the right" width="920" />
 
-<em>An engine dashboard, described in a sentence and built in three sections by
-a model running on the local network. Each section landed on the panel canvas
-as it arrived; the live preview reloaded behind it; the chips on every turn say
-exactly what changed. The same widgets go on to <strong>Preview</strong> and
-<strong>Deploy</strong> through the pipeline below — no bundle had to be opened
-first.</em>
-
-<br /><br />
-
-<img src="docs/assets/screenshot-designer.png" alt="The Designer workspace with the trip-and-maintenance cockpit board open and the Studio connected to a panel: widget library and layer tree on the left, the canvas drawing an attitude indicator, altitude tape, VSI, fuel and engine cards with the panel's own renderer, and the property, tag-binding, actions and chat inspectors on the right" width="900" />
-
-<em><strong>The Designer.</strong> A cockpit board open in the Studio, connected
-to the panel named in the header — library and layers to the left, the canvas
-inside a bezel of the real glass, and the property, tag-binding (with its
-warning and critical thresholds), actions and chat inspectors to the right.
-Every widget on that canvas is drawn by <strong>the panel's own renderer</strong>,
-not by a desktop stand-in, so what you arrange here is what the glass draws.
-The canvas is 1024 × 768 because that is what the connected panel reported.</em>
-
-<br /><br />
-
-<img src="docs/assets/screenshot-panel-live.png" alt="The same cockpit board running on the panel: attitude indicator banked in a climbing turn, altitude tape scrolling past 7194 feet, VSI up, Mach and true airspeed, both oil pressure gauges at 85 PSI, engine temperatures at 822 C with two active alarms listed, and fuel quantity falling" width="900" />
-
-<em><strong>The same board, running.</strong> Read off the glass itself — the
-runtime writes what it is displaying on request, so this is the panel, not a
-render of it. Mid-climb through a turn: the horizon is banked and the turn
-coordinator agrees with it, the altitude tape is scrolling past 7194 ft, both
-oil pressure gauges are live, the engine temperatures have crossed their
-limits and put two alarms in the table, and the fuel is going down. Every
-number comes from tags; on a bench with no aircraft behind it, they come from
-<a href="#bench-data-without-an-aircraft"><code>hmi-tagsim</code></a>.</em>
+<sub><strong>The Designer</strong>, connected to a 10.1" panel — the canvas is 1024 × 768 because that is what the panel reported, and every widget on it is drawn by the panel's own renderer.</sub>
 
 </div>
+
+<br />
+
+<table>
+<tr>
+<td width="33%" valign="top">
+<a href="#ai-design"><img src="docs/assets/screens/ai-design-done.png" alt="AI Design: a twin composition of torque and oil pressure" /></a>
+<p><strong>Describe it</strong><br /><sub>A model builds the screen in sections, composed for the glass — split into pages when it will not fit.</sub></p>
+</td>
+<td width="33%" valign="top">
+<a href="#code"><img src="docs/assets/screens/code-agent-done.png" alt="The Code workspace with the coding agent" /></a>
+<p><strong>Code it</strong><br /><sub>The design, the C that draws each widget, and a coding agent that edits the project.</sub></p>
+</td>
+<td width="33%" valign="top">
+<a href="#deploying"><img src="docs/assets/screens/display-console.png" alt="The Display Console mirroring the panel" /></a>
+<p><strong>Ship it</strong><br /><sub>Validate, deploy atomically, watch the panel's own screen at a frame a second.</sub></p>
+</td>
+</tr>
+</table>
 
 ---
 
 ## The idea
 
-A machine builder ships one panel image. Their customers — or their own app
-team — put a screen on it in whichever of three ways suits the job, and push
-it to the panel with one button or one command. The app never touches a GPIO
-line, an ADC node or a serial port: it binds to **tags** that arrive over a
-loopback socket, and the platform does the rest.
-
-<img src="docs/assets/architecture.svg" alt="On the laptop, the Designer edits project.edsui and the Studio previews it through a headless hmi-ui and deploys it over SSH; on the panel, hmi-ui.service (C + LVGL on DRM/KMS) interprets the deployed design, draws to the display and gets its tags from hmi-hwd over a loopback socket; no Qt and no compositor on the panel" width="900" />
-
-<sub>Source: <a href="docs/assets/architecture.mmd"><code>docs/assets/architecture.mmd</code></a></sub>
-
-Three layers, deliberately decoupled:
-
-| | Layer | Owns | Knows nothing about |
-|---|---|---|---|
-| **1** | `hmi-hwd` — hardware abstraction daemon | GPIO, ADC, UART, safe states | pixels |
-| **2** | `hmi-ui` — the panel GUI runtime | the design file, bindings, alarms, pixels on DRM/KMS | hardware |
-| **3** | deployment | atomic install, health check, rollback | either of the above |
-
-The panel is **Qt-free**. `hmi-ui` (`native/hmi-ui`) is C11 + LVGL 9: it opens
-the DRM/KMS device itself — no compositor — and interprets the deployed
-`project.edsui` directly: pages, all 46 widget types, tag bindings, actions,
-the alarm engine and touch. Nothing is generated for the panel and nothing is
-compiled per design; a deploy is the design file, its assets and a manifest.
-The kit it draws with (Inter fonts, Tabler icons as PNGs) lives at
-`/usr/lib/hmi/kit`.
-
-The same runtime previews the design on your machine. A headless build of
-`hmi-ui` travels inside the Studio (`hmi-ui.exe` on Windows) and renders the
-Designer canvas, the bezel and the Code section, so what the desktop shows is
-what the glass draws, pixel for pixel — `native/hmi-ui/win64/check.sh` proves
-the Windows renders identical to the Linux ones. The Studio's own chrome is Qt,
-and its interactive Live Preview window is still the desktop's Qt/QML; every
-still image is the panel's renderer.
-
-The Qt loaders of earlier phases (`gui/hmi_loader`, `native/hmi-gui`) remain in
-the repository as a legacy path for existing Qt bundles; they are no longer
-provisioned or packaged.
-
----
-
-## Architecture
-
-The platform is three programs and one file. The file is the deliverable; the
-programs are deliberately ignorant of each other.
-
-### The deployable is the design
-
-There is no build step for the target. `project.edsui` is JSON: a screen size
-and theme, pages, and a tree of widgets with a geometry, properties, tag
-bindings and actions. The Designer writes it, the panel **interprets** it, and
-a deploy moves that file, its `assets/` and a `manifest.json` — nothing is
-generated, cross-compiled or code-generated per design.
-
-That one decision buys most of the rest. A design can be diffed, reviewed and
-rolled back as text. The same file renders identically on a laptop and on the
-glass because the same renderer reads it in both places. And a panel image
-never has to be rebuilt to change a screen.
-
-```
-trip-and-maintenance/
-├── manifest.json     runtime: edsui, screen, tags_required, alarms
-├── project.edsui     the screen itself
-└── assets/           images the design refers to
-```
-
-### The widget kit is written twice, on purpose
-
-A widget exists in two forms that must agree pixel for pixel:
-
-| | Where | What it is | Who reads it |
-|---|---|---|---|
-| **Spec** | `ui/qml/Shadcn/*.qml` | the reference drawing, in QML | the desktop Live Preview; humans |
-| **Port** | `native/hmi-ui/src/widgets/w_*.c` | the same drawing in C on LVGL | the panel, and every still image the Studio shows |
-
-`tests/ui/test_widget_parity.py` renders both and compares them. The catch,
-learned the hard way, is that a parity suite proves only what it renders: for a
-long time it drew every widget at its **defaults**, and four faults hid behind
-that — an attitude indicator whose sky and ground were inverted in both axes, a
-tape whose scale travelled with the needle instead of scrolling past it, a VSI
-with hard-coded labels, and a gauge that ignored any range a design set. All
-four were invisible at pitch 0, roll 0 and a 0..100 scale. Render a widget with
-a non-default range and a non-zero attitude, or the suite is agreeing with
-itself.
-
-`hmi-ui --render-widget <Type> --props '{...}' --headless out.png` draws one
-widget in isolation, which is the fast way to settle any of this.
-
-### The tag link
-
-The application never touches hardware. It binds to **tags**, which arrive on a
-loopback UDP socket as JSON (CONTRACT section 2):
-
-```
-hmi-ui  --->  {"cmd":"subscribe","ttl":5}              every 2 s
-        <---  {"t":"tags","seq":41,"tags":{"eng1.n1":92.4,"gear.warning":false}}
-        --->  {"id":"gui-7","cmd":"set","tag":"do.relay1","value":true}
-        <---  {"t":"ack","id":"gui-7","ok":true}
-```
-
-`hmi-hwd` (`daemon/hmi_hwd.py`) owns GPIO through libgpiod, analogue inputs
-through IIO, serial and Modbus, and publishes them as tags on port 5000. It
-knows nothing about pixels. `hmi-ui` keeps a tag map with a 2.5 s watchdog,
-runs the bindings, and goes visibly offline rather than showing a value that
-stopped arriving. Widget signals travel the other way as commands, so a button
-on the glass can pulse an output without the design containing a line of
-hardware code.
-
-Tag names are lowercase dotted (`^[a-z][a-z0-9]*(\.[a-z0-9_]+)+$`) — the
-manifest validator enforces it, which is worth knowing because a generated
-design that invents `eng1.eGT` will fail to deploy until it is renamed.
-
-### Bindings, thresholds and alarms
-
-A binding is more than a wire. It carries the unit the value is in and,
-optionally, a `warning` and a `critical` threshold written as `"> 650"` or
-`"< 20"`. The Designer collects every threshold in the design into the
-manifest's `alarms` list; the runtime's alarm engine evaluates them on each tag
-it receives and raises, clears and timestamps entries that any `ShAlarmTable`
-in the design displays.
-
-The trap is units. Thresholds are absolute (`> 650` degrees), so the dial the
-value is drawn on has to be in the same units — a gauge left on the kit's
-default 0..100 can never reach 650, and the alarm will never fire no matter how
-hot the engine gets.
-
-### What runs on the panel
-
-No Qt, no compositor, no X, no Wayland. `hmi-ui` opens the DRM/KMS device
-itself.
-
-| Unit | What it does |
-|---|---|
-| `hmi-ui.service` | C11 + LVGL 9 on DRM/KMS: interprets the design, all 46 widget types, bindings, actions, the alarm engine and touch |
-| `hmi-hwd.service` | GPIO, ADC, UART, Modbus → tags; safe states on shutdown |
-| `hmi-tagsim.service` | bench only, optional: flies the deployed design so a panel with nothing wired to it still moves |
-
-| Path | Holds |
-|---|---|
-| `/opt/hmi_apps/current` | symlink to the running release (`project.edsui` + `assets/`) |
-| `/opt/hmi_apps/previous` | what a rollback returns to |
-| `/usr/lib/hmi/kit` | Inter fonts and Tabler icons as PNGs |
-| `/etc/default/hmi-ui` | display, touch node, log level, extra arguments |
-| `/run/hmi/gui-ready` | touched once the first page is on the glass |
-| `/run/hmi/screen.png` | what the panel is showing, written on `SIGUSR1` |
-
-`/opt/hmi_apps/current` is a **symlink into the release directory**: writing
-through it edits that release in place, which is not what a deploy does and not
-what a rollback expects.
-
-### Seeing what the panel sees
-
-Two different problems, two mechanisms:
-
-**Before deploying** — the Studio renders the design with a headless build of
-`hmi-ui` that travels inside the executable, so the Designer canvas, the bezel
-and the Code section are drawn by the panel's own renderer rather than by an
-approximation of it. `native/hmi-ui/win64/check.sh` proves the Windows build
-renders identically to the Linux one.
-
-**After deploying** — a still render cannot show values that are moving, so the
-Display Console's **Mirror the panel** signals the runtime, copies
-`/run/hmi/screen.png` and paints it at a frame a second. One snapshot and one
-`scp` per second, and nothing installed on the target that is not there
-already. By hand, the same trick is:
-
-```bash
-ssh <panel> 'kill -USR1 $(pidof hmi-ui)' && scp <panel>:/run/hmi/screen.png .
-```
-
-### Bench data without an aircraft
-
-`hmi-hwd --sim` fakes the *hardware* channels — `ai.pot`, `di.button`, the tags
-a wiring loom would provide. It knows nothing of the tags a design invents, so
-a cockpit screen on a bench sits at zero on every instrument.
-
-`daemon/tagsim.py` fills that gap. It speaks the same link, reads the tag list
-out of the **deployed design**, and fills it from a single flight: one aircraft
-that taxis, rotates, climbs, cruises, turns, descends and lands, on a table of
-keyframes interpolated linearly. Altitude, vertical speed, pitch, bank, Mach,
-N1, EGT, oil pressure, OAT, fuel and heading all come from that one state, so
-the screen agrees with itself — the nose is up while the altimeter climbs, the
-wing is down only while the heading changes, fuel only ever falls, and ramps
-that cross a binding's thresholds put real entries in the alarm table.
-
-Each tag is matched to a quantity by what its name measures, then mapped onto
-the scale of the widget that draws it — the design's own min/max first, then
-the kit's default for the type, then the quantity's natural range — so a needle
-sweeps the dial it is drawn on instead of pegging past the end of it.
-
-It serves on 5010 and leaves `hmi-hwd` on 5000 for the real inputs:
-
-```bash
-scp daemon/tagsim.py          root@<panel>:/usr/lib/hmi/tagsim.py
-scp daemon/hmi-tagsim.service root@<panel>:/etc/systemd/system/
-echo 'HMI_UI_EXTRA_ARGS=--daemon-port 5010' >> /etc/default/hmi-ui
-systemctl daemon-reload && systemctl enable --now hmi-tagsim
-systemctl restart hmi-ui          # the journal should say "daemon link online"
-```
-
-Remove that one line from `/etc/default/hmi-ui` to put the panel back on its
-real inputs. Full details in [`daemon/README.md`](daemon/README.md) section 8.
-
-### Deployment
-
-Covered in full under [From a design to the glass](#from-a-design-to-the-glass).
-In one paragraph: the bundle is validated locally, packed by a packer shared
-with the CLI so the tarball is byte-identical either way, uploaded, checksummed,
-extracted to a staging directory, promoted by `rename(2)`, and the GUI is
-restarted. If `/run/hmi/gui-ready` does not appear within 25 s the symlink swaps
-back and the previous release is restarted — the deploy fails and the machine
-still has its UI.
-
----
-
-## Three ways to a screen
-
-Every path ends in the same place: a **bundle** — a directory with a
-`manifest.json` and an entry point — that the Studio previews in a bezel of the
-real panel, validates, packages and installs atomically. What differs is how
-the bundle comes to exist.
-
-| | Start from | What the Studio does | Then |
-|---|---|---|---|
-| **Describe it** — [AI Design](#ai-design) | A sentence: *"engine data summary with RPM, coolant and oil gauges, fuel quantity and start/stop"* | Sends the brief to a local or cloud model with a system prompt built from the widget library, streams the answer, parses it into widgets in sections, and puts them on the canvas with the live preview refreshed | Tune in the Designer, bind to tags, **Deploy** |
-| **Draw it** — [Visual Designer](#visual-designer) | An empty canvas the size of the panel's glass | Library, layers, inspector, tag bindings, undo; generates the QML and the manifest for you | **Preview**, **Deploy** |
-| **Bring your own** — [legacy](#legacy-qt-bundles) | An existing Qt Quick or Qt Widgets application | Detects the entry point and Qt binding, proposes the manifest, previews the real app live, checks its imports against the panel | **Deploy** — *only to a panel provisioned with the Qt loader; the current image does not carry one* |
-
-The first two are not silos: a described screen is a Designer project the
-moment it lands, and a drawn screen is an ordinary bundle the moment it is
-generated. Both produce the same `runtime: edsui` bundle and deploy to the
-image as shipped.
-
----
-
-## What you need
-
-### To run the Studio
-
-The packaged Windows **`EmbeddedDisplayStudio.exe`** and Linux x86-64 release
-need no Python installation: each carries its own Python, PySide6 and standard
-library. Download the build for your workstation from the
-[latest release](../../releases/latest). The Studio deploys applications to
-64-bit ARM panels over SSH; the Linux x86-64 build is the desktop authoring and
-deployment tool, not the panel runtime itself.
-
-From a checkout:
-
-| | |
-|---|---|
-| **Python** | 3.12 — the version CI runs and the executable is built from |
-| **PySide6** | `6.8.1`, pinned in `requirements.txt` |
-| **pyserial** | `3.5`, only for the simulated hardware daemon |
-| **An SSH client** | `ssh` and `scp`. Windows: the built-in OpenSSH at `System32\OpenSSH`, which the tool resolves by absolute path so a PATH wrapper cannot shadow it |
-
-```bash
-python -m pip install -r requirements.txt
-python main.py
-```
-
-Previewing a **PySide2** bundle needs a second interpreter with PySide2
-installed, because the two bindings cannot share a process. It is found on PATH
-or named explicitly with `HMI_PREVIEW_PYTHON_QT5`. This is the one thing the
-packaged executable cannot supply for itself; PySide6 bundles preview with no
-Python on the machine at all.
-
-### To use AI Design
-
-A model, reachable over HTTP. Nothing else is installed and nothing runs in the
-background:
-
-| | |
-|---|---|
-| **Local, private** | [Ollama](https://ollama.com) — `ollama serve` and pull a model; the Studio finds it at `127.0.0.1:11434` with no configuration |
-| **Your own server** | A **vLLM** (or any OpenAI-compatible) endpoint, on the LAN or over Tailscale — the screenshot above was generated by one |
-| **Hosted** | OpenAI, Anthropic or Google — paste an API key once, it is remembered per provider |
-
-The Designer, preview and deploy do not depend on any of this. A Studio with no
-model configured is the same Studio, minus one tab's worth of typing.
-
-### To reach a panel
-
-Key-based SSH as `root`, and nothing else from this end:
-
-```bash
-ssh-copy-id root@<panel-ip>
-```
-
-### On the panel
-
-| | |
-|---|---|
-| **A 64-bit Linux image** | Yocto or similar, with **systemd** and a **DRM/KMS** display device (`/dev/dri/card*`, `libdrm`); no compositor is needed or used |
-| **A complete Python 3** | Read this twice: a Yocto image can ship `python3-core` alone — no `json`, `socket`, `hashlib` or `ctypes` — and the installer itself cannot run on that. `provision_panel.py` puts a self-contained interpreter at `/opt/hmi-python`, which every target script prefers |
-| **A Qt runtime** | *Only for legacy Qt bundles:* PySide6 for a Qt6 application; PySide2 at `/opt/hmi-python-qt5` for a Qt5 one. Studio designs need neither |
-| **coreutils** | `flock`, `tar` and `sha256sum` — `hmi-install` serialises on the first and verifies with the last |
-| **libgpiod, IIO, pyserial** | Only for real I/O. Each is optional: `hmi-hwd` disables the feature it cannot reach rather than refusing to start |
-
-If the panel is running a stock image, install the platform onto it first — no
-reflash needed:
-
-```bash
-python deploy/provision_panel.py --host <panel-ip> --check   # survey only
-python deploy/provision_panel.py --host <panel-ip>
-```
-
-`--check` names anything that would stop the board hosting the platform. Run it
-before assuming an image is ready.
-
-### The hardware it runs on
-
-The platform is not tied to one module. It needs a 64-bit ARM Linux board that
-can put pixels on a display and accept an SSH connection; everything below that
-is the application's business, not the platform's.
+A machine builder ships one panel image. Their customers — or their own app team — put a screen on it and push it with one button or one command. The app never touches a GPIO line, an ADC node or a serial port: it binds to **tags** that arrive over a loopback socket, and the platform does the rest.
 
 <div align="center">
-
-<img src="docs/assets/hardware.svg" alt="A 64-bit ARM SoM with storage, display and network, optional GPIO, ADC and UART, reached from a developer machine over SSH" width="820" />
-
-<sub>Source: <a href="docs/assets/hardware.mmd"><code>docs/assets/hardware.mmd</code></a></sub>
-
+<img src="docs/assets/architecture.svg" alt="On the laptop, the Designer edits project.edsui and the Studio previews it through a headless hmi-ui and deploys it over SSH; on the panel, hmi-ui.service interprets the deployed design, draws to the display and gets its tags from hmi-hwd over a loopback socket" width="900" />
 </div>
 
-| | Needed | Why |
+| | Layer | Owns | Knows nothing about |
+|:-:|---|---|---|
+| **1** | `hmi-hwd` — hardware daemon | GPIO, ADC, UART, Modbus, safe states | pixels |
+| **2** | `hmi-ui` — panel runtime | the design file, bindings, alarms, pixels on DRM/KMS | hardware |
+| **3** | deployment | atomic install, health check, rollback | either of the above |
+
+Three ways to a screen, one pipeline after it:
+
+| | Start from | Runs on the panel as |
 |---|---|---|
-| **CPU** | 64-bit ARM, quad core in practice | Qt and the interpreter both live here; the tag engine is idle most of the time |
-| **RAM** | 2 GB comfortably | A Qt Widgets application with its runtime sits in the low hundreds of MB |
-| **Storage** | ~2 GB free after the OS | Retention keeps `current`, `previous` and three more releases; an unpacked release is typically 100–300 MB |
-| **Display** | Whatever the manifest declares | The Studio composes the preview at that geometry, and the panel reports its real size on connect |
-| **Touch** | Optional | Nothing in the platform requires it |
-| **Network** | Ethernet or Wi-Fi | SSH on port 22 is the only channel the Studio uses — no agent, no broker, no open port on the panel beyond sshd |
-| **GPU** | Optional | Qt Widgets renders through the raster engine and issues no desktop GL calls |
-
-Field I/O is entirely optional and independently so: `hmi-hwd` disables the
-feature it cannot reach rather than refusing to start, so a board with no ADC
-still runs an application that only uses digital inputs.
-
----
-
-### To develop on it
-
-The full suite needs a POSIX shell with `flock`, so run it on Linux or under
-WSL; on Windows the installer and shell-validator suites skip. Regenerating the
-diagrams in this README needs `npx` and `@mermaid-js/mermaid-cli`.
-
-### No hardware at all
-
-Everything above is for a real panel. The whole stack also runs on a desktop —
-see [Quick start](#quick-start), where the daemon simulates its I/O.
+| **Describe it** — [AI Design](#ai-design) | *"An engine page for a turboprop: torque, ITT, Ng, fuel flow and an alarm list"* | a Studio design, drawn by `hmi-ui` |
+| **Draw it** — [Designer](#the-studio) | an empty canvas the size of the panel's glass | a Studio design, drawn by `hmi-ui` |
+| **Bring your own** — [Qt apps](#qt-applications) | an existing PySide6 or PySide2 application | the application itself, with a Qt runtime the Studio installs at deploy |
 
 ---
 
 ## Quick start
 
-**On your laptop — no hardware needed.** The daemon simulates I/O so the whole
-stack runs on a desktop.
+> [!TIP]
+> No hardware needed to start. The hardware daemon simulates its I/O and Tag Lab drives any tag a design invents, so the whole flow runs on a desktop.
+
+**Packaged** — download `EmbeddedDisplayStudio.exe` (Windows) or the Linux x86-64 build from the [latest release](../../releases/latest). It carries its own Python, PySide6 and pip; nothing to install.
+
+**From a checkout** — Python 3.12:
 
 ```bash
-python -m pip install PySide6
-
-# terminal 1 — simulated hardware
-python daemon/hmi_hwd.py --config daemon/hwd.json --sim
-
-# terminal 2 — the panel UI, in a window
-python gui/hmi_loader/main.py --apps-dir apps/demo-app --windowed
-
-# terminal 3 — EmbeddedDisplay Studio
-python main.py
+python -m pip install -r requirements.txt
+python main.py                                            # --bundle <dir> to open one
+python daemon/hmi_hwd.py --config daemon/hwd.json --sim   # optional: simulated I/O
 ```
 
-### From a sentence to a deployed screen
-
-The shortest path through the Studio, and the one the screenshot at the top of
-this page shows:
-
-1. **AI Design** — pick a provider and a model (the status line confirms
-   `Connected · <provider> · <latency> · <n> models`), type what the screen
-   should show, `Ctrl+Enter`. The model answers in sections of up to eight
-   widgets; each section is parsed, merged, put on the canvas and previewed
-   as it arrives, and the next one is requested automatically until the
-   design says it is complete.
-2. **Designer** — the result is already here as an ordinary project. Move
-   things, rename, restyle, and bind each gauge to the dotted tag that will
-   feed it. **Preview** regenerates the QML and reloads the live panel. There
-   is no bundle to open first: the Designer creates one under
-   `Documents/EmbeddedDisplay Studio/projects/<name>/` the first time Preview
-   or Deploy needs it, and the Studio adopts it as the current bundle.
-3. **Tag Lab** — drive those tags with a sine, a ramp or a constant and watch
-   the gauges move before any hardware exists.
-4. **Connect** — target IP in the header, `ssh-copy-id root@<panel-ip>` once
-   beforehand. The Studio reads the panel's real display geometry and
-   retargets both the bezel and the canvas to it.
-5. **Deploy** — from the Designer toolbar or the Display Console. The bar
-   names each stage; the panel must render the screen within 25 s or rolls
-   itself back.
-
-### Running EmbeddedDisplay Studio
+**A panel**, once — key-based SSH as root, then the platform installed onto a stock image, no reflash:
 
 ```bash
-python -m pip install PySide6              # once
-python main.py                             # from the repository root
+ssh-copy-id root@<panel-ip>
+python deploy/provision_panel.py --host <panel-ip> --check   # survey only
+python deploy/provision_panel.py --host <panel-ip>
 ```
 
-`--bundle <dir>` opens an application on start; with no argument the last one
-is restored. The window is one header — target address, port, **Connect** /
-**Disconnect**, **Open Bundle…**, **New App…**, theme — over six workspaces:
+**From a sentence to the glass**
 
-| Tab | What it is for |
+1. **AI Design** — pick a provider and model, describe the screen, <kbd>Ctrl</kbd>+<kbd>Enter</kbd>.
+2. **Designer** — the result is an ordinary project; bind each instrument to its tag.
+3. **Tag Lab** — drive those tags and watch the instruments move.
+4. **Connect** — the panel's real display size retargets the canvas.
+5. **Deploy** — the panel must draw the screen within 25 s, or it rolls itself back.
+
+---
+
+## The Studio
+
+One window, seven workspaces, under a header with the panel's address, **Connect** / **Disconnect**, **Open Bundle…**, **New App…**, the theme and the animations switch.
+
+| Workspace | |
 |---|---|
-| **Designer** | Draw or edit the screen on a canvas the size of the panel's glass; bind widgets to tags; Preview, Generate, Deploy |
-| **AI Design** | Describe the screen; the model builds it in sections onto the same canvas, with the run log and panel canvas side by side |
-| **Display Console** | Target details, the bundle's verdict, **Deploy to Target**, **Rollback**, **Restart GUI**, and the releases the panel still holds |
-| **Tag Lab** | Inject signals into any tag the app declares — sine, square, ramp, noise, constant — before the I/O exists |
-| **Panel Logs** | Follow the journal from `hmi-ui` and `hmi-hwd` live, which is where a fault an hour after a good deploy shows up |
-| **System Profile** | What the live release costs the board: package, footprint, filesystem split, free RAM |
+| **Designer** | Draw the screen on a canvas the size of the panel's glass, bind widgets to tags, Preview, Generate, Deploy |
+| **AI Design** | Describe the screen; a local or hosted model builds it onto the same canvas |
+| **Code** | Files, the design as the panel reads it, the C that draws each widget, and a coding agent |
+| **Display Console** | Target and key, readiness, **Deploy to Target**, **Mirror the panel**, rollback, restart, releases |
+| **Tag Lab** | Drive any tag the design declares with a waveform, before the I/O exists |
+| **Panel Logs** | The journal of `hmi-ui` and `hmi-hwd`, followed live |
+| **System Profile** | What the live release costs the board |
 
-### Sharing the deploy key
+**The Designer.** A searchable widget library with favorites, a layer tree that mirrors the page, and an inspector generated from the widget registry — paired X/Y and W/H cells, colour swatches, and a tag-binding editor with format, scale, unit and **warning / critical** thresholds. Resize from any of the eight handles, snap, align, z-order; **Tidy up** composes the page on a 12-column grid; **Design Chat** takes offline text commands. No bundle is needed to start: the first Preview or Deploy creates one under `Documents/EmbeddedDisplay Studio/projects/<name>/`.
 
-A panel trusts one SSH key — the one `deploy/provision_panel.py` put into its
-`/root/.ssh/authorized_keys`. Until now that key lived in one person's
-`~/.ssh`, and "copy this file, then type the host, user and port" was how
-it reached the next person. A **deploy key bundle** is one file that carries
-the key pair and the panel's address:
+**The canvas follows the glass.** On **Connect** the Studio reads the panel's real geometry from its DRM connector and retargets the canvas and the bezel to it.
+
+**46 widgets from one registry** — shadcn/ui-derived basics (`ShButton`, `ShInput`, `ShCard`, `ShTabs`, …), industrial (`ShGauge`, `ShValueTile`, `ShTrendChart`, `ShAlarmTable`, …), avionics (`ShAttitude`, `ShTape`, `ShCompass`, `ShVSI`, `ShFlightDirector`, `ShEngineGauge`, `ShFuelQuantity`, `ShAnnunciator`, …) and automotive (`ShClusterGauge`, `ShGearIndicator`, `ShDriveMode`, `ShTelltale`, `ShTripInfo`, `ShVehicleStatus`, …). Every one binds to tags; interactive ones write back through actions.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/screens/tag-lab.png" alt="Tag Lab: the design's tags listed with their waveforms" /><p align="center"><sub><strong>Tag Lab</strong> — every tag the design binds, ready to drive with a constant, ramp, sine, square or noise; scenarios save and replay.</sub></p></td>
+<td width="50%"><img src="docs/assets/screens/panel-logs.png" alt="Panel Logs following the journal" /><p align="center"><sub><strong>Panel Logs</strong> — the panel's journal, live: here a UART the daemon was configured for is not answering.</sub></p></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/assets/screens/system-profile.png" alt="System Profile of the deployed release" /><p align="center"><sub><strong>System Profile</strong> — the active release, its footprint, the storage split and free RAM, read over SSH.</sub></p></td>
+<td width="50%"><img src="docs/assets/screens/light-theme.png" alt="The Studio in light mode" /><p align="center"><sub><strong>Light mode</strong> — the theme follows the operator; the design keeps its own colour mode for the panel.</sub></p></td>
+</tr>
+</table>
+
+---
+
+## AI Design
+
+Describe the screen; the Studio streams the model's answer, turns it into Designer widgets, composes them for the panel's glass and puts them on the canvas. From there it previews and deploys exactly like a hand-drawn design.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/screens/ai-design-working.png" alt="AI Design mid-run: the execution shell writing, the POST to the vLLM server and the model's JSON streaming in" /><p align="center"><sub><strong>At work</strong> — the brief and the turn's execution shell: the request, the streamed answer, tokens and time to first token.</sub></p></td>
+<td width="50%"><img src="docs/assets/screens/ai-design-done.png" alt="AI Design after the run: torque and oil pressure mirrored in a twin composition" /><p align="center"><sub><strong>Composed</strong> — two instruments of a kind become a mirrored <em>twin</em>; other compositions wait as thumbnails.</sub></p></td>
+</tr>
+</table>
+
+| Provider | How | Needs |
+|---|---|---|
+| **Ollama** | local, zero configuration | `ollama serve` |
+| **OpenAI** · **Anthropic** · **Google** | hosted | an API key, remembered per provider |
+| **vLLM** | your own server on the network or tailnet — preset `http://spark-ba51:8080`, `qwen3.8-35b-a3b` | the server's API key |
+| **BYOK** | any OpenAI-compatible server | base URL + key |
+
+The status line tells a server that is not there (`unreachable`) from one that refused the key (`API key required` / `rejected`), and a saved model the server no longer serves is replaced by one it does.
+
+### How a brief becomes a screen
+
+```mermaid
+flowchart LR
+    B[Brief] --> P[Prompt from the<br/>widget registry<br/>+ page budget]
+    P --> S[Sections of<br/>≤ 8 widgets]
+    S --> D[Parse, make<br/>deployable]
+    D --> F{Fits the<br/>screen?}
+    F -- no --> PG[Split into<br/>linked pages]
+    F -- yes --> C
+    PG --> C[Compose:<br/>archetype · grid ·<br/>style · critic]
+    C --> A[Canvas + preview]
+```
+
+1. **A prompt from the palette** — built from the widget registry and the target screen, so the model only knows widgets the panel can draw. It carries a **per-page budget** for that screen and asks for gauge ranges in the tag's own units. A brief naming a different resolution from the panel's is reported.
+2. **Sections** — at most eight widgets per response, merged by id and continued automatically until complete; a response cut off at the output limit is salvaged.
+3. **Made deployable** — undeclared properties dropped, tags lowercased, actions on signals a widget cannot emit and links to pages never built removed, reused ids renamed.
+4. **Fit** — if the widgets' minimum footprints will not fit, the design becomes pages: the instruments, alerts and controls that matter most stay on an overview, the rest go to a page per engine or system, linked with a row of buttons along the foot. The limit is measured: layout composes cleanly up to about sixteen widgets at 1024 × 768.
+5. **Compose** — a human-designed archetype places the widgets (hero-centre, thirds, header-hero-rail, card-grid, split, and **twin** for paired instruments), the grid aligns them, each face gets its proportions, and a style pass repairs scales: a range too short for the widget's thresholds is widened, a 0..1 scale with a real readout becomes the real scale, paired instruments share one scale. A critic scores the page; one that still overlaps moves its least important widget on. After every section the whole page is composed again.
+6. **Apply** — one undo step on the canvas, the preview reloads; the last three turns ride along, so *"make the RPM gauge bigger"* edits rather than restarts.
 
 <div align="center">
-
-<img src="docs/assets/key-sharing.svg" alt="Export key packs the private key and the panel address into a .hmikey; Import key installs it with owner-only permissions and fills the connection fields; Connect, Deploy and Disconnect then reach the panel, whose authorized_keys holds the one public key" width="900" />
-
-<sub>Source: <a href="docs/assets/key-sharing.mmd"><code>docs/assets/key-sharing.mmd</code></a></sub>
-
+<img src="docs/assets/ai/composition-before.png" alt="The model's own geometry: a gauge with a scribbled scale, a stretched alarm table, controls scattered" width="440" />&nbsp;<img src="docs/assets/ai/composition-after.png" alt="The same widgets composed" width="440" />
+<br /><sub>The same model output before and after composition, both drawn by the panel's renderer.</sub>
 </div>
 
-In *Display Console → Target Details*, **Export key…** writes the bundle
-from the Key field (or the `~/.ssh` default key); **Import key…** on the
-other machine installs it under `~/.ssh/hmi-deploy/` with owner-only
-permissions (`0600`, `icacls` on Windows — OpenSSH refuses anything looser),
-fills Key, Target IP, User and Port, and saves them. The same from a
-terminal:
+<details>
+<summary><strong>The execution shell, presets and the self-driving cluster</strong></summary>
+
+<br />
+
+Every turn is a foldable **execution shell** — request, thinking, response, parsed design, canvas diff (`+added −removed ~changed`), usage (`in · out · tok/s · TTFT`) — with chips such as `Section 2 · Fuel`, `14 widgets`, `Applied · panel preview refreshed`. A reasoning model's thinking pass is off by default: it counts against the output budget, and a long one returns no design at all.
+
+**Design presets.** A brief that reads like an automotive cluster or an EV dashboard gets a hand-built exemplar and a style guide appended to the prompt (`python -m tools.hmi_deployer.design_presets --list`).
+
+**A cluster that drives itself.** `sim.car.*` values are a sixty-second drive cycle, so a page bound to them carries its own clock on the canvas, in the Live Preview window and on the panel. `designer/templates/automotive_cluster_demo.edsui` is the preset wired to it.
+
+<div align="center"><img src="docs/assets/cluster-drive.gif" alt="The automotive cluster running its drive cycle" width="640" /></div>
+
+</details>
+
+---
+
+## Code
+
+The project as code, with a coding agent beside it.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/screens/code-agent-working.png" alt="The Code workspace with the agent reading project.edsui and writing a file" /><p align="center"><sub><strong>At work</strong> — the agent reads the design, thinks, writes; every tool call in the transcript.</sub></p></td>
+<td width="50%"><img src="docs/assets/screens/code-agent-done.png" alt="The agent's reply: NOTES.md created, two binding mistakes flagged" /><p align="center"><sub><strong>Done</strong> — <code>NOTES.md</code> written, and two binding mistakes it noticed flagged for review.</sub></p></td>
+</tr>
+</table>
+
+* **Files and Widgets** — the bundle's folder as a tree and a Widgets list with live thumbnails; any file opens in a tabbed editor (C, Python, QML, JSON, `.edsui`) with undo, redo and save.
+* **The design as the panel reads it** — pick a widget and its `.edsui` sits beside `hmi-ui`'s render; edit and **Apply** as one undo step. **Runtime C (hmi-ui)** shows `native/hmi-ui/src/widgets/w_<type>.c`, the file compiled into the runtime.
+* **The agent** — [opencode](https://opencode.ai) driven over its HTTP server in the project folder, on the model configured in opencode. Thinking, tools, file links and permission prompts show in the transcript; an edited file reloads in its tab. Install once with `npm i -g opencode-ai`. Notes in [docs/CODE_SECTION.md](docs/CODE_SECTION.md).
+
+---
+
+## Deploying
+
+<div align="center">
+<img src="docs/assets/deploy-pipeline.svg" alt="From validating the manifest through packaging, upload, checksum, atomic swap and the readiness check, to either the boot default or an automatic rollback" width="760" />
+</div>
+
+* **Nothing is converted.** No build and no code generation for the target: the panel interprets `project.edsui` as the Designer saved it.
+* **What travels is what runs** — `manifest.json`, `project.edsui` and `assets/`, packed by one packer shared with the CLI so both produce a byte-identical tarball.
+* **Validated twice, by one implementation** — the Studio, the CLI and the panel's installer all call `schema/manifest.py`.
+* **Readiness is the picture, not the process** — `hmi-install` starts the bundle's GUI service and waits for `/run/hmi/gui-ready`, touched only once the first page is on the glass.
+* **The swap cannot leave the panel dark** — tmpfs landing, checksum, staging, validation, then `rename(2)`. No readiness within 25 s and the previous release comes back.
+* **Boot default, rollback, releases, restart** — a proven release boots next time; the previous one is a button away; any release the panel still holds can be activated.
+
+> [!NOTE]
+> **Seeing the glass.** **Mirror the panel** signals the runtime, copies `/run/hmi/screen.png` and paints it at a frame a second — the panel itself, live values and all. By hand: `ssh <panel> 'kill -USR1 $(pidof hmi-ui)' && scp <panel>:/run/hmi/screen.png .`
+
+**From the command line**, for CI or a headless machine — options in [`deploy/README.md`](deploy/README.md):
+
+```bash
+./deploy/deploy_to_hmi.sh deploy -H <panel-ip> -b ./trip-and-maintenance
+```
+
+<details>
+<summary><strong>Sharing the deploy key</strong></summary>
+
+<br />
+
+A panel trusts one SSH key. A **deploy key bundle** (`.hmikey`) carries the key pair and the panel's address, so a colleague can Connect and Deploy at once.
+
+<div align="center"><img src="docs/assets/key-sharing.svg" alt="Export key packs the private key and the panel address into a .hmikey; Import key installs it and fills the connection fields" width="860" /></div>
+
+**Export key…** tries each candidate key on its own against the panel and packs the one it accepts, with the panel's host key. **Import key…** installs it under `~/.ssh/hmi-deploy/` with owner-only permissions, writes the host key into `known_hosts`, fills the connection fields and verifies the link — naming the problem in plain words when there is one.
 
 ```bash
 python -m tools.hmi_deployer.deploy_key export --host 172.16.20.70 --out line3.hmikey
 python -m tools.hmi_deployer.deploy_key import line3.hmikey
 ```
 
-**Export verifies before it packs.** The Key field may name one key while the
-link actually works through another (ssh also offers the `~/.ssh` defaults),
-so Export tries each key *on its own* against the panel and packs the one the
-panel accepts — a bundle that opens the door, not the one that happened to be
-typed. **Import verifies after it installs** and says in plain words what is
-wrong when the link is not there: no OpenSSH client on this machine, panel
-unreachable, host key mismatch, key not trusted by the panel, or file
-permissions. `python -m tools.hmi_deployer.deploy_key verify --host <ip>`
-does the same from a terminal.
+The file holds a private key: hand it over directly. Passphrase-protected keys are refused; the Studio deploys non-interactively.
 
-The file contains a private key: hand it over directly. A passphrase-protected
-key is refused, because the Studio deploys non-interactively (`BatchMode`).
+</details>
 
-The bundle also carries the panel's SSH **host key** (read with `ssh-keyscan`
-at export). Import writes it into the other user's `known_hosts`, replacing
-any entry another board left behind at the same DHCP address — the usual
-cause of "Host key verification failed" on the first Connect. When a stale
-entry is hit anyway, Connect explains it and offers to forget the stored key.
+---
 
-Then, for an application you already have:
+## The panel runtime
 
-1. **Open Bundle…** — point it at the directory. The manifest is validated, or
-   proposed and written for you if there is none, and the application starts
-   rendering in the bezel at the target's resolution. The preview is live, not
-   a picture: click it, drag it, type into it, and the events reach the widget
-   under your cursor in the real application.
-2. **Target IP** and **Port** in the header, with `root` and the private key
-   that reaches the panel under **Target Details** on the Display Console.
-3. **Connect** — proves the link, reports the panel's real display size and
-   which release is live on it. The badge beside it carries the link state,
-   and the bezel re-composes itself at the resolution the panel reported.
-4. **Deploy to Target** — everything in [the pipeline below](#from-a-design-to-the-glass).
-   The bar names the stage it is in, and the console carries the panel's own
-   words.
-5. **Rollback** returns to the previous release. **Installed Releases** reaches
-   any of the others the board still holds: activating one re-points the panel
-   at it and makes the outgoing release the new rollback target, so it is
-   undoable in turn. **Restart GUI** restarts what is running.
+`hmi-ui` is the program that draws every Studio design on the panel: C11 on [LVGL](https://lvgl.io) 9.3, straight to the DRM/KMS device, with no compositor. It interprets `project.edsui` at start — pages, all 46 widget types, bindings, actions, the alarm engine, touch — so a new screen is new data, never a new build.
 
-**From the command line**, for CI or a headless machine:
+### How LVGL reaches the HMI
 
-```bash
-ssh-copy-id root@<panel-ip>                       # once
-./deploy/deploy_to_hmi.sh -H <panel-ip> -b ./trip-and-maintenance
+LVGL is not a package on the panel. It is compiled **into** `hmi-ui`: `native/hmi-ui/lvgl` is the upstream repository pinned as a git submodule (`release/v9.3`), configured by `native/hmi-ui/lv_conf.h` and linked statically, as is cJSON. What ships is one executable and a folder of assets:
+
+| On the panel | Size | What it is |
+|---|---|---|
+| `/usr/lib/hmi/ui/hmi-ui` | ~1.4 MB | the runtime: LVGL, cJSON and the widget kit's C, one aarch64 binary. Links dynamically only against `libdrm`, `libm` and `libc` |
+| `/usr/lib/hmi/kit/` | ~2.2 MB | Inter fonts and Tabler icons — what the runtime draws text and icons with |
+| `hmi-ui.service`, `/etc/default/hmi-ui` | | the unit that runs it, and its display, touch and log settings |
+
+```mermaid
+flowchart LR
+    subgraph src[Source]
+        L[lvgl submodule<br/>release/v9.3]
+        W[hmi-ui C:<br/>interpreter, widgets]
+        K[kit: fonts, icons]
+    end
+    subgraph build[Build once per runtime version]
+        A[arm64/build.sh<br/>Debian bookworm arm64]
+        Y[Yocto meta-hmi<br/>hmi-ui_1.0.bb]
+    end
+    subgraph panel[Panel]
+        B["/usr/lib/hmi/ui/hmi-ui"]
+        KT["/usr/lib/hmi/kit/"]
+        D[project.edsui<br/>per deploy]
+    end
+    L --> A & Y
+    W --> A & Y
+    A -- provision_panel.py --> B
+    Y -- image --> B
+    K --> KT
+    D -. read at start .-> B
 ```
 
-If the panel is running a stock image rather than one built from
-`yocto/meta-hmi`, install the platform onto it first — no reflash needed:
+There are two ways to put it on a board, and both install the same files:
+
+* **Onto a board already in the field** — `native/hmi-ui/arm64/build.sh` builds the aarch64 binary inside a Debian bookworm arm64 root under qemu (from WSL on Windows). Built against bookworm's glibc 2.36, it runs on any newer glibc, such as a Toradex image's 2.39. `deploy/provision_panel.py --host <ip>` packs that binary, the kit, the units and the installer into one tarball, uploads it and installs it — no reflash.
+* **Into an image** — `yocto/meta-hmi` builds the same sources with bitbake: `hmi-ui_1.0.bb` (CMake, `DEPENDS = "libdrm"`) and `hmi-ui-kit_1.0.bb`, pulled in by `packagegroup-hmi`. No Qt layer is needed.
 
 ```bash
-python deploy/provision_panel.py --host <panel-ip> --check   # survey only
-python deploy/provision_panel.py --host <panel-ip>
+bitbake-layers add-layer /path/to/meta-hmi
+bitbake <your-bsp-reference-image>
 ```
 
-`--check` surveys the board and names anything that would stop it hosting the
-platform. Read it before assuming a stock image is ready: a **base** vendor
-image ships `python3-core` alone — no `json`, no `socket`, no `ctypes` — and no
-Qt, which is enough to stop the installer, the loader and any application. See
-[`deploy/README.md`](deploy/README.md#what-a-minimal-image-is-still-missing) for
-what to add and where the scripts expect it.
+After that, **deploying a design never touches the runtime**: a deploy carries `project.edsui`, its assets and a manifest, and `hmi-ui` reads them on its next start. Updating the runtime itself — a new LVGL, a widget fix — is a new `hmi-ui` binary, shipped by provisioning again or by the next image.
 
-If the new app fails to render within 25 s, the panel **rolls itself back** to the
-previous release and the command exits non-zero. A bad deploy cannot leave a
-machine without a UI.
+**The same runtime on the desktop.** `native/hmi-ui/win64/` cross-compiles the identical sources for Windows without the DRM backend. The Studio carries that `hmi-ui.exe` and uses it to draw the canvas, the bezel and the Code previews, so the desktop shows exactly what the glass will draw — `win64/check.sh` compares its renders with the Linux build's.
 
-A successful deploy also makes the app the panel's **boot default**: once the
-release has been proven to render, `hmi-ui.service` is enabled, so a power
-cycle brings the same application back with no further action. Deploying is the
-only step — there is nothing to enable by hand afterwards.
+<details>
+<summary><strong>The widget kit is written twice, on purpose</strong></summary>
 
----
+<br />
 
-## From the Designer to the glass, in pictures
+| | Where | Who reads it |
+|---|---|---|
+| **Spec** | `ui/qml/Shadcn/*.qml` — the reference drawing | the desktop Live Preview; humans |
+| **Port** | `native/hmi-ui/src/widgets/w_*.c` — the same drawing on LVGL | the panel, and every still image the Studio shows |
 
-One design, followed end to end on the bench: a Verdin i.MX8M Plus with a
-10.1" 1024 × 768 panel at the other end of an Ethernet cable, and the Studio
-connected to it. Every image below is a capture from that session; the last
-one is the panel's own screen, written by the runtime.
+`tests/ui/test_widget_parity.py` renders both and compares them. A parity suite proves only what it renders: drawn at their defaults, four faults hid for a long time — an attitude indicator with sky and ground inverted, a tape whose scale travelled with the needle, a VSI with hard-coded labels, a gauge that ignored the design's range. `hmi-ui --render-widget <Type> --props '{...}' --headless out.png` draws one widget in isolation.
 
-<div align="center">
-
-<img src="docs/assets/e2e/01-designer.png" alt="The Designer with the flight-deck design open and the attitude indicator selected; the canvas is drawn by hmi-ui" width="880" />
-
-<em><strong>1. Design.</strong> The Designer, connected to the panel, with a
-flight-deck design open and the attitude indicator selected. Every widget on
-the canvas is rendered by <code>hmi-ui</code> — the same C runtime the panel
-runs — so this is already the panel's picture.</em>
-
-<br /><br />
-
-<img src="docs/assets/e2e/02-code-widget.png" alt="The Code section showing the attitude indicator's .edsui and its render" width="880" />
-
-<em><strong>2. The code of a widget.</strong> The Code section with the
-selected widget: its <code>.edsui</code> fragment on the left, exactly what
-the panel will interpret, and its render on the right.</em>
-
-<br /><br />
-
-<img src="docs/assets/e2e/03-code-screen.png" alt="The Code section showing the whole screen's .edsui and the screen's render" width="880" />
-
-<em><strong>3. The code of the screen.</strong> Scope switched to the whole
-screen: the page as it sits in <code>project.edsui</code>, and the screen as
-<code>hmi-ui</code> draws it.</em>
-
-<br /><br />
-
-<img src="docs/assets/e2e/04-console-ready.png" alt="The Display Console before the deploy: bezel preview, readiness checklist all green, Deploy to Target" width="880" />
-
-<em><strong>4. Ready to deploy.</strong> The Display Console: the design in
-the bezel at the connected panel's geometry, the readiness checklist
-(bundle valid, display connected, geometry matches), the verdict
-<code>[Studio design]</code>, and the one button.</em>
-
-<br /><br />
-
-<img src="docs/assets/e2e/05-console-deployed.png" alt="The Display Console after the deploy: progress complete, 'Running on the panel, and set as the boot default', the installer's steps in the console" width="880" />
-
-<em><strong>5. Deployed.</strong> Five seconds later: the installer's steps
-in the console, <code>install-complete</code>, and the release running on the
-panel and set as its boot default.</em>
-
-<br /><br />
-
-<img src="docs/assets/e2e/06-panel-logs.png" alt="Panel Logs showing hmi-ui restarting on the new release and marking itself ready" width="880" />
-
-<em><strong>6. What the panel said.</strong> Panel Logs, live: systemd
-stopping and starting <code>hmi-ui.service</code>, the runtime loading
-<code>test_frame_data</code> at 1024 × 768 with the kit from
-<code>/usr/lib/hmi/kit</code>, marking itself ready and linking to the daemon.</em>
-
-<br /><br />
-
-<img src="docs/assets/e2e/07-system-profile.png" alt="System Profile: the active release, its footprint, storage and RAM" width="880" />
-
-<em><strong>7. What it costs the board.</strong> System Profile: the active
-release and where it landed, a 312 KiB application, the root filesystem
-split, and the RAM left over.</em>
-
-<br /><br />
-
-<img src="docs/assets/e2e/08-panel-screen.png" alt="The panel's own screen: the flight deck drawn by hmi-ui on the Verdin" width="880" />
-
-<em><strong>8. The glass.</strong> Not a preview: the panel's screen, written
-by the runtime itself (<code>kill -USR1 $(pidof hmi-ui)</code> saves
-<code>/run/hmi/screen.png</code>), live values included. Compare it with
-the Code section's render in step 3.</em>
-
-</div>
+</details>
 
 ---
 
-## From a design to the glass
+## Qt applications
 
-What happens between pressing **Deploy to Target** and the application being the
-panel's boot default. Every step is the same whether it is driven from the
-window or from `deploy_to_hmi.sh`.
+An existing PySide6 or PySide2 application deploys to the same Qt-free panel. **Open Bundle…** detects the entry point and the binding, proposes the manifest, and previews the real application in the bezel — clicks, drags and keys reach it — before anything is sent.
 
-<img src="docs/assets/deploy-pipeline.svg" alt="From validating the design's manifest through packaging, upload, checksum, atomic swap and the readiness check of hmi-ui, to either the boot default or an automatic rollback" width="760" />
+At deploy, the Studio asks the panel what the application needs and lacks, and installs it after one confirmation:
 
-<sub>Source: <a href="docs/assets/deploy-pipeline.mmd"><code>docs/assets/deploy-pipeline.mmd</code></a></sub>
+| Piece | What lands on the panel |
+|---|---|
+| **Launcher** | `hmi-gui-launch`, `hmi-gui.service` (under Weston), its defaults, a Weston drop-in, and an `hmi-install` that starts the right service per bundle |
+| **PySide2** | `/opt/hmi-python-qt5` — CPython 3.11, PySide2 5.15 and a private Qt 5.15, assembled on the Studio's PC from Debian bookworm packages (no WSL, no `dpkg-deb`) and cached |
+| **PySide6** | PySide6-Essentials wheels into `/opt/hmi-python` |
+| **The app's packages** | aarch64 or pure-Python wheels fetched on the PC and installed with `pip --no-index` — the panel needs no internet |
 
-A few of those steps are worth their own sentence.
+`hmi-install` then starts `hmi-gui.service` and makes it the boot default; deploying a Studio design afterwards hands the display back to `hmi-ui`. Both directions have been run on a Verdin i.MX8M Plus.
 
-**Nothing is converted.** There is no build, no code generation for the
-target, no cross-compilation: the panel's runtime interprets `project.edsui`
-as the Designer saved it. What the pipeline does is decide what travels, prove
-it arrived intact, and swap it in without a window where the panel has no UI.
+> [!IMPORTANT]
+> The panel image must already carry **Weston** for a Qt application. A Qt bundle declares its binding, because the two cannot share an interpreter:
+> ```json
+> { "runtime": "python", "entry": "main.py", "qt_binding": "pyside2", "qt": ">=5.15" }
+> ```
 
-**What travels is what runs.** A Studio bundle carries `manifest.json`
-(`runtime: edsui`, the screen, the tags it needs, its alarm thresholds),
-`project.edsui` and `assets/`. The QML the Studio generates for its own
-desktop preview (`generated/`), build outputs, caches and VCS metadata are
-excluded by one packer shared with the CLI, so the same folder produces a
-byte-identical tarball either way, and the checksum the target verifies does
-not depend on which tool sent it. (A legacy Qt bundle still goes through the
-dependency check that asks the panel to *import* each module it needs.)
-
-**Readiness is the picture, not the process.** `hmi-install` restarts
-`hmi-ui.service` and waits for `/run/hmi/gui-ready`, which the runtime touches
-only once the design loaded and the first page is on the glass — a design the
-runtime cannot load never counts as deployed.
-
-**The swap cannot leave the panel dark.** `current` is promoted by `rename(2)`,
-never `rm` then `ln`. If the new release does not signal readiness within 25 s,
-the symlink swaps back and the previous release is restarted — the deploy fails
-and the machine still has its UI.
+The packaged Studio previews PySide6 applications with no Python on the machine; a PySide2 preview needs a PySide2 interpreter on PATH or named with `HMI_PREVIEW_PYTHON_QT5`.
 
 ---
 
-## Writing a bundle
+## Bundles
 
-A bundle is a directory. `manifest.json` plus the thing it names is enough.
+A bundle is a directory: `manifest.json` plus the entry it names. Only `schema`, `name`, `version` and `entry` are required; the Designer writes the rest.
 
 ```
 trip-and-maintenance/
-├── manifest.json
-├── project.edsui
-└── assets/
+├── manifest.json     runtime, screen, tags_required, alarms
+├── project.edsui     the screen itself
+└── assets/           images the design refers to
 ```
+
+| runtime | entry | Runs on the panel as |
+|---|---|---|
+| `edsui` | `project.edsui` | interpreted by `hmi-ui` — what the Studio writes |
+| `python` | `*.py` | the application under Weston, with the Qt runtime installed at deploy |
+| `qml` | `*.qml` | legacy: needs the retired native Qt loader |
+
+<details>
+<summary><strong>A full manifest, and the rules it is held to</strong></summary>
+
+<br />
 
 ```json
 {
@@ -727,450 +405,131 @@ trip-and-maintenance/
 }
 ```
 
-Only four fields are required — `schema`, `name`, `version` and `entry`. The
-Designer writes the rest for you: `screen` from the panel it is connected to,
-`tags_required` from the bindings in the design, and `alarms` from the
-thresholds on those bindings. The smallest manifest that validates is:
-
-```json
-{ "schema": 1, "name": "line-controller", "version": "1.4.0", "entry": "project.edsui" }
-```
-
-| runtime | entry | How it runs on the panel |
-| --- | --- | --- |
-| `edsui` | `project.edsui` | Interpreted by `hmi-ui`. What the Studio writes, and the only runtime the current panel image can run. |
-| `qml`, `python` | `*.qml`, `*.py` | **Legacy.** Still accepted by the validator, but they need a panel provisioned with the Qt loader — see [Legacy: Qt bundles](#legacy-qt-bundles). |
-
-
-### What makes a bundle acceptable
-
-The Studio validates before it packages, and the panel validates again after it
-unpacks, using the same code. A bundle that opens in the window is a bundle that
-will install.
-
-**The shape.** Any directory, with `manifest.json` at its root and the entry
-point somewhere inside it. No build step, no layout convention, no imports from
-this repository — the application does not know it is being deployed.
-
-```
-my-screen/
-├── manifest.json          required, at the root
-├── project.edsui          the entry named by the manifest
-├── assets/  ...           whatever else the design refers to
-└── .hmiignore             optional, extra exclusions
-```
-
-**The rules, and what each one prevents:**
-
-| Field | Rule | Why it is checked here |
+| Field | Rule | Why it is checked on the laptop |
 |---|---|---|
-| `schema` | exactly `1` | A future format should fail on the laptop, not halfway through an install |
-| `name` | `^[a-z0-9][a-z0-9._-]{0,63}$` | It becomes a directory on the panel and a filename on the host; a case-insensitive filesystem anywhere in that chain would let two apps collide |
-| `version` | `1.4`, `1.4.0`, `2.0.0-rc1`, `1.0.0+build7` | It names artefacts, so it cannot be arbitrary text |
-| `entry` | relative, no `..`, and the file must exist | An absolute or escaping path would resolve somewhere else entirely on the target |
-| `runtime` | `qml` needs a `.qml` entry, `python` needs a `.py` | A mismatch would otherwise fail only on the panel, after the swap |
-| `qt_binding` | must match what the sources actually import | Declaring the wrong one starts the wrong interpreter, and the app dies on its first import |
-| `screen` | positive integers | A string here is a mistake worth catching before it reaches a board |
-| `tags_required` | list of strings | These are seeded into the tag map so bindings resolve on the first frame |
+| `schema` | exactly `1` | a future format should fail here, not halfway through an install |
+| `name` | `^[a-z0-9][a-z0-9._-]{0,63}$` | it becomes a directory on the panel and a filename on the host |
+| `version` | `1.4`, `1.4.0`, `2.0.0-rc1`, `1.0.0+build7` | it names artefacts |
+| `entry` | relative, no `..`, must exist | an escaping path resolves somewhere else on the target |
+| `runtime` | `qml` needs `.qml`, `python` needs `.py` | a mismatch would fail only on the panel |
+| `qt_binding` | must match what the sources import | the wrong one starts the wrong interpreter |
 
-Only `schema`, `name`, `version` and `entry` are required. `runtime` defaults to
-`qml`, `screen` to 1280x800, `tags_required` to none, `qt_binding` to `pyside6`.
+`runtime` defaults to `qml`, `screen` to 1280×800, `qt_binding` to `pyside6`. Bundles are capped at 500 MB; `.git`, `__pycache__`, `build`, `dist`, `node_modules` and similar are excluded automatically, `.hmiignore` adds more.
 
-**Size.** 500 MB per bundle, enforced on both sides. Build outputs, caches and
-VCS metadata are excluded automatically — `.git`, `__pycache__`, `build`,
-`dist`, `node_modules`, `.venv`, `*.egg-info`, `.pytest_cache` and the rest —
-so the number is about your application, not your working directory. Add
-`.hmiignore` for anything else.
+</details>
 
-**No manifest?** Point the Studio at the directory anyway. It looks for
-`main.qml`, `Main.qml`, `app.qml`, then `main.py`, `app.py`, `__main__.py`,
-detects the Qt binding from the sources, and offers to write the manifest for
-you. QML is preferred when a project contains both.
+> [!NOTE]
+> **The one rule for an application:** never touch a GPIO line, an ADC node or a serial port — bind to tags. That is the whole contract, and it is what lets the same bundle run on a bench, in a preview and on a panel.
 
-**What the application must not do:** touch a GPIO line, an ADC node or a
-serial port. It binds to tags. That is the whole contract, and it is what lets
-the same bundle run on a bench, in a preview and on a panel.
+---
 
-### Legacy: Qt bundles
+## Architecture
 
-Before the panel runtime was written, a bundle was a Qt Quick or Qt Widgets
-application and the panel carried a Qt loader to run it. That path still exists
-in the repository (`gui/hmi_loader`, `native/hmi-gui`) and the manifest
-validator still accepts `runtime: qml` and `runtime: python`, but **the current
-panel image does not ship it**: there is no Qt, no compositor and no Qt loader
-on the target, and provisioning removes them if it finds them.
+Three programs and one file; the file is the deliverable and the programs are deliberately ignorant of each other. The normative interface spec is [docs/CONTRACT.md](docs/CONTRACT.md).
 
-It is kept for panels already in the field that were provisioned that way, and
-for anyone who needs to bring an existing Qt application across. Those panels
-need `deploy/provision_native.sh`, and a Python bundle also has to declare
-which binding it imports, because the two cannot share an interpreter —
-PySide2 is Qt5-only and was never built past Python 3.11:
+**The tag link.** Tags arrive on a loopback UDP socket as JSON. `hmi-hwd` owns GPIO through libgpiod (1.6 and 2.x), analogue inputs through IIO, serial and Modbus, and publishes them on port 5000. `hmi-ui` keeps a tag map with a 2.5 s watchdog and goes visibly offline rather than showing a value that stopped arriving. Tag names are lowercase dotted.
 
-```json
-{ "runtime": "python", "entry": "main.py", "qt_binding": "pyside2", "qt": ">=5.15" }
+```
+hmi-ui  --->  {"cmd":"subscribe","ttl":5}              every 2 s
+        <---  {"t":"tags","seq":41,"tags":{"eng1.n1":92.4,"gear.warning":false}}
+        --->  {"id":"gui-7","cmd":"set","tag":"do.relay1","value":true}
+        <---  {"t":"ack","id":"gui-7","ok":true}
 ```
 
-| qt_binding | Runtime on such a panel | For |
-| --- | --- | --- |
-| `pyside6` (default) | `/opt/hmi-python` — CPython 3.12 + PySide6 | Qt6 apps, and the QML loader |
-| `pyside2` | `/opt/hmi-python-qt5` — CPython 3.11 + PySide2 + a private Qt 5.15 | Existing Qt5 apps |
+**Bindings, thresholds and alarms.** A binding carries a unit and optional `warning` / `critical` thresholds (`"> 650"`). The Designer collects them into the manifest's `alarms`; the runtime's alarm engine raises, clears and timestamps entries that any `ShAlarmTable` shows. Thresholds are absolute, so the dial must be in the same units — a gauge left on 0..100 never reaches 650.
 
-A QML bundle gets two context properties injected: **`Tags`** for live values
-(dots become underscores, so `ai.pot` reads as `Tags.ai_pot`, and `Tags.online`
-tracks the hardware link) and **`Bus`** for commands (`Bus.write()`,
-`Bus.pulse()`, `Bus.uart_tx()`, `Bus.value(name, fallback)`).
+<details>
+<summary><strong>What runs on the panel</strong></summary>
 
-New work should use the Designer and `runtime: edsui`: it deploys to the image
-as shipped, renders the same on the desktop as on the glass, and needs no Qt on
-the panel at all.
+<br />
 
----
+| Unit | What it does |
+|---|---|
+| `hmi-ui.service` | the runtime: design, bindings, actions, alarms, touch |
+| `hmi-hwd.service` | GPIO, ADC, UART, Modbus → tags; safe states on shutdown |
+| `hmi-gui.service` | only for a Qt bundle, installed at its first deploy |
+| `hmi-tagsim.service` | bench only, optional: flies the deployed design |
 
+| Path | Holds |
+|---|---|
+| `/opt/hmi_apps/current` | symlink to the running release — never write through it |
+| `/opt/hmi_apps/previous` | what a rollback returns to |
+| `/opt/hmi-python` | the complete CPython the installer and daemon run on |
+| `/run/hmi/gui-ready` | touched once the first page is on the glass |
+| `/run/hmi/screen.png` | what the panel shows, written on `SIGUSR1` |
 
-## EmbeddedDisplay Studio
+</details>
 
-The desktop tool. Describe, draw or import a screen, watch it run inside a
-photo-real mock-up of the panel, then push it.
+<details>
+<summary><strong>Bench data without an aircraft — <code>hmi-tagsim</code></strong></summary>
 
-One window, seven workspaces across the top — **Designer**, **AI Design**,
-**Code**, **Display Console**, **Tag Lab**, **Panel Logs**, **System
-Profile** — over a header that holds the panel's address, port, **Connect**
-and **Disconnect**. Everything below is about the panel that header points
-at.
+<br />
 
-**Authoring**
-
-* **AI Design** — write a brief and a local or cloud model builds the screen
-  onto the Designer canvas, in sections, with the live preview refreshed as
-  each lands. Every turn is a foldable execution shell — request, streamed
-  reasoning, streamed response, parsed design, canvas diff, token usage — so
-  nothing the model did is hidden. Ollama, OpenAI, Anthropic, Google, vLLM
-  over Tailscale, or any OpenAI-compatible server with a pasted key. Details
-  in [AI Design](#ai-design).
-* **A Designer that is in the window, not beside it** — searchable widget
-  library with favorites, a layer tree, an inspector with paired X/Y and
-  W/H cells and live colour swatches, a tag-binding inspector with format,
-  scale, unit and threshold expressions, and an offline Design Chat for
-  text commands. The same toolbar previews, generates and deploys. Details
-  in [Visual Designer](#visual-designer).
-* **Code** — the project as code, in one tab: the bundle's folder as a
-  tree, a Widgets list with a live thumbnail of each widget, tabbed editors
-  for any file (C, Python, QML, JSON, `.edsui`) with Ctrl+Z / Ctrl+Y /
-  Ctrl+S, and the design itself pinned first — pick a widget and its
-  `.edsui` sits beside `hmi-ui`'s render of it. On the right a coding agent
-  ([opencode](https://opencode.ai) driven over its HTTP server) reads and
-  edits the project on your configured model; files it changes reload in
-  their tabs. Details in [Code](#code-section) and
-  [docs/CODE_SECTION.md](docs/CODE_SECTION.md).
-* **No bundle required to start** — an empty Studio, a brief or a blank
-  canvas is enough. The first Preview or Deploy provisions a bundle under
-  `Documents/EmbeddedDisplay Studio/projects/<name>/`, never on top of an
-  existing design, and the Studio adopts it as the current bundle.
-* **A cockpit-ready avionics palette** — attitude, airspeed/altitude tape,
-  heading compass, VSI, flight director, turn coordinator, engine gauge,
-  engine bar, dual-tank fuel quantity, annunciator and compact data-field
-  widgets, all bindable to live tags, with EFIS colours that hold across
-  light and dark modes.
-* **An automotive cluster palette** — arc cluster gauge with redline band
-  and centre readout, gear indicator, curved fuel / coolant level bar,
-  readout with icon and warn limits, drive-mode selector, telltale lamps,
-  icon tiles, trip-info box, segmented battery bar and a top-view tyre
-  pressure display — modelled on a classic instrument cluster and an EV
-  infotainment screen. Every one binds to tags; the interactive ones write
-  back through actions. Two ready-made cluster projects ship as design
-  presets (see [Design presets](#design-presets)).
-* **The canvas is the real thing** — each widget on the Designer canvas is
-  drawn with its own QML, rendered offscreen at the canvas zoom and cached,
-  so what you lay out is what the glass will show; not a sketch of it.
-  Toggle **Live QML** next to Grid and Snap.
-* **Resize from any handle** — all eight handles on a selected widget drag
-  their own edge; the cursor names the direction.
-* **Scaffold** — "New App…" writes a valid starter bundle, already importing
-  the design kit.
-* **Adopts apps that were never written for this platform** — point it at an
-  existing Qt project with no `manifest.json` and it detects the entry point
-  *and the binding*, proposes a manifest and writes it for you.
-
-**Preview**
-
-* **True WYSIWYG** — the bezel contains a live QML engine rendering *your
-  actual app* at target resolution with the same tag engine the device runs.
-  Not a screenshot, not an approximation.
-* **A Live Preview window** — Preview also opens the design in a window of
-  its own at the panel's resolution, on the same tag engine, so a drive-mode
-  selector or a start button can be operated at full size while Tag Lab, the
-  simulator or the connected panel feeds it. Zoom 50–150 %; also **Open Live
-  Preview** beside Deploy for any loaded QML bundle.
-* **An operable bezel, not a photograph** — clicks, drags, wheel and keys are
-  mapped from panel pixels into the application's own window and delivered as
-  real Qt events, so the preview is something you use rather than watch.
-* **Live or simulated data** — connected, telemetry is relayed from the real
-  daemon over SSH; offline, a built-in simulator drives plausible values.
-* **Panel picker** — preview against 5.0" 800×480, 7" 1024×600,
-  7"/10.1"/12.1" 1280×800 or 15.6" 1920×1080, with the live resolution
-  reported under the bezel. The preview never shrinks below a readable size
-  and always holds the panel's aspect ratio.
-* **The connected panel outranks the picker** — on Connect the Studio reads
-  the SOM's DRM connector and adopts its real pixel geometry, for the bezel
-  *and* the designer canvas. A design opened afterwards is retargeted to the
-  glass that is plugged in, so nobody lays out widgets against a screen that
-  is not there and finds out after a deploy.
-* **Qt Widgets apps preview live too.** A `runtime: python` bundle owns its
-  own window, so it cannot be composited into the QML scene. It is run
-  unmodified in a child process instead, forced to the target resolution, and
-  its frames are streamed into the bezel — real application, real fonts,
-  before you deploy it. Nothing appears on your desktop: the window is kept
-  unmapped with `WA_DontShowOnScreen`.
-* **Qt5 applications too** — a PySide2 bundle is previewed by a second
-  interpreter, because the two bindings cannot share a process. The binding
-  is read from the bundle's sources and the child is told which Qt to host.
-  Point `HMI_PREVIEW_PYTHON_QT5` at a PySide2 interpreter, or skip it — the
-  bundle still deploys and runs on the panel's own Qt5 runtime.
-
-**Deploy**
-
-* **Validation before upload** — every manifest rule is checked host-side,
-  with the offending field named.
-* **It checks the panel can run the app before sending it.** The bundle's
-  third-party imports are read off its source, the panel is asked whether it
-  can import each one under the interpreter that bundle will use, and
-  anything missing is named and offered for installation. A missing package
-  does not degrade an application, it kills it on its first import and leaves
-  the panel restart-looping on the release before it.
-* **Nothing blocks the window.** Packaging, upload, install, rollback,
-  restart and journal tail all run on worker threads, and the bar reports the
-  stage it is in — a sweeping bar while the bundle is packed, then bytes and
-  throughput for the upload, then the installer's own steps as the panel
-  reaches them. A step that fails names what failed: an unreachable panel is
-  reported as an unreachable panel, not as whatever the step was trying to
-  do.
-* **Rollback, releases, restart** — the previous release is one button away;
-  every release the panel still holds is listed from the panel itself and can
-  be activated; the GUI can be restarted without a reboot.
-* **Connect and Disconnect** — Connect probes the display, pulls the panel's
-  tag catalogue into the Designer and starts the telemetry relay; Disconnect
-  tears all of that down again (and cancels a connect still in flight), so
-  the Studio can be pointed at another board or back at Tag Lab without a
-  restart.
-* **Deploy keys that travel** — the panel trusts one SSH key. **Export key…**
-  packs it and the panel's address into a `.hmikey`; a colleague presses
-  **Import key…** and can Connect and Deploy at once. The flow, and what
-  the panel actually holds, is in [Sharing the deploy key](#sharing-the-deploy-key).
-
-**Diagnose**
-
-* **Tag Lab** — drive any declared tag with a deterministic waveform, pin a
-  sensor, flip an interlock; the bound tags of the open bundle are wired up
-  automatically.
-* **Panel Logs** — the journal from `hmi-ui` and `hmi-hwd`, followed live.
-* **The glass itself** — `ssh <panel> 'kill -USR1 $(pidof hmi-ui)'` makes the
-  runtime write what is on screen, live values and all, to
-  `/run/hmi/screen.png`.
-* **System Profile** — the active release, its footprint on flash, the
-  filesystem split and the RAM left over, read back over SSH.
-* **Ships as one file** — `EmbeddedDisplayStudio.exe` carries its own Python,
-  PySide6 and the whole standard library, so it previews a customer
-  application on a machine with no Python installed at all.
-
-<div align="center">
-
-<img src="docs/assets/screenshot-deploy.png" alt="The Display Console: target details, bundle verdict, deploy, rollback and installed releases" width="880" />
-
-<em><strong>Display Console.</strong> The deployment view, connected to a
-panel: the header's <strong>Connected</strong> badge with <strong>Disconnect</strong>
-beside it, the target's user and key with <strong>Export key…</strong> /
-<strong>Import key…</strong> under them, the display geometry read off the
-panel, the readiness checklist, the bundle's verdict —
-<code>Bundle Valid: engine-dashboard v1.1.0 [Studio design]</code> — and the one
-button that sends it, with <strong>Open Live Preview (desktop QML)</strong>
-beneath. The bezel on the left is the design as <code>hmi-ui</code> renders it,
-composed at the connected panel's 1024 × 768. Further down:
-<strong>Rollback</strong> to the release that worked, <strong>Restart GUI</strong>
-without a reboot, and the releases the panel still holds, listed from the
-panel itself. The bar and the console report the installer's own steps as the
-panel reaches them.</em>
-
-<br /><br />
-
-<a id="code-section"></a>
-<img src="docs/assets/screenshot-code.png" alt="The Code section: the Widgets list with thumbnails on the left and the attitude indicator picked, its .edsui in the pinned Design tab, the attitude indicator rendered by hmi-ui beside it, and the coding agent's panel with its bot avatar and model picker on the right" width="880" />
-
-<em><strong>Code section.</strong> The attitude indicator picked in the
-Widgets list: its <code>.edsui</code> — exactly what the panel interprets — in
-the pinned <strong>Design</strong> tab, and <code>hmi-ui</code>'s render of it
-beside. <strong>Files</strong> shows the bundle's folder; any file opens in its
-own tab with undo, redo and save. Edit the JSON and <strong>Apply</strong> puts
-it back into the design as one undo step. The agent on the right runs
-<a href="https://opencode.ai">opencode</a> in the project folder: its thinking,
-each tool it runs, the files it touches (links that open them) and permission
-prompts show in the transcript, and an edited file reloads in its tab.</em>
-
-<br /><br />
-
-<img src="docs/assets/screenshot-live-preview.png" alt="The Live Preview window running the automotive cluster at the panel's resolution" width="880" />
-
-<em><strong>Live Preview window.</strong> The design as the desktop's Qt/QML
-runs it, in a window of its own at 1280 × 800 (shown at 75 %), on the Studio's
-tag engine — here with no feed connected, so every bound value sits at its
-fallback and the battery readout is already red. Tag Lab, the simulator or a
-connected panel drives it; the drive-mode chevrons and tiles are operable. It
-is the one preview that is not drawn by <code>hmi-ui</code>: it is interactive,
-and interaction needs a running runtime.</em>
-
-<br /><br />
-
-<img src="docs/assets/screenshot-studio.png" alt="A Qt5 application running in the live preview beside the panel it deploys to" width="880" />
-
-<em><strong>Bezel preview of a legacy Qt bundle.</strong> A customer's Qt5
-application running inside the preview of the panel, beside the target it
-deploys to — connected here to a 10.1", 1024 × 768 panel, which is the geometry
-the bezel composes it at. Qt bundles need a panel that still carries the legacy
-Qt loader; a Studio design needs no Qt on the panel at all.</em>
-
-<br /><br />
-
-<img src="docs/assets/screenshot-taglab.png" alt="Tag Lab injecting waveforms" width="880" />
-
-<em><strong>Tag Lab.</strong> Drive the application with signals instead of
-hardware: a sine on a bus voltage, a square wave on an interlock, a constant on
-a contactor. The panel's behaviour can be exercised long before the I/O it
-binds to exists.</em>
-
-<br /><br />
-
-<img src="docs/assets/screenshot-logs.png" alt="Panel Logs following the journal" width="880" />
-
-<em><strong>Panel Logs.</strong> The journal from the panel's own services,
-followed live — here <code>hmi-hwd</code> reporting, every five seconds, that the
-UART it was configured for is not answering. A fault no deploy would have
-reported, because the deploy succeeded.</em>
-
-<br /><br />
-
-<img src="docs/assets/screenshot-memory-profile.png" alt="System Profile of the deployed release" width="880" />
-
-<em><strong>System Profile.</strong> What the release costs the board, read
-back over SSH: the active package and where it landed, the application against
-its compressed size, how the root filesystem divides between the OS image, the
-application and free space, and the RAM left over.</em>
-
-<br /><br />
-
-<img src="docs/assets/screenshot-light.png" alt="The Studio in light mode" width="880" />
-
-<em><strong>Light mode.</strong> The same window and the same panel; the theme
-follows the operator, and the preview inside the bezel follows the theme with
-it.</em>
-
-</div>
-
----
-
-## Built for the field
-
-**The daemon cannot be crashed by its socket.** Malformed JSON, wrong types,
-oversized frames, binary noise and invalid UTF-8 are counted and answered with a
-typed error code — or with silence where no correlation id can be recovered,
-which also stops it being used as a UDP reflector. Logging is rate-limited so a
-flooding client cannot fill the journal. Outputs are driven to configured safe
-states on `SIGTERM`, and systemd watchdog keep-alives are sent every cycle.
-
-**Deployment is atomic and self-healing.** The bundle lands in a tmpfs, so a
-failed upload never touches flash. It is checksum-verified, extracted to a
-staging directory, validated again on the target, then promoted by a single
-`rename(2)` onto the `current` symlink — never `rm` then `ln`, which would leave a
-window with no UI. The GUI must recreate its ready-file within 25 s or the
-symlink swaps back.
-
-**Validation happens twice, from one implementation.** The host CLI, the target
-installer and the desktop tool all call `schema/manifest.py`; the target still
-validates independently of the host, as it must, but not by different rules.
-They used to be three separate implementations that had drifted apart in both
-directions — a bundle that passed on a laptop and was refused on the panel is
-worse than one that fails everywhere.
-
-**Both libgpiod generations.** BSP 6 ships libgpiod 1.6, BSP 7 ships 2.x, and
-their Python APIs are incompatible. Both are implemented and selected at import.
-
-**The panel can be watched, not guessed at.** `SIGUSR1` makes the runtime write
-what it is displaying — live values and all — to `/run/hmi/screen.png`. The
-Display Console's **Mirror the panel** shows that at a frame a second, so a
-screen can be checked against the bench rather than against a render of it, and
-a bug report can carry the glass instead of a description of it.
-
-**A bench panel can be made to move.** `hmi-tagsim` reads the deployed design
-and flies it — one aircraft state driving every instrument, alarms included —
-so a demo, a soak test or a design review does not need the machine the panel
-was built for. It sits beside `hmi-hwd` rather than replacing it, and one line
-in `/etc/default/hmi-ui` switches back.
-
----
-
-## Design system
-
-Every pixel — on the panel and on the desktop — comes from a Qt port of
-[shadcn/ui](https://github.com/shadcn-ui/ui) with [Tabler](https://github.com/tabler/tabler-icons)
-icons vendored offline. Same tokens, same variant names, same geometry.
-
-`ShButton` · `ShInput` · `ShCard` · `ShBadge` · `ShSwitch` · `ShProgress` ·
-`ShSeparator` · `ShAlert` · `ShTabs` · `ShLabel` · `ShSkeleton` · `ShDialog`
-— plus HMI additions `ShGauge`, `ShStatDot`, `ShValueTile`, and the avionics
-set `ShDataField`, `ShAttitude`, `ShTape`, `ShCompass`, `ShVSI`,
-`ShEngineGauge`, `ShAnnunciator`, `ShFlightDirector`, `ShTurnCoordinator`,
-`ShEngineBar`, `ShFuelQuantity`.
+`hmi-hwd --sim` fakes the hardware channels but knows nothing of the tags a design invents. `daemon/tagsim.py` reads the tag list out of the **deployed design** and fills it from a single flight — taxi, climb, cruise, turn, descend, land — so the screen agrees with itself, and ramps that cross a binding's thresholds put real entries in the alarm table. It serves on 5010, leaving `hmi-hwd` on 5000:
 
 ```bash
-python ui/gallery.py --theme dark      # every component, every state
+scp daemon/tagsim.py          root@<panel>:/usr/lib/hmi/tagsim.py
+scp daemon/hmi-tagsim.service root@<panel>:/etc/systemd/system/
+echo 'HMI_UI_EXTRA_ARGS=--daemon-port 5010' >> /etc/default/hmi-ui
+systemctl daemon-reload && systemctl enable --now hmi-tagsim && systemctl restart hmi-ui
 ```
 
-Light and dark are switchable at runtime and both default to dark; icons are
-re-rendered in the new palette on every switch, so nothing goes black-on-black.
-`ui/tokens.json` is the single source of truth, and a test fails if `Theme.qml`
-ever drifts from it.
+Remove that line from `/etc/default/hmi-ui` to go back to the real inputs.
+
+</details>
+
+**Built for the field.** The daemon cannot be crashed by its socket — malformed JSON, oversized frames, binary noise and invalid UTF-8 are counted and answered with a typed error, or with silence where no correlation id survives, so it cannot be used as a UDP reflector. Outputs go to configured safe states on `SIGTERM`, with systemd watchdog keep-alives every cycle.
+
+---
+
+## Hardware
+
+Not tied to one module: a 64-bit ARM Linux board that can put pixels on a display and accept an SSH connection. Developed and exercised on a **Toradex Verdin i.MX8M Plus** with a 10.1" 1024 × 768 panel.
+
+<div align="center">
+<img src="docs/assets/hardware.svg" alt="A 64-bit ARM SoM with storage, display and network, optional GPIO, ADC and UART, reached from a developer machine over SSH" width="760" />
+</div>
+
+| | Needed | |
+|---|---|---|
+| **OS** | 64-bit Linux, systemd, a DRM/KMS display | `hmi-ui` draws to DRM itself |
+| **Python** | a complete Python 3 — or provisioning's `/opt/hmi-python` | the installer and daemon run on it |
+| **coreutils** | `flock`, `tar`, `sha256sum` | `hmi-install` serialises and verifies with them |
+| **Weston** | only for a Qt bundle | the Qt application runs under it |
+| **RAM** | 1 GB for Studio designs, 2 GB for Qt apps | `hmi-ui` runs in a few MB |
+| **Storage** | ~2 GB free | releases are retained; the Qt5 runtime is ~300 MB |
+| **Network** | Ethernet or Wi-Fi, SSH on 22 | the only channel the Studio uses |
+| **Field I/O** | optional, each on its own | `hmi-hwd` disables what it cannot reach |
+
+**Before first power-on**, confirm the board-specific parts `daemon/hwd.json` assumes (`gpioinfo`, `iio_info`, `ls /dev/serial/by-id/*`) and release the pins from their default pinmux with a device-tree overlay — `daemon/README.md` walks through it.
 
 ---
 
 ## Look and feel
 
-The Studio's motion comes from [Libraries.dev](https://github.com/Jakubantalik/Libraries.dev)
-(MIT, © 2026 Jakub Antalik), a set of React effects for AI-agent interfaces,
-ported to plain QPainter in `ui/python/fx/` — no web engine, no OpenGL and no
-numpy (the packaged Studio ships none of them), keeping the originals' tuned
-numbers:
+Every pixel comes from a port of [shadcn/ui](https://github.com/shadcn-ui/ui) with [Tabler](https://github.com/tabler/tabler-icons) icons vendored offline; `ui/tokens.json` is the single source of truth and a test fails if `Theme.qml` drifts from it.
 
-| Effect | Where it shows |
-|---|---|
-| **Liquid tabs** (liquid-gooey) | the navigation: the selection flows between workspaces, stretching and trailing a droplet |
-| **Border beam** | a glow travelling the edge of what is working: **Connect** while it connects, **Refresh profile**, the Deployment card during a deploy, the AI Design composer and the agent's message box while a model writes |
-| **Thinking orbs** | the AI Design run orb (connecting, thinking, writing, parsing each look different) and a streaming thought in the agent panel |
-| **Bot avatar** | the coding agent's face: idle, hopping while it works, asleep when it stopped or failed |
-| **Liquid metal** | the rim of the Studio mark |
-| **Pixel mosaic** (img-fx) | the Code preview while `hmi-ui` renders, dissolving cell by cell into the result |
-| **Working glow** (voice-glow) | a colour sweep under the agent's header while it works |
+The Studio's motion is [Libraries.dev](https://github.com/Jakubantalik/Libraries.dev) (MIT, © 2026 Jakub Antalik) ported to plain QPainter in `ui/python/fx/` — no web engine, no OpenGL, no numpy: **liquid tabs** in the navigation, a **border beam** on whatever is working, **thinking orbs** for the AI run, a **bot avatar** for the coding agent, a **liquid-metal** mark, a **pixel mosaic** while a preview renders, and a **working glow** under the agent. One timer drives them all and stops when nothing moves; the sparkles button turns motion off. Notes in [docs/UI_FX.md](docs/UI_FX.md).
 
-All of them run from one timer that stops when nothing moves; a hidden tab
-costs nothing. The sparkles button beside the theme toggle turns motion off —
-every effect then shows a still frame. `python tools/fx_gallery.py out.png`
-renders each effect in both themes; the design notes are in
-[docs/UI_FX.md](docs/UI_FX.md).
+---
 
-## Layout
+## Repository
 
 ```
 docs/CONTRACT.md      the normative interface spec — read this first
-schema/               shared formats: manifest validation, bundle packing, dependency scan
-daemon/               Layer 1  hardware daemon + tag map
-gui/                  Layer 2  loader, tag engine, shell, fallback screen
-apps/demo-app/        a worked example, and the pipeline's test fixture
-ui/                   design system: tokens, QML kit, QSS, icons, gallery
-designer/             the visual designer: model, canvas, widget registry, QML generator
-target/               systemd units, atomic installer, Wayland launcher
-deploy/               deploy_to_hmi.sh — the CLI; provision_panel.py — onboard a stock image
-tools/hmi_deployer/   EmbeddedDisplay Studio: main window, deployer, device panel, Tag Lab,
-                      AI design (ai_design.py — providers and streaming; ai_generator.py —
-                      parser, diff and section merge; ai_tab.py — the tab)
-yocto/meta-hmi/       bitbake layer that puts it all in the image
-tests/                protocol, integration and cross-validator suites
+schema/               manifest validation, bundle packing, dependency scan
+daemon/               Layer 1: hmi-hwd, the tag map, tagsim
+native/hmi-ui/        Layer 2: the panel runtime — C11 + LVGL (submodule), its Windows preview build
+native/hmi-gui/       the Qt application launcher and unit, and the retired native QML loader
+gui/                  the retired Python QML loader; its TagEngine drives the Live Preview
+designer/             the Designer: model, canvas, registry, generators, layout, the Code IDE
+tools/hmi_deployer/   the Studio: window, deploy, Qt runtime on demand, AI Design, Tag Lab, mirror
+ui/                   design system: tokens, QML kit, icons, QPainter effects
+target/               the installer (hmi-install), units, tmpfiles
+deploy/               deploy_to_hmi.sh and the provisioning scripts
+packaging/            the PyInstaller spec for the packaged Studio
+yocto/meta-hmi/       the bitbake layer
+tests/                1467 tests in 97 modules
 ```
 
 ---
@@ -1178,528 +537,48 @@ tests/                protocol, integration and cross-validator suites
 ## Verification
 
 ```bash
-python tests/run_all.py          # 738 tests, 52 of them Linux-only
+python tests/run_all.py            # 1467 tests in 97 modules
+native/hmi-ui/build.sh --test      # the runtime's C tests
 ```
+
+> [!NOTE]
+> The installer and shell suites need `flock`, so they skip on Windows — the runner prints how many skipped, because a skip is not a pass. CI runs the whole suite on Linux; `tests/README.md` has the WSL command.
 
 | Area | Coverage |
 |---|---|
-| Daemon protocol | error codes, silence on unparseable input, `seq` monotonicity, survives hostile frames |
-| Tag engine | daemon → UDP → QML binding, command write-back, fallback on missing tags |
-| Bundle validation | one implementation, three callers; minimal, README and malformed manifests |
-| Install atomicity | unique release ids, running release survives redeploy, traversal refused before extraction |
-| Fallback screen | the card lays out, sections do not overlap, the error text is shown |
-| Design tokens | `tokens.json` and `Theme.qml` cannot drift |
-| Gallery render | painted pixels asserted, not just "it ran" |
-| Native preview | a real Qt Widgets app renders at the target resolution with content, and answers a click |
-| Qt5 bundles | a real **PySide2** application reaches the bezel, hosted by a second interpreter |
-| Qt binding | the binding is read from the sources, and a manifest that disagrees is refused |
-| Connected display | the detected panel geometry reaches the preview *and* the designer, and survives opening a design drawn for another screen |
-| Theme contract | the designed colour mode reaches the manifest, the loader and the panel |
-| Designer | model, reparenting, containers, arrange, assets, toolbars, generator, deploy, and Preview provisioning a bundle when none is open |
-| Dependency scan | imports against stdlib, bundle-local and guarded ones; distribution names; the commands sent to the panel |
-| Deploy bookkeeping | a step that finishes late cannot delete the files of the deploy that replaced it |
-| SSH commands | every argv the Studio builds, including the display probe and the release list |
-| AI Design | streaming events for every provider protocol (`reasoning_content`, `<think>`, Anthropic/Gemini thought blocks, NDJSON usage), BYOK config round-trip, secrets kept out of URLs, multi-turn history, canvas diff, section metadata and merge, truncation salvage, the registry-driven system prompt |
-| Capture | the Studio switches to a tab where the preview is live before a bezel capture |
+| Daemon | error codes, silence on unparseable input, `seq` monotonicity, hostile frames |
+| Install | atomic swap, traversal refused before extraction, rollback, the GUI service per runtime, boot default |
+| Panel runtime | protocol conformance and widget parity against the QML kit, through a real `hmi-ui` |
+| Bundles | one validator, three callers; the dependency scan and offline wheel install |
+| Qt on demand | the panel check, launcher and runtime installs, the PySide2 runtime assembled from `.deb` streams |
+| Designer | model, canvas, inspector, generator, Live Preview, repairs on open |
+| Layout | grid, archetypes, fit and pages on a real 35-widget AI design, scale repairs, the critic |
+| AI Design | streaming for every provider, the key-aware probe, sections and merge, tag and action repairs |
+| Code | project files, editor tabs, the opencode client on a recorded stream, the agent panel |
+| Studio | connect/disconnect, deploy keys, mirror, the frozen entry points |
 
-### The release gate
-
-A green source tree says nothing about the artefact. Tagging builds
-`EmbeddedDisplayStudio.exe` on CI and then **runs it**: the binary previews a
-fixture application whose imports were never visible to the build, grabs its
-bezel, and `tests/verify_smoke_capture.py` asserts the fixture's colour is
-actually in the picture. Only a binary that passed that is attached to a
-release — 0.0.1 shipped one that died on a customer application's first
-standard-library import while every test above passed.
-
-> **Run the installer tests on Linux.** Windows has no `flock`, so the
-> atomic-swap and cross-validator suites skip there rather than pretending to
-> pass — and the runner prints how many tests skipped, because a skip is not a
-> pass. CI runs the whole suite on Linux and fails if anything skips.
-> `tests/README.md` has the WSL command.
+**The release gate.** Tagging builds `EmbeddedDisplayStudio.exe` on CI and then **runs it**: the binary previews a fixture whose imports were never visible to the build, grabs its bezel, and `tests/verify_smoke_capture.py` checks the fixture's colour is in the picture. Only a binary that passed is attached to a release.
 
 ---
 
-## Building the image
-
-```bash
-bitbake-layers add-layer /path/to/meta-hmi
-bitbake <your-bsp-reference-image>
-```
-
-`yocto/README.md` covers prerequisite layers (no Qt layer is needed), how each
-recipe's `files/` directory maps onto this repository, and how to verify on the
-target.
-
-### Why no containers
-
-This targets the **native** Yocto reference image. No Docker, no
-container OS, no container runtime — every component is a systemd unit on the
-rootfs. Less to boot, less to update, less to explain to a certification body.
-
----
-
-## Before first power-on
-
-GPIO offsets, IIO device names and UART aliases are **board specific**.
-`daemon/hwd.json` ships a documented default for one reference module and
-carrier board. Confirm yours:
-
-```bash
-gpioinfo                 # GPIO chip and line offsets
-iio_info                 # ADC device name and channels
-ls /dev/serial/by-id/*   # stable UART aliases
-```
-
-Pins must first be released from their default pinmux with a device-tree
-overlay, however your BSP applies them. `daemon/README.md` walks through it.
-
----
-
-## Visual Designer
-
-**The editor is in the Studio, not beside it** — it is the second window at the
-top of this page. A widget library and layer tree on the left, the canvas drawn
-inside the same bezel the preview uses and labelled with the geometry it is
-designing for, and the property, tag-binding and Design Chat inspectors on the
-right. The same window then previews, generates and deploys what you drew: no
-export step, no second tool, and no hand-off where the design and the bundle
-can disagree.
-
-**Starting.** Select **Designer** and draw. If a bundle is open the design is
-saved beside it as `project.edsui`; if none is, the first **Preview** or
-**Deploy** provisions one under `Documents/EmbeddedDisplay Studio/projects/<name>/`
-— named after the project, with a numeric suffix rather than overwriting an
-existing folder — and the Studio adopts it as the current bundle. A design
-handed over from [AI Design](#ai-design) arrives here the same way.
-
-**The canvas.** Selection, rubber-band multi-selection, movement, resize
-handles, copy/paste, duplicate, keyboard nudging, z-order, grid snapping and
-alignment are on the canvas itself. Double-click a caption to edit its text,
-double-click an image widget to choose its file, right-click for the context
-menu. Delete removes the selection but never text inside an editor. Two
-compact command rows — file/edit and page/geometry above, arrange, Preview,
-Generate and Deploy on the canvas bar — keep the whole workflow visible at
-laptop widths.
-
-**The library and layers.** The widget library is searchable and has a
-favorites filter (right-click or `Ctrl+F` on an entry); favorites persist. The
-layer tree mirrors the page's containment and selection both ways.
-
-**The inspector.** Generated from the central widget registry, so every widget
-edits its own properties: paired X/Y and W/H cells, live colour swatches, and
-an empty state when nothing is selected. The binding inspector connects
-bindable properties to the same dotted tag names Tag Lab and the deployed
-`TagEngine` use, with an optional format, multiplier, offset, unit, warning
-expression and critical expression per binding. **Design Chat** takes offline
-text commands — `add Value Tile named inputVoltage`,
-`set inputVoltage title=Input Voltage`, `bind inputVoltage value=power.input_voltage`,
-`remove inputVoltage` — through an adapter kept separate from the model, so the
-designer runtime never needs the network.
-
-**Preview and Deploy.** **Preview** saves the project, generates QML into
-`generated/`, updates `manifest.json` and reloads the result through the
-Studio's live preview. **Deploy** confirms the deployment name, does the same,
-validates, and hands the bundle to the same pipeline an imported application
-uses.
-
-**What the previews are drawn with.** The canvas widgets, the bezel in the
-Display Console and the Code section's preview pane are rendered by `hmi-ui`
-itself -- the panel's own C + LVGL runtime, run headless on the desktop -- so
-what the Studio shows is what the glass will draw, pixel for pixel. The
-**Live preview** toggle on the canvas bar turns those renders on and off
-(its tooltip names the renderer in use). The binary is looked for at
-`$HMI_UI_BIN`, in a packaged Studio's `hmi-ui/` folder, and at
-`native/hmi-ui/out/win64/hmi-ui.exe` (Windows) or `native/hmi-ui/out/hmi-ui`
-(Linux) in a checkout; without it the Studio falls back to the Qt/QML renders
-it used before. **Open Live Preview (desktop QML)** is the one exception: it
-runs the generated QML in a window on the desktop's Qt so the design can be
-operated against the Studio's tag feed.
-
-**The Code section.** **Code** sits beside Designer and AI Design in the
-Studio's sections; the **Code** action on the Designer's file/edit row (or
-`Ctrl+Shift+K`) switches to it. It shows the design behind what is selected
-on the canvas — the `.edsui` fragment of the selected widget, or of the whole
-screen — exactly what the panel's runtime interprets, and follows the
-selection as it changes, with an optional preview of that section rendered
-by `hmi-ui` beside the text. The design can be edited and applied back: an
-Apply replaces that widget or page in the model as one undo step, so `Ctrl+Z`
-in the Designer takes the whole edit back at once, and the section re-reads
-the model after every change on either side. The second format, **Runtime C
-(hmi-ui)**, shows the C that draws the selected widget on the panel —
-`native/hmi-ui/src/widgets/w_<type>.c`, read-only, the very file compiled into
-the runtime — or, for the whole screen, the source of every widget type the
-page uses. No QML appears here: the QML the Studio generates is only its own
-desktop preview code.
-
-<div align="center">
-<img src="docs/assets/screenshot-code-c.png" alt="The Code section in Runtime C format: w_shclustergauge.c, the C that draws the cluster gauge on the panel, beside its render" width="880" />
-</div>
-
-<div align="center">
-<img src="docs/assets/screenshot-code-widget.png" alt="The Code section in widget scope: the selected cluster gauge's design JSON beside its hmi-ui render" width="880" />
-</div>
-
-Avionics controls use the same data path as every other live HMI value. Bind,
-for example, `ShFuelQuantity.leftValue` to `fuel.left.quantity` and
-`rightValue` to `fuel.right.quantity`; generated QML reads them through
-`Bus.value(tag, fallback)`. The underlying program can publish those dotted
-tags through the hardware daemon's UDP telemetry protocol, or Tag Lab can drive
-them with constant, ramp, sine, square or noise signals before hardware is
-available. Pitch, roll, heading, vertical speed, engine values, flight-director
-commands, turn rate, slip, annunciator state and both fuel tanks are exposed as
-bindable properties in the same way.
-
-The editable source is `project.edsui`, a human-readable JSON document. It is
-not generated QML. A designed bundle has this shape:
-
-```text
-project.edsui
-generated/
-  Main.qml
-  Settings.qml
-assets/
-manifest.json
-```
-
-`manifest.json` remains the runtime/deployment contract. Generation updates its
-name, screen resolution, colour mode, QML entry and `tags_required`, so Tag Lab
-simulation, preview and target deployment all use the established runtime — the
-mode the design was drawn in is the mode the panel boots in, rather than a
-default the loader picks on its own.
-
-**The canvas follows the glass.** When the Studio is connected, the panel's real
-geometry — read from its DRM connector, not from the manifest — sets the canvas
-size, and keeps it: a design saved for another screen is retargeted on open
-rather than quietly moving the canvas back to whatever that file was drawn for.
-Widget coordinates are never touched by this; the surface moves, the design does
-not. Disconnected, the saved screen stands, because then the file is the only
-authority on its own geometry. Images are copied into the project's `assets/`
-and kept as project-relative paths; absolute machine paths are rejected.
-
-Version 1 intentionally supports only `.edsui` → QML generation. Arbitrary QML
-is left untouched and is not imported or round-tripped. Container hierarchy is
-represented in the model and generator; the initial canvas primarily optimizes
-top-level absolute-positioned HMI screens. Threshold metadata is preserved in
-bindings but is not yet converted into visual state expressions by the QML
-backend.
-
-The visual designer is implemented as part of EmbeddedDisplayStudio using
-ordinary PySide6 APIs and does not incorporate Qt Designer source code. It adds
-no third-party dependency; the model and generator use Python's standard
-library, and the editor uses the project's existing PySide6 dependency.
-
----
-
-## AI Design
-
-**Turn a written brief into a running panel screen.**  Switch to the
-**AI Design** tab, pick a provider and model, describe the screen you want and
-the Studio streams the model's answer, parses it into Designer widgets, draws
-them on the panel canvas and refreshes the live preview — all without leaving
-the window.  The same widgets then generate, preview and deploy through exactly
-the pipeline a hand-drawn design uses.
-
-The screenshot at the top of this page is this tab: the brief asked for an
-engine data summary; the model returned it as Section 1 (gauges), Section 2
-(temperature gauges and fuel) and Section 3 (bottom summary), each applied to
-the canvas as it arrived.  The chips on every turn say what happened —
-`14 widgets`, `+7 −0 ~0`, `Applied · panel preview refreshed`,
-`8.2k tok · 76.1 tok/s · 1m 26s`.
-
-### The layout
-
-| Region | What it is |
-|---|---|
-| **Provider / Model** | Which endpoint answers and which model it runs.  The status line beneath shows the live probe: `Connected · vLLM (Tailscale) · 63 ms · 1 models`.  **Endpoint** expands to edit the base URL or paste a key. |
-| **Run log** | One foldable *execution shell* per turn — request, thinking, response, parsed design, canvas diff, usage — followed by the result chips and an **Apply to canvas** button that re-applies that turn later. |
-| **Composer** | The brief.  **Auto-apply to canvas** (default on) puts each result on the canvas as it lands; `Ctrl+Enter` sends; **Clear** empties the conversation; the ▶ button becomes **Stop** while a run is live. |
-| **Session strip** | `3 runs · 21.1k tokens (5.1k in / 16k out) · 75.9 tok/s` — totals for the whole session. |
-| **Panel canvas** | The design drawn inside the panel bezel at the design target (`1024 × 768`), with the widget count and an **Open in Designer** shortcut.  It is the same canvas the Designer edits, so what you see here is what deploys. |
-
-### Providers
-
-| Provider | How | Needs |
-|---|---|---|
-| **Ollama** | Local model, zero configuration | `ollama serve` running |
-| **OpenAI** | `api.openai.com` | API key |
-| **Anthropic** | `api.anthropic.com` | API key |
-| **Google** | `generativelanguage.googleapis.com` | API key |
-| **vLLM (Tailscale)** | A vLLM server reached over your Tailscale network | Tailscale + the server's key, if any |
-| **BYOK** | Any OpenAI-compatible server | Base URL + key |
-
-The tab probes the endpoint when it opens and again on the refresh button, and
-merges the models the endpoint actually serves into the **Model** list; the
-field stays editable for anything not listed.  Base URL and key are remembered
-per provider, so switching between a local Ollama and a hosted model is one
-click.
-
-### How a brief becomes widgets
-
-1. **System prompt from the palette.**  The prompt sent with every brief is
-   built from the Designer's own widget registry and the current screen size,
-   so the model only knows about widgets the panel can actually render
-   (`ShGauge`, `ShValueTile`, `ShButton`, …) and lays them out for the glass
-   you are targeting.
-2. **Sectioned generation.**  Large screens do not fit in one response, and a
-   truncated JSON design is worthless.  The Studio therefore asks for the design
-   *in sections of at most eight widgets*.  Each section says whether the design
-   is complete and, if not, names the next section; the Studio queues
-   `Continue · Section n · <label>` automatically, tells the model which widget
-   ids already exist so it never repeats them, and merges each section into the
-   running project.  Up to eight sections run unattended; after that the tab
-   pauses and asks you to review before continuing.  A response that hits the
-   model's output limit is salvaged for whatever widgets it did finish and the
-   rest is requested again.
-3. **Parse and diff.**  The answer is parsed into `DesignerProject` /
-   `DesignerWidget` objects — unknown widget types fall back to a plain
-   rectangle rather than failing the whole design — and diffed against what is
-   on the canvas.  The chips report `+added −removed ~changed`; expand
-   **Canvas changes** in the shell for the ids.
-4. **Composition.**  A model asked for absolute geometry returns a draft: a
-   start/stop button inside the fuel gauge, a `ShFuelQuantity` stretched to
-   864 × 100, left edges at 32, 40 and 80 px.  Prompting does not fix that, so
-   every parsed section goes through `designer.layout.polish` before it
-   reaches the canvas: a human-designed composition archetype places the
-   widgets, the 12-column grid aligns them, each type is sized to the
-   proportions its face needs, a style pass sets the type scale and captions,
-   and a critic scores the result on overlap, margins, alignment, grid,
-   hierarchy, balance and proportion.  Rounds that do not raise the score are
-   rolled back, and the shell says what happened — `Composed: hero-centre,
-   54 → 90`.  Where the panel's own renderer is available the other
-   compositions are offered as thumbnails under the turn; clicking one swaps
-   the canvas.  The same pass is the Designer's **Tidy up** button, and it
-   only ever moves, sizes and styles: no widget, property, binding or action
-   is invented, renamed or dropped.
-5. **Apply.**  With auto-apply on, the merged project replaces the canvas as
-   one undoable step, so `Ctrl+Z` in the Designer takes you back to the
-   previous turn.  The AI title (`AI Design`, `AI Design (partial)`) is coerced
-   to a deployable name (`ai-design-partial`) so the manifest is valid.
-6. **Preview.**  Applying also runs the Designer's own Preview: the QML is
-   generated, the manifest updated, and the bundle reloaded into the live
-   panel.  **You do not need a bundle open first** — if none is, the Designer
-   provisions one under `Documents/EmbeddedDisplay Studio/projects/<name>/`,
-   named after the design and never on top of an existing one, and the Studio
-   adopts it as the current bundle.  From there **Preview** and **Deploy** in
-   the Designer, and the Display Console, behave exactly as they do for any
-   other bundle.
-7. **Multi-turn.**  Up to three prior turns ride along with a new brief, so
-   "make the RPM gauge bigger" or "add a coolant warning" edit the design on the
-   canvas instead of starting over.  **Stop** cancels a run at the next token.
-
-<div align="center">
-<img src="docs/assets/ai/composition-before.png" alt="The model's own geometry: a gauge whose ticks are a scribble, a stretched alarm table, controls scattered" width="440" /> <img src="docs/assets/ai/composition-after.png" alt="The same widgets composed: a readable dial, the table at its proportions, the controls in a foot band" width="440" />
-
-<em>The same model output, before and after the composition pass — both drawn
-by the panel's own renderer. The dial's ticks were a scribble because the model
-changed the gauge's range to 0–100 and left the kit's step of 1 behind: 500 tick
-marks. The pass repairs the scale, sizes each face to its proportions, places
-everything on the grid and puts the controls in a band. 78 → 86 on the critic,
-with no errors left.</em>
-</div>
-
-### Reading the execution shell
-
-Every turn produces a foldable record that stays open while the run is live
-and folds once the conclusion lands:
-
-| Row | Content |
-|---|---|
-| **Head** | spinner / ✓ / ✗, status word (`Sending request… → Connecting… → Thinking… → Writing… → Parsing design… → Done`), elapsed |
-| **Request** | `POST <url>`, model, brief length |
-| **Thinking** | The model's reasoning as it streams — `reasoning_content`, `<think>` tags, Anthropic/Gemini thought blocks |
-| **Response** | The streamed answer — foldable, live-scrolling |
-| **Parsed design** | Widget count and types recovered from the output |
-| **Canvas changes** | `+added −removed ~changed` with ids listed inside |
-| **Usage** | `in · out · total · tok/s · TTFT · elapsed` |
-
-Counts prefixed with `~` are estimated from characters; they are replaced by
-provider-reported usage when those arrive.  The chips under each turn summarise
-the same record at a glance:
-
-| Chip | Meaning |
-|---|---|
-| `Section 2 · Temperature Gauges and Fuel` | Which section of a multi-section design this turn produced |
-| `14 widgets` | Widgets in the merged design after this turn |
-| `+7 −0 ~0` | Canvas diff: added, removed, changed |
-| `Applied · panel preview refreshed` | The design is on the canvas and the live panel reloaded it |
-| `Applied · continuing automatically` | Another section is queued and will start when this one exits |
-| `Stopped after 8 sections` | The unattended limit; review the canvas and send a new brief |
-| `8.2k tok · 76.1 tok/s · 1m 26s` | Tokens, throughput and wall time for the turn |
-
-### Where the AI output goes next
-
-The AI tab never writes QML itself.  It hands a `DesignerProject` to the
-Designer, and everything downstream — QML generation, `manifest.json`,
-`tags_required`, bundle validation, packaging, the atomic install on the panel
-and rollback if the app fails to come up — is the same code path a hand-drawn
-design uses.  Tune the result in the Designer (bind the gauges to real tags,
-resize, restyle), then **Deploy**.  Tag Lab can drive the bound tags before the
-panel is even connected.
-
-### Design presets
-
-When the brief text mentions certain domain keywords the AI tab automatically
-appends a **design preset** to the system prompt: a hand-built layout exemplar
-and a style guide that steer the model toward the right idiom.  Two presets ship
-with the Studio today:
-
-| Preset | Brief keywords | What it adds |
-|---|---|---|
-| **Automotive cluster** | `automotive`, `cluster`, `car`, `dashboard`, `speedometer`, `rpm`, `fuel`, `gear` | Dark instrument-cluster template with arc gauge, readouts, level bars, telltales and trip info. |
-| **EV infotainment cluster** | `ev`, `electric`, `soc`, `battery`, `tyre`, `tpms`, `carplay`, `android auto` | EV dashboard with dual round gauges, tyre-pressure display, SOC segment bar and icon tiles. |
-
-A preset is just a validated ``.edsui`` project (loadable in the Designer
-itself) plus a short composition guide.  You can list them with the CLI:
-
-```
-python -m tools.hmi_deployer.design_presets --list
-```
-
-### A cluster that drives itself
-
-`sim.car.*` values are a drive cycle, not a sweep: sixty seconds that idle in
-P, pull away through the gears, cruise in fourth, kick down for a sprint to
-the redline, brake, cruise in ECO and stop — with rpm derived from speed and
-gear, the coolant warming to 90 °C, fuel and SOC creeping down, the trip
-counting and the indicators blinking. Put a value such as `sim.car.rpm_k`,
-`sim.car.speed` or `sim.car.gear` on any widget property and the page carries
-its own clock; no daemon, no Tag Lab, and it runs the same on the canvas, in
-the Live Preview window and on the panel.
-
-<div align="center">
-
-<img src="docs/assets/cluster-drive.gif" alt="The automotive cluster running its drive cycle: pull-away, cruise, sprint to the redline, braking and stop" width="720" />
-
-</div>
-
-`designer/templates/automotive_cluster_demo.edsui` is the cluster preset
-with every binding replaced by a `sim.car.*` value — open it, press Preview,
-or deploy it to a bench panel as a demonstrator. The full list of values is
-`CAR_TAGS` in `designer/generators/qml_generator.py`.
-
-### What changed recently
-
-**Unreleased**
-
-* The **Code** workspace is a project editor: the bundle's files and folders,
-  a Widgets list with live thumbnails, tabbed editors with undo / redo / save
-  on every platform, the design pinned first, and an
-  [opencode](https://opencode.ai) coding agent that works in the project
-  folder on the configured model. Studio projects hide `generated/` (the
-  desktop preview's regenerated QML).
-* A new look, from [Libraries.dev](https://github.com/Jakubantalik/Libraries.dev)
-  ported to QPainter: liquid navigation, border beams on work in progress,
-  thinking orbs, a bot avatar for the agent, a liquid-metal mark and a
-  pixel-mosaic preview loader — with an **Animations** switch in the header.
-* `hmi-tagsim`: a bench feed that reads the deployed design and fills every
-  tag it binds from one flight — one aircraft state, so the screen agrees
-  with itself — with each quantity mapped onto the scale of the widget that
-  draws it. Master-warning lamps are driven from the design's own alarm
-  limits rather than blinking to their own tune.
-* **Mirror the panel** in the Display Console: the panel's own screen at a
-  frame a second, instead of a still render that cannot show values moving.
-* `hmi-ui` honours the Designer's `z`. Card backgrounds sent behind the
-  instruments were painted over them on the panel while the preview showed
-  them correctly behind.
-* Four kit widgets brought back to their spec, all of them wrong only away
-  from the defaults the parity suite rendered: `ShAttitude` (sky and ground
-  inverted in both axes, and a horizon line that escaped the widget),
-  `ShTape` (ticks anchored to the reading rather than to whole steps, labels
-  clipped to a pixel, tick dashes missing), `ShVSI` (hard-coded labels) and
-  `ShGauge` (a range set in the Designer never reached the panel).
-* `ShTurnCoordinator`'s aeroplane sits on its own arc again.
-* AI Design: the reasoning pass is off by default — a thinking model spent
-  the whole output budget on it and could return no design at all.
-* The packaged Studio ships `designer/templates`, and uncaught exceptions
-  reach `studio.log`: a missing template hung a run at "Sending request"
-  with nothing written anywhere.
-* The Designer's property panel no longer deletes an editor inside its own
-  signal, which crashed the Studio outright when a font size was typed.
-
-**0.1.0**
-
-* The panel is Qt-free: `hmi-ui` (C11 + LVGL, DRM/KMS) is the platform GUI,
-  interpreting the design file directly with all 46 widget types, icons,
-  touch and the alarm engine. Bundles carry `runtime: edsui` and no
-  generated code; provisioning installs `hmi-ui`, converts a Qt panel in
-  place and can ship the interpreter (`--python`); the Yocto layer has no
-  Qt dependency. The Qt loaders remain in the repository as a legacy path.
-* The Studio previews with `hmi-ui` itself: the Designer canvas, the bezel
-  and the Code section are rendered by the panel's own renderer (a
-  headless Windows build travels inside the exe), so what the desktop
-  shows is what the glass draws. Only the Live Preview window is still
-  the desktop's Qt/QML.
-* The Code section, beside Designer and AI Design: the `.edsui` design of
-  the selected widget or the whole screen, following the selection, with
-  a preview; editable and applied back as one undo step.
-* `hmi-ui` hardening from review: bounded binding format text, bounded
-  UDP drain per poll.
-
-**0.0.9**
-
-* `sim.car.*` drive cycle and the `automotive_cluster_demo` preset: a cluster
-  that drives itself on the canvas, in the Live Preview window and on the
-  panel.
-* Deploy keys: Export verifies the key against the panel and packs the one it
-  accepts; the bundle carries the panel's host key; Import installs it,
-  verifies the link and explains any failure (no ssh client, unreachable,
-  host-key mismatch, key not trusted, permissions). Connect offers to forget
-  a stale host key.
-* Size-like properties have floors: a cleared or negative font size, dot size
-  or segment count can no longer blank every widget on the page.
-* The gear indicator ignores a numeric gear from a simulator.
-
-**0.0.8**
-
-* **A cluster that drives itself**: `sim.car.*` values run a 60 s drive cycle
-  on any page, and `automotive_cluster_demo.edsui` is the cluster preset
-  running on it. Deploy keys carry the panel's host key, so an imported key
-  connects at once instead of failing host-key verification.
-* **Automotive widget set**: `ShClusterGauge`, `ShGearIndicator`, `ShAutoLevel`,
-  `ShAutoReadout`, `ShDriveMode`, `ShTelltale`, `ShIconTile`, `ShTripInfo`,
-  `ShSegmentBar`, `ShVehicleStatus` — after a classic instrument cluster and an
-  EV infotainment screen; 47 Tabler cluster icons vendored.
-* **Design presets**: a brief that reads like a cluster or an EV dashboard gets
-  a style guide and a hand-built exemplar in the AI prompt; the two templates
-  open as projects too.
-* **The canvas is the real thing**: each widget is drawn with its own QML,
-  rendered offscreen and cached, instead of a painted sketch ("Live QML").
-* **Live Preview window**: Preview runs the design in its own window at the
-  panel's resolution on the Studio's tag engine, so controls can be operated.
-* Resize from any of the eight handles; **Disconnect** beside Connect;
-  **Export / Import key** (`.hmikey`) so another user can deploy to a panel.
-* Generator never emits a property or enum a widget does not declare (an
-  AI-invented `active` on a status dot used to fail the deploy on the panel);
-  a bound text property falls back to `""`, not `0`.
-* Panel: the GUI loader finds the validator in the panel layout, the
-  provisioner ships `modbus.py`, 32-bit Modbus tags read both registers.
-
-**0.0.7**
-
-* AI Design → Designer → Preview no longer requires an open bundle; the
-  Designer provisions one and the Studio adopts it.
-* AI project titles are coerced to valid manifest names, so a generated
-  design always validates.
-* Sectioned generation: designs are requested in ≤ 8-widget sections, merged
-  by widget id, and continued automatically until complete.
-* The AI tab hides the runtime preview like the Designer does; bezel capture
-  picks a tab where the preview is live.
-
-**0.0.6**
-
-* AI Design tab: Ollama, OpenAI, Anthropic, Google, vLLM and BYOK; streaming
-  reasoning, response and usage; canvas diff and multi-turn context.
-* The Designer restyled in the same vocabulary: flat panels, icon-only tools,
-  searchable library with favorites, layer tree, paired inspector cells.
-* `TagEngine` gained `list_tags` and `unsubscribe` QML slots.
+## What's new in 0.1.1
+
+<table>
+<tr>
+<td width="33%" valign="top"><strong>Qt apps on a Qt-free panel</strong><br /><sub>The Studio installs the PySide2 or PySide6 runtime, the launcher and the app's packages at deploy, offline; the panel switches between <code>hmi-ui</code> and the Qt app per bundle.</sub></td>
+<td width="33%" valign="top"><strong>AI Design that fits the glass</strong><br /><sub>Designs too big for the screen become linked pages; a twin composition for paired instruments; gauge scales repaired; model output made deployable.</sub></td>
+<td width="33%" valign="top"><strong>The Code workspace</strong><br /><sub>A project editor with an opencode agent, the new look, Mirror the panel, <code>hmi-tagsim</code>, and a Live Preview that says why a design did not load.</sub></td>
+</tr>
+</table>
+
+Every change, and every earlier release, is in [**CHANGELOG.md**](CHANGELOG.md).
 
 ---
 
 <div align="center">
 
-**MIT licensed** — see [`LICENSE`](LICENSE). Tabler Icons are MIT; their notice
-is in `ui/icons/LICENSE.tabler`. The packaged Studio executable also carries
-PySide6 and Qt, redistributed unmodified under the LGPL-3.0.
+**MIT licensed** — see [`LICENSE`](LICENSE). LVGL is MIT; Tabler Icons are MIT, with their notice in `ui/icons/LICENSE.tabler`. The packaged Studio also carries PySide6 and Qt, redistributed unmodified under the LGPL-3.0.
+
+<sub>FLYVI TECHNOLOGIES · EMBEDDED DISPLAY ENGINEERING</sub>
 
 </div>
