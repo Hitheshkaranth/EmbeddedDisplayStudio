@@ -2180,6 +2180,7 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         if self._live_preview is None:
             self._live_preview = LivePreviewWindow(self)
             self._live_preview.closed.connect(self._on_live_preview_closed)
+            self._live_preview.problem.connect(lambda text: self.log(f"Live preview: {text}"))
         try:
             from hmi_loader.tagengine import expose_to_qml
         except ImportError:
@@ -3564,4 +3565,8 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self._shutdown_transport()
         self._discard_packaging_dir()
         self.device_panel.stop_preview()
+        # Closed, not just destroyed with this window: its closeEvent cuts the
+        # QML warnings hook before the engine tears its items down.
+        if getattr(self, "_live_preview", None) is not None:
+            self._live_preview.close()
         super().closeEvent(event)

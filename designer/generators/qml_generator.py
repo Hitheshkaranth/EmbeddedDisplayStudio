@@ -425,8 +425,19 @@ class QmlGenerator:
         two_way = {state_prop} if state_prop and state_prop in widget.bindings and any(
             action.kind == "write" and action.tag == widget.bindings[state_prop].tag
             for action in widget.actions.values()) else set()
+        declared = (set(definition.properties) | set(definition.bindable_properties)) if definition else set()
         for key, binding in widget.bindings.items():
             qml_key = aliases.get((widget.type, key), key)
+            # A binding on a property the component does not have is
+            # "Cannot assign to non-existent property" and the whole file
+            # fails to load -- an AI design binding ShAnnunciator "value"
+            # left the Live Preview empty. Its thresholds still decide lit
+            # and severity through ``derived`` above; only the raw
+            # assignment goes. (ShTripInfo "value" becomes a Binding element
+            # below, which cannot break the load.)
+            if (declared and key not in declared and (widget.type, key) not in aliases
+                    and not (widget.type == "ShTripInfo" and key == "value")):
+                continue
             if key in derived:
                 # The threshold expression already decides this property
                 # (an annunciator's ``lit`` bound with a threshold, say).

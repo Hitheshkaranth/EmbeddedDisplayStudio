@@ -71,6 +71,44 @@ class LivePreviewWindowTests(unittest.TestCase):
         # The layout is still the panel's: zoom scales the picture only.
         self.assertEqual((app.property("width"), app.property("height")), (640, 400))
 
+    def test_a_binding_on_a_property_the_widget_lacks_does_not_empty_the_window(self):
+        """AI Design bound ShAnnunciator "value"; the generated file then
+        failed to load and the window stayed dark. The threshold still lights
+        the lamp; only the raw assignment is dropped."""
+        bundle, manifest = _bundle([DesignerWidget(
+            "ShAnnunciator", "lamp", {"x": 10, "y": 10, "width": 175, "height": 48},
+            {"text": "CRITICAL"},
+            {"value": DesignerBinding("di.fault", warning="> 2.5", critical="> 3.0")})])
+        qml = open(os.path.join(bundle, manifest["entry"]), encoding="utf-8").read()
+        self.assertNotIn("value: Bus.value", qml)
+        self.assertIn("lit:", qml)
+        engine = TagEngine(manifest["tags_required"], rx_port=0, allow_any_port=True,
+                           daemon_host="127.0.0.1", daemon_port=5000)
+        window = LivePreviewWindow()
+        self.addCleanup(window.close)
+        window.load(bundle, manifest, engine, expose_to_qml)
+        window.show()
+        QTest.qWait(200)
+        self.assertIsNotNone(window.app_item(), window.errors())
+        self.assertEqual(window.errors(), [])
+
+    def test_a_file_that_does_not_load_says_why(self):
+        """One bad line fails the whole file; the window used to show only
+        its background, with nothing in the console."""
+        bundle, manifest = _bundle([DesignerWidget(
+            "ShButton", "b", {"x": 10, "y": 10, "width": 120, "height": 40}, {"text": "Go"})])
+        with open(os.path.join(bundle, manifest["entry"]), "a", encoding="utf-8") as handle:
+            handle.write("\nthis is not qml\n")
+        window = LivePreviewWindow()
+        self.addCleanup(window.close)
+        reported = []
+        window.problem.connect(reported.append)
+        window.load(bundle, manifest, None, lambda *_: None)
+        QTest.qWait(100)
+        self.assertIsNone(window.app_item())
+        self.assertTrue(reported)
+        self.assertIn("did not load", window.feed.text())
+
     def test_a_control_in_the_window_writes_through_the_tag_engine(self):
         bundle, manifest = _bundle([DesignerWidget(
             "ShDriveMode", "mode", {"x": 10, "y": 10, "width": 180, "height": 56},

@@ -59,9 +59,13 @@ class LivePreviewWindow(QMainWindow):
     Signals:
         closed(): the window went away; the Studio drops its reference so the
             next Preview opens a fresh one.
+        problem(str): a QML error from loading the app. One error in the
+            generated file fails the whole file, and the window used to show
+            only its dark background with nothing said anywhere.
     """
 
     closed = Signal()
+    problem = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -74,6 +78,10 @@ class LivePreviewWindow(QMainWindow):
         self.quick.setResizeMode(QQuickWidget.SizeViewToRootObject)
         self.quick.setClearColor(QColor("#101418"))
         self.quick.engine().addImportPath(os.path.join(REPO_ROOT, "ui", "qml"))
+        self.quick.engine().warnings.connect(self._on_qml_warnings)
+        self._errors = []
+        self._loaded = False
+        self._feed_text = ""
 
         self.scroll = QScrollArea()
         self.scroll.setWidget(self.quick)
@@ -120,8 +128,12 @@ class LivePreviewWindow(QMainWindow):
         self._tag_engine = tag_engine
         name = manifest.get("name") or os.path.basename(bundle_dir)
         self.title.setText(f"<b>{name}</b> &nbsp; {width}×{height}")
-        self.feed.setText("live tags" if tag_engine is not None else "no tag feed")
+        self._feed_text = "live tags" if tag_engine is not None else "no tag feed"
+        self.feed.setText(self._feed_text)
+        self.feed.setStyleSheet("")
+        self._loaded = False
 
+        self._errors = []
         engine = self.quick.engine()
         if tag_engine is not None:
             expose(engine, engine.rootContext(), tag_engine)
@@ -130,6 +142,8 @@ class LivePreviewWindow(QMainWindow):
         self.quick.setSource(QUrl())
         engine.clearComponentCache()
         self.quick.setContent(QUrl(), *self._host_object(width, height))
+        self._loaded = True
+        self._show_verdict()
         self._apply_zoom()
         self.resize(min(width + 24, 1600), min(height + 80, 1000))
 
@@ -145,6 +159,39 @@ class LivePreviewWindow(QMainWindow):
         host.setProperty("entry", QUrl.fromLocalFile(self._entry))
         self._component, self._host = component, host
         return component, host
+
+    def _on_qml_warnings(self, warnings):
+        """Say what broke, in the window and to the Studio's console."""
+        for warning in warnings:
+            text = warning.toString()
+            self._errors.append(text)
+            self.problem.emit(text)
+        if self._loaded:
+            self._show_verdict()
+
+    def _show_verdict(self):
+        """After a load: failed (red, first error) or running with warnings.
+
+        Decided only once the load has finished: Qt reports a binding's
+        runtime error before the Loader hands over its item, so an app that
+        loaded fine would otherwise read as one that did not.
+        """
+        if not self._errors:
+            return
+        # "file:///.../generated/Main.qml:41:9: Cannot assign ..." -> keep
+        # the part a person can act on.
+        first = self._errors[0]
+        short = first.split("/")[-1] if "/" in first else first
+        if self.app_item() is None:
+            self.feed.setText(f"did not load: {short}")
+            self.feed.setStyleSheet("color: #ef4444;")
+        else:
+            self.feed.setText(f"{self._feed_text} · {len(self._errors)} QML warning(s), see the console")
+            self.feed.setStyleSheet("color: #f59e0b;")
+
+    def errors(self):
+        """QML errors from the last load (tests and the console read these)."""
+        return list(self._errors)
 
     def zoom_factor(self):
         return float(self.zoom.currentData())
@@ -164,5 +211,12 @@ class LivePreviewWindow(QMainWindow):
         return loader.property("item") if loader is not None else None
 
     def closeEvent(self, event):
+        # The engine keeps reporting while its items are torn down (bindings
+        # re-evaluate against objects already gone); delivered to this
+        # half-destroyed window, that was an access violation.
+        try:
+            self.quick.engine().warnings.disconnect(self._on_qml_warnings)
+        except (RuntimeError, TypeError):
+            pass
         self.closed.emit()
         super().closeEvent(event)
