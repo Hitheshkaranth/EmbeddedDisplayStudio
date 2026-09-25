@@ -84,7 +84,9 @@ static void load_defs(hmi_alarms_t *a, const cJSON *arr)
         def_t *def = &a->defs[a->ndefs++];
         snprintf(def->tag, sizeof def->tag, "%s", cJSON_GetStringValue(tag));
         const cJSON *label = cJSON_GetObjectItemCaseSensitive(d, "label");
-        snprintf(def->label, sizeof def->label, "%s", cJSON_IsString(label) ? cJSON_GetStringValue(label) : def->tag);
+        // A label longer than the field is cut to fit (display text only).
+        snprintf(def->label, sizeof def->label, "%.*s", (int)sizeof def->label - 1,
+                 cJSON_IsString(label) ? cJSON_GetStringValue(label) : def->tag);
         const cJSON *unit = cJSON_GetObjectItemCaseSensitive(d, "unit");
         snprintf(def->unit, sizeof def->unit, "%s", cJSON_IsString(unit) ? cJSON_GetStringValue(unit) : "");
         read_threshold(d, "critical", &def->critical);
