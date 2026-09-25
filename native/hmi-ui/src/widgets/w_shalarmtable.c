@@ -77,6 +77,12 @@ static void build_rows(hmi_widget_t *w)
     int stateX = tsX - SPACING - STATE_W;
     int msgX = SPACING + DOT + SPACING;
     int msgW = stateX - SPACING - msgX;
+    // The body does not scroll: rows below its bottom edge are never seen,
+    // so only build the ones that fit (a long alarm list stays cheap).
+    size_t fit = (size_t)(fmax(1, w->height - HEADER_H) / rowH) + 1;
+    if (n > fit) n = fit;
+    int smH = lv_font_get_line_height(hmi_font(hmi_font_size("fontSizeSm"), 400));
+    int xsH = lv_font_get_line_height(hmi_font(10, 400));
     for (size_t i = 0; i < n; ++i) {
         const hmi_value_t *al = &st->alarms.items[i];
         bool ack = cell_bool(al, 6);
@@ -107,17 +113,17 @@ static void build_rows(hmi_widget_t *w)
         lv_obj_t *message = hmi_make_label(row, hmi_font_size("fontSizeSm"), 400,
                                            hmi_colour(ack ? "mutedForeground" : "foreground"), msg[0] ? msg : "Alarm");
         lv_label_set_long_mode(message, LV_LABEL_LONG_DOT);
-        lv_obj_set_size(message, msgW > 0 ? msgW : 1, lv_font_get_line_height(hmi_font(hmi_font_size("fontSizeSm"), 400)));
-        lv_obj_set_pos(message, msgX, (rowH - lv_font_get_line_height(hmi_font(hmi_font_size("fontSizeSm"), 400))) / 2);
+        lv_obj_set_size(message, msgW > 0 ? msgW : 1, smH);
+        lv_obj_set_pos(message, msgX, (rowH - smH) / 2);
         lv_obj_t *state = hmi_make_label(row, 10, 400, hmi_colour(ack ? "mutedForeground" : "brand"), ack ? "ACK" : "NEW");
         lv_obj_set_width(state, STATE_W);
-        lv_obj_set_pos(state, stateX, (rowH - lv_font_get_line_height(hmi_font(10, 400))) / 2);
+        lv_obj_set_pos(state, stateX, (rowH - xsH) / 2);
         if (st->showTimestamp) {
             lv_obj_t *ts = hmi_make_label(row, 10, 400, hmi_colour("mutedForeground"), cell(al, 5, ""));
             lv_label_set_long_mode(ts, LV_LABEL_LONG_DOT);
-            lv_obj_set_size(ts, TS_W, lv_font_get_line_height(hmi_font(10, 400)));
+            lv_obj_set_size(ts, TS_W, xsH);
             lv_obj_set_style_text_align(ts, LV_TEXT_ALIGN_RIGHT, 0);
-            lv_obj_set_pos(ts, tsX, (rowH - lv_font_get_line_height(hmi_font(10, 400))) / 2);
+            lv_obj_set_pos(ts, tsX, (rowH - xsH) / 2);
         }
     }
 }

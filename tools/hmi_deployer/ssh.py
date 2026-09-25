@@ -392,7 +392,7 @@ class UploadWorker(QThread):
                     return
                 try:
                     for raw in iter(proc.stdout.readline, b""):
-                        line = raw.decode("utf-8", errors="replace").rstrip("\n")
+                        line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
                         if line:
                             collected.append(line)
                 except (OSError, ValueError):
@@ -404,13 +404,21 @@ class UploadWorker(QThread):
             reader.start()
 
             sent = 0
+            broken = False
             self.progress.emit(0, total)
             with open(self.local_path, "rb") as f:
                 while not self._cancelled:
                     chunk = f.read(self.CHUNK)
                     if not chunk:
                         break
-                    self._proc.stdin.write(chunk)
+                    try:
+                        self._proc.stdin.write(chunk)
+                    except (BrokenPipeError, ConnectionResetError):
+                        # The remote side exited early (disk full, bad path,
+                        # auth). Its own output and exit code below say why;
+                        # "[Errno 32] Broken pipe" says nothing.
+                        broken = True
+                        break
                     sent += len(chunk)
                     self.progress.emit(sent, total)
             try:
@@ -426,6 +434,10 @@ class UploadWorker(QThread):
             self._proc.wait()
             if self._timed_out:
                 self.error.emit(f"Upload timed out after {self.timeout_s}s")
+                self.finished.emit(-1)
+            elif broken and self._proc.returncode == 0 and not self._cancelled:
+                # Never report a partial file as delivered.
+                self.error.emit(f"The panel closed the upload after {sent} of {total} bytes")
                 self.finished.emit(-1)
             else:
                 self.finished.emit(_signed_exit_code(self._proc.returncode) if not self._cancelled else -1)

@@ -27,8 +27,10 @@
 
 typedef struct hmi_alarms hmi_alarms_t;
 
+#define HMI_ALARM_TAG_MAX 128   // bytes incl. NUL; longer tags are rejected at load
+
 typedef struct {
-    char tag[64];
+    char tag[HMI_ALARM_TAG_MAX];
     char label[96];
     char severity[16];     // "critical" | "warning"
     hmi_value_t value;     // raw frame value, type preserved

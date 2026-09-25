@@ -189,3 +189,33 @@ class TestSignedExitCode(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUploadRemoteExitsEarly(unittest.TestCase):
+    """A remote that quits mid-upload is reported by what it said, not EPIPE."""
+
+    def run_upload(self, script):
+        import sys
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.write(b"x" * (4 * ssh.UploadWorker.CHUNK))
+        self.addCleanup(os.unlink, f.name)
+        worker = ssh.UploadWorker([sys.executable, "-c", script], f.name, timeout_s=30)
+        lines, errors, codes = [], [], []
+        worker.outputLine.connect(lines.append)
+        worker.error.connect(errors.append)
+        worker.finished.connect(codes.append)
+        worker.run()                     # synchronously, on this thread
+        return lines, errors, codes
+
+    def test_failure_keeps_the_remote_message_and_code(self):
+        lines, errors, codes = self.run_upload(
+            "import sys; print('No space left on device', flush=True); sys.exit(3)")
+        self.assertEqual(codes, [3])
+        self.assertIn("No space left on device", lines)
+        self.assertFalse(any("Broken pipe" in e or "Errno" in e for e in errors), errors)
+
+    def test_a_clean_exit_before_the_end_is_still_a_failure(self):
+        _lines, errors, codes = self.run_upload("import sys; sys.exit(0)")
+        self.assertEqual(codes, [-1])
+        self.assertTrue(any("closed the upload" in e for e in errors), errors)

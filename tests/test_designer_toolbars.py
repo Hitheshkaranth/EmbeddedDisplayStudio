@@ -188,6 +188,43 @@ class ToolbarLayoutTests(unittest.TestCase):
         self.assertFalse(actions["Text.AlignLeft"].isChecked())
         self.assertTrue(all(a.isEnabled() for a in actions.values()))
 
+    def test_text_alignment_applies_to_every_selected_text(self):
+        """A mixed selection: every Text is aligned, the Rectangle is left alone.
+
+        It used to route through the single-widget property command, which
+        edits selected[0] -- so only one widget changed, and when that was the
+        Rectangle it got a horizontalAlignment it cannot use.
+        """
+        from designer.model import DesignerWidget
+
+        workspace = self.workspace(STUDIO_PANE_WIDTHS[0])
+        page = workspace.current_page
+        page.widgets.clear()
+        page.widgets.append(DesignerWidget(
+            id="box", type="Rectangle",
+            geometry={"x": 0, "y": 100, "width": 60, "height": 60},
+            properties=dict(workspace.registry.get("Rectangle").defaults)))
+        for i in range(3):
+            page.widgets.append(DesignerWidget(
+                id="caption%d" % i, type="Text",
+                geometry={"x": 0, "y": i * 40, "width": 140, "height": 32},
+                properties=dict(workspace.registry.get("Text").defaults)))
+        workspace._load_page()
+        for model in page.widgets:
+            workspace.scene.item_for_id(model.id).setSelected(True)
+        self.settle()
+        before = {m.id: dict(m.properties) for m in page.widgets}
+
+        workspace.set_text_alignment("Text.AlignHCenter")
+
+        for model in workspace.current_page.widgets:
+            if model.type == "Text":
+                self.assertEqual(model.properties["horizontalAlignment"], "Text.AlignHCenter", model.id)
+            else:
+                self.assertNotIn("horizontalAlignment", model.properties)
+        workspace.undo_stack.undo()
+        self.assertEqual({m.id: dict(m.properties) for m in workspace.current_page.widgets}, before)
+
     def test_delete_key_is_scoped_and_does_not_auto_repeat(self):
         workspace = self.workspace(STUDIO_PANE_WIDTHS[0])
         delete = next(

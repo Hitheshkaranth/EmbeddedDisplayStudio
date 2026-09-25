@@ -22,6 +22,7 @@ import argparse
 import asyncio
 import json
 import logging
+import math
 import os
 import pathlib
 import re
@@ -67,6 +68,17 @@ SEQ_WRAP: int = 2**31
 # Minimum pulse width (ms) and maximum pulse width (ms) (CONTRACT 2.2).
 PULSE_MIN_MS: int = 1
 PULSE_MAX_MS: int = 10000
+# Clients subscribe with a 5-10 s TTL and refresh every 2 s. A cap keeps a
+# stray or hostile sender from registering a sink that never expires.
+SUBSCRIBE_TTL_MAX_S: float = 60.0
+
+
+def _reject_constant(name: str):
+    """json.loads hook: NaN and +/-Infinity are not JSON, and every numeric
+    range check is False for NaN -- a pulse of NaN ms passed validation, drove
+    the output high and scheduled its off-transition at time NaN, which never
+    comes. Refuse them at the parser, for every command."""
+    raise json.JSONDecodeError(f"non-finite number {name}", name, 0)
 
 # Rate-limit window for logging: max 1 line per this many seconds per class.
 LOG_RATE_LIMIT_S: float = 5.0
@@ -1127,7 +1139,7 @@ class CommandProtocol(asyncio.DatagramProtocol):
 
         # -- JSON parse --
         try:
-            msg = json.loads(text)
+            msg = json.loads(text, parse_constant=_reject_constant)
         except json.JSONDecodeError:
             self._daemon.error_count += 1
             _rl_log.warning(ERR_BAD_JSON, "Malformed JSON from %s", addr)
@@ -1238,7 +1250,8 @@ class CommandProtocol(asyncio.DatagramProtocol):
                 self._send_nack(msg_id, ERR_NOT_WRITABLE, addr)
             return
         ms = msg.get("ms")
-        if not isinstance(ms, (int, float)) or ms < PULSE_MIN_MS or ms > PULSE_MAX_MS:
+        if (not isinstance(ms, (int, float)) or isinstance(ms, bool) or not math.isfinite(ms)
+                or ms < PULSE_MIN_MS or ms > PULSE_MAX_MS):
             self._daemon.error_count += 1
             if msg_id:
                 self._send_nack(msg_id, ERR_BAD_VALUE, addr)
@@ -1281,8 +1294,11 @@ class CommandProtocol(asyncio.DatagramProtocol):
     def _cmd_subscribe(self, msg: dict, msg_id: Optional[str], addr: Tuple[str, int]) -> None:
         """Handle the 'subscribe' command: register sender as telemetry sink."""
         ttl = msg.get("ttl")
-        if ttl is not None and (not isinstance(ttl, (int, float)) or ttl <= 0):
+        if ttl is not None and (not isinstance(ttl, (int, float)) or isinstance(ttl, bool)
+                                or not math.isfinite(ttl) or ttl <= 0):
             ttl = None
+        elif ttl is not None:
+            ttl = min(float(ttl), SUBSCRIBE_TTL_MAX_S)
         self._daemon.subscribers.subscribe(addr, ttl)
         if msg_id:
             self._send_ack(msg_id, addr)
@@ -1736,25 +1752,22 @@ class HwDaemon:
         """
         # Give the client a moment to initialize.
         time.sleep(0.1)
-        last_reconnect: float = 0.0
 
         while not self._modbus_stop.is_set():
+            delay = poll_interval_s
             try:
                 self._do_modbus_poll()
                 # Mark online on first successful poll.
                 self._modbus_online_event.set()
-                last_reconnect = 0.0
             except Exception:
                 self._modbus_online_event.clear()
                 self.error_count += 1
                 _rl_log.warning("modbus_poll", "Modbus poll error, retrying in %.1fs", reconnect_s)
-                last_reconnect = time.monotonic()
+                # Back off for real: retrying at the poll rate opened a new
+                # TCP connection to a dead PLC several times a second.
+                delay = max(poll_interval_s, reconnect_s)
 
-            # Check if we need to reconnect (link down after a failure).
-            if last_reconnect > 0 and time.monotonic() - last_reconnect >= reconnect_s:
-                last_reconnect = 0.0
-
-            self._modbus_stop.wait(timeout=poll_interval_s)
+            self._modbus_stop.wait(timeout=delay)
 
     def _do_modbus_poll(self) -> None:
         """Perform a single Modbus poll cycle.

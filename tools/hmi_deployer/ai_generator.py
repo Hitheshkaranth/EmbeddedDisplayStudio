@@ -420,6 +420,23 @@ def build_system_prompt(registry: Optional[WidgetRegistry] = None,
     return prompt
 
 
+def _geometry_number(value, default):
+    """A geometry value from model output as a number: 12, 12.5, "12",
+    "12px". Anything else (null, "auto", NaN) takes the default -- layout
+    does arithmetic on these, and one null used to fail the whole design."""
+    if isinstance(value, str):
+        value = value.strip().lower().removesuffix("px").strip()
+    if isinstance(value, bool):
+        return default
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if number != number or number in (float("inf"), float("-inf")):
+        return default
+    return int(number) if number.is_integer() else number
+
+
 class AIDesignGenerator:
     """Parse AI output (QML code or JSON design spec) into DesignerProject."""
 
@@ -582,6 +599,10 @@ class AIDesignGenerator:
         result = []
         seen_ids: set = set()
         for i, wdata in enumerate(widget_list):
+            # Model output: an entry that is not an object ("oops", null) is
+            # dropped rather than failing the whole section.
+            if not isinstance(wdata, dict):
+                continue
             widget_type = wdata.get("type", "Rectangle")
             # Resolve aliases (e.g. "Button" -> "ShButton")
             aliased = _AI_TYPE_ALIASES.get(widget_type, widget_type)
@@ -591,11 +612,13 @@ class AIDesignGenerator:
                     # Double-check original type
                     if not self.registry.get(widget_type):
                         aliased = "Rectangle"
-            geometry = wdata.get("geometry", {})
-            x = geometry.get("x", i * 20 % 1000)
-            y = geometry.get("y", i * 20 % 800)
-            w = geometry.get("width", 140)
-            h = geometry.get("height", 40)
+            geometry = wdata.get("geometry")
+            if not isinstance(geometry, dict):
+                geometry = {}
+            x = _geometry_number(geometry.get("x"), i * 20 % 1000)
+            y = _geometry_number(geometry.get("y"), i * 20 % 800)
+            w = _geometry_number(geometry.get("width"), 140)
+            h = _geometry_number(geometry.get("height"), 40)
             properties = dict(wdata.get("properties") or {})
             # A model invents properties freely ("active" on a status dot);
             # one unknown key makes the generated QML fail to load on the

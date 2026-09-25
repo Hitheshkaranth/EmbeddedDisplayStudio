@@ -144,6 +144,10 @@ class TagEngine(QObject):
             permanently offline rather than taking the UI down with it.
         """
         super().__init__(parent)
+        # Pending correlation ids -> ack handler; set by slot calls, popped
+        # by ackReceived. Per instance: a class-level dict was shared by every
+        # engine in the process, so one engine could consume another's ack.
+        self._pending_acks: dict[str, Any] = {}
 
         # Current link state. False until the first valid frame arrives.
         self._online = False
@@ -259,9 +263,6 @@ class TagEngine(QObject):
 
         self._subscribe_to_daemon()
 
-    # Maps pending correlation ids to (emit_fn, result_holder) tuples.
-    # Populated by slot calls and cleared by ackReceived.
-    _pending_acks: dict[str, Any] = {}
 
     # ---------------------------------------------------------------- exposure
 

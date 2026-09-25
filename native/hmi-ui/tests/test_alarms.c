@@ -389,6 +389,28 @@ static void test_manifest_file(void)
     hmi_alarms_destroy(a);
 }
 
+// A tag longer than the old 64-byte buffer still fires under its full name;
+// one past the limit is dropped, not truncated into a dead (or wrong) alarm.
+static void test_long_tag(void)
+{
+    char tag[HMI_ALARM_TAG_MAX + 8], json[512];
+    memset(tag, 'a', sizeof tag); memcpy(tag, "plc.", 4);
+    tag[100] = '\0';
+    snprintf(json, sizeof json, "[{\"tag\":\"%s\",\"warning\":{\"op\":\">\",\"value\":1}}]", tag);
+    hmi_alarms_t *a = engine(json);
+    CHECK(hmi_alarms_tag_count(a) == 1);
+    CHECK(feed(a, tag, 5));
+    CHECK(count(a) == 1);
+    hmi_alarms_destroy(a);
+
+    memset(tag + 4, 'a', sizeof tag - 4);
+    tag[HMI_ALARM_TAG_MAX] = '\0';
+    snprintf(json, sizeof json, "[{\"tag\":\"%s\",\"warning\":{\"op\":\">\",\"value\":1}}]", tag);
+    a = engine(json);
+    CHECK(hmi_alarms_tag_count(a) == 0);
+    hmi_alarms_destroy(a);
+}
+
 int main(void)
 {
     test_empty();
@@ -410,5 +432,6 @@ int main(void)
     test_value_keeps_type();
     test_active_value_shape();
     test_manifest_file();
+    test_long_tag();
     return check_summary("test_alarms");
 }
