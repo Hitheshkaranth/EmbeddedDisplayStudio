@@ -371,16 +371,20 @@ def _free_spot(widget, others, grid) -> tuple[int, int] | None:
     lefts = set(grid.col_lefts()) | {grid.margin}
     tops = set(grid.row_tops()) | {grid.margin}
     on_grid_x, on_grid_y = set(grid.col_lefts()), set(grid.row_tops())
-    for other in others:
-        other_x, other_y, other_width, other_height = _rect(other)
+    # The neighbours' rectangles, once: every candidate is tested against all
+    # of them, and re-reading geometry per test made a crowded page (80
+    # widgets) take minutes.
+    rects = [_rect(other) for other in others]
+    for other_x, other_y, other_width, other_height in rects:
         lefts.add(other_x + other_width + grid.gutter)
         tops.add(other_y + other_height + grid.gutter)
-    best = None
-    for left in sorted(lefts):
-        if left < grid.margin or left + width > grid.content_right:
+    right_limit, bottom_limit = grid.content_right, grid.content_bottom
+    candidates = []
+    for left in lefts:
+        if left < grid.margin or left + width > right_limit:
             continue
-        for top in sorted(tops):
-            if top < grid.margin or top + height > grid.content_bottom:
+        for top in tops:
+            if top < grid.margin or top + height > bottom_limit:
                 continue
             dx, dy = left - x, top - y
             if dx == 0 and dy == 0:
@@ -394,15 +398,27 @@ def _free_spot(widget, others, grid) -> tuple[int, int] | None:
             else:
                 direction = 3
             off_grid = int(left not in on_grid_x) + int(top not in on_grid_y)
-            key = (abs(dx) + abs(dy), off_grid, direction, left, top)
-            if best is not None and key >= best[0]:
+            candidates.append((abs(dx) + abs(dy), off_grid, direction, left, top))
+    # Best first: the first clear candidate is the answer (keys end in
+    # left, top, so no two tie). The last blocker is tried first -- the
+    # next candidate over is usually blocked by the same neighbour.
+    candidates.sort()
+    blocker = None
+    for key in candidates:
+        left, top = key[3], key[4]
+        right, bottom = left + width, top + height
+        if blocker is not None:
+            ox, oy, ow, oh = blocker
+            if min(right, ox + ow) > max(left, ox) and min(bottom, oy + oh) > max(top, oy):
                 continue
-            _place(widget, (left, top, width, height))
-            clear = not _hits(widget, others)
-            _place(widget, (x, y, width, height))
-            if clear:
-                best = (key, left, top)
-    return (best[1], best[2]) if best else None
+        for rect in rects:
+            ox, oy, ow, oh = rect
+            if min(right, ox + ow) > max(left, ox) and min(bottom, oy + oh) > max(top, oy):
+                blocker = rect
+                break
+        else:
+            return (left, top)
+    return None
 
 
 def _nudge_clear(widget, other, others, grid) -> bool:

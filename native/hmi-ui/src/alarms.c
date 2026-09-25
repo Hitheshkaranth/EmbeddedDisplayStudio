@@ -14,6 +14,7 @@
 
 #include "cJSON.h"
 #include "compat.h"
+#include "log.h"
 
 typedef struct {
     char op[4];
@@ -22,7 +23,7 @@ typedef struct {
 } threshold_t;
 
 typedef struct {
-    char tag[64];
+    char tag[HMI_ALARM_TAG_MAX];
     char label[96];
     char unit[32];
     threshold_t critical, warning;
@@ -73,10 +74,19 @@ static void load_defs(hmi_alarms_t *a, const cJSON *arr)
         if (!cJSON_IsObject(d)) continue;
         const cJSON *tag = cJSON_GetObjectItemCaseSensitive(d, "tag");
         if (!cJSON_IsString(tag)) continue;
+        // A truncated tag never matches a frame (or matches the wrong one):
+        // say so and drop the definition rather than arm a dead alarm.
+        if (strlen(cJSON_GetStringValue(tag)) >= HMI_ALARM_TAG_MAX) {
+            hmi_log(HMI_LOG_WARNING, "alarms: tag longer than %d bytes ignored: %.40s...",
+                    HMI_ALARM_TAG_MAX - 1, cJSON_GetStringValue(tag));
+            continue;
+        }
         def_t *def = &a->defs[a->ndefs++];
         snprintf(def->tag, sizeof def->tag, "%s", cJSON_GetStringValue(tag));
         const cJSON *label = cJSON_GetObjectItemCaseSensitive(d, "label");
-        snprintf(def->label, sizeof def->label, "%s", cJSON_IsString(label) ? cJSON_GetStringValue(label) : def->tag);
+        // A label longer than the field is cut to fit (display text only).
+        snprintf(def->label, sizeof def->label, "%.*s", (int)sizeof def->label - 1,
+                 cJSON_IsString(label) ? cJSON_GetStringValue(label) : def->tag);
         const cJSON *unit = cJSON_GetObjectItemCaseSensitive(d, "unit");
         snprintf(def->unit, sizeof def->unit, "%s", cJSON_IsString(unit) ? cJSON_GetStringValue(unit) : "");
         read_threshold(d, "critical", &def->critical);

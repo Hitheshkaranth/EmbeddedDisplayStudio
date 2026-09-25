@@ -1754,11 +1754,19 @@ class DesignerWorkspace(QWidget):
         and a combo box change produce one undo entry of the same shape rather
         than two paths that can drift.
         """
-        for model in self.scene.selected_models():
-            definition = self.registry.get(model.type)
-            if definition and "horizontalAlignment" in definition.properties:
-                self._property_command("horizontalAlignment", value)
-                break
+        targets = [model for model in self.scene.selected_models()
+                   if (definition := self.registry.get(model.type))
+                   and "horizontalAlignment" in definition.properties]
+        value = clamp_property("horizontalAlignment", value)
+        befores = [model.properties.get("horizontalAlignment") for model in targets]
+        if any(before != value for before in befores):
+            ids = [model.id for model in targets]
+            def apply(values):
+                for model, v in zip(targets, values): model.properties["horizontalAlignment"] = v
+                self._load_page(select=ids)
+            self.undo_stack.push(CallbackCommand(
+                "Change horizontalAlignment",
+                lambda: apply([value] * len(targets)), lambda: apply(befores)))
         self._sync_text_alignment()
 
     def _sync_text_alignment(self):

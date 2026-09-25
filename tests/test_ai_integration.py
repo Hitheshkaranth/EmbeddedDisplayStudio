@@ -7,6 +7,21 @@ import re
 class TestAIDesignGenerator(unittest.TestCase):
     """Tests for AIDesignGenerator._convert_widgets and _build_project."""
 
+    def test_malformed_geometry_from_the_model_does_not_fail_the_design(self):
+        """null geometry, null/"12px"/"auto" values and non-object entries
+        used to raise out of the conversion (or later out of layout)."""
+        from tools.hmi_deployer.ai_generator import AIDesignGenerator
+        gen = AIDesignGenerator()
+        widgets = gen._convert_widgets([
+            "oops", None,
+            {"type": "ShButton", "geometry": None},
+            {"type": "ShButton", "geometry": {"x": None, "y": "12px", "width": 80.0, "height": "auto"}},
+        ])
+        self.assertEqual(len(widgets), 2)
+        # Missing values take the usual cascade default for the entry's slot.
+        self.assertEqual(widgets[0].geometry, {"x": 40, "y": 40, "width": 140, "height": 40})
+        self.assertEqual(widgets[1].geometry, {"x": 60, "y": 12, "width": 80, "height": 40})
+
     def test_convert_simple_button(self):
         from tools.hmi_deployer.ai_generator import AIDesignGenerator, _AI_TYPE_ALIASES
         gen = AIDesignGenerator()

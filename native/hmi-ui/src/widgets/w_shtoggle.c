@@ -18,16 +18,6 @@ typedef struct {
     char offLabel[32];
 } shtoggle_state_t;
 
-static void shtoggle_value_changed_cb(lv_event_t *e)
-{
-    hmi_widget_t *widget = (hmi_widget_t *)lv_event_get_user_data(e);
-    if (!widget) return;
-    bool state = lv_obj_has_state(widget->native, LV_STATE_CHECKED);
-    hmi_value_t v = hmi_value_bool(state);
-    hmi_widget_emit(widget, "toggled", &v);
-    hmi_value_free(&v);
-}
-
 static void update_status(shtoggle_state_t *st, bool checked)
 {
     const char *txt = checked ? st->onLabel : st->offLabel;
@@ -54,6 +44,42 @@ static void update_colors(shtoggle_state_t *st, bool checked)
     }
     lv_obj_set_style_bg_color(st->track, trackBg, 0);
     lv_obj_set_style_bg_color(st->knob, knobColor, 0);
+}
+
+// The label line only takes room when there is a label (visible: text !== "").
+static void set_label(shtoggle_state_t *st, const char *text)
+{
+    lv_label_set_text(st->label, text);
+    if (text[0]) lv_obj_remove_flag(st->label, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(st->label, LV_OBJ_FLAG_HIDDEN);
+}
+
+// One place that makes the drawing match `checked`: the track state, the
+// knob side, the colours and the ON/OFF text.
+static void apply_checked(shtoggle_state_t *st, bool checked)
+{
+    st->checked = checked;
+    if (checked) {
+        lv_obj_add_state(st->track, LV_STATE_CHECKED);
+        lv_obj_set_pos(st->knob, 40 - 20 - 2, 2);
+    } else {
+        lv_obj_clear_state(st->track, LV_STATE_CHECKED);
+        lv_obj_set_pos(st->knob, 2, 2);
+    }
+    update_colors(st, checked);
+    update_status(st, checked);
+}
+
+// A tap anywhere on the widget flips it, then reports (ShToggle.qml toggle()).
+static void shtoggle_clicked_cb(lv_event_t *e)
+{
+    hmi_widget_t *widget = (hmi_widget_t *)lv_event_get_user_data(e);
+    shtoggle_state_t *st = widget ? widget->state : NULL;
+    if (!st) return;
+    apply_checked(st, !st->checked);
+    hmi_value_t v = hmi_value_bool(st->checked);
+    hmi_widget_emit(widget, "toggled", &v);
+    hmi_value_free(&v);
 }
 
 static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
@@ -94,18 +120,25 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     lv_obj_set_style_bg_opa(knob, LV_OPA_COVER, 0);
     lv_obj_set_pos(knob, 2, 2);
 
-    // Label (sm, foreground)
-    lv_obj_t *label = hmi_make_label(row, hmi_font_size("fontSizeSm"), 400, hmi_colour("foreground"), "");
+    // Text column beside the track: the label (sm, hidden when empty) over
+    // the ON/OFF status (xs), as ShToggle.qml's Column stacks them.
+    lv_obj_t *col = lv_obj_create(row);
+    lv_obj_remove_style_all(col);
+    lv_obj_remove_flag(col, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_grow(col, 1);
+    lv_obj_set_height(col, LV_SIZE_CONTENT);
 
-    // Status text (xs, success/mutedForeground)
-    lv_obj_t *status = lv_label_create(row);
+    lv_obj_t *label = hmi_make_label(col, hmi_font_size("fontSizeSm"), 400, hmi_colour("foreground"), "");
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(label, lv_pct(100));
+
+    lv_obj_t *status = lv_label_create(col);
     lv_obj_remove_style_all(status);
     lv_obj_set_style_text_font(status, hmi_font(hmi_font_size("fontSizeXs"), 400), 0);
     lv_obj_set_style_text_color(status, hmi_colour("mutedForeground"), 0);
-
-    // Make label/status grow
-    lv_obj_set_flex_grow(label, 1);
-    lv_obj_set_flex_grow(status, 1);
+    lv_label_set_long_mode(status, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(status, lv_pct(100));
 
     shtoggle_state_t *st = lv_malloc_zeroed(sizeof *st);
     st->track = track;
@@ -116,12 +149,16 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     strncpy(st->onLabel, hmi_widget_str(w, "onLabel", "ON"), sizeof(st->onLabel) - 1);
     strncpy(st->offLabel, hmi_widget_str(w, "offLabel", "OFF"), sizeof(st->offLabel) - 1);
 
-    update_colors(st, st->checked);
-    update_status(st, st->checked);
-    lv_label_set_text(st->label, hmi_widget_str(w, "label", ""));
+    apply_checked(st, st->checked);
+    set_label(st, hmi_widget_str(w, "label", ""));
 
-    lv_obj_add_event_cb(track, shtoggle_value_changed_cb, LV_EVENT_CLICKED, w);
-    lv_obj_add_flag(track, LV_OBJ_FLAG_CLICKABLE);
+    // The whole widget is the hit area (the QML MouseArea fills it); the
+    // children are not hit targets, so every tap lands on it.
+    lv_obj_add_flag(bg, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(track, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(knob, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(bg, shtoggle_clicked_cb, LV_EVENT_CLICKED, w);
 
     w->state = st;
     return bg;
@@ -134,20 +171,9 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
 
     if (strcmp(prop, "checked") == 0) {
         bool v = hmi_value_as_bool(value, st->checked);
-        if (v != st->checked) {
-            st->checked = v;
-            if (v) {
-                lv_obj_add_state(st->track, LV_STATE_CHECKED);
-                lv_obj_set_pos(st->knob, lv_obj_get_width(st->track) - 22, 2);
-            } else {
-                lv_obj_clear_state(st->track, LV_STATE_CHECKED);
-                lv_obj_set_pos(st->knob, 2, 2);
-            }
-            update_colors(st, v);
-            update_status(st, v);
-        }
+        if (v != st->checked) apply_checked(st, v);
     } else if (strcmp(prop, "label") == 0) {
-        lv_label_set_text(st->label, hmi_value_as_str(value, ""));
+        set_label(st, hmi_value_as_str(value, ""));
     } else if (strcmp(prop, "onLabel") == 0) {
         strncpy(st->onLabel, hmi_value_as_str(value, "ON"), sizeof(st->onLabel) - 1);
         update_status(st, st->checked);

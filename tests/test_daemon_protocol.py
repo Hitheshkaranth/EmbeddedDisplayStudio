@@ -146,6 +146,26 @@ class TestDaemonProtocol(unittest.TestCase):
         self.assertFalse(resp.get("ok"))
         self.assertEqual(resp.get("err"), "too_large")
 
+    def test_nan_pulse_is_refused_and_the_output_stays_low(self):
+        """A NaN width used to pass the 1..10000 range check (every comparison
+        with NaN is False), drive the relay high and never switch it off."""
+        resp = self._send_cmd(b'{"id":"p1","cmd":"pulse","tag":"do.relay1","ms":NaN}')
+        self.assertIsNotNone(resp)
+        self.assertFalse(resp.get("ok"))
+        # Wait for a fresh frame and check the relay was never driven.
+        deadline = time.monotonic() + 1.0
+        relay = None
+        while time.monotonic() < deadline:
+            try:
+                data, _ = self.sink_sock.recvfrom(8192)
+            except socket.timeout:
+                continue
+            relay = json.loads(data.decode("utf-8")).get("tags", {}).get("do.relay1")
+        self.assertIn(relay, (0, False))
+        # A real pulse still works.
+        resp = self._send_cmd(json.dumps({"id": "p2", "cmd": "pulse", "tag": "do.relay1", "ms": 20}).encode())
+        self.assertTrue(resp and resp.get("ok"), resp)
+
     def test_unparseable_input_nacks_when_an_id_is_recoverable(self):
         """
         CONTRACT 2.3 + 7: unparseable input is answered with ack{ok:false}

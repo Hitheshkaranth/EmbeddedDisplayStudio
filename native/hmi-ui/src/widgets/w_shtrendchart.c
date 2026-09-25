@@ -35,28 +35,39 @@ static void draw_trace_cb(lv_event_t *e)
     double stepX = W / (st->maxPoints - 1 > 0 ? st->maxPoints - 1 : 1);
     double yScale = 1.0 / (st->maxValue - st->minValue > 0 ? st->maxValue - st->minValue : 1);
 
-    // Fill area (gradient from fillColor at 20% opacity to 2%)
-    for (int yi = 0; yi < (int)H; yi++) {
-        double y = yi + 0.5;
-        // Find where the trace crosses this scanline
-        double leftX = -1, rightX = -1;
-        for (int i = 0; i < n - 1; i++) {
-            double x0 = i * stepX, y0 = H - (st->data[i] - st->minValue) * yScale * H;
-            double x1 = (i + 1) * stepX, y1 = H - (st->data[i + 1] - st->minValue) * yScale * H;
-            if ((y0 <= y && y1 > y) || (y0 > y && y1 <= y)) {
-                double t = (y - y0) / (y1 - y0 + 0.001);
-                double x = x0 + t * (x1 - x0);
-                if (x < leftX || leftX < 0) leftX = x;
-                rightX = x;
-            }
-        }
-        if (leftX >= 0 && rightX >= 0 && rightX > leftX) {
-            // Calculate alpha based on y position (20% at top, 2% at bottom)
-            double t = y / H;
-            lv_opa_t alpha = (lv_opa_t)lround(255 * (0.20 - t * 0.18));
-            if (alpha < 5) alpha = 5;
-            hmi_draw_fill(&d, leftX, yi, rightX - leftX, 1, st->fillColor, alpha, 0);
-        }
+    // Fill under the trace: a vertical gradient over the whole plot, fillColor
+    // at 20% opacity at the top to 2% at the bottom (the canvas face's
+    // createLinearGradient). Drawn as COL-wide columns from the trace down to
+    // the baseline; each column's gradient starts at the plot gradient's
+    // opacity for its own top, so the columns read as one fill. O(W) draws.
+    const double COL = 2.0;
+    double xEnd = (n - 1) * stepX;
+    lv_draw_rect_dsc_t fill;
+    lv_draw_rect_dsc_init(&fill);
+    fill.bg_opa = LV_OPA_COVER;
+    fill.border_width = 0;
+    fill.bg_grad.dir = LV_GRAD_DIR_VER;
+    fill.bg_grad.stops_count = 2;
+    fill.bg_grad.stops[0].color = st->fillColor;
+    fill.bg_grad.stops[0].frac = 0;
+    fill.bg_grad.stops[1].color = st->fillColor;
+    fill.bg_grad.stops[1].opa = (lv_opa_t)lround(255 * 0.02);
+    fill.bg_grad.stops[1].frac = 255;
+    for (double cx = 0; cx < xEnd; cx += COL) {
+        double mid = fmin(cx + COL * 0.5, xEnd);
+        int i = (int)(mid / stepX);
+        if (i > n - 2) i = n - 2;
+        double t = (mid - i * stepX) / stepX;
+        double v = st->data[i] + t * (st->data[i + 1] - st->data[i]);
+        double top = H - (v - st->minValue) * yScale * H;
+        if (top < 0) top = 0;
+        if (top >= H) continue;
+        fill.bg_grad.stops[0].opa = (lv_opa_t)lround(255 * (0.20 - 0.18 * top / H));
+        lv_area_t a = {(int32_t)lround(d.coords.x1 + cx), (int32_t)lround(d.coords.y1 + top),
+                       (int32_t)lround(d.coords.x1 + fmin(cx + COL, xEnd)) - 1,
+                       (int32_t)lround(d.coords.y1 + H) - 1};
+        if (a.x2 < a.x1 || a.y2 < a.y1) continue;
+        lv_draw_rect(d.layer, &fill, &a);
     }
 
     // Line trace

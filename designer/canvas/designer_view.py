@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import QByteArray, QDataStream, QIODevice, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QDrag, QPainter, QPen, QPixmap
+from PySide6.QtGui import QBrush, QColor, QDrag, QPainter, QPen, QPixmap, QPixmapCache
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView
 
 from designer.canvas import widget_previews
@@ -13,6 +13,28 @@ MIME_TYPE = "application/x-embedded-display-widget"
 
 # Containers that place their own children, exactly as QtQuick does at runtime.
 POSITIONERS = ("Row", "Column", "Grid")
+
+
+def _cached_pixmap(path: str) -> QPixmap:
+    """The image at path, decoded once per file version.
+
+    The canvas repaints on every hover, drag and selection change; reading and
+    decoding the file each time made dragging next to a large image stutter.
+    The key carries the file's mtime and size so an edited asset reloads.
+    """
+    if not path:
+        return QPixmap()
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return QPixmap()
+    key = f"designer-image:{path}:{stat.st_mtime_ns}:{stat.st_size}"
+    pixmap = QPixmap()
+    if not QPixmapCache.find(key, pixmap):
+        pixmap = QPixmap(path)
+        if not pixmap.isNull():
+            QPixmapCache.insert(key, pixmap)
+    return pixmap
 
 
 class DesignerItem(QGraphicsRectItem):
@@ -119,7 +141,7 @@ class DesignerItem(QGraphicsRectItem):
             if source and self._designer_scene.project_dir:
                 path = source if os.path.isabs(source) else os.path.join(
                     self._designer_scene.project_dir, source.replace('/', os.sep))
-            pixmap = QPixmap(path) if path else QPixmap()
+            pixmap = _cached_pixmap(path)
             if not pixmap.isNull():
                 target = self.rect().toRect()
                 mode = self.widget_model.properties.get("fillMode", "Image.PreserveAspectFit")

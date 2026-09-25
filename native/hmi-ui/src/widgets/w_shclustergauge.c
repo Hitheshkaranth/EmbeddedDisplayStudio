@@ -57,7 +57,10 @@ static void draw_cb(lv_event_t *e)
     }
     // 4. major ticks
     double tickLen = 0.035 * dim;
-    for (double mv = st->minimumValue; mv <= st->maximumValue + 0.0001; mv += st->majorStep) {
+    // A majorStep far too small for the span (a typo in the design) would
+    // draw millions of lines per frame; past 10x the label cap, draw no ticks.
+    bool ticks = st->majorStep > 0 && span / st->majorStep <= MAX_MAJORS * 10;
+    for (double mv = st->minimumValue; ticks && mv <= st->maximumValue + 0.0001; mv += st->majorStep) {
         double a = (startAngle + st->sweep * (mv - st->minimumValue) / span) * M_PI / 180;
         hmi_draw_line(&d, cx + (arcR + tickLen) * cos(a), cy + (arcR + tickLen) * sin(a),
                       cx + arcR * cos(a), cy + arcR * sin(a), 2,
@@ -66,7 +69,7 @@ static void draw_cb(lv_event_t *e)
     }
     // 5. minor ticks
     double minorLen = tickLen * 0.5;
-    int steps = (int)lround(span / fmax(0.0001, st->majorStep));
+    int steps = ticks ? (int)lround(span / st->majorStep) : 0;
     for (int s = 0; s < steps; ++s) {
         double base = st->minimumValue + s * st->majorStep;
         for (int m = 1; m < 5; ++m) {

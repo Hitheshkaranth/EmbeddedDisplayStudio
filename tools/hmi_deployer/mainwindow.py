@@ -194,6 +194,8 @@ LOG_HISTORY_LINES = 200
 # Lines kept in memory. A panel that logs steadily for a day would grow the
 # view without bound; this keeps the most recent window instead.
 LOG_BUFFER_LINES = 5000
+# Journal lines arriving within this window share one repaint of the view.
+LOG_RENDER_DELAY_MS = 50
 
 # Fallback for callers that do not say what they are running.
 DEFAULT_SSH_TIMEOUT_S = 60
@@ -3351,10 +3353,21 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self.btn_logs_follow.setText("Start Following")
 
     def _on_log_line(self, line: str) -> None:
-        """Keep one journal line, bounded so a long follow cannot grow forever."""
+        """Keep one journal line, bounded so a long follow cannot grow forever.
+
+        The repaint is coalesced: a follow opens with LOG_HISTORY_LINES at
+        once, and rewriting the whole view per line made that burst O(n^2)
+        and froze the window for seconds.
+        """
         self._log_lines.append(line)
         if len(self._log_lines) > LOG_BUFFER_LINES:
             del self._log_lines[: len(self._log_lines) - LOG_BUFFER_LINES]
+        if not getattr(self, "_log_render_pending", False):
+            self._log_render_pending = True
+            QTimer.singleShot(LOG_RENDER_DELAY_MS, self._flush_log_render)
+
+    def _flush_log_render(self) -> None:
+        self._log_render_pending = False
         self._render_logs()
 
     def _on_log_error(self, message: str) -> None:

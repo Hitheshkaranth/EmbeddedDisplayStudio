@@ -313,5 +313,36 @@ class ModbusSimIntegrationTest(unittest.TestCase):
             os.remove(path)
 
 
+class ModbusBackoffTest(unittest.TestCase):
+    """A PLC that is down is retried every reconnect_s, not every poll."""
+
+    def test_failed_poll_waits_reconnect_s(self):
+        import threading
+        import time
+        attempts = []
+
+        class Stub:
+            _modbus_stop = threading.Event()
+            _modbus_online_event = threading.Event()
+            error_count = 0
+
+            def _do_modbus_poll(self):
+                attempts.append(time.monotonic())
+                raise ConnectionRefusedError("plc down")
+
+        stub = Stub()
+        thread = threading.Thread(target=hmi_hwd.HwDaemon._modbus_poll_loop,
+                                  args=(stub, 0.01, 0.25), daemon=True)
+        thread.start()
+        time.sleep(0.9)
+        stub._modbus_stop.set()
+        thread.join(2)
+        # 0.1 s start-up delay, then one try per 0.25 s: 4 at most. At the
+        # 10 ms poll rate it was ~80.
+        self.assertLessEqual(len(attempts), 5, len(attempts))
+        self.assertGreaterEqual(len(attempts), 2)
+        self.assertEqual(stub.error_count, len(attempts))
+
+
 if __name__ == "__main__":
     unittest.main()

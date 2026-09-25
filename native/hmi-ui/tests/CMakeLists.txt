@@ -7,6 +7,7 @@ set(HMI_UI_TESTS
     test_model
     test_bind
     test_alarms
+    test_widgets
 )
 
 foreach(name IN LISTS HMI_UI_TESTS)
