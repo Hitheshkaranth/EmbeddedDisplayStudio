@@ -38,7 +38,8 @@ backend.py (render_backend_py) -- the generated program:
         an object "not_an_object";
       - acks {"t":"ack","id":<id>,"ok":bool[,"err":code]} go to the sender,
         only when the command carried an "id" -- except ping and list, which
-        are always answered (CONTRACT 2.3).
+        are always answered (CONTRACT 2.3), and bad_json / not_an_object,
+        which are always answered because such a datagram cannot carry one.
       - every --period seconds (default 0.1) a telemetry frame
         {"t":"tags","seq":n,"ts":time.time(),"src":"<project slug>-backend",
          "tags":{tag: read_<ident>() for every tag}} goes to the static sink

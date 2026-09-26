@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.append(str(Path(__file__).resolve().parent))  # after the repo: tests/ui must not shadow ui
 
 from designer.ide.backend_scaffold import (  # noqa: E402
     BACKEND_DIR, FILES, project_slug, render_backend_py, render_readme, render_tags_header, render_tags_json,
@@ -242,6 +242,15 @@ class BackendProcessTests(unittest.TestCase):
              "--sink", f"127.0.0.1:{self.sink.getsockname()[1]}", "--period", "0.02", "--frames", "5"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.assertEqual(proc.wait(timeout=10), 0)
+        # Drop the finished run's frames, or start() takes one of them as
+        # proof the new process is up and signals it before its handler exists.
+        self.sink.setblocking(False)
+        try:
+            while True:
+                self.sink.recvfrom(65536)
+        except BlockingIOError:
+            pass
+        self.sink.settimeout(3)
         proc = self.start()
         proc.send_signal(signal.SIGTERM)
         self.assertEqual(proc.wait(timeout=10), 0)

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.append(str(Path(__file__).resolve().parent))  # after the repo: tests/ui must not shadow ui
 
 from designer.ide.design_index import DesignIndex, edsui_lines, is_writable_tag  # noqa: E402
 from designer.palette.widget_registry import default_registry  # noqa: E402

@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.append(str(Path(__file__).resolve().parent))  # after the repo: tests/ui must not shadow ui
 
 from designer.ide import backend_scaffold  # noqa: E402
 from designer.ide.backend_scaffold import (  # noqa: E402
