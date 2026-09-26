@@ -87,17 +87,137 @@ class QuickAction:
 
 def design_brief(index: DesignIndex | None, selected_id: str = "", max_chars: int = DEFAULT_MAX_CHARS) -> str:
     """See the module docstring. index None -> '' (no design open)."""
-    raise NotImplementedError  # W4
+    if index is None:
+        return ""
+
+    project = index.project
+    summary = index.summary()
+    lines = ["## Design",
+             f'Project "{project.name or "(unnamed)"}", '
+             f"{summary['pages']} pages, {summary['widgets']} widgets, {summary['tags']} tags", "", ""]
+
+    for page_index, page in enumerate(project.pages):
+        counts = {}
+        for entry in index.widgets(page_index):
+            counts[entry.type] = counts.get(entry.type, 0) + 1
+        types = ", ".join(f"{t} x{counts[t]}" for t in counts)
+        lines.append(f'- {page.id} "{page.name}": {sum(counts.values())} widgets ({types})')
+    lines.append("")
+
+    selected = index.widget(selected_id) if selected_id else None
+    if selected is not None:
+        lines += ["", "## Selected widget",
+                  f"{selected.id} ({selected.type}) on page {selected.page_id}, "
+                  f"parent {selected.parent_id or 'none'}"]
+        definition = index.definition(selected.type)
+        bindable = tuple(getattr(definition, "bindable_properties", ()) or ())
+        lines.append("Bindable properties: " + (", ".join(bindable) if bindable else "none"))
+        signals = tuple(getattr(definition, "action_signals", ()) or ())
+        lines.append("Action signals: " + (", ".join(signals) if signals else "none"))
+        lines.append("```json")
+        lines.append(json.dumps(find_widget(project, selected_id).to_dict(), indent=2))
+        lines.append("```")
+
+    lines += ["", "## Tags", ""]
+    tag_lines = []
+    for entry in index.tags():
+        readers = ", ".join(wid for wid, _ in entry.readers) or "nothing"
+        writers = ", ".join(wid for wid, _ in entry.writers) or "nothing"
+        line = f'- {entry.tag} [{entry.access or "-"}] read by {readers}; written by {writers}'
+        if not entry.declared:
+            line += " (not declared)"
+        if entry.writable:
+            line += " (writable)"
+        tag_lines.append(line)
+    lines += tag_lines or ["- none"]
+
+    issues = index.issues()
+    if issues:
+        lines += ["", "## Issues", ""]
+        for issue in issues:
+            lines.append(f"- {issue.widget_id}.{issue.property}: {issue.detail}")
+
+    lines += ["", "## Rules", "", RULES]
+    text = "\n".join(lines)
+
+    if max_chars and len(text) > max_chars:
+        return _cut(text, max_chars)
+    return text
+
+
+def _cut(text: str, max_chars: int) -> str:
+    """Drop whole lines from the end of the Tags section first, then the
+    per-page lines, until it fits; Rules is never cut and the Selected widget
+    JSON is never cut mid-line."""
+    text, rules = text.split("## Rules", 1)
+    body, sep, tags = text.partition("\n\n## Tags")
+    body_lines = body.rstrip("\n").splitlines()
+    design_head = body_lines[:2]
+    page_lines = body_lines[2:]
+    tag_lines = tags[len("## Tags"):].splitlines()
+
+    def rendered(design, pages, tags):
+        return "\n".join(design + pages + ["## Tags"] + tags + ["## Rules"])
+
+    while len(rendered(design_head, page_lines, tag_lines)) > max_chars:
+        if tag_lines:
+            n = len(tag_lines)
+            tag_lines = tag_lines[:-1] + [f"- ... {n - 1} more tags"]
+        elif len(page_lines) > 1:
+            n = len(page_lines)
+            page_lines = page_lines[:-1] + [f"- ... {n - 1} more pages"]
+        else:
+            break
+
+    return rendered(design_head, page_lines, tag_lines)
 
 
 def quick_actions(index: DesignIndex | None, selected_id: str = "") -> list:
     """See the module docstring. index None -> [] ."""
-    raise NotImplementedError  # W4
+    if index is None:
+        return []
+    actions = []
+    selected = index.widget(selected_id) if selected_id else None
+    if selected is not None:
+        definition = index.definition(selected.type) or None
+        bindable = tuple(p for p in (definition.bindable_properties if definition else ()) if p)
+        actions.append(QuickAction(
+            f"Explain {selected.id}",
+            f"Explain what widget {selected.id} ({selected.type}) shows and how it is wired: "
+            "its bindings, actions and the tags involved."))
+        if bindable:
+            actions.append(QuickAction(
+                f"Bind {selected.id}...",
+                f"Bind widget {selected.id}'s {bindable[0]} to a suitable tag in project.edsui. "
+                "Use an existing tag of this design when one fits, otherwise a new CONTRACT 2.5 "
+                "tag name, and say which you chose."))
+        widget = find_widget(index.project, selected_id)
+        if widget is not None and widget.bindings:
+            first_bound = next(iter(widget.bindings))
+            actions.append(QuickAction(
+                f"Add alarm to {selected.id}",
+                f"Add warning and critical thresholds to widget {selected.id}'s {first_bound} binding "
+                "in project.edsui, with sensible values for its range."))
+    if index.issues():
+        actions.append(QuickAction(
+            "Fix binding issues",
+            "Fix the binding issues listed in the design context by editing project.edsui."))
+    actions.append(QuickAction(
+        "Write backend for tags",
+        "Implement the read functions in backend/backend.py so each tag returns a realistic value "
+        "for this design; keep the CONTRACT 2 wire format."))
+    actions.append(QuickAction(
+        "Summarise design",
+        "Summarise this design: pages, what each page is for, and the tags it depends on."))
+    return actions
 
 
 def find_widget(project, widget_id: str):
     """The DesignerWidget with that id anywhere in project (nested too), or None."""
-    raise NotImplementedError  # W4
+    for widget in project.all_widgets():
+        if widget.id == widget_id:
+            return widget
+    return None
 
 
 __all__ = ["design_brief", "quick_actions", "find_widget", "QuickAction", "RULES", "DEFAULT_MAX_CHARS"]
