@@ -98,11 +98,81 @@ class EngineTagSource(TagSource):
     def __init__(self, engine, parent=None):
         super().__init__(parent)
         self._engine = engine
-        raise NotImplementedError  # W3
+        self._poll = QTimer(self)
+        self._poll.setInterval(self.POLL_MS)
+        self._poll.timeout.connect(self.valuesChanged.emit)
+        self._online = False
+        if engine is not None:
+            self._engine.onlineChanged.connect(self._handle_online)
+
+    def _handle_online(self):
+        self._online = self.is_online()
+        self.onlineChanged.emit(self._online)
+
+    def is_online(self) -> bool:
+        if self._engine is None:
+            return False
+        try:
+            return bool(self._engine.get_online())
+        except Exception:
+            return False
+
+    def name(self) -> str:
+        return "Panel"
 
     def engine(self):
         """The wrapped TagEngine (or None)."""
-        raise NotImplementedError  # W3
+        return self._engine
+
+    def value(self, tag: str):
+        if self._engine is None:
+            return None
+        try:
+            return self._engine.value(tag, None)
+        except Exception:
+            return None
+
+    def can_write(self) -> bool:
+        return self._engine is not None
+
+    def write(self, tag: str, value) -> bool:
+        if isinstance(value, bool):
+            pass
+        elif isinstance(value, (int, float)):
+            pass
+        else:
+            return False
+        if self._engine is None:
+            return False
+        try:
+            self._engine.write(tag, value)
+            return True
+        except Exception:
+            return False
+
+    def start(self) -> None:
+        if self._poll.isActive():
+            return
+        self._poll.start()
+        if self.is_online():
+            self._online = True
+            self.onlineChanged.emit(True)
+
+    def stop(self) -> None:
+        stopped_poll = self._poll.isActive()
+        if not stopped_poll:
+            if self._online:
+                self._online = False
+                self.onlineChanged.emit(False)
+            return
+        self._poll.stop()
+        if self._engine is not None:
+            try:
+                self._engine.onlineChanged.disconnect(self._handle_online)
+            except (TypeError, RuntimeError):
+                pass
+        self._online = False
+        self._poll.stop()
 
 
 class SimulatedTagSource(TagSource):
@@ -136,24 +206,90 @@ class SimulatedTagSource(TagSource):
     def __init__(self, tags=(), clock=time.monotonic, parent=None):
         super().__init__(parent)
         self._clock = clock
-        raise NotImplementedError  # W3
+        self._tags = list(tags)
+        self._overrides = {}
+        self._ranges = {}
+        self._start = None
+        self._timer = QTimer(self)
+        self._timer.setInterval(SIM_PERIOD_MS)
+        self._timer.timeout.connect(self.valuesChanged.emit)
+        self._online = False
 
     def set_tags(self, tags) -> None:
-        raise NotImplementedError  # W3
+        self._tags = list(tags)
+        self._ranges = {}
+
+    def name(self) -> str:
+        return "Simulator"
 
     def tags(self) -> list:
-        """The tags answered for, sorted."""
-        raise NotImplementedError  # W3
+        return sorted(self._tags)
 
     def set_range(self, tag: str, lo: float, hi: float) -> None:
-        raise NotImplementedError  # W3
+        self._ranges[tag] = (float(lo), float(hi))
 
     def sample(self, tag: str, t: float):
-        """The value of `tag` at `t` seconds after start, ignoring overrides."""
-        raise NotImplementedError  # W3
+        if tag in self._overrides:
+            return self._overrides[tag]
+        low = tag[:3]
+        if low == "sys":
+            if tag == "sys.uptime":
+                return round(t, 3)
+            return 0
+        if low == "di." or low == "do.":
+            h = zlib.crc32(tag.encode())
+            period = 2 + (h % 5)
+            return t % period < period * 0.5
+        if tag not in self._tags:
+            return None
+        h = zlib.crc32(tag.encode())
+        period = 4 + (h % 7)
+        phase = math.radians(h % 360)
+        raw = 50 + 40 * math.sin(2 * math.pi * t / period + phase)
+        if tag in self._ranges:
+            lo, hi = self._ranges[tag]
+            raw = lo + ((raw - 10) / 100) * (hi - lo)
+        return round(raw, 3)
 
     def clear_overrides(self) -> None:
-        raise NotImplementedError  # W3
+        self._overrides = {}
+
+    def value(self, tag: str):
+        if tag not in self._tags:
+            return None
+        t = self._clock()
+        if self._start is not None:
+            t -= self._start
+        return self.sample(tag, t)
+
+    def is_online(self) -> bool:
+        return self._online
+
+    def can_write(self) -> bool:
+        return True
+
+    def write(self, tag: str, value) -> bool:
+        if tag not in self._tags:
+            return False
+        self._overrides[tag] = value
+        self.valuesChanged.emit()
+        return True
+
+    def start(self) -> None:
+        if self._online:
+            return
+        self._online = True
+        self._start = self._clock()
+        self._timer.start()
+        self.onlineChanged.emit(True)
+
+    def stop(self) -> None:
+        if not self._online:
+            return
+        self._online = False
+        self._start = None
+        self._timer.stop()
+        self.onlineChanged.emit(False)
 
 
 def ranges_from_index(index) -> dict:
@@ -163,7 +299,42 @@ def ranges_from_index(index) -> dict:
     first such widget in design order wins. Needs index.project (the
     DesignerProject) to read properties; widgets without a finite range with
     lo < hi are skipped."""
-    raise NotImplementedError  # W3
+    project = getattr(index, "project", None)
+    if project is None:
+        return {}
+    ranges = {}
+    widgets = index.widgets() if hasattr(index, "widgets") else []
+
+    def as_finite(prop):
+        if prop not in properties:
+            return None
+        value = properties[prop]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value)
+
+    for widget in widgets:
+        properties = {}
+        for page_index, pg in enumerate(getattr(project, "pages", []) or []):
+            for w in list(pg.walk()):
+                if w.id == widget.id:
+                    properties = getattr(w, "properties", {}) or {}
+                    break
+            if properties:
+                break
+        pairs = (("minimum", "maximum"), ("minValue", "maxValue"), ("min", "max"))
+        lo = hi = None
+        for low, high in pairs:
+            if low in properties and high in properties:
+                lo = as_finite(low)
+                hi = as_finite(high)
+                break
+        if lo is None or hi is None or not (lo < hi):
+            continue
+        for tag in widget.tags_read():
+            if tag not in ranges:
+                ranges[tag] = (lo, hi)
+    return ranges
 
 
 __all__ = ["TagSource", "EngineTagSource", "SimulatedTagSource", "ranges_from_index", "SIM_PERIOD_MS"]
