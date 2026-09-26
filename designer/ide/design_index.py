@@ -82,7 +82,9 @@ class TagEntry:
     readers   -- ((widget_id, property), ...) bindings that read it.
     writers   -- ((widget_id, signal), ...) actions that write/pulse it.
     declared  -- listed by the bundle's manifest (tags_required) or the
-                 catalogue the index was given.
+                 catalogue the index was given; when the index was given no
+                 declared tags at all, every tag the design uses counts as
+                 declared (there is nothing to check it against).
     writable  -- the tag's prefix allows writes (CONTRACT 2.5).
     """
     tag: str
@@ -172,9 +174,10 @@ class DesignIndex:
         for page_index, page in enumerate(project.pages):
             walk(page.widgets, page_index, page, "", 0)
 
+        known = declared or set(readers) | set(writers)
         for tag in sorted(set(readers) | set(writers) | declared):
             entry = TagEntry(tag=tag, readers=tuple(readers.get(tag, ())), writers=tuple(writers.get(tag, ())),
-                             declared=tag in declared, writable=is_writable_tag(tag))
+                             declared=tag in known, writable=is_writable_tag(tag))
             index._tags.append(entry)
             index._tag_by_name[tag] = entry
 

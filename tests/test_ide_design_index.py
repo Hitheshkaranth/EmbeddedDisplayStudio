@@ -67,6 +67,12 @@ class DesignIndexTests(unittest.TestCase):
         self.assertIsNone(DesignIndex.build(None).widget("x"))
         self.assertTrue(is_writable_tag("do.x") and not is_writable_tag("ai.x"))
 
+    def test_no_manifest_means_every_used_tag_is_declared(self):
+        # Nothing to check against: flagging every tag would say nothing.
+        index = DesignIndex.build(self.project)
+        self.assertTrue(all(t.declared for t in index.tags()))
+        self.assertNotIn("Tag not declared", {r.detail for r in index.issues()})
+
 
 if __name__ == "__main__":
     unittest.main()

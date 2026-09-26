@@ -112,6 +112,7 @@ class TagPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("tagPanel")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self._theme = "dark"
         self._index: DesignIndex | None = None
         self._source = None
@@ -132,7 +133,18 @@ class TagPanel(QWidget):
         self.table.setAlternatingRowColors(False)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.setHorizontalHeaderLabels(list(COLUMNS))
-        self.table.horizontalHeader().setSectionResizeMode(USED_COL, QHeaderView.Stretch)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        # The tag and its value are what the pane is for: they keep their
+        # width, "Used by" takes what is left and is elided (tooltip has all).
+        header.setSectionResizeMode(TAG_COL, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(ACCESS_COL, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(USED_COL, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(VALUE_COL, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(STATUS_COL, QHeaderView.ResizeMode.ResizeToContents)
+        header.setMinimumSectionSize(36)
+        self.table.verticalHeader().setDefaultSectionSize(22)
+        self.table.setWordWrap(False)
         self.table.cellClicked.connect(self._on_cell_clicked)
         self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         self.table.customContextMenuRequested.connect(self._show_menu)
@@ -189,8 +201,9 @@ class TagPanel(QWidget):
                 self.table.setItem(row, TAG_COL, QTableWidgetItem(entry.tag))
                 self.table.setItem(row, ACCESS_COL, QTableWidgetItem(entry.access))
                 used = index.widgets_using(entry.tag)
-                self.table.setItem(row, USED_COL,
-                                   QTableWidgetItem(", ".join(used) if used else "-"))
+                used_item = QTableWidgetItem(", ".join(used) if used else "-")
+                used_item.setToolTip("\n".join(used))
+                self.table.setItem(row, USED_COL, used_item)
                 self.table.setItem(row, VALUE_COL, QTableWidgetItem("--"))
                 self.table.setItem(row, STATUS_COL, QTableWidgetItem(status_for(entry)))
         finally:

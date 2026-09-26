@@ -286,7 +286,7 @@ class CodeSection(QWidget):
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
         split.setStretchFactor(2, 0)
-        split.setSizes([300, 700, 360])
+        split.setSizes([380, 660, 360])
         state = QSettings("MIL-HMI", "Deployer").value(SETTINGS_SPLITTER_KEY)
         if state is not None:
             split.restoreState(state)

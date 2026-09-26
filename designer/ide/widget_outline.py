@@ -71,7 +71,7 @@ Attributes tests rely on: `tree` (QTreeWidget), `filter_edit`,
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton,
@@ -138,6 +138,7 @@ class WidgetOutline(QWidget):
     def __init__(self, workspace, parent=None):
         super().__init__(parent)
         self.setObjectName("widgetOutline")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self._workspace = workspace
         self._index: DesignIndex | None = None
         self._items: dict = {}
@@ -181,9 +182,11 @@ class WidgetOutline(QWidget):
         self.tree.setHeaderLabels(list(COLUMNS))
         header = self.tree.header()
         header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        # Column 0 follows the tree's width (see eventFilter).
+        self.tree.viewport().installEventFilter(self)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tree.itemClicked.connect(self._on_clicked)
@@ -283,6 +286,15 @@ class WidgetOutline(QWidget):
         self._workspace.select_widget(widget_id)
         self._highlight(widget_id)
         self.widgetPicked.emit(widget_id)
+
+    def eventFilter(self, watched, event) -> bool:
+        # Id + type get a bit more than half of the tree's own width, the
+        # tags the rest: a fixed width starves the tags in a narrow pane.
+        if watched is self.tree.viewport() and event.type() == QEvent.Resize:
+            width = event.size().width()
+            if width > 0:
+                self.tree.header().resizeSection(0, max(120, int(width * 0.56)))
+        return super().eventFilter(watched, event)
 
     def apply_theme(self, theme: str) -> None:
         """'dark' or 'light'. Issue counts use the theme's destructive colour."""
