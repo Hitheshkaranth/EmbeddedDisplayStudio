@@ -331,7 +331,8 @@ class AgentPanel(QWidget):
     Attributes tests rely on: `input` (QPlainTextEdit), `send_button`,
     `stop_button`, `new_chat_button` (QToolButton/QPushButton),
     `model_combo` (QComboBox), `context_check` (QCheckBox),
-    `state_label` (QLabel).
+    `state_label` (QLabel), `design_check` (QCheckBox "Include design", on
+    by default, beside context_check), `quick_button` (QToolButton).
     """
 
     openFileRequested = Signal(str, int)
@@ -369,6 +370,33 @@ class AgentPanel(QWidget):
     def set_context_provider(self, provider: Callable[[], dict] | None) -> None:
         """A function returning EditorTabs.selection_context(), called at send."""
         self._context_provider = provider
+
+    def set_design_provider(self, provider: Callable[[], str] | None) -> None:
+        """A function returning the design brief (agent_context.design_brief),
+        called at send. When `design_check` is ticked and it returns a
+        non-empty string, send() passes context = {**(editor context or {}),
+        "design": brief} to backend.send -- the editor context's keys are
+        kept as they are, and "Include open file" unticked still drops them.
+        (W4)"""
+        raise NotImplementedError  # W4
+
+    def set_quick_actions(self, actions: list) -> None:
+        """agent_context.QuickAction list (label, prompt) for `quick_button`, a
+        QToolButton "Quick actions" (InstantPopup) with a QMenu of one action
+        per item, in order; the button is hidden when the list is empty.
+        Triggering an item calls send(prompt); when send refuses (busy, not
+        ready) the prompt is put in `input` instead, so nothing is lost.
+        (W4)"""
+        raise NotImplementedError  # W4
+
+    def quick_actions(self) -> list:
+        """The list last given to set_quick_actions ([] at first). (W4)"""
+        raise NotImplementedError  # W4
+
+    def trigger_quick_action(self, label: str) -> bool:
+        """What choosing the menu item with that label does; False when no
+        item has that label. (W4)"""
+        raise NotImplementedError  # W4
 
     def set_directory(self, path: str) -> None:
         """The project folder: backend.start(path) when it differs from the

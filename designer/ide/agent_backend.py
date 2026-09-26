@@ -34,7 +34,14 @@ SYSTEM_PROMPT = (
 def build_prompt(text: str, context: dict | None) -> str:
     """The prompt sent for a user message: the text, then -- when the panel
     passes the editor's selection_context() -- a short block naming the open
-    file and cursor line, and the selected lines in a fenced block."""
+    file and cursor line, and the selected lines in a fenced block.
+
+    context["design"] (a non-empty string, agent_context.design_brief) is
+    appended last, after one blank line, as:
+        "Design context (from the Studio, current as of this message):"
+        <the brief, verbatim>
+    It is added whether or not the context names a file; a context with
+    only "design" yields the text, blank line, that block. (W4)"""
     text = (text or "").strip()
     if not context or not context.get("path"):
         return text
