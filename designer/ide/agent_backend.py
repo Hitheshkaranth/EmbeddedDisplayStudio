@@ -43,14 +43,18 @@ def build_prompt(text: str, context: dict | None) -> str:
     It is added whether or not the context names a file; a context with
     only "design" yields the text, blank line, that block. (W4)"""
     text = (text or "").strip()
+    design = (context or {}).get("design") or ""
     if not context or not context.get("path"):
-        return text
-    name = context.get("relative") or context["path"]
-    lines = [text, "", f"(Open in the editor: {name}, cursor on line {context.get('cursor_line', 1)}.)"]
-    selected = context.get("text") or ""
-    if selected:
-        lines += [f"Selected lines {context.get('start_line')}-{context.get('end_line')}:",
-                  "```" + (context.get("language") or ""), selected, "```"]
+        lines = [text]
+    else:
+        name = context.get("relative") or context["path"]
+        lines = [text, "", f"(Open in the editor: {name}, cursor on line {context.get('cursor_line', 1)}.)"]
+        selected = context.get("text") or ""
+        if selected:
+            lines += [f"Selected lines {context.get('start_line')}-{context.get('end_line')}:",
+                      "```" + (context.get("language") or ""), selected, "```"]
+    if design:
+        lines += ["", "Design context (from the Studio, current as of this message):", design]
     return "\n".join(lines)
 
 
