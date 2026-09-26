@@ -164,9 +164,11 @@ class SimulatorTests(unittest.TestCase):
 
     def test_ranges(self):
         self.sim.set_range("ai.rpm", 0, 6000)
-        for t in (0.0, 0.5, 1.0, 2.0, 3.3):
-            v = self.sim.sample("ai.rpm", t)
-            self.assertTrue(750 - 1e-6 <= v <= 5250 + 1e-6, v)  # 10..90 % of 0..6000
+        # The 10..90 wave maps onto the whole dial: raw 10 -> 0, raw 90 -> 6000.
+        values = [self.sim.sample("ai.rpm", t / 10) for t in range(200)]
+        self.assertTrue(all(-1e-6 <= v <= 6000 + 1e-6 for v in values), values)
+        self.assertLess(min(values), 300)
+        self.assertGreater(max(values), 5700)
         self.sim.set_tags(["ai.rpm"])
         self.assertTrue(10 <= self.sim.sample("ai.rpm", 0.5) <= 90)
         self.assertEqual(self.sim.tags(), ["ai.rpm"])

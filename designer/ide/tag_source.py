@@ -100,14 +100,19 @@ class EngineTagSource(TagSource):
         self._engine = engine
         self._poll = QTimer(self)
         self._poll.setInterval(self.POLL_MS)
-        self._poll.timeout.connect(self.valuesChanged.emit)
+        self._poll.timeout.connect(self._tick)
         self._online = False
-        if engine is not None:
-            self._engine.onlineChanged.connect(self._handle_online)
+        self._started = False
+
+    def _tick(self):
+        if self.is_online():
+            self.valuesChanged.emit()
 
     def _handle_online(self):
-        self._online = self.is_online()
-        self.onlineChanged.emit(self._online)
+        online = self.is_online()
+        if online != self._online:
+            self._online = online
+            self.onlineChanged.emit(online)
 
     def is_online(self) -> bool:
         if self._engine is None:
@@ -151,25 +156,26 @@ class EngineTagSource(TagSource):
             return False
 
     def start(self) -> None:
-        if self._poll.isActive():
+        if self._started:
             return
+        self._started = True
+        if self._engine is not None:
+            self._engine.onlineChanged.connect(self._handle_online)
         self._poll.start()
-        if self.is_online():
-            self._online = True
-            self.onlineChanged.emit(True)
+        self._handle_online()
 
     def stop(self) -> None:
-        if self._poll.isActive():
-            self._poll.stop()
-            if self._engine is not None:
-                try:
-                    self._engine.onlineChanged.disconnect(self._handle_online)
-                except (TypeError, RuntimeError):
-                    pass
-            if self._online:
-                self._online = False
-                self.onlineChanged.emit(False)
+        if not self._started:
+            return
+        self._started = False
         self._poll.stop()
+        if self._engine is not None:
+            try:
+                self._engine.onlineChanged.disconnect(self._handle_online)
+            except (TypeError, RuntimeError):
+                pass
+        # A stopped source says nothing more; its state is re-read on start().
+        self._online = False
 
 
 class SimulatedTagSource(TagSource):
@@ -220,14 +226,14 @@ class SimulatedTagSource(TagSource):
         return "Simulator"
 
     def tags(self) -> list:
+        """The tags answered for, sorted."""
         return sorted(self._tags)
 
     def set_range(self, tag: str, lo: float, hi: float) -> None:
         self._ranges[tag] = (float(lo), float(hi))
 
     def sample(self, tag: str, t: float):
-        if tag in self._overrides:
-            return self._overrides[tag]
+        """The value of `tag` at `t` seconds after start, ignoring overrides."""
         low = tag[:3]
         if low == "sys":
             if tag == "sys.uptime":
@@ -245,7 +251,7 @@ class SimulatedTagSource(TagSource):
         raw = 50 + 40 * math.sin(2 * math.pi * t / period + phase)
         if tag in self._ranges:
             lo, hi = self._ranges[tag]
-            raw = lo + ((raw - 10) / 100) * (hi - lo)
+            raw = lo + (raw - 10) / 80 * (hi - lo)
         return round(raw, 3)
 
     def clear_overrides(self) -> None:
@@ -254,10 +260,10 @@ class SimulatedTagSource(TagSource):
     def value(self, tag: str):
         if tag not in self._tags:
             return None
-        t = self._clock()
-        if self._start is not None:
-            t -= self._start
-        return self.sample(tag, t)
+        if tag in self._overrides:
+            return self._overrides[tag]
+        elapsed = self._clock() - self._start if self._start is not None else 0.0
+        return self.sample(tag, elapsed)
 
     def is_online(self) -> bool:
         return self._online
@@ -299,38 +305,27 @@ def ranges_from_index(index) -> dict:
     project = getattr(index, "project", None)
     if project is None:
         return {}
-    ranges = {}
-    widgets = index.widgets() if hasattr(index, "widgets") else []
 
-    def as_finite(prop):
-        if prop not in properties:
-            return None
-        value = properties[prop]
+    def number(value):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return None
-        return float(value)
+        return float(value) if math.isfinite(value) else None
 
-    for widget in widgets:
-        properties = {}
-        for page_index, pg in enumerate(getattr(project, "pages", []) or []):
-            for w in list(pg.walk()):
-                if w.id == widget.id:
-                    properties = getattr(w, "properties", {}) or {}
+    ranges: dict = {}
+    for page in project.pages:
+        for widget in page.walk():
+            props = widget.properties or {}
+            span = None
+            for low, high in (("minimum", "maximum"), ("minValue", "maxValue"), ("min", "max")):
+                if low in props and high in props:
+                    lo, hi = number(props[low]), number(props[high])
+                    span = (lo, hi) if lo is not None and hi is not None and lo < hi else None
                     break
-            if properties:
-                break
-        pairs = (("minimum", "maximum"), ("minValue", "maxValue"), ("min", "max"))
-        lo = hi = None
-        for low, high in pairs:
-            if low in properties and high in properties:
-                lo = as_finite(low)
-                hi = as_finite(high)
-                break
-        if lo is None or hi is None or not (lo < hi):
-            continue
-        for tag in widget.tags_read():
-            if tag not in ranges:
-                ranges[tag] = (lo, hi)
+            if span is None:
+                continue
+            for binding in widget.bindings.values():
+                if binding.tag and binding.tag != "*" and binding.tag not in ranges:
+                    ranges[binding.tag] = span
     return ranges
 
 

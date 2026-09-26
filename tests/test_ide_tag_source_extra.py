@@ -67,7 +67,8 @@ class EngineExtraTests(unittest.TestCase):
         engine.onlineChanged.emit()
         src.stop()
         src.stop()
-        self.assertEqual(seen, [True, False])
+        # One True on start; the relay is live once; stop says nothing.
+        self.assertEqual(seen, [True])
         engine = FakeEngine()
         src = EngineTagSource(engine)
         self.assertFalse(src.write("do.pump", "hi"))
@@ -92,7 +93,8 @@ class SimulatorExtraTests(unittest.TestCase):
         sim = SimulatedTagSource(["ai.rpm"])
         sim.set_range("ai.rpm", 0, 6000)
         for t in (0.0, 0.5, 1.0, 2.0, 3.3):
-            self.assertTrue(750 - 1e-6 <= sim.sample("ai.rpm", t) <= 5250 + 1e-6, sim.sample("ai.rpm", t))
+            # The 10..90 wave spans the whole 0..6000 dial.
+            self.assertTrue(-1e-6 <= sim.sample("ai.rpm", t) <= 6000 + 1e-6, sim.sample("ai.rpm", t))
         sim.set_tags(["ai.rpm"])
         self.assertTrue(10 <= sim.sample("ai.rpm", 0.5) <= 90)
 
