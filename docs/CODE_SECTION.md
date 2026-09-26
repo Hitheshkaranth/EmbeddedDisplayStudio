@@ -126,6 +126,59 @@ carries no session and always passes. Deltas for a part id seen before its
 * The design view (`CodeWindow`) is a pinned, non-closable first tab
   "Design"; the Designer's Code action (Ctrl+Shift+K) switches to it.
 
+## Widget visibility and backend
+
+The navigator on the left has four panes: **Files**, **Widgets** (the
+current page, with thumbnails), **Outline** and **Backend**. The last two,
+and the agent's design context, all read one `DesignIndex`
+(`designer/ide/design_index.py`), which `CodeSection.rebuild_index()` builds
+again on every `designChanged`. It covers the whole design (every page),
+each widget's bindings and actions, every tag with the widgets that read and
+write it, each widget's line in `project.edsui`, and the binding
+diagnostics from `designer/model/binding_diagnostics.audit_bindings`.
+
+```
+Outline                                   Backend
+2 pages, 10 widgets, 6 types, 6 tags...   Source: Simulator (online)
+[filter] [All] [Bound] [Issues] [tag: x]  Tag        Access Used by   Value  Status
+v Main (5)                                ai.fuel           -         --     unused
+    rpm    ShGauge    ai.rpm              ai.oiltemp R      oil       52.1   not declared
+  v panel  ShCard                         ai.rpm     R      rpm, rpm2 3120.5 ok
+      pump ShToggle   do.pump (rw)        do.pump    RW     pump      true   ok
+v Alarms (5)                              [Copy tags] [Generate backend...]
+    oil    ShNumDisplay ai.oiltemp   1
+```
+
+| Module | Class | What |
+|---|---|---|
+| `designer/ide/design_index.py` | `DesignIndex`, `WidgetEntry`, `TagEntry` | the design as facts; no Qt |
+| `designer/ide/widget_outline.py` | `WidgetOutline` | whole-design tree: tags, issue counts, filters (All / Bound / Issues / one tag). Click selects the widget, switching page if needed; double-click opens `project.edsui` at the widget |
+| `designer/ide/tag_panel.py` | `TagPanel` | the Backend pane: one row per tag with access, users, live value and status; clicking a tag filters the Outline to its widgets; double-click on a writable tag writes a value; "Generate backend..." |
+| `designer/ide/tag_source.py` | `TagSource`, `EngineTagSource`, `SimulatedTagSource` | where values come from: the Studio's TagEngine (UDP 5001) while it is online, else a time-driven simulator scaled to each widget's min/max |
+| `designer/ide/agent_context.py` | `design_brief`, `quick_actions` | what the agent is told about the design (pages, the selected widget's JSON and bindable properties, tags, issues, CONTRACT rules), and one-click prompts |
+| `designer/ide/backend_scaffold.py` | `write_scaffold` | writes `backend/` into the project: `backend.py` (a runnable CONTRACT 2 UDP backend with one `read_`/`write_` stub per tag), `tags.json`, `tags.h`, `README.md` |
+
+**Values.** The pane polls its source every 250 ms, only while it is
+visible. `CodeSection.set_engine_provider()` is given the device panel's
+TagEngine (built lazily by the first preview); `EngineTagSource` never starts
+or stops the engine, the Studio owns it. The simulator runs only while the
+Code tab is on screen. Writes go to the engine (`Bus.write`, i.e. to the
+daemon) or, on the simulator, override that tag until the design changes.
+
+**Agent.** The panel's "Include design" option (on by default) adds
+`design_brief()` to each message as `context["design"]`; `build_prompt`
+appends it after the editor context. The brief is capped at 6000 characters
+(tags are dropped first, the rules never). "Quick actions" offers prompts
+for the selected widget (explain, bind, add alarm) and the design (fix
+binding issues, write the backend, summarise).
+
+**Generated backend.** `python3 backend/backend.py --listen 127.0.0.1:5010
+--sink 127.0.0.1:5001` publishes a frame of every design tag each 100 ms and
+answers `set`, `pulse`, `subscribe`, `list`, `ping` as `hmi-hwd` does. On a
+panel, point hmi-ui at it with `HMI_UI_EXTRA_ARGS=--daemon-port 5010`, as for
+tagsim. Files that already exist are kept unless the user agrees to
+overwrite them.
+
 ## Security notes
 
 The opencode server listens on 127.0.0.1 only. The agent can run shell
@@ -141,3 +194,6 @@ nothing is auto-approved by the Studio.
 * `tests/test_ide_agent_panel.py`
 * `tests/test_ide_code_section.py` (composition; live opencode test when `OPENCODE_LIVE=1`)
 * `tests/test_code_window.py`, `tests/test_code_editor.py`
+* `tests/test_ide_design_index.py`, `tests/test_ide_widget_outline.py`, `tests/test_ide_tag_panel.py`,
+  `tests/test_ide_tag_source.py`, `tests/test_ide_agent_context.py`, `tests/test_ide_backend_scaffold.py`
+  (fixture `tests/ide_v2_fixture.py`; the scaffold test runs the generated backend over UDP)

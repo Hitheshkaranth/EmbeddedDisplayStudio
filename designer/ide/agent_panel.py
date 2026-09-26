@@ -62,7 +62,7 @@ from typing import Callable
 from PySide6.QtCore import QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
+    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QMenu, QPlainTextEdit, QPushButton,
     QScrollArea, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -331,7 +331,8 @@ class AgentPanel(QWidget):
     Attributes tests rely on: `input` (QPlainTextEdit), `send_button`,
     `stop_button`, `new_chat_button` (QToolButton/QPushButton),
     `model_combo` (QComboBox), `context_check` (QCheckBox),
-    `state_label` (QLabel).
+    `state_label` (QLabel), `design_check` (QCheckBox "Include design", on
+    by default, beside context_check), `quick_button` (QToolButton).
     """
 
     openFileRequested = Signal(str, int)
@@ -343,6 +344,8 @@ class AgentPanel(QWidget):
         self._backend = backend
         self._directory = ""
         self._context_provider: Callable[[], dict] | None = None
+        self._design_provider: Callable[[], str] | None = None
+        self._quick_actions: list = []
         self._blocks: list[_Block] = []
         self._parts: dict[tuple[str, str], _Block] = {}
         # Busy is the backend's word (busy ... idle), not a widget's
@@ -369,6 +372,44 @@ class AgentPanel(QWidget):
     def set_context_provider(self, provider: Callable[[], dict] | None) -> None:
         """A function returning EditorTabs.selection_context(), called at send."""
         self._context_provider = provider
+
+    def set_design_provider(self, provider: Callable[[], str] | None) -> None:
+        """A function returning the design brief (agent_context.design_brief),
+        called at send. When `design_check` is ticked and it returns a
+        non-empty string, send() passes context = {**(editor context or {}),
+        "design": brief} to backend.send -- the editor context's keys are
+        kept as they are, and "Include open file" unticked still drops them.
+        (W4)"""
+        self._design_provider = provider
+
+    def set_quick_actions(self, actions: list) -> None:
+        """agent_context.QuickAction list (label, prompt) for `quick_button`, a
+        QToolButton "Quick actions" (InstantPopup) with a QMenu of one action
+        per item, in order; the button is hidden when the list is empty.
+        Triggering an item calls send(prompt); when send refuses (busy, not
+        ready) the prompt is put in `input` instead, so nothing is lost.
+        (W4)"""
+        self._quick_actions = list(actions or [])
+        menu = self.quick_button.menu()
+        menu.clear()
+        for action in self._quick_actions:
+            item = menu.addAction(action.label)
+            item.triggered.connect(lambda _checked=False, label=action.label: self.trigger_quick_action(label))
+        self.quick_button.setVisible(bool(self._quick_actions))
+
+    def quick_actions(self) -> list:
+        """The list last given to set_quick_actions ([] at first). (W4)"""
+        return list(self._quick_actions)
+
+    def trigger_quick_action(self, label: str) -> bool:
+        """What choosing the menu item with that label does; False when no
+        item has that label. (W4)"""
+        for action in self._quick_actions:
+            if action.label == label:
+                if not self.send(action.prompt):
+                    self.input.setPlainText(action.prompt)
+                return True
+        return False
 
     def set_directory(self, path: str) -> None:
         """The project folder: backend.start(path) when it differs from the
@@ -397,6 +438,10 @@ class AgentPanel(QWidget):
         context = None
         if self.context_check.isChecked() and self._context_provider is not None:
             context = self._context_provider() or None
+        if self.design_check.isChecked() and self._design_provider is not None:
+            brief = self._design_provider()
+            if brief:
+                context = {**(context or {}), "design": brief}
         self._usage = [0, 0]
         self._follow = True
         self._add(_TextBlock("user", text))
@@ -541,7 +586,20 @@ class AgentPanel(QWidget):
         self.context_check = QCheckBox("Include open file")
         self.context_check.setChecked(True)
         self.context_check.setToolTip("Tell the agent which file is open and what is selected")
-        column.addWidget(self.context_check)
+        self.design_check = QCheckBox("Include design")
+        self.design_check.setChecked(True)
+        self.design_check.setToolTip("Tell the agent the design's pages, widgets, tags and binding issues")
+        self.quick_button = QToolButton()
+        self.quick_button.setText("Quick actions")
+        self.quick_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.quick_button.setMenu(QMenu(self.quick_button))
+        self.quick_button.setVisible(False)
+        options = QHBoxLayout()
+        options.addWidget(self.context_check)
+        options.addWidget(self.design_check)
+        options.addStretch(1)
+        options.addWidget(self.quick_button)
+        column.addLayout(options)
         self.input = QPlainTextEdit()
         self.input.setObjectName("agentInput")
         self.input.setPlaceholderText("Ask the agent to change the code... (Enter sends, Shift+Enter new line)")
