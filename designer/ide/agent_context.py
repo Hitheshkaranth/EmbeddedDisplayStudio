@@ -89,87 +89,83 @@ def design_brief(index: DesignIndex | None, selected_id: str = "", max_chars: in
     """See the module docstring. index None -> '' (no design open)."""
     if index is None:
         return ""
-
     project = index.project
     summary = index.summary()
-    lines = ["## Design",
-             f'Project "{project.name or "(unnamed)"}", '
-             f"{summary['pages']} pages, {summary['widgets']} widgets, {summary['tags']} tags", "", ""]
+    head = ["## Design",
+            f'Project "{getattr(project, "name", "") or "(unnamed)"}", '
+            f"{summary['pages']} pages, {summary['widgets']} widgets, {summary['tags']} tags"]
+    page_lines = [_page_line(index, page_index, page)
+                  for page_index, page in enumerate(getattr(project, "pages", None) or [])]
 
-    for page_index, page in enumerate(project.pages):
-        counts = {}
-        for entry in index.widgets(page_index):
-            counts[entry.type] = counts.get(entry.type, 0) + 1
-        types = ", ".join(f"{t} x{counts[t]}" for t in counts)
-        lines.append(f'- {page.id} "{page.name}": {sum(counts.values())} widgets ({types})')
-    lines.append("")
-
-    selected = index.widget(selected_id) if selected_id else None
-    if selected is not None:
-        lines += ["", "## Selected widget",
-                  f"{selected.id} ({selected.type}) on page {selected.page_id}, "
-                  f"parent {selected.parent_id or 'none'}"]
-        definition = index.definition(selected.type)
+    selected: list = []
+    entry = index.widget(selected_id) if selected_id else None
+    if entry is not None:
+        definition = index.definition(entry.type)
         bindable = tuple(getattr(definition, "bindable_properties", ()) or ())
-        lines.append("Bindable properties: " + (", ".join(bindable) if bindable else "none"))
         signals = tuple(getattr(definition, "action_signals", ()) or ())
-        lines.append("Action signals: " + (", ".join(signals) if signals else "none"))
-        lines.append("```json")
-        lines.append(json.dumps(find_widget(project, selected_id).to_dict(), indent=2))
-        lines.append("```")
+        selected = ["## Selected widget",
+                    f"{entry.id} ({entry.type}) on page {entry.page_id}, parent {entry.parent_id or 'none'}",
+                    "Bindable properties: " + (", ".join(bindable) or "none"),
+                    "Action signals: " + (", ".join(signals) or "none")]
+        model = find_widget(project, entry.id)
+        if model is not None:
+            selected += ["```json", *json.dumps(model.to_dict(), indent=2).splitlines(), "```"]
 
-    lines += ["", "## Tags", ""]
-    tag_lines = []
-    for entry in index.tags():
-        readers = ", ".join(wid for wid, _ in entry.readers) or "nothing"
-        writers = ", ".join(wid for wid, _ in entry.writers) or "nothing"
-        line = f'- {entry.tag} [{entry.access or "-"}] read by {readers}; written by {writers}'
-        if not entry.declared:
-            line += " (not declared)"
-        if entry.writable:
-            line += " (writable)"
-        tag_lines.append(line)
-    lines += tag_lines or ["- none"]
+    tag_lines = [_tag_line(tag) for tag in index.tags()]
+    issue_lines = [f"- {row.widget_id}.{row.property}: {row.detail}" for row in index.issues()]
+    rules = ["## Rules", RULES]
 
-    issues = index.issues()
-    if issues:
-        lines += ["", "## Issues", ""]
-        for issue in issues:
-            lines.append(f"- {issue.widget_id}.{issue.property}: {issue.detail}")
+    def render(pages_kept: int, tags_kept: int) -> str:
+        pages = page_lines[:pages_kept]
+        if pages_kept < len(page_lines):
+            pages.append(f"- ... {len(page_lines) - pages_kept} more pages")
+        if not tag_lines:
+            tags = ["- none"]
+        else:
+            tags = tag_lines[:tags_kept]
+            if tags_kept < len(tag_lines):
+                tags.append(f"- ... {len(tag_lines) - tags_kept} more tags")
+        sections = [head + pages]
+        if selected:
+            sections.append(selected)
+        sections.append(["## Tags"] + tags)
+        if issue_lines:
+            sections.append(["## Issues"] + issue_lines)
+        sections.append(rules)
+        return "\n\n".join("\n".join(section) for section in sections)
 
-    lines += ["", "## Rules", "", RULES]
-    text = "\n".join(lines)
-
-    if max_chars and len(text) > max_chars:
-        return _cut(text, max_chars)
+    pages_kept, tags_kept = len(page_lines), len(tag_lines)
+    text = render(pages_kept, tags_kept)
+    # Each step drops exactly one line, so this ends after at most
+    # len(tag_lines) + len(page_lines) renders; the Rules and the selected
+    # widget are never touched, so an unfittable brief comes back over-long.
+    while len(text) > max_chars and (tags_kept or pages_kept):
+        if tags_kept:
+            tags_kept -= 1
+        else:
+            pages_kept -= 1
+        text = render(pages_kept, tags_kept)
     return text
 
 
-def _cut(text: str, max_chars: int) -> str:
-    """Drop whole lines from the end of the Tags section first, then the
-    per-page lines, until it fits; Rules is never cut and the Selected widget
-    JSON is never cut mid-line."""
-    text, rules = text.split("## Rules", 1)
-    body, sep, tags = text.partition("\n\n## Tags")
-    body_lines = body.rstrip("\n").splitlines()
-    design_head = body_lines[:2]
-    page_lines = body_lines[2:]
-    tag_lines = tags[len("## Tags"):].splitlines()
+def _page_line(index: DesignIndex, page_index: int, page) -> str:
+    counts: dict = {}
+    for entry in index.widgets(page_index):
+        counts[entry.type] = counts.get(entry.type, 0) + 1
+    types = ", ".join(f"{name} x{count}" for name, count in counts.items())
+    return f'- {page.id} "{page.name}": {sum(counts.values())} widgets ({types})'
 
-    def rendered(design, pages, tags):
-        return "\n".join(design + pages + ["## Tags"] + tags + ["## Rules"])
 
-    while len(rendered(design_head, page_lines, tag_lines)) > max_chars:
-        if tag_lines:
-            n = len(tag_lines)
-            tag_lines = tag_lines[:-1] + [f"- ... {n - 1} more tags"]
-        elif len(page_lines) > 1:
-            n = len(page_lines)
-            page_lines = page_lines[:-1] + [f"- ... {n - 1} more pages"]
-        else:
-            break
-
-    return rendered(design_head, page_lines, tag_lines)
+def _tag_line(entry) -> str:
+    # A widget reading one tag through two properties is still one reader.
+    readers = ", ".join(dict.fromkeys(wid for wid, _prop in entry.readers)) or "nothing"
+    writers = ", ".join(dict.fromkeys(wid for wid, _sig in entry.writers)) or "nothing"
+    line = f"- {entry.tag} [{entry.access or '-'}] read by {readers}; written by {writers}"
+    if not entry.declared:
+        line += " (not declared)"
+    if entry.writable:
+        line += " (writable)"
+    return line
 
 
 def quick_actions(index: DesignIndex | None, selected_id: str = "") -> list:
@@ -177,35 +173,36 @@ def quick_actions(index: DesignIndex | None, selected_id: str = "") -> list:
     if index is None:
         return []
     actions = []
-    selected = index.widget(selected_id) if selected_id else None
-    if selected is not None:
-        definition = index.definition(selected.type) or None
-        bindable = tuple(p for p in (definition.bindable_properties if definition else ()) if p)
+    entry = index.widget(selected_id) if selected_id else None
+    if entry is not None:
+        wid, wtype = entry.id, entry.type
         actions.append(QuickAction(
-            f"Explain {selected.id}",
-            f"Explain what widget {selected.id} ({selected.type}) shows and how it is wired: "
-            "its bindings, actions and the tags involved."))
+            f"Explain {wid}",
+            f"Explain what widget {wid} ({wtype}) shows and how it is wired: its bindings, actions "
+            "and the tags involved."))
+        bindable = tuple(getattr(index.definition(wtype), "bindable_properties", ()) or ())
         if bindable:
             actions.append(QuickAction(
-                f"Bind {selected.id}...",
-                f"Bind widget {selected.id}'s {bindable[0]} to a suitable tag in project.edsui. "
-                "Use an existing tag of this design when one fits, otherwise a new CONTRACT 2.5 "
-                "tag name, and say which you chose."))
-        widget = find_widget(index.project, selected_id)
-        if widget is not None and widget.bindings:
-            first_bound = next(iter(widget.bindings))
+                f"Bind {wid}...",
+                f"Bind widget {wid}'s {bindable[0]} to a suitable tag in project.edsui. Use an existing "
+                "tag of this design when one fits, otherwise a new CONTRACT 2.5 tag name, and say which "
+                "you chose."))
+        # An empty binding or the alarm table's wildcard has nothing to put
+        # thresholds on.
+        bound = [prop for prop, tag in entry.bindings if tag and tag != "*"]
+        if bound:
             actions.append(QuickAction(
-                f"Add alarm to {selected.id}",
-                f"Add warning and critical thresholds to widget {selected.id}'s {first_bound} binding "
-                "in project.edsui, with sensible values for its range."))
+                f"Add alarm to {wid}",
+                f"Add warning and critical thresholds to widget {wid}'s {bound[0]} binding in "
+                "project.edsui, with sensible values for its range."))
     if index.issues():
         actions.append(QuickAction(
             "Fix binding issues",
             "Fix the binding issues listed in the design context by editing project.edsui."))
     actions.append(QuickAction(
         "Write backend for tags",
-        "Implement the read functions in backend/backend.py so each tag returns a realistic value "
-        "for this design; keep the CONTRACT 2 wire format."))
+        "Implement the read functions in backend/backend.py so each tag returns a realistic value for "
+        "this design; keep the CONTRACT 2 wire format."))
     actions.append(QuickAction(
         "Summarise design",
         "Summarise this design: pages, what each page is for, and the tags it depends on."))
@@ -214,9 +211,12 @@ def quick_actions(index: DesignIndex | None, selected_id: str = "") -> list:
 
 def find_widget(project, widget_id: str):
     """The DesignerWidget with that id anywhere in project (nested too), or None."""
-    for widget in project.all_widgets():
-        if widget.id == widget_id:
-            return widget
+    if project is None or not widget_id:
+        return None
+    for page in getattr(project, "pages", None) or []:
+        for widget in page.walk():
+            if widget.id == widget_id:
+                return widget
     return None
 
 
