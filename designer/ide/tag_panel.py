@@ -55,8 +55,9 @@ from __future__ import annotations
 import time
 
 from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
-    QApplication, QAbstractItemView, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu, QPushButton,
+    QAbstractItemView, QApplication, QAbstractItemView, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -83,7 +84,7 @@ def format_value(value) -> str:
         return str(value)
     if isinstance(value, float):
         text = f"{value:.3f}".rstrip("0").rstrip(".")
-        return "0" if text in ("", "-") else text
+        return "0" if text in ("", "-", "-0") else text
     return str(value)
 
 
@@ -168,8 +169,9 @@ class TagPanel(QWidget):
 
         self._last_refresh = 0.0
         self._menu = QMenu(self)
-        self._menu.addAction("Copy tag", self._copy_tag)
-        self._menu.addAction("Write value...", self._write_value_action)
+        self._menu_tag = ""
+        self._copy_action = self._menu.addAction("Copy tag", self._copy_tag)
+        self._write_action = self._menu.addAction("Write value...", self._write_value_action)
 
         self.apply_theme("dark")
 
@@ -193,6 +195,7 @@ class TagPanel(QWidget):
                 self.table.setItem(row, STATUS_COL, QTableWidgetItem(status_for(entry)))
         finally:
             self.table.blockSignals(False)
+        self._colour_rows()
         self._apply_filter(self.filter_edit.text())
         self.refresh_values()
 
@@ -215,7 +218,8 @@ class TagPanel(QWidget):
             source.valuesChanged.connect(self._on_values_changed)
             source.onlineChanged.connect(self._on_online_changed)
             self._update_source_label()
-            self._refresh_timer.start()
+            if self.isVisible():
+                self._refresh_timer.start()
         else:
             self._refresh_timer.stop()
             self.source_label.setText("Source: none")
@@ -268,8 +272,7 @@ class TagPanel(QWidget):
             self._fill_values("--")
             return
         self._last_refresh = time.monotonic()
-        tags = self.tags()
-        values = self._source.snapshot(tags)
+        values = self._source.snapshot(list(self._tag_rows))
         by_row = {self.table.item(r, TAG_COL).text(): r
                   for r in range(self.table.rowCount())
                   if self.table.item(r, TAG_COL) is not None}
@@ -345,10 +348,6 @@ class TagPanel(QWidget):
                     value = False
                 else:
                     value = None
-            elif stripped in ("true", "on"):
-                value = True
-            elif stripped in ("false", "off"):
-                value = False
             elif "e" in stripped or "E" in stripped or "." in stripped:
                 try:
                     value = float(stripped)
@@ -404,6 +403,7 @@ class TagPanel(QWidget):
             }}
             QLabel#tagPanelSourceEmpty {{ color: {muted}; font-size: 12px; }}
         """)
+        self._colour_rows()
 
     # ------------------------------------------------------------ private
 
@@ -418,6 +418,19 @@ class TagPanel(QWidget):
                 "success": "#22c55e",
             }
             return defaults.get(name, "#fafafa" if theme == "dark" else "#09090b")
+
+    def _colour_rows(self) -> None:
+        muted = QColor(self._token("mutedForeground", self._theme))
+        warning = QColor(self._token("warning", self._theme))
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, STATUS_COL)
+            if item is None:
+                continue
+            tint = {_STATUS_UNUSED: muted, _STATUS_NOT_DECLARED: warning}.get(item.text())
+            for col in range(self.table.columnCount()):
+                cell = self.table.item(row, col)
+                if cell is not None:
+                    cell.setForeground(tint if tint is not None else QBrush())
 
     def _apply_filter(self, text: str) -> None:
         needle = text.strip().lower()
@@ -456,22 +469,19 @@ class TagPanel(QWidget):
         writable = (tag is not None and self._index is not None
                     and self._index.tag(tag) is not None
                     and self._index.tag(tag).writable)
-        self._menu.findChild("Write value...").setEnabled(writable and self._source is not None
-                                                           and self._source.can_write())
+        self._write_action.setEnabled(bool(writable and self._source is not None
+                                           and self._source.can_write()))
         if tag is not None:
+            self._menu_tag = tag
             self._menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def _copy_tag(self) -> None:
-        row = self.table.currentRow()
-        tag = self._cell_row(row)
-        if tag is not None:
-            QApplication.clipboard().setText(tag)
+        if self._menu_tag:
+            QApplication.clipboard().setText(self._menu_tag)
 
     def _write_value_action(self) -> None:
-        row = self.table.currentRow()
-        tag = self._cell_row(row)
-        if tag is not None:
-            self.request_write(tag)
+        if self._menu_tag:
+            self.request_write(self._menu_tag)
 
     def _update_source_label(self) -> None:
         if self._source is None:
@@ -509,7 +519,6 @@ class TagPanel(QWidget):
 __all__ = ["TagPanel", "format_value", "status_for", "COLUMNS", "REFRESH_MS"]
 
 # Imported for the implementation; keeps the skeleton's import list stable.
-from PySide6.QtWidgets import QAbstractItemView  # noqa: E402,F401
 
 _ = (Qt, QTimer, QApplication, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu, QPushButton,
       QTableWidget, QTableWidgetItem, QVBoxLayout, _rgba, color)
