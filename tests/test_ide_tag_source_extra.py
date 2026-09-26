@@ -68,8 +68,6 @@ class EngineExtraTests(unittest.TestCase):
         src.stop()
         src.stop()
         self.assertEqual(seen, [True, False])
-
-    def test_write_rejects_all_non_scalar(self):
         engine = FakeEngine()
         src = EngineTagSource(engine)
         self.assertFalse(src.write("do.pump", "hi"))

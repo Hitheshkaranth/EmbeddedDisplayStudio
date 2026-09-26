@@ -159,19 +159,16 @@ class EngineTagSource(TagSource):
             self.onlineChanged.emit(True)
 
     def stop(self) -> None:
-        stopped_poll = self._poll.isActive()
-        if not stopped_poll:
+        if self._poll.isActive():
+            self._poll.stop()
+            if self._engine is not None:
+                try:
+                    self._engine.onlineChanged.disconnect(self._handle_online)
+                except (TypeError, RuntimeError):
+                    pass
             if self._online:
                 self._online = False
                 self.onlineChanged.emit(False)
-            return
-        self._poll.stop()
-        if self._engine is not None:
-            try:
-                self._engine.onlineChanged.disconnect(self._handle_online)
-            except (TypeError, RuntimeError):
-                pass
-        self._online = False
         self._poll.stop()
 
 
