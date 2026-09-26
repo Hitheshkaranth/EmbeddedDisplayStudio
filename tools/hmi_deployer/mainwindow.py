@@ -1006,6 +1006,9 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         from designer.ide.code_section import CodeSection
         self._code_tab = CodeSection(self.designer_workspace)
         self._code_tab.message.connect(self.log)
+        # The Backend pane shows the preview's live tags once the device
+        # panel has built its TagEngine; until then it simulates them.
+        self._code_tab.set_engine_provider(lambda: getattr(self.device_panel, "tag_engine", None))
 
         def show_design_code():
             self._right_tabs.setCurrentWidget(self._code_tab)
