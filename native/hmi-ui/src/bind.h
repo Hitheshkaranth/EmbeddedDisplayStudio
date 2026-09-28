@@ -35,6 +35,12 @@ typedef void (*hmi_bind_apply_cb)(hmi_widget_t *w, const char *prop, const hmi_v
 hmi_bind_t *hmi_bind_create(hmi_bind_apply_cb apply, void *user);
 void hmi_bind_destroy(hmi_bind_t *b);
 
+// Where rule 4 reads a scalar tag's recent values: the last `count` numeric
+// samples, oldest first, as an HMI_V_LIST the caller frees (the runtime
+// passes hmi_tags_history). Without one, only list-valued tags feed series.
+typedef hmi_value_t (*hmi_bind_history_cb)(const char *tag, size_t count, void *user);
+void hmi_bind_set_history(hmi_bind_t *b, hmi_bind_history_cb history, void *user);
+
 // Registers every binding of a page (and unregisters the previous page's).
 // Applies the initial (fallback) values immediately.
 void hmi_bind_page(hmi_bind_t *b, hmi_page_t *page);

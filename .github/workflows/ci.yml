@@ -33,6 +33,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       # Ahead of the Studio's own interpreter, deliberately. Two setup-python
       # steps both prepend to PATH and the last one wins, so putting this
@@ -86,6 +88,14 @@ jobs:
             command -v "$tool" >/dev/null || { echo "missing: $tool"; exit 1; }
           done
 
+      # The panel runtime. Thirty-odd Studio and conformance tests render
+      # through it, and before this step they skipped here -- so the program
+      # that actually runs on the glass was the one thing CI never built.
+      - name: Build hmi-ui and run its C tests
+        run: |
+          sudo apt-get install -y --no-install-recommends cmake ninja-build pkg-config libdrm-dev
+          native/hmi-ui/build.sh --test
+
       - name: Run the full test suite
         env:
           QT_QPA_PLATFORM: offscreen
@@ -102,8 +112,14 @@ jobs:
       # NOTE line when anything did; this turns that into a failure, because a
       # silent skip is exactly how the validator drift survived for so long.
       - name: Fail if any test skipped
+        # Opt-in suites (a live opencode server, a live panel runtime, the
+        # retired Qt loader's own job) skip by design and are allowed by name;
+        # any other skip fails the job.
         run: |
-          if grep -q "test(s) were skipped" /tmp/suite.log; then
+          unexpected=$(grep -o "\.\.\. skipped '[^']*'" /tmp/suite.log \
+            | grep -v -e "OPENCODE_LIVE" -e "QT_RUNTIME_LIVE" -e "HMI_GUI_CMD not set" || true)
+          if [ -n "$unexpected" ]; then
+            echo "$unexpected" | sort | uniq -c
             echo "::error::Tests were skipped on Linux, where the full suite must run."
             exit 1
           fi
@@ -357,7 +373,7 @@ jobs:
           bash -n deploy/provision_pyside2.sh
           sh -n deploy/provision_remote.sh
           sh -n target/bin/hmi-install
-          sh -n target/bin/hmi-gui-launch
+          sh -n native/hmi-gui/target/bin/hmi-gui-launch
           sh -n target/bin/hmi-hwd-launch
 
       - name: shellcheck
@@ -368,7 +384,7 @@ jobs:
             deploy/deploy_to_hmi.sh \
             deploy/provision_remote.sh \
             target/bin/hmi-install \
-            target/bin/hmi-gui-launch \
+            native/hmi-gui/target/bin/hmi-gui-launch \
             target/bin/hmi-hwd-launch
 
   line-endings:

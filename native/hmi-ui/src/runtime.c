@@ -204,6 +204,12 @@ static bool show_page(hmi_runtime_t *rt, hmi_page_t *page)
     return true;
 }
 
+static hmi_value_t tag_history(const char *tag, size_t count, void *user)
+{
+    hmi_runtime_t *rt = user;
+    return hmi_tags_history(rt->tags, tag, count);
+}
+
 hmi_runtime_t *hmi_runtime_create(hmi_project_t *project, lv_obj_t *screen, hmi_tags_t *tags, const char *apps_dir)
 {
     hmi_runtime_t *rt = calloc(1, sizeof *rt);
@@ -211,6 +217,7 @@ hmi_runtime_t *hmi_runtime_create(hmi_project_t *project, lv_obj_t *screen, hmi_
     rt->screen = screen;
     rt->tags = tags;
     rt->bind = hmi_bind_create(bind_apply, rt);
+    if (tags) hmi_bind_set_history(rt->bind, tag_history, rt);
     rt->alarms = hmi_alarms_create(apps_dir);
     hmi_alarms_set_callback(rt->alarms, alarms_changed, rt);
     hmi_theme_set_dark(strcmp(project->theme, "light") != 0);

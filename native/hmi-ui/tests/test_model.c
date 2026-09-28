@@ -6,7 +6,7 @@
 int main(void)
 {
     char err[256];
-    hmi_project_t *p = hmi_project_load(HMI_REPO_ROOT "/tests/ui/fixtures/engine-dashboard/project.edsui", err, sizeof err);
+    hmi_project_t *p = hmi_project_load(HMI_REPO_ROOT "/tests/hmi_ui/fixtures/engine-dashboard/project.edsui", err, sizeof err);
     CHECK(p != NULL);
     if (!p) { fprintf(stderr, "%s\n", err); return check_summary("test_model"); }
     CHECK_EQ_STR(p->name, "engine-dashboard");

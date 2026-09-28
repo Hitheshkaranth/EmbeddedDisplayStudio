@@ -1,5 +1,5 @@
 // tests/test_bind.c -- the binding engine (acceptance test, part 1;
-// part 2 is tests/ui/test_conformance_ui.py through a real process).
+// part 2 is tests/hmi_ui/test_conformance_ui.py through a real process).
 //
 // Uses the engine against the engine-dashboard fixture with a recording
 // apply callback: no LVGL objects are needed, the engine only computes
@@ -53,7 +53,7 @@ int main(void)
     CHECK(hmi_bind_threshold_trips(2, "==", 2) && hmi_bind_threshold_trips(3, "!=", 2));
 
     char err[256];
-    hmi_project_t *p = hmi_project_load(HMI_REPO_ROOT "/tests/ui/fixtures/engine-dashboard/project.edsui", err, sizeof err);
+    hmi_project_t *p = hmi_project_load(HMI_REPO_ROOT "/tests/hmi_ui/fixtures/engine-dashboard/project.edsui", err, sizeof err);
     CHECK(p != NULL);
     if (!p) return check_summary("test_bind");
     hmi_bind_t *b = hmi_bind_create(apply, NULL);

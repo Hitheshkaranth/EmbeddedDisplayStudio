@@ -334,7 +334,7 @@ After that, **deploying a design never touches the runtime**: a deploy carries `
 | **Spec** | `ui/qml/Shadcn/*.qml` — the reference drawing | the desktop Live Preview; humans |
 | **Port** | `native/hmi-ui/src/widgets/w_*.c` — the same drawing on LVGL | the panel, and every still image the Studio shows |
 
-`tests/ui/test_widget_parity.py` renders both and compares them. A parity suite proves only what it renders: drawn at their defaults, four faults hid for a long time — an attitude indicator with sky and ground inverted, a tape whose scale travelled with the needle, a VSI with hard-coded labels, a gauge that ignored the design's range. `hmi-ui --render-widget <Type> --props '{...}' --headless out.png` draws one widget in isolation.
+`tests/hmi_ui/test_widget_parity.py` renders both and compares them. A parity suite proves only what it renders: drawn at their defaults, four faults hid for a long time — an attitude indicator with sky and ground inverted, a tape whose scale travelled with the needle, a VSI with hard-coded labels, a gauge that ignored the design's range. `hmi-ui --render-widget <Type> --props '{...}' --headless out.png` draws one widget in isolation.
 
 </details>
 

@@ -212,7 +212,7 @@ do_install() {
     # of the pin/bus mapping (may contain hardware security parameters).
     # -----------------------------------------------------------------------
     install -d ${D}${sysconfdir}/hmi
-    install -m 0644 ${S}/hwd.json ${D}${sysconfdir}/hmi/hwd.json
+    install -m 0640 ${S}/hwd.json ${D}${sysconfdir}/hmi/hwd.json
 
     # -----------------------------------------------------------------------
     # /usr/bin/ - public executables.

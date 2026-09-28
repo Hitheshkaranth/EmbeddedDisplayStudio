@@ -1,18 +1,19 @@
 """
-tests/ui/test_conformance_ui.py
+tests/hmi_ui/test_conformance_ui.py
 Black-box conformance of the Qt-free runtime (native/hmi-ui) against the
 CONTRACT section 2 wire protocol, driven exactly like the loaders' suite:
 LoaderHarness spawns the binary with the standard flags and plays daemon.
 
-The bundle is tests/ui/fixtures/probe-app: HmiProbe widgets that log every
+The bundle is tests/hmi_ui/fixtures/probe-app: HmiProbe widgets that log every
 bound value ("App Log: PROBE value=...") and turn ctl.* tag changes into
 write / pulse / navigate actions.
 
-    HMI_GUI_CMD=native/hmi-ui/out/hmi-ui python -m unittest tests.ui.test_conformance_ui -v
+    native/hmi-ui/build.sh && python -m unittest tests.hmi_ui.test_conformance_ui -v
 
 Passes once tags.c (tag intake) and bind.c (bindings) are in place.
 """
 import os
+import shlex
 import time
 import unittest
 
@@ -21,15 +22,24 @@ from tests.native.loader_harness import LoaderHarness
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "probe-app")
 
 
-def _is_ui_runtime():
+def _ui_runtime():
+    """The hmi-ui command under test: HMI_GUI_CMD when it names hmi-ui, else
+    HMI_UI_BIN, else build.sh's output. None when there is no binary."""
     cmd = os.environ.get("HMI_GUI_CMD", "")
-    return "hmi-ui" in cmd
+    if "hmi-ui" in cmd:
+        return cmd
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    path = os.environ.get("HMI_UI_BIN") or os.path.join(root, "native", "hmi-ui", "out", "hmi-ui")
+    return shlex.quote(path) if os.path.isfile(path) else None
 
 
-@unittest.skipUnless(_is_ui_runtime(), "HMI_GUI_CMD must point at native/hmi-ui/out/hmi-ui")
+UI_CMD = _ui_runtime()
+
+
+@unittest.skipUnless(UI_CMD, "needs the Linux hmi-ui binary (native/hmi-ui/build.sh)")
 class TestUiConformance(unittest.TestCase):
     def setUp(self):
-        self.h = LoaderHarness(apps_dir=FIXTURE, exit_after_ms=15000)
+        self.h = LoaderHarness(apps_dir=FIXTURE, exit_after_ms=15000, cmd=UI_CMD)
         self.h.start()
         self.h.wait_for(r"Marked ready", timeout=20)
         self.addCleanup(self.h.stop)
@@ -107,7 +117,7 @@ class TestUiConformance(unittest.TestCase):
     def test_unsubscribe_on_exit(self):
         """A runtime that exits (here: --exit-after) unsubscribes first."""
         self.h.stop()
-        short = LoaderHarness(apps_dir=FIXTURE, exit_after_ms=2500)
+        short = LoaderHarness(apps_dir=FIXTURE, exit_after_ms=2500, cmd=UI_CMD)
         short.start()
         self.addCleanup(short.stop)
         short.wait_for(r"Marked ready", timeout=20)

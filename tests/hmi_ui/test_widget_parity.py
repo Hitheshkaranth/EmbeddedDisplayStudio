@@ -1,5 +1,5 @@
 """
-tests/ui/test_widget_parity.py
+tests/hmi_ui/test_widget_parity.py
 The Qt-free kit against the QML kit, widget by widget.
 
 For every implemented kit type (wave 1, WAVE below) the widget is rendered
@@ -16,7 +16,7 @@ signs off on. Placeholder renders (the runtime logs "not implemented") are
 reported as skips, so the gate is honest about stubs.
 
     QT_QPA_PLATFORM=offscreen HMI_UI_BIN=native/hmi-ui/out/hmi-ui \\
-        python -m unittest tests.ui.test_widget_parity -v
+        python -m unittest tests.hmi_ui.test_widget_parity -v
     HMI_UI_TYPES=ShClusterGauge,ShButton restricts the run.
 """
 import copy

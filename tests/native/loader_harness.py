@@ -46,8 +46,11 @@ class LoaderHarness:
         exit_after_ms: ``--exit-after`` value in milliseconds.
     """
 
-    def __init__(self, apps_dir, *, theme=None, log_level=None, exit_after_ms=15000):
+    def __init__(self, apps_dir, *, theme=None, log_level=None, exit_after_ms=15000, cmd=None):
         self.apps_dir = str(apps_dir)
+        # An explicit binary wins over HMI_GUI_CMD: the hmi-ui suite must not
+        # redirect every other loader suite in the same run.
+        self.cmd = cmd
         self.theme = theme
         self.log_level = log_level
         self.exit_after_ms = exit_after_ms
@@ -69,7 +72,7 @@ class LoaderHarness:
 
     def start(self):
         """Spawn the loader process and start the reader thread."""
-        cmd = os.environ.get("HMI_GUI_CMD")
+        cmd = self.cmd or os.environ.get("HMI_GUI_CMD")
         if cmd is None:
             cmd = [sys.executable, str(REPO_ROOT / "gui" / "hmi_loader" / "main.py")]
         else:

@@ -74,6 +74,8 @@ struct hmi_bind {
     bind_idx_entry_t *idx;
     size_t n_idx;
     size_t cap_idx;
+    hmi_bind_history_cb history;
+    void *history_user;
 };
 
 hmi_bind_t *hmi_bind_create(hmi_bind_apply_cb apply, void *user)
@@ -82,6 +84,26 @@ hmi_bind_t *hmi_bind_create(hmi_bind_apply_cb apply, void *user)
     b->apply = apply;
     b->user = user;
     return b;
+}
+
+void hmi_bind_set_history(hmi_bind_t *b, hmi_bind_history_cb history, void *user)
+{
+    b->history = history;
+    b->history_user = user;
+}
+
+// Rule 4 for a scalar tag: the chart shows the tag's recent samples, scaled
+// like any other reading, as many as the widget keeps.
+static void apply_series_history(hmi_bind_t *b, hmi_widget_t *w, const hmi_binding_t *bd)
+{
+    const hmi_value_t *mp = hmi_widget_prop(w, "maxPoints");
+    double want = mp ? hmi_value_as_num(mp, 100.0) : 100.0;
+    size_t count = want < 2.0 ? 2 : (size_t)want;
+    hmi_value_t list = b->history(bd->tag, count, b->history_user);
+    for (size_t i = 0; i < list.count; i++)
+        list.items[i].n = list.items[i].n * bd->multiplier + bd->offset;
+    b->apply(w, bd->prop, &list, b->user);
+    hmi_value_free(&list);
 }
 
 // ---------------------------------------------------------------------------
@@ -399,6 +421,8 @@ static void apply_tag_value(hmi_widget_t *widget, void *user)
         if (is_series_property(wtype, bd->prop)) {
             if (c->value->kind == HMI_V_LIST) {
                 b->apply(w2, bd->prop, c->value, b->user);
+            } else if (c->value->kind == HMI_V_NUM && b->history) {
+                apply_series_history(b, w2, bd);
             }
             continue;
         }

@@ -1,3 +1,3 @@
-from .commands import CallbackCommand
+from .commands import CallbackCommand, NudgeCommand
 
-__all__ = ["CallbackCommand"]
+__all__ = ["CallbackCommand", "NudgeCommand"]

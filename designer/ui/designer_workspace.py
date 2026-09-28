@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 from designer.canvas import widget_previews
 from designer.canvas.designer_view import POSITIONERS, DesignerScene, DesignerView
 from designer.canvas.qml_previews import QmlPreviewRenderer
-from designer.commands import CallbackCommand
+from designer.commands import CallbackCommand, NudgeCommand
 from designer.generators import QmlGenerationError, QmlGenerator
 from designer.model import DesignerAction, DesignerBinding, DesignerPage, DesignerProject, DesignerWidget
 from designer.model.project import drop_unrunnable_actions, ensure_unique_ids
@@ -582,8 +582,15 @@ class DesignerWorkspace(QWidget):
         # The stack outlives the workspace on teardown and keeps emitting (see
         # _pin in _build_ui); a signal on a deleted widget raises from inside
         # Qt's delivery.
-        if shiboken6.isValid(self):
+        if shiboken6.isValid(self) and not getattr(self, "_clearing_undo", False):
             self.designChanged.emit()
+
+    def _clear_undo(self):
+        # Every caller loads a new design and announces that itself; the
+        # stack's own index change on clear() would announce it twice.
+        self._clearing_undo = True
+        try: self.undo_stack.clear()
+        finally: self._clearing_undo = False
 
     def _build_ui(self):
         self.setObjectName("designerWorkspace")
@@ -1344,7 +1351,7 @@ class DesignerWorkspace(QWidget):
             screen = (manifest or {}).get("screen", {})
             self.project = DesignerProject(name=self._bundle_project_name(manifest)); self.project.screen.width = int(screen.get("width", 1280)); self.project.screen.height = int(screen.get("height", 800))
             self.project.screen.theme = theme_of(manifest or {})
-            self.file_path = path; self.current_page_index = 0; self.undo_stack.clear(); self._load_page()
+            self.file_path = path; self.current_page_index = 0; self._clear_undo(); self._load_page()
             # clear() is silent on an empty stack, so a fresh project would
             # otherwise never reach the Code window.
             self.designChanged.emit()
@@ -1370,7 +1377,7 @@ class DesignerWorkspace(QWidget):
             name = self._bundle_project_name()
         self.project = DesignerProject(name=name); self.project.screen.width = width; self.project.screen.height = height
         self.file_path = os.path.join(self.bundle_dir, "project.edsui") if self.bundle_dir else ""
-        self.current_page_index = 0; self.undo_stack.clear(); self._load_page()
+        self.current_page_index = 0; self._clear_undo(); self._load_page()
         self.designChanged.emit()
 
     def open_ui(self):
@@ -1382,7 +1389,7 @@ class DesignerWorkspace(QWidget):
             self.project = DesignerProject.load(path); self.file_path = os.path.abspath(path); self.bundle_dir = os.path.dirname(self.file_path)
             self._drop_unrunnable_actions(self.project)
             self.scene.project_dir = self.bundle_dir
-            self.current_page_index = 0; self.undo_stack.clear(); self._load_page(); self.message.emit(f"Opened {path}")
+            self.current_page_index = 0; self._clear_undo(); self._load_page(); self.message.emit(f"Opened {path}")
             self.designChanged.emit()
             self._retarget_to_connected_display()
         except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -1482,6 +1489,12 @@ class DesignerWorkspace(QWidget):
                           for model in self.scene.selected_models()]
     def cut(self): self.copy(); self.delete_selected()
     def paste(self):
+        if not self.clipboard: return
+        # One undo step for the whole clipboard, however many widgets it holds.
+        self.undo_stack.beginMacro("Paste widgets" if len(self.clipboard) > 1 else "Paste widget")
+        try: self._paste_each()
+        finally: self.undo_stack.endMacro()
+    def _paste_each(self):
         for parent_id, source in self.clipboard:
             model = copy.deepcopy(source); model.id = self.project.unique_id(source.id); model.geometry["x"] += 10; model.geometry["y"] += 10
             for child in model.walk():
@@ -1646,32 +1659,42 @@ class DesignerWorkspace(QWidget):
             if model: self.scene.clearSelection(); canvas_item = self.scene.item_for_id(old); canvas_item.setSelected(True); self._property_command("id", new)
     def _find(self, widget_id): return next((w for w in self.project.all_widgets() if w.id == widget_id), None)
 
-    # Page operations and nudging edit the model without an undo command, so
-    # the stack never announces them; they tell the Code window themselves.
+    # Switching pages is navigation, not an edit: it stays off the undo stack
+    # and announces itself. Page edits and nudges are commands, so undo can
+    # never replay a geometry or page list the model no longer has.
     def change_page(self, index):
         if index >= 0: self.current_page_index = index; self._load_page(); self.designChanged.emit()
+    def _push_page_insert(self, text, page):
+        previous = self.current_page_index
+        def redo():
+            self.project.pages.append(page); self.current_page_index = len(self.project.pages)-1; self._load_page()
+        def undo():
+            if page in self.project.pages: self.project.pages.remove(page)
+            self.current_page_index = previous; self._load_page()
+        self.undo_stack.push(CallbackCommand(text, redo, undo))
     def new_page(self):
-        number = len(self.project.pages)+1; page = DesignerPage(self.project.unique_id(f"page{number}"), f"Page {number}")
-        self.project.pages.append(page); self.current_page_index = len(self.project.pages)-1; self._load_page()
-        self.designChanged.emit()
+        number = len(self.project.pages)+1
+        self._push_page_insert("New page", DesignerPage(self.project.unique_id(f"page{number}"), f"Page {number}"))
     def duplicate_page(self):
         source = self.current_page; number = len(self.project.pages) + 1
         page = copy.deepcopy(source); page.id = self.project.unique_id(f"page{number}"); page.name = f"{source.name} Copy"
         for widget in page.walk(): widget.id = self.project.unique_id(widget.id)
-        self.project.pages.append(page); self.current_page_index = len(self.project.pages)-1; self._load_page()
-        self.designChanged.emit()
+        self._push_page_insert("Duplicate page", page)
     def delete_page(self):
         if len(self.project.pages) == 1:
             QMessageBox.information(self, "Page required", "A design must contain at least one page."); return
-        del self.project.pages[self.current_page_index]; self.current_page_index = min(self.current_page_index, len(self.project.pages)-1); self._load_page()
-        self.designChanged.emit()
+        index = self.current_page_index; page = self.project.pages[index]
+        def redo():
+            self.project.pages.remove(page); self.current_page_index = min(index, len(self.project.pages)-1); self._load_page()
+        def undo():
+            self.project.pages.insert(index, page); self.current_page_index = index; self._load_page()
+        self.undo_stack.push(CallbackCommand("Delete page", redo, undo))
     def select_all(self):
         for item in self.scene.items():
             if hasattr(item, "widget_model"): item.setSelected(True)
     def nudge(self, dx, dy):
         models = self.scene.selected_models()
-        for model in models: model.geometry["x"] += dx; model.geometry["y"] += dy
-        if models: self._load_page(select=[m.id for m in models]); self.designChanged.emit()
+        if models: self.undo_stack.push(NudgeCommand(self, models, dx, dy))
     def _screen_changed(self):
         if not hasattr(self, "scene"): return
         self.project.screen.width = self.screen_width.value(); self.project.screen.height = self.screen_height.value()

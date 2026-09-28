@@ -32,7 +32,7 @@ bash native/hmi-ui/win64/build.sh 2>&1 | tail -3
 echo "== 3. renders"
 KIT="$ROOT/ui/qml/Shadcn"
 WKIT="$(wslpath -w "$KIT")"
-FIX="$ROOT/tests/ui/fixtures/engine-dashboard"
+FIX="$ROOT/tests/hmi_ui/fixtures/engine-dashboard"
 WFIX="$(wslpath -w "$FIX")"
 WQC="$(wslpath -w "$QC")"
 PROPS='{"label":"RPM","value":137,"unit":"x100"}'
