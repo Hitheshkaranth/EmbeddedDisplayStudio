@@ -1,9 +1,10 @@
 // expr.c -- see expr.h (CONTRACT 13.2).
 //
-// A recursive-descent parser + evaluator. Limits: 512 characters, 16 distinct
-// tags, nesting depth 32 (parentheses, function calls, unary operators).
-// A null or string arithmetic operand, division/modulo by zero, a non-finite
-// result, and a non-finite number all yield null (never a compile error).
+// A tokenizer, a recursive-descent parser and a tree evaluator. Limits: 512
+// characters, 16 distinct tags, nesting depth 32 (parentheses, function
+// calls, unary operators). A null or string arithmetic operand, division or
+// modulo by zero and a non-finite result all yield null at run time; only the
+// text itself can be a compile error.
 
 #include "expr.h"
 
@@ -16,699 +17,696 @@
 #define MAX_TAGS    16
 #define MAX_DEPTH   32
 
+// ---------------------------------------------------------------------------
+// tokens
+// ---------------------------------------------------------------------------
+
 typedef enum {
-    N_NUM, N_BOOL, N_STR, N_TAG, N_UNARY, N_BIN, N_CMP, N_AND, N_OR,
-    N_TERN, N_CALL
-} nodekind_t;
+    T_END, T_NUM, T_STR, T_WORD, T_OP, T_LPAREN, T_RPAREN, T_COMMA, T_QMARK, T_COLON
+} tokkind_t;
+
+typedef struct {
+    tokkind_t kind;
+    size_t pos;         // offset in the text, for error messages
+    size_t len;         // T_WORD / T_OP: length of the text at pos
+    double num;         // T_NUM
+    char *str;          // T_STR: unescaped, owned
+} token_t;
+
+typedef enum {
+    OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD,
+    OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE,
+    OP_NOT, OP_NEG,
+} op_t;
+
+typedef enum { N_NUM, N_BOOL, N_STR, N_TAG, N_UNARY, N_BIN, N_CMP, N_AND, N_OR, N_TERN, N_CALL } nodekind_t;
+
+typedef enum { F_ABS, F_FLOOR, F_CEIL, F_ROUND, F_MIN, F_MAX, F_CLAMP } func_t;
+
+static const struct { const char *name; int min, max; } FUNCS[] = {
+    [F_ABS] = {"abs", 1, 1},     [F_FLOOR] = {"floor", 1, 1}, [F_CEIL] = {"ceil", 1, 1},
+    [F_ROUND] = {"round", 1, 2}, [F_MIN] = {"min", 2, -1},    [F_MAX] = {"max", 2, -1},
+    [F_CLAMP] = {"clamp", 3, 3},
+};
+#define NFUNCS (sizeof FUNCS / sizeof FUNCS[0])
 
 typedef struct node {
     nodekind_t kind;
-    // N_NUM: double d
-    // N_BOOL: bool b
-    // N_STR: char *s (owned), size_t slen
-    // N_TAG: char *s (owned to end of tag), size_t slen
-    // N_UNARY: struct node *a
-    // N_BIN: struct node *a, *b; enum {OP_ADD,OP_SUB,OP_MUL,OP_DIV,OP_MOD,OP_POW} op
-    // N_CMP: struct node *a, *b; char op (== != < <= > >=)
-    // N_AND / N_OR: struct node *a, *b
-    // N_TERN: struct node *a (cond), *b (then), *c (else)
-    // N_CALL: char *fname; struct node **args; size_t nargs
-    double d;
-    bool bv;
-    char *s;
-    size_t slen;
-    struct node *a, *b, *c;
-    int op;
-    char cop;
-    const char *fname;
-    struct node **args;
-    size_t nargs;
+    double d;           // N_NUM
+    bool b;             // N_BOOL
+    char *s;            // N_STR (owned)
+    size_t tag;         // N_TAG: index into the expression's tag list
+    op_t op;            // N_UNARY, N_BIN, N_CMP
+    func_t fn;          // N_CALL
+    struct node *a, *b2, *c;    // operands; N_TERN: cond, then, else
+    struct node **args; size_t nargs;   // N_CALL
 } node_t;
 
-typedef struct {
+struct hmi_expr {
+    node_t *root;
     char *tags[MAX_TAGS];
     size_t ntags;
-} tagset_t;
+};
 
 typedef struct {
-    const char *start, *p, *end;
-    node_t *root;
-    tagset_t *tags;
-    char err[80];
+    const char *text;
+    token_t *toks; size_t ntoks, cap;
+    size_t i;           // parser cursor into toks
     int depth;
+    struct hmi_expr *e;
+    char err[160];
 } parser_t;
 
-// ---------------------------------------------------------------------------
-// small helpers
-// ---------------------------------------------------------------------------
-
-static const char *skip_ws(const char *p)
-{
-    while (*p == ' ' || *p == '\t') p++;
-    return p;
-}
-
-static bool is_digit(int c) { return c >= '0' && c <= '9'; }
-
-static bool is_ident_start(int c) { return c >= 'a' && c <= 'z'; }
-
-static bool is_ident_char(int c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'; }
-
-static bool is_tag_char(int c) { return is_ident_char(c); }   // segment chars except the leading one rule below
-
-static node_t *node_new(void)
-{
-    return calloc(1, sizeof(node_t));
-}
-
-static void free_node(node_t *n)
+static void node_free(node_t *n)
 {
     if (!n) return;
-    if (n->kind == N_STR || n->kind == N_TAG) free(n->s);
-    if (n->kind == N_CALL) {
-        if (n->args) {
-            for (size_t i = 0; i < n->nargs; i++) free_node(n->args[i]);
-            free(n->args);
-        }
-    }
-    free_node(n->a);
-    free_node(n->b);
-    free_node(n->c);
+    free(n->s);
+    for (size_t i = 0; i < n->nargs; i++) node_free(n->args[i]);
+    free(n->args);
+    node_free(n->a);
+    node_free(n->b2);
+    node_free(n->c);
     free(n);
 }
 
-static bool tag_has(tagset_t *ts, const char *name, size_t len)
+static node_t *node_new(nodekind_t kind)
 {
-    for (size_t i = 0; i < ts->ntags; i++)
-        if (len == strlen(ts->tags[i]) && memcmp(ts->tags[i], name, len) == 0)
-            return true;
-    return false;
+    node_t *n = calloc(1, sizeof *n);
+    if (n) n->kind = kind;
+    return n;
 }
 
-static void tag_add(tagset_t *ts, const char *name, size_t len)
+// First error wins: later ones are consequences of it.
+static void fail(parser_t *ps, size_t pos, const char *fmt, const char *what)
 {
-    for (size_t i = 0; i < ts->ntags; i++)
-        if (len == strlen(ts->tags[i]) && memcmp(ts->tags[i], name, len) == 0)
-            return;
-    if (ts->ntags >= MAX_TAGS) return;   // overflow: caller checks via error
-    char *dup = malloc(len + 1);
-    memcpy(dup, name, len);
-    dup[len] = '\0';
-    ts->tags[ts->ntags++] = dup;
+    if (ps->err[0]) return;
+    char msg[120];
+    snprintf(msg, sizeof msg, fmt, what);
+    snprintf(ps->err, sizeof ps->err, "%s at %zu", msg, pos);
+}
+
+static bool is_digit(char c) { return c >= '0' && c <= '9'; }
+static bool is_lower(char c) { return c >= 'a' && c <= 'z'; }
+static bool is_word(char c)
+{
+    return is_digit(c) || is_lower(c) || (c >= 'A' && c <= 'Z') || c == '_';
+}
+
+static bool push(parser_t *ps, token_t t)
+{
+    if (ps->ntoks == ps->cap) {
+        size_t cap = ps->cap ? ps->cap * 2 : 32;
+        token_t *grown = realloc(ps->toks, cap * sizeof *grown);
+        if (!grown) { free(t.str); fail(ps, t.pos, "%s", "out of memory"); return false; }
+        ps->toks = grown;
+        ps->cap = cap;
+    }
+    ps->toks[ps->ntoks++] = t;
+    return true;
+}
+
+static bool tokenize(parser_t *ps)
+{
+    const char *s = ps->text;
+    size_t i = 0;
+    for (;;) {
+        while (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') i++;
+        token_t t = {.pos = i};
+        char c = s[i];
+        if (!c) { t.kind = T_END; return push(ps, t); }
+        if (is_digit(c)) {
+            // NUMBER := [0-9]+ ('.' [0-9]+)? -- no exponent, no leading '.'
+            size_t j = i;
+            while (is_digit(s[j])) j++;
+            if (s[j] == '.' && is_digit(s[j + 1])) {
+                j++;
+                while (is_digit(s[j])) j++;
+            }
+            t.kind = T_NUM;
+            t.num = strtod(s + i, NULL);
+            i = j;
+        } else if (c == '"') {
+            size_t j = i + 1, n = 0;
+            char *out = malloc(strlen(s + i) + 1);
+            if (!out) { fail(ps, i, "%s", "out of memory"); return false; }
+            while (s[j] && s[j] != '"') {
+                if (s[j] == '\\') {
+                    if (s[j + 1] != '"' && s[j + 1] != '\\') {
+                        free(out);
+                        fail(ps, j, "%s", "bad escape in string");
+                        return false;
+                    }
+                    j++;
+                }
+                out[n++] = s[j++];
+            }
+            if (s[j] != '"') { free(out); fail(ps, i, "%s", "unterminated string"); return false; }
+            out[n] = '\0';
+            t.kind = T_STR;
+            t.str = out;
+            i = j + 1;
+        } else if (is_word(c)) {
+            // A word, possibly dotted; whether it is a tag, a keyword or a
+            // function name is the parser's decision.
+            size_t j = i;
+            while (is_word(s[j])) j++;
+            while (s[j] == '.' && is_word(s[j + 1])) {
+                j++;
+                while (is_word(s[j])) j++;
+            }
+            t.kind = T_WORD;
+            t.len = j - i;
+            i = j;
+        } else {
+            static const char *two[] = {"==", "!=", "<=", ">=", "&&", "||"};
+            size_t len = 0;
+            for (size_t k = 0; k < sizeof two / sizeof two[0]; k++)
+                if (c == two[k][0] && s[i + 1] == two[k][1]) len = 2;
+            if (!len && strchr("+-*/%<>!", c)) len = 1;
+            if (len) {
+                t.kind = T_OP;
+                t.len = len;
+            } else if (c == '(') { t.kind = T_LPAREN; len = 1; }
+            else if (c == ')') { t.kind = T_RPAREN; len = 1; }
+            else if (c == ',') { t.kind = T_COMMA; len = 1; }
+            else if (c == '?') { t.kind = T_QMARK; len = 1; }
+            else if (c == ':') { t.kind = T_COLON; len = 1; }
+            else {
+                char what[2] = {c, 0};
+                fail(ps, i, "unexpected '%s'", what);
+                return false;
+            }
+            i += len;
+        }
+        if (!push(ps, t)) return false;
+    }
 }
 
 // ---------------------------------------------------------------------------
 // parser
 // ---------------------------------------------------------------------------
 
-static bool compile_error(parser_t *ps, const char *msg)
+static const token_t *cur(parser_t *ps) { return &ps->toks[ps->i]; }
+
+static bool is_op(parser_t *ps, const char *op)
 {
-    if (!ps->err[0]) snprintf(ps->err, sizeof ps->err, "%s at %ld", msg, (long)(ps->p - ps->start));
-    return false;
+    const token_t *t = cur(ps);
+    return t->kind == T_OP && t->len == strlen(op) && memcmp(ps->text + t->pos, op, t->len) == 0;
 }
 
-// parse a dotted tag: [a-z][a-z0-9]*(\.[a-z0-9_]+)+  (CONTRACT 2.5 / 13.2)
-static node_t *parse_tag(parser_t *ps)
+static void fail_unexpected(parser_t *ps)
 {
-    const char *start = ps->p;
-    if (!is_ident_start(*ps->p)) return NULL;
-    // consume the first segment, then dot-separated segments, accepting
-    // digits and '_' in every segment except the final one.
-    ps->p++;
-    while (*ps->p == '.' || is_ident_char(*ps->p)) {
-        if (*ps->p == '.') {
-            ps->p++;
-            if (!is_ident_char(*ps->p)) return NULL;   // trailing/empty dot
-        } else {
-            ps->p++;
-        }
-    }
-    if (memchr(start, '.', (size_t)(ps->p - start)) == NULL) return NULL;   // no dot at all
-    if (memchr(start, '_', (size_t)(ps->p - start)) != NULL) return NULL;   // '_' in first segment
-    size_t len = (size_t)(ps->p - start);
-    node_t *n = node_new();
-    n->kind = N_TAG;
-    n->s = malloc(len + 1);
-    memcpy(n->s, start, len);
-    n->s[len] = '\0';
-    n->slen = len;
-    return n;
-}
-
-static node_t *parse_string(parser_t *ps)
-{
-    if (*ps->p != '"') return NULL;
-    ps->p++;
-    const char *start = ps->p;
-    while (*ps->p && *ps->p != '"') {
-        if (*ps->p == '\\') ps->p++;
-        if (*ps->p == '"') break;
-        ps->p++;
-    }
-    if (*ps->p != '"') return NULL;   // unterminated
-    size_t len = (size_t)(ps->p - start);
-    node_t *n = node_new();
-    n->kind = N_STR;
-    n->s = malloc(len + 1);
-    memcpy(n->s, start, len);
-    n->s[len] = '\0';
-    n->slen = len;
-    ps->p++;   // closing quote
-    return n;
-}
-
-static node_t *parse_number(parser_t *ps)
-{
-    const char *start = ps->p;
-    while (is_digit(*ps->p)) ps->p++;
-    if (*ps->p == '.') {
-        ps->p++;
-        while (is_digit(*ps->p)) ps->p++;
-    }
-    node_t *n = node_new();
-    n->kind = N_NUM;
-    n->d = strtod(start, NULL);
-    return n;
-}
-
-static const char *FUNCTIONS[] = {"abs", "floor", "ceil", "round", "min", "max", "clamp"};
-static int FUNC_MIN[] = {1, 1, 1, 1, 2, 2, 3};
-static int FUNC_MAX[] = {1, 1, 1, 2, -1, -1, 3};
-
-// expr := ... (already in caller's precedence). We parse a full expression
-// body here because functions take expr-lists and so do our binary ops.
-static bool parse_binary(parser_t *ps, int maxprec, node_t **out);
-
-static bool parse_call(parser_t *ps, node_t **out)
-{
-    const char *start = ps->p;
-    while (is_ident_char(*ps->p)) ps->p++;
-    size_t len = (size_t)(ps->p - start);
-    for (size_t i = 0; i < sizeof(FUNCTIONS) / sizeof(FUNCTIONS[0]); i++) {
-        if (len != strlen(FUNCTIONS[i])) continue;
-        if (memcmp(start, FUNCTIONS[i], len) != 0) continue;
-        // expect '('
-        const char *paren = skip_ws(ps->p);
-        if (*paren != '(') return compile_error(ps, "unknown function");
-        ps->p = paren + 1;
-        node_t *n = node_new();
-        n->kind = N_CALL;
-        n->fname = FUNCTIONS[i];
-        size_t cap = 4, nargs = 0;
-        node_t **args = malloc(cap * sizeof(node_t *));
-        for (;;) {
-            parser_t inner = {0};
-            inner.start = ps->p; inner.end = ps->p; inner.tags = ps->tags;
-            node_t *arg;
-            if (!parse_binary(&inner, 4, &arg)) {
-                // error already logged on the inner parser; discard it
-free_node(n); free(args);
-                ps->p = inner.p;
-                return false;
-            }
-            if (nargs >= cap) { cap *= 2; args = realloc(args, cap * sizeof(node_t *)); }
-            args[nargs++] = arg;
-            ps->p = inner.p;
-            const char *q = skip_ws(ps->p);
-            if (*q == ',') { ps->p = q + 1; continue; }
-            if (*q == ')') { ps->p = q + 1; break; }
-            compile_error(ps, "expected ',' or ')'");
-            free_node(n); free(args);
-            return false;
-        }
-        int min = FUNC_MIN[i], max = FUNC_MAX[i];
-        if (nargs < (size_t)min || (max >= 0 && nargs > (size_t)max)) {
-            compile_error(ps, "wrong number of arguments");
-            free_node(n); free(args);
-            return false;
-        }
-        n->args = args; n->nargs = nargs;
-        *out = n;
-        return true;
-    }
-    return compile_error(ps, "bad token");
-}
-
-static bool parse_primary(parser_t *ps, node_t **out)
-{
-    fprintf(stderr, "DBGpp p=%s\n", ps->p);
-    if (ps->depth >= MAX_DEPTH) return compile_error(ps, "too nested");
-    const char *p = skip_ws(ps->p);
-    ps->p = p;
-
-if (*p == '-') {
-            if (!is_digit(p[1]) && p[1] != '.') {
-                ps->p = p + 1;
-                node_t *n = node_new();
-                n->kind = N_UNARY;
-                n->op = 1;   // negate
-            if (!parse_primary(ps, &n->a)) { free_node(n); return false; }
-            *out = n;
-            return true;
-        }
-    }
-    if (*p == '!') {
-        ps->p = p + 1;
-        ps->depth++;
-        node_t *n = node_new();
-        n->kind = N_UNARY;
-        n->op = 0;   // logical not
-        if (!parse_primary(ps, &n->a)) { ps->depth--; free_node(n); return false; }
-        ps->depth--;
-        *out = n;
-        return true;
-    }
-
-    if (*p == '(') {
-        ps->p = p + 1;
-        ps->depth++;
-        node_t *inner;
-        if (!parse_binary(ps, 0, &inner)) { ps->depth--; return false; }
-        const char *q = skip_ws(ps->p);
-        if (*q != ')') { ps->depth--; return compile_error(ps, "expected ')'"); }
-        ps->p = q + 1;
-        ps->depth--;
-        *out = inner;
-        return true;
-    }
-
-    if (*p == '"') {
-        node_t *n = parse_string(ps);
-        if (!n) return compile_error(ps, "bad string");
-        *out = n;
-        return true;
-    }
-
-    // true / false / tag
-    if (is_ident_start(*p)) {
-        const char *start = p;
-        while (is_ident_char(*p)) p++;
-        size_t len = (size_t)(p - start);
-        if (len == 4 && memcmp(start, "true", 4) == 0) {
-            node_t *n = node_new();
-            n->kind = N_BOOL; n->bv = true;
-            ps->p = p;
-            *out = n;
-            return true;
-        }
-        if (len == 5 && memcmp(start, "false", 5) == 0) {
-            node_t *n = node_new();
-            n->kind = N_BOOL; n->bv = false;
-            ps->p = p;
-            *out = n;
-            return true;
-        }
-        // function call? "func ( ... )"
-        {
-            const char *q = skip_ws(p);
-            if (*q == '(') {
-                for (size_t i = 0; i < sizeof(FUNCTIONS) / sizeof(FUNCTIONS[0]); i++) {
-                    if (len == strlen(FUNCTIONS[i]) && memcmp(start, FUNCTIONS[i], len) == 0) {
-                        ps->p = start;
-                        if (!parse_call(ps, out)) return false;
-                        return true;
-                    }
-                }
-            }
-        }
-        // tag
-        ps->p = start;
-        node_t *n = parse_tag(ps);
-        if (!n) return compile_error(ps, "bad tag");
-        if (ps->tags->ntags >= MAX_TAGS && !tag_has(ps->tags, n->s, n->slen)) { free_node(n); return compile_error(ps, "too many tags"); }
-        tag_add(ps->tags, n->s, n->slen);
-        *out = n;
-        return true;
-    }
-
-    if (is_digit(*p) || (*p == '.' && is_digit(p[1]))) {
-        node_t *n = parse_number(ps);
-        if (!isfinite(n->d)) return compile_error(ps, "bad number");
-        *out = n;
-        return true;
-    }
-
-    return compile_error(ps, "unexpected character");
-}
-
-// Precedence climbing: * / % bind tightest, then + -, then comparisons, then
-// &&, then ||. (Ternary handled by the caller, parse_expr.)
-static bool parse_binary(parser_t *ps, int maxprec, node_t **out)
-{
-    node_t *left;
-    fprintf(stderr, "DBGpb maxprec=%d p=%s\n", maxprec, ps->p);
-    if (!parse_primary(ps, &left)) return false;
-    for (;;) {
-        const char *p = skip_ws(ps->p);
-        if (*p == '*') { ps->p = p + 1; if (maxprec > 3) break; node_t *n = node_new(); n->kind = N_BIN; n->op = 0; n->a = left; if (!parse_binary(ps, 3, &n->b)) { free_node(n); return false; } left = n; continue; }
-        if (*p == '/') { ps->p = p + 1; if (maxprec > 3) break; node_t *n = node_new(); n->kind = N_BIN; n->op = 1; n->a = left; if (!parse_binary(ps, 3, &n->b)) { free_node(n); return false; } left = n; continue; }
-        if (*p == '%') { ps->p = p + 1; if (maxprec > 3) break; node_t *n = node_new(); n->kind = N_BIN; n->op = 2; n->a = left; if (!parse_binary(ps, 3, &n->b)) { free_node(n); return false; } left = n; continue; }
-        if (*p == '+') { ps->p = p + 1; if (maxprec > 2) break; node_t *n = node_new(); n->kind = N_BIN; n->op = 3; n->a = left; if (!parse_binary(ps, 2, &n->b)) { free_node(n); return false; } left = n; continue; }
-        if (*p == '-') { ps->p = p + 1; if (maxprec > 2) break; node_t *n = node_new(); n->kind = N_BIN; n->op = 4; n->a = left; if (!parse_binary(ps, 2, &n->b)) { free_node(n); return false; } left = n; continue; }
-        if (*p == '=' && p[1] == '=') { ps->p = p + 2; if (maxprec > 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '='; n->a = left; if (!parse_binary(ps, 1, &n->b)) { free_node(n); return false; } left = n; continue; }
-        if (*p == '!' && p[1] == '=') { ps->p = p + 2; if (maxprec > 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '!'; n->a = left; if (!parse_binary(ps, 1, &n->b)) { free_node(n); return false; } left = n; continue; }
-        if (*p == '<' && p[1] == '=') { ps->p = p + 2; if (maxprec > 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '<'; n->a = left; if (!parse_binary(ps, 1, &n->b)) { free_node(n); return false; } left = n; continue; }
-        if (*p == '>' && p[1] == '=') { ps->p = p + 2; if (maxprec > 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '>'; n->a = left; if (!parse_binary(ps, 1, &n->b)) { free_node(n); return false; } left = n; continue; }
-        if (*p == '<') { ps->p = p + 1; if (maxprec > 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '<'; n->a = left; if (!parse_binary(ps, 1, &n->b)) { free_node(n); return false; } left = n; continue; }
-        if (*p == '>') { ps->p = p + 1; if (maxprec > 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '>'; n->a = left; if (!parse_binary(ps, 1, &n->b)) { free_node(n); return false; } left = n; continue; }
-        if (*p == '&' && p[1] == '&') { ps->p = p + 2; if (maxprec > 0) break; node_t *n = node_new(); n->kind = N_AND; n->a = left; if (!parse_binary(ps, 0, &n->b)) { free_node(n); return false; } left = n; continue; }
-        if (*p == '|' && p[1] == '|') { ps->p = p + 2; if (maxprec > 0) break; node_t *n = node_new(); n->kind = N_OR; n->a = left; if (!parse_binary(ps, 0, &n->b)) { free_node(n); return false; } left = n; continue; }
+    const token_t *t = cur(ps);
+    char what[64];
+    switch (t->kind) {
+    case T_END: fail(ps, t->pos, "%s", "unexpected end"); return;
+    case T_NUM: snprintf(what, sizeof what, "number"); break;
+    case T_STR: snprintf(what, sizeof what, "string"); break;
+    case T_WORD: case T_OP:
+        snprintf(what, sizeof what, "%.*s", (int)(t->len < 40 ? t->len : 40), ps->text + t->pos);
         break;
+    default: snprintf(what, sizeof what, "%c", ps->text[t->pos]); break;
     }
-    *out = left;
+    fail(ps, t->pos, "unexpected '%s'", what);
 }
 
-static bool parse_expr(parser_t *ps, node_t **out)
+static bool enter(parser_t *ps)
 {
-    node_t *n;
-    if (!parse_binary(ps, 0, &n)) return false;
-    const char *p = skip_ws(ps->p);
-    ps->p = p;
-    if (*p != '?') { *out = n; return true; }
-    ps->p = p + 1;
-    ps->depth++;
-    node_t *a;
-    if (!parse_binary(ps, 1, &a)) { ps->depth--; free_node(n); return false; }
-    const char *q = skip_ws(ps->p);
-    ps->p = q;
-    if (*q != ':') { compile_error(ps, "expected ':'"); ps->depth--; free_node(n); free_node(a); return false; }
-    ps->p = q + 1;
-    ps->depth++;
-    node_t *c;
-    if (!parse_binary(ps, 1, &c)) { ps->depth--; free_node(n); free_node(a); return false; }
-    ps->depth--;
-    node_t *tern = node_new();
-    tern->kind = N_TERN;
-    tern->a = n;
-    tern->b = a;
-    tern->c = c;
-    *out = tern;
+    if (++ps->depth > MAX_DEPTH) {
+        fail(ps, cur(ps)->pos, "%s", "too deeply nested");
+        return false;
+    }
     return true;
+}
+
+// TAG := [a-z][a-z0-9]*(\.[a-z0-9_]+)+   (CONTRACT 2.5)
+static bool valid_tag(const char *s, size_t len)
+{
+    size_t i = 0;
+    if (!len || !is_lower(s[0])) return false;
+    while (i < len && (is_lower(s[i]) || is_digit(s[i]))) i++;
+    if (i == len) return false;             // no dotted segment
+    while (i < len) {
+        if (s[i] != '.') return false;
+        size_t start = ++i;
+        while (i < len && (is_lower(s[i]) || is_digit(s[i]) || s[i] == '_')) i++;
+        if (i == start) return false;
+    }
+    return true;
+}
+
+static node_t *parse_expr(parser_t *ps);
+
+static node_t *parse_call(parser_t *ps, func_t fn, size_t pos)
+{
+    node_t *n = node_new(N_CALL);
+    if (!n || !enter(ps)) { node_free(n); return NULL; }
+    n->fn = fn;
+    ps->i++;                                // '('
+    for (;;) {
+        node_t *arg = parse_expr(ps);
+        if (!arg) { node_free(n); return NULL; }
+        node_t **grown = realloc(n->args, (n->nargs + 1) * sizeof *grown);
+        if (!grown) { node_free(arg); node_free(n); return NULL; }
+        n->args = grown;
+        n->args[n->nargs++] = arg;
+        if (cur(ps)->kind != T_COMMA) break;
+        ps->i++;
+    }
+    if (cur(ps)->kind != T_RPAREN) { fail_unexpected(ps); node_free(n); return NULL; }
+    ps->i++;
+    ps->depth--;
+    int want_min = FUNCS[fn].min, want_max = FUNCS[fn].max;
+    if ((int)n->nargs < want_min || (want_max >= 0 && (int)n->nargs > want_max)) {
+        fail(ps, pos, "wrong number of arguments to %s()", FUNCS[fn].name);
+        node_free(n);
+        return NULL;
+    }
+    return n;
+}
+
+static node_t *parse_word(parser_t *ps)
+{
+    const token_t *t = cur(ps);
+    const char *w = ps->text + t->pos;
+    size_t len = t->len, pos = t->pos;
+    if ((len == 4 && memcmp(w, "true", 4) == 0) || (len == 5 && memcmp(w, "false", 5) == 0)) {
+        node_t *n = node_new(N_BOOL);
+        if (n) n->b = len == 4;
+        ps->i++;
+        return n;
+    }
+    if (ps->toks[ps->i + 1].kind == T_LPAREN) {
+        ps->i++;
+        for (size_t f = 0; f < NFUNCS; f++)
+            if (strlen(FUNCS[f].name) == len && memcmp(FUNCS[f].name, w, len) == 0)
+                return parse_call(ps, (func_t)f, pos);
+        char name[48];
+        snprintf(name, sizeof name, "%.*s", (int)(len < 40 ? len : 40), w);
+        fail(ps, pos, "unknown function '%s'", name);
+        return NULL;
+    }
+    if (!valid_tag(w, len)) {
+        char name[48];
+        snprintf(name, sizeof name, "%.*s", (int)(len < 40 ? len : 40), w);
+        fail(ps, pos, "'%s' is not a tag name", name);
+        return NULL;
+    }
+    struct hmi_expr *e = ps->e;
+    size_t k = 0;
+    while (k < e->ntags && !(strlen(e->tags[k]) == len && memcmp(e->tags[k], w, len) == 0)) k++;
+    if (k == e->ntags) {
+        if (e->ntags >= MAX_TAGS) {
+            snprintf(ps->err, sizeof ps->err, "too many tags");
+            return NULL;
+        }
+        char *copy = malloc(len + 1);
+        if (!copy) return NULL;
+        memcpy(copy, w, len);
+        copy[len] = '\0';
+        e->tags[e->ntags++] = copy;
+    }
+    node_t *n = node_new(N_TAG);
+    if (n) n->tag = k;
+    ps->i++;
+    return n;
+}
+
+static node_t *parse_unary(parser_t *ps)
+{
+    const token_t *t = cur(ps);
+    if (is_op(ps, "!") || is_op(ps, "-")) {
+        op_t op = ps->text[t->pos] == '!' ? OP_NOT : OP_NEG;
+        if (!enter(ps)) return NULL;
+        ps->i++;
+        node_t *a = parse_unary(ps);
+        if (!a) return NULL;
+        ps->depth--;
+        node_t *n = node_new(N_UNARY);
+        if (!n) { node_free(a); return NULL; }
+        n->op = op;
+        n->a = a;
+        return n;
+    }
+    switch (t->kind) {
+    case T_NUM: {
+        node_t *n = node_new(N_NUM);
+        if (n) n->d = t->num;
+        ps->i++;
+        return n;
+    }
+    case T_STR: {
+        node_t *n = node_new(N_STR);
+        if (n) { n->s = t->str; ps->toks[ps->i].str = NULL; }
+        ps->i++;
+        return n;
+    }
+    case T_WORD:
+        return parse_word(ps);
+    case T_LPAREN: {
+        if (!enter(ps)) return NULL;
+        ps->i++;
+        node_t *n = parse_expr(ps);
+        if (!n) return NULL;
+        if (cur(ps)->kind != T_RPAREN) { fail_unexpected(ps); node_free(n); return NULL; }
+        ps->i++;
+        ps->depth--;
+        return n;
+    }
+    default:
+        fail_unexpected(ps);
+        return NULL;
+    }
+}
+
+static node_t *binary(nodekind_t kind, op_t op, node_t *a, node_t *b)
+{
+    node_t *n = node_new(kind);
+    if (!n) { node_free(a); node_free(b); return NULL; }
+    n->op = op;
+    n->a = a;
+    n->b2 = b;
+    return n;
+}
+
+static node_t *parse_prod(parser_t *ps)
+{
+    node_t *left = parse_unary(ps);
+    while (left && (is_op(ps, "*") || is_op(ps, "/") || is_op(ps, "%"))) {
+        char c = ps->text[cur(ps)->pos];
+        ps->i++;
+        node_t *right = parse_unary(ps);
+        if (!right) { node_free(left); return NULL; }
+        left = binary(N_BIN, c == '*' ? OP_MUL : c == '/' ? OP_DIV : OP_MOD, left, right);
+    }
+    return left;
+}
+
+static node_t *parse_sum(parser_t *ps)
+{
+    node_t *left = parse_prod(ps);
+    while (left && (is_op(ps, "+") || is_op(ps, "-"))) {
+        op_t op = ps->text[cur(ps)->pos] == '+' ? OP_ADD : OP_SUB;
+        ps->i++;
+        node_t *right = parse_prod(ps);
+        if (!right) { node_free(left); return NULL; }
+        left = binary(N_BIN, op, left, right);
+    }
+    return left;
+}
+
+// Comparisons do not chain: "1 < 2 == true" is a compile error.
+static node_t *parse_cmp(parser_t *ps)
+{
+    static const struct { const char *text; op_t op; } CMPS[] = {
+        {"==", OP_EQ}, {"!=", OP_NE}, {"<", OP_LT}, {"<=", OP_LE}, {">", OP_GT}, {">=", OP_GE},
+    };
+    node_t *left = parse_sum(ps);
+    if (!left) return NULL;
+    for (size_t k = 0; k < sizeof CMPS / sizeof CMPS[0]; k++) {
+        if (!is_op(ps, CMPS[k].text)) continue;
+        ps->i++;
+        node_t *right = parse_sum(ps);
+        if (!right) { node_free(left); return NULL; }
+        return binary(N_CMP, CMPS[k].op, left, right);
+    }
+    return left;
+}
+
+static node_t *parse_and(parser_t *ps)
+{
+    node_t *left = parse_cmp(ps);
+    while (left && is_op(ps, "&&")) {
+        ps->i++;
+        node_t *right = parse_cmp(ps);
+        if (!right) { node_free(left); return NULL; }
+        left = binary(N_AND, OP_EQ, left, right);
+    }
+    return left;
+}
+
+static node_t *parse_or(parser_t *ps)
+{
+    node_t *left = parse_and(ps);
+    while (left && is_op(ps, "||")) {
+        ps->i++;
+        node_t *right = parse_and(ps);
+        if (!right) { node_free(left); return NULL; }
+        left = binary(N_OR, OP_EQ, left, right);
+    }
+    return left;
+}
+
+// expr := or ('?' expr ':' expr)?
+static node_t *parse_expr(parser_t *ps)
+{
+    node_t *cond = parse_or(ps);
+    if (!cond || cur(ps)->kind != T_QMARK) return cond;
+    ps->i++;
+    node_t *then = parse_expr(ps);
+    if (!then) { node_free(cond); return NULL; }
+    if (cur(ps)->kind != T_COLON) {
+        fail_unexpected(ps);
+        node_free(cond);
+        node_free(then);
+        return NULL;
+    }
+    ps->i++;
+    node_t *other = parse_expr(ps);
+    if (!other) { node_free(cond); node_free(then); return NULL; }
+    node_t *n = node_new(N_TERN);
+    if (!n) { node_free(cond); node_free(then); node_free(other); return NULL; }
+    n->a = cond;
+    n->b2 = then;
+    n->c = other;
+    return n;
 }
 
 // ---------------------------------------------------------------------------
 // public API
 // ---------------------------------------------------------------------------
 
-typedef struct hmi_expr {
-    node_t *root;
-    char **tags;
-    size_t ntags;
-} expr_impl_t;
+void hmi_expr_free(hmi_expr_t *e)
+{
+    if (!e) return;
+    node_free(e->root);
+    for (size_t i = 0; i < e->ntags; i++) free(e->tags[i]);
+    free(e);
+}
 
 hmi_expr_t *hmi_expr_compile(const char *text, char *err, size_t errlen)
 {
     if (err && errlen) err[0] = '\0';
-    if (!text) {
-        if (err && errlen) snprintf(err, errlen, "null expression");
+    if (!text) text = "";
+    if (strlen(text) > MAX_LENGTH) {
+        if (err && errlen) snprintf(err, errlen, "expression longer than %d characters", MAX_LENGTH);
         return NULL;
     }
-    size_t len = strlen(text);
-    if (len == 0 || len > MAX_LENGTH) {
-        if (err && errlen) snprintf(err, errlen, "%s", len == 0 ? "empty expression" : "too long");
+    parser_t ps = {.text = text};
+    ps.e = calloc(1, sizeof *ps.e);
+    if (!ps.e) {
+        if (err && errlen) snprintf(err, errlen, "out of memory");
         return NULL;
     }
-    parser_t ps;
-    tagset_t ts = {0};
-    memset(&ps, 0, sizeof ps);
-    ps.start = text;
-    ps.p = text;
-    ps.end = text + len;
-    ps.tags = &ts;
     node_t *root = NULL;
-    if (!parse_expr(&ps, &root)) {
-        if (err && errlen) snprintf(err, errlen, "%s", ps.err[0] ? ps.err : "parse error");
+    if (tokenize(&ps)) {
+        root = parse_expr(&ps);
+        if (root && cur(&ps)->kind != T_END) {
+            fail_unexpected(&ps);
+            node_free(root);
+            root = NULL;
+        }
+    }
+    for (size_t i = 0; i < ps.ntoks; i++) free(ps.toks[i].str);
+    free(ps.toks);
+    if (!root) {
+        if (err && errlen) snprintf(err, errlen, "%s", ps.err[0] ? ps.err : "out of memory");
+        hmi_expr_free(ps.e);
         return NULL;
     }
-    const char *p = skip_ws(ps.p);
-    if (*p != '\0') {
-        if (err && errlen) snprintf(err, errlen, "unexpected '%c'", *p);
-        return NULL;
-    }
-    expr_impl_t *e = calloc(1, sizeof *e);
-    e->root = root;
-    e->tags = malloc(sizeof(char *) * (ps.tags->ntags ? ps.tags->ntags : 1));
-    memcpy(e->tags, ps.tags->tags, sizeof(char *) * ps.tags->ntags);
-    e->ntags = ps.tags->ntags;
-    return (hmi_expr_t *)e;
-}
-
-void hmi_expr_free(hmi_expr_t *e)
-{
-    if (!e) return;
-    expr_impl_t *e_ = (expr_impl_t *)e;
-    free_node(e_->root);
-    for (size_t i = 0; i < e_->ntags; i++) free(e_->tags[i]);
-    free(e_->tags);
-    free(e);
+    ps.e->root = root;
+    return ps.e;
 }
 
 size_t hmi_expr_tag_count(const hmi_expr_t *e)
 {
-    return e ? ((expr_impl_t *)e)->ntags : 0;
+    return e ? e->ntags : 0;
 }
 
 const char *hmi_expr_tag(const hmi_expr_t *e, size_t i)
 {
-    expr_impl_t *e_ = (expr_impl_t *)e;
-    if (!e_ || i >= e_->ntags) return "";
-    return e_->tags[i];
+    return (e && i < e->ntags) ? e->tags[i] : "";
 }
 
 // ---------------------------------------------------------------------------
 // evaluator
 // ---------------------------------------------------------------------------
 
-static bool truthy_val(const hmi_value_t *v)
+typedef struct {
+    const hmi_expr_t *e;
+    hmi_expr_lookup_cb lookup;
+    void *user;
+} ctx_t;
+
+// CONTRACT 13.1/13.2 truthy: null, false, 0, "", "false", "0" and an empty
+// list are false.
+static bool truthy(const hmi_value_t *v)
 {
     switch (v->kind) {
-    case HMI_V_NULL: return false;
     case HMI_V_BOOL: return v->b;
     case HMI_V_NUM: return v->n != 0.0;
-    case HMI_V_STR: {
-        if (!v->s || !*v->s) return false;
-        return strcmp(v->s, "false") != 0 && strcmp(v->s, "0") != 0;
-    }
-    default: return true;
+    case HMI_V_STR: return v->s && *v->s && strcmp(v->s, "false") != 0 && strcmp(v->s, "0") != 0;
+    case HMI_V_LIST: return v->count > 0;
+    default: return false;
     }
 }
 
-static hmi_value_t nullval(void) { return hmi_value_null(); }
-
-static hmi_value_t numval(double x)
+// Arithmetic operand: numbers, and bools as 1/0; anything else is null.
+static bool as_number(const hmi_value_t *v, double *out)
 {
-    if (!isfinite(x)) return nullval();
-    return hmi_value_num(x);
+    if (v->kind == HMI_V_NUM) { *out = v->n; return true; }
+    if (v->kind == HMI_V_BOOL) { *out = v->b ? 1.0 : 0.0; return true; }
+    return false;
 }
 
-static hmi_value_t boolval(bool b) { return hmi_value_bool(b); }
-
-static const char *FUNC_NAME[] = {"abs", "floor", "ceil", "round", "min", "max", "clamp"};
-static int FUNC_NARGS[] = {1, 1, 1, -1, 2, 2, 3};
-
-static hmi_value_t eval_bin(int op, hmi_value_t *a, hmi_value_t *b)
+static hmi_value_t num_result(double x)
 {
-    if (a->kind == HMI_V_NULL || b->kind == HMI_V_NULL) {
-        hmi_value_free(a); hmi_value_free(b); return nullval();
-    }
-    bool an = a->kind == HMI_V_NUM || a->kind == HMI_V_BOOL;
-    bool bn = b->kind == HMI_V_NUM || b->kind == HMI_V_BOOL;
-    if (!an || !bn) { hmi_value_free(a); hmi_value_free(b); return nullval(); }
-    switch (op) {
-    case 0: { hmi_value_t r = numval(a->n * b->n); hmi_value_free(a); hmi_value_free(b); return r; }
-    case 1: { if (b->n == 0.0) { hmi_value_free(a); hmi_value_free(b); return nullval(); } hmi_value_t r = numval(a->n / b->n); hmi_value_free(a); hmi_value_free(b); return r; }
-    case 2: { if (b->n == 0.0) { hmi_value_free(a); hmi_value_free(b); return nullval(); } hmi_value_t r = numval(fmod(a->n, b->n)); hmi_value_free(a); hmi_value_free(b); return r; }
-    case 3: { hmi_value_t r = numval(a->n + b->n); hmi_value_free(a); hmi_value_free(b); return r; }
-    case 4: { hmi_value_t r = numval(a->n - b->n); hmi_value_free(a); hmi_value_free(b); return r; }
-    default: { hmi_value_free(a); hmi_value_free(b); return nullval(); }
-    }
+    return isfinite(x) ? hmi_value_num(x) : hmi_value_null();
 }
 
-static hmi_value_t eval(expr_impl_t *e_, const node_t *n,
-                          hmi_expr_lookup_cb lookup, void *user);
-static hmi_value_t eval_cmp(int op, hmi_value_t a, hmi_value_t b);
-static hmi_value_t eval_call(expr_impl_t *e_, const node_t *n,
-                             hmi_expr_lookup_cb lookup, void *user);
-
-static bool truthy_expr(expr_impl_t *e_, const node_t *n,
-                          hmi_expr_lookup_cb lookup, void *user)
+static double round_half_away(double x)
 {
-    if (!n) return false;
-    hmi_value_t v = eval(e_, n, lookup, user);
-    bool t = truthy_val(&v);
+    return x >= 0 ? floor(x + 0.5) : ceil(x - 0.5);
+}
+
+static hmi_value_t eval(const ctx_t *cx, const node_t *n);
+
+static bool eval_truthy(const ctx_t *cx, const node_t *n)
+{
+    hmi_value_t v = eval(cx, n);
+    bool t = truthy(&v);
     hmi_value_free(&v);
     return t;
 }
 
-static hmi_value_t eval(expr_impl_t *e_, const node_t *n,
-                          hmi_expr_lookup_cb lookup, void *user)
+static bool eval_number(const ctx_t *cx, const node_t *n, double *out)
 {
-    if (!n) return nullval();
+    hmi_value_t v = eval(cx, n);
+    bool ok = as_number(&v, out);
+    hmi_value_free(&v);
+    return ok;
+}
+
+static hmi_value_t eval_cmp(op_t op, const hmi_value_t *a, const hmi_value_t *b)
+{
+    if (a->kind == HMI_V_NULL || b->kind == HMI_V_NULL) return hmi_value_bool(false);
+    bool as = a->kind == HMI_V_STR, bs = b->kind == HMI_V_STR;
+    if (as || bs) {
+        // Only two strings compare, and only for (in)equality; a string
+        // against anything else is simply not equal.
+        bool same = as && bs && strcmp(a->s ? a->s : "", b->s ? b->s : "") == 0;
+        if (op == OP_EQ) return hmi_value_bool(same);
+        if (op == OP_NE) return hmi_value_bool(!same);
+        return hmi_value_bool(false);
+    }
+    double x, y;
+    if (!as_number(a, &x) || !as_number(b, &y)) return hmi_value_bool(false);
+    switch (op) {
+    case OP_EQ: return hmi_value_bool(x == y);
+    case OP_NE: return hmi_value_bool(x != y);
+    case OP_LT: return hmi_value_bool(x < y);
+    case OP_LE: return hmi_value_bool(x <= y);
+    case OP_GT: return hmi_value_bool(x > y);
+    case OP_GE: return hmi_value_bool(x >= y);
+    default: return hmi_value_bool(false);
+    }
+}
+
+static hmi_value_t eval_call(const ctx_t *cx, const node_t *n)
+{
+    double x[3];
+    switch (n->fn) {
+    case F_ABS: case F_FLOOR: case F_CEIL:
+        if (!eval_number(cx, n->args[0], &x[0])) return hmi_value_null();
+        return num_result(n->fn == F_ABS ? fabs(x[0]) : n->fn == F_FLOOR ? floor(x[0]) : ceil(x[0]));
+    case F_ROUND: {
+        if (!eval_number(cx, n->args[0], &x[0])) return hmi_value_null();
+        if (n->nargs == 1) return num_result(round_half_away(x[0]));
+        if (!eval_number(cx, n->args[1], &x[1])) return hmi_value_null();
+        if (x[1] != floor(x[1]) || x[1] < 0 || x[1] > 6) return hmi_value_null();
+        double f = pow(10.0, x[1]);
+        return num_result(round_half_away(x[0] * f) / f);
+    }
+    case F_MIN: case F_MAX: {
+        double best = 0.0;
+        bool ok = true;
+        // Every argument is evaluated, so a null anywhere is null.
+        for (size_t i = 0; i < n->nargs; i++) {
+            double v;
+            if (!eval_number(cx, n->args[i], &v)) { ok = false; continue; }
+            if (i == 0 || (n->fn == F_MIN ? v < best : v > best)) best = v;
+        }
+        return ok ? num_result(best) : hmi_value_null();
+    }
+    case F_CLAMP: {
+        bool ok = true;
+        for (size_t i = 0; i < 3; i++)
+            if (!eval_number(cx, n->args[i], &x[i])) ok = false;
+        if (!ok) return hmi_value_null();
+        return num_result(fmax(x[1], fmin(x[0], x[2])));
+    }
+    }
+    return hmi_value_null();
+}
+
+static hmi_value_t eval(const ctx_t *cx, const node_t *n)
+{
     switch (n->kind) {
-    case N_NUM: return hmi_value_num(n->d);
-    case N_BOOL: return boolval(n->b);
-    case N_STR: return hmi_value_str(n->s ? n->s : "");
+    case N_NUM: return num_result(n->d);
+    case N_BOOL: return hmi_value_bool(n->b);
+    case N_STR: return hmi_value_str(n->s);
     case N_TAG: {
-        const hmi_value_t *v = lookup(n->s, user);
-        if (!v) return nullval();
-        return hmi_value_copy(v);
+        const hmi_value_t *v = cx->lookup ? cx->lookup(cx->e->tags[n->tag], cx->user) : NULL;
+        return v ? hmi_value_copy(v) : hmi_value_null();
     }
     case N_UNARY: {
-        hmi_value_t a = eval(e_, n->a, lookup, user);
-        if (n->op == 1) {   // unary minus
-            if (a.kind != HMI_V_NUM && a.kind != HMI_V_BOOL) { hmi_value_free(&a); return nullval(); }
-            hmi_value_t r = numval(-a.n);
-            hmi_value_free(&a);
-            return r;
-        }
-        bool t = truthy_val(&a);   // logical not
-        hmi_value_free(&a);
-        return boolval(!t);
+        if (n->op == OP_NOT) return hmi_value_bool(!eval_truthy(cx, n->a));
+        double x;
+        if (!eval_number(cx, n->a, &x)) return hmi_value_null();
+        return num_result(-x);
     }
     case N_BIN: {
-        hmi_value_t a = eval(e_, n->a, lookup, user);
-        hmi_value_t b = eval(e_, n->b, lookup, user);
-        return eval_bin(n->op, &a, &b);
+        double x, y;
+        bool okx = eval_number(cx, n->a, &x);
+        bool oky = eval_number(cx, n->b2, &y);
+        if (!okx || !oky) return hmi_value_null();
+        switch (n->op) {
+        case OP_ADD: return num_result(x + y);
+        case OP_SUB: return num_result(x - y);
+        case OP_MUL: return num_result(x * y);
+        case OP_DIV: return y == 0.0 ? hmi_value_null() : num_result(x / y);
+        case OP_MOD: return y == 0.0 ? hmi_value_null() : num_result(fmod(x, y));
+        default: return hmi_value_null();
+        }
     }
     case N_CMP: {
-        hmi_value_t a = eval(e_, n->a, lookup, user);
-        hmi_value_t b = eval(e_, n->b, lookup, user);
-        return eval_cmp(n->cop, a, b);
+        hmi_value_t a = eval(cx, n->a), b = eval(cx, n->b2);
+        hmi_value_t r = eval_cmp(n->op, &a, &b);
+        hmi_value_free(&a);
+        hmi_value_free(&b);
+        return r;
     }
-    case N_AND: {
-        bool t = truthy_expr(e_, n->a, lookup, user);
-        return boolval(t && truthy_expr(e_, n->b, lookup, user));
+    case N_AND: return hmi_value_bool(eval_truthy(cx, n->a) && eval_truthy(cx, n->b2));
+    case N_OR: return hmi_value_bool(eval_truthy(cx, n->a) || eval_truthy(cx, n->b2));
+    case N_TERN: return eval(cx, eval_truthy(cx, n->a) ? n->b2 : n->c);
+    case N_CALL: return eval_call(cx, n);
     }
-    case N_OR: {
-        bool t = truthy_expr(e_, n->a, lookup, user);
-        return boolval(t || truthy_expr(e_, n->b, lookup, user));
-    }
-    case N_TERN: {
-        bool c = truthy_expr(e_, n->a, lookup, user);
-        const node_t *br = c ? n->b : n->c;
-        return eval(e_, br, lookup, user);
-    }
-    case N_CALL: {
-        if (strcmp(n->fname, "sqrt") == 0) return nullval();
-        return eval_call(e_, n, lookup, user);
-    }
-    default: return nullval();
-    }
-}
-
-static hmi_value_t eval_call(expr_impl_t *e_, const node_t *n,
-                             hmi_expr_lookup_cb lookup, void *user)
-{
-    for (size_t i = 0; i < 7; i++) {
-        if (strcmp(n->fname, FUNC_NAME[i]) != 0) continue;
-        if (i == 3) {   // round: 1 or 2 args
-            if (n->nargs != 1 && n->nargs != 2) return nullval();
-        } else if (FUNC_NARGS[i] != (int)n->nargs) {
-            return nullval();
-        }
-        switch (i) {
-        case 0: {   // abs
-            hmi_value_t a = eval(e_, n->a, lookup, user);
-            if (a.kind != HMI_V_NUM && a.kind != HMI_V_BOOL) { hmi_value_free(&a); return nullval(); }
-            hmi_value_t r = numval(fabs(a.n));
-            hmi_value_free(&a);
-            return r;
-        }
-        case 1: {   // floor
-            hmi_value_t a = eval(e_, n->a, lookup, user);
-            if (a.kind != HMI_V_NUM && a.kind != HMI_V_BOOL) { hmi_value_free(&a); return nullval(); }
-            hmi_value_t r = hmi_value_num(floor(a.n));
-            hmi_value_free(&a);
-            return r;
-        }
-        case 2: {   // ceil
-            hmi_value_t a = eval(e_, n->a, lookup, user);
-            if (a.kind != HMI_V_NUM && a.kind != HMI_V_BOOL) { hmi_value_free(&a); return nullval(); }
-            hmi_value_t r = hmi_value_num(ceil(a.n));
-            hmi_value_free(&a);
-            return r;
-        }
-        case 3: {   // round
-            hmi_value_t a = eval(e_, n->a, lookup, user);
-            if (a.kind != HMI_V_NUM && a.kind != HMI_V_BOOL) { hmi_value_free(&a); return nullval(); }
-            if (n->nargs == 2) {
-                hmi_value_t b = eval(e_, n->b, lookup, user);
-                if (b.kind != HMI_V_NUM) { hmi_value_free(&a); hmi_value_free(&b); return nullval(); }
-                int digits = (int)b.n;
-                hmi_value_free(&b);
-                if (digits < 0 || digits > 6) { hmi_value_free(&a); return nullval(); }
-                double factor = pow(10.0, digits);
-                hmi_value_t r = hmi_value_num(round(a.n * factor) / factor);
-                hmi_value_free(&a);
-                return r;
-            }
-            hmi_value_t r = hmi_value_num(round(a.n));
-            hmi_value_free(&a);
-            return r;
-        }
-        case 4: {   // min
-            double m = INFINITY;
-            for (size_t k = 0; k < n->nargs; k++) {
-                hmi_value_t v = eval(e_, n->args[k], lookup, user);
-                if (v.kind != HMI_V_NUM && v.kind != HMI_V_BOOL) { hmi_value_free(&v); return nullval(); }
-                if (v.n < m) m = v.n;
-                hmi_value_free(&v);
-            }
-            return numval(m);
-        }
-        case 5: {   // max
-            double m = -INFINITY;
-            for (size_t k = 0; k < n->nargs; k++) {
-                hmi_value_t v = eval(e_, n->args[k], lookup, user);
-                if (v.kind != HMI_V_NUM && v.kind != HMI_V_BOOL) { hmi_value_free(&v); return nullval(); }
-                if (v.n > m) m = v.n;
-                hmi_value_free(&v);
-            }
-            return numval(m);
-        }
-        case 6: {   // clamp
-            hmi_value_t x = eval(e_, n->args[0], lookup, user);
-            hmi_value_t lo = eval(e_, n->args[1], lookup, user);
-            hmi_value_t hi = eval(e_, n->args[2], lookup, user);
-            bool ok = x.kind != HMI_V_NULL && lo.kind != HMI_V_NULL && hi.kind != HMI_V_NULL;
-            double r = (ok && lo.n > hi.n) ? hi.n : (ok ? x.n : 0.0);
-            if (ok) {
-                if (r < lo.n) r = lo.n;
-                if (r > hi.n) r = hi.n;
-            }
-            hmi_value_free(&x);
-            hmi_value_free(&lo);
-            hmi_value_free(&hi);
-            return numval(ok ? r : 0.0);
-        }
-        }
-        return nullval();
-    }
-    return nullval();
-}
-
-static hmi_value_t eval_cmp(int op, hmi_value_t a, hmi_value_t b)
-{
-    if (a.kind == HMI_V_STR && b.kind == HMI_V_STR) {
-        if (op == '=') return boolval(strcmp(a.s ? a.s : "", b.s ? b.s : "") == 0);
-        if (op == '!') return boolval(strcmp(a.s ? a.s : "", b.s ? b.s : "") != 0);
-        return boolval(false);   // string < > <= >= are false
-    }
-    if (a.kind != HMI_V_NULL && b.kind != HMI_V_NULL) {
-        double av = hmi_value_as_num(&a, 0.0), bv = hmi_value_as_num(&b, 0.0);
-        switch (op) {
-        case '=': return boolval(av == bv);
-        case '!': return boolval(av != bv);
-        case '<': return boolval(av < bv);
-        case '>': return boolval(av > bv);
-        }
-    }
-    return boolval(false);
+    return hmi_value_null();
 }
 
 hmi_value_t hmi_expr_eval(const hmi_expr_t *e, hmi_expr_lookup_cb lookup, void *user)
 {
-    expr_impl_t *e_ = (expr_impl_t *)e;
-    if (!e_) return nullval();
-    return eval(e_, e_->root, lookup, user);
+    if (!e || !e->root) return hmi_value_null();
+    ctx_t cx = {e, lookup, user};
+    return eval(&cx, e->root);
 }
