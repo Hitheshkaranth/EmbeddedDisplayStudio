@@ -22,7 +22,9 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
+#include "journal.h"
 #include "value.h"
 
 typedef struct hmi_alarms hmi_alarms_t;
@@ -37,6 +39,9 @@ typedef struct {
     char message[160];     // "<label> <value:%g><unit>"
     char timestamp[24];    // "YYYY-MM-DDTHH:MM:SS" local time, set on activation
     bool acknowledged;
+    // CONTRACT 13.3 (wave 1):
+    int priority;          // 1..4, 1 highest
+    bool cleared;          // latched: condition gone, still unacknowledged
 } hmi_alarm_t;
 
 typedef void (*hmi_alarms_changed_cb)(void *user);
@@ -72,5 +77,33 @@ const hmi_alarm_t *hmi_alarms_active(const hmi_alarms_t *a, size_t *count);
 // The same as the HMI_V_LIST ShAlarmTable is bound to (caller frees).
 hmi_value_t hmi_alarms_active_value(const hmi_alarms_t *a);
 
-// Marks an active alarm acknowledged; true when one was.
+// Marks an active alarm acknowledged; true when one was. A latched alarm
+// that has already cleared is removed by its ack (13.3).
 bool hmi_alarms_acknowledge(hmi_alarms_t *a, const char *tag);
+
+// ---- CONTRACT 13.3, FROZEN (wave 1, W3) ---------------------------------
+// Definitions also read "priority", "latch", "delay_ms", "deadband",
+// "message" (13.3 table; out-of-range values fall back to the defaults).
+// Ordering of hmi_alarms_active(): priority ascending, then newest first.
+// hmi_alarms_active_value() items carry 9 fields:
+//   [tag, label, severity, value, message, timestamp, acknowledged, priority, state]
+// with state "active" | "cleared".
+
+// Acknowledge every listed alarm; returns how many changed.
+size_t hmi_alarms_acknowledge_all(hmi_alarms_t *a);
+// Shelve the alarm on `tag` for `ms` (1..86400000): it leaves the active list
+// and does not raise until the shelve expires. false when `tag` has no
+// definition or ms is out of range. Fires the change callback when the list changed.
+bool hmi_alarms_shelve(hmi_alarms_t *a, const char *tag, int ms);
+bool hmi_alarms_is_shelved(const hmi_alarms_t *a, const char *tag);
+// Timers: on-delays and shelve expiry. The runtime calls it every loop;
+// fires the callback when the list changed.
+void hmi_alarms_tick(hmi_alarms_t *a);
+// Test hook: the monotonic clock (ms) used for delays and shelving; NULL
+// restores the real one (lv_tick_get is NOT used: the engine has no LVGL).
+typedef uint64_t (*hmi_alarms_mono_fn)(void *user);
+void hmi_alarms_set_monotonic(hmi_alarms_t *a, hmi_alarms_mono_fn now, void *user);
+// Journal every raise/clear/ack/shelve/unshelve to `j` (not owned; NULL = off).
+// Timestamps are the wall clock in epoch ms.
+void hmi_alarms_set_journal(hmi_alarms_t *a, hmi_journal_t *j);
+hmi_journal_t *hmi_alarms_journal(const hmi_alarms_t *a);

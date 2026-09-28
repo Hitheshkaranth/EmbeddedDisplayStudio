@@ -4,10 +4,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "actions.h"
 #include "alarms.h"
+#include "journal.h"
 #include "log.h"
+#include "overlay.h"
 #include "registry.h"
 #include "theme.h"
+
+#define BACK_DEPTH 16
 
 struct hmi_runtime {
     hmi_project_t *project;
@@ -17,7 +22,11 @@ struct hmi_runtime {
     hmi_page_t *page;
     lv_obj_t *page_obj;     // container for the page's widgets
     hmi_page_t *pending;    // navigation requested, applied by hmi_runtime_tick
+    bool pending_is_back;   // a back() does not push the page it leaves
+    hmi_page_t *back[BACK_DEPTH];
+    size_t nback;
     hmi_alarms_t *alarms;
+    hmi_overlay_t *overlay;
 };
 
 // Deliver the active alarm list to every ShAlarmTable of the current page.
@@ -26,9 +35,18 @@ static void deliver_alarms_cb(hmi_widget_t *w, void *user)
     hmi_runtime_t *rt = user;
     if (strcmp(w->type, "ShAlarmTable") != 0 || !w->native) return;
     // No definitions: the engine has nothing to say; the model's own list stands.
-    if (hmi_alarms_tag_count(rt->alarms) == 0) return;
     const hmi_widget_ops_t *ops = hmi_registry_find(w->type);
     if (!ops || !ops->set_prop) return;
+    // 13.3 history mode: the journal's newest maxVisible events.
+    if (strcmp(hmi_widget_str(w, "mode", "active"), "history") == 0) {
+        hmi_journal_t *j = hmi_alarms_journal(rt->alarms);
+        if (!j) return;
+        hmi_value_t hist = hmi_journal_recent(j, (size_t)hmi_widget_num(w, "maxVisible", 6));
+        ops->set_prop(w, "alarms", &hist);
+        hmi_value_free(&hist);
+        return;
+    }
+    if (hmi_alarms_tag_count(rt->alarms) == 0) return;
     hmi_value_t list = hmi_alarms_active_value(rt->alarms);
     ops->set_prop(w, "alarms", &list);
     hmi_value_free(&list);
@@ -182,6 +200,8 @@ static void teardown_page(hmi_runtime_t *rt)
     rt->page = NULL;
 }
 
+static void request_backfill_cb(hmi_widget_t *w, void *user);
+
 static bool show_page(hmi_runtime_t *rt, hmi_page_t *page)
 {
     teardown_page(rt);
@@ -197,11 +217,30 @@ static bool show_page(hmi_runtime_t *rt, hmi_page_t *page)
     build_in_z_order(rt, page->widgets, page->nwidgets, rt->page_obj);
     hmi_bind_page(rt->bind, page);
     hmi_page_visit(page, deliver_alarms_cb, rt);
+    if (rt->tags) hmi_page_visit(page, request_backfill_cb, rt);
     // Re-deliver every known tag so bound widgets start from live values.
     // (The bind engine asks the tag map through hmi_bind_page's fallbacks;
     // the values already received arrive through on_tag as they change.)
     hmi_log(HMI_LOG_DEBUG, "page %s shown (%zu widgets)", page->id, hmi_page_widget_count(page));
     return true;
+}
+
+// 13.4 backfill: ask the daemon's historian for every scalar tag a trend
+// chart on this page draws; tags.c merges the answer and on_history redraws.
+static void request_backfill_cb(hmi_widget_t *w, void *user)
+{
+    hmi_runtime_t *rt = user;
+    if (strcmp(w->type, "ShTrendChart") != 0) return;
+    const hmi_binding_t *bd = hmi_widget_binding(w, "data");
+    if (!bd || !bd->tag[0] || strncmp(bd->tag, "sim.", 4) == 0) return;
+    int points = (int)hmi_widget_num(w, "maxPoints", 100);
+    hmi_tags_request_history(rt->tags, bd->tag, 3600, points > 200 ? 200 : points);
+}
+
+static void on_history(const char *tag, void *user)
+{
+    hmi_runtime_t *rt = user;
+    hmi_bind_refresh_series(rt->bind, tag);
 }
 
 static hmi_value_t tag_history(const char *tag, size_t count, void *user)
@@ -217,9 +256,13 @@ hmi_runtime_t *hmi_runtime_create(hmi_project_t *project, lv_obj_t *screen, hmi_
     rt->screen = screen;
     rt->tags = tags;
     rt->bind = hmi_bind_create(bind_apply, rt);
-    if (tags) hmi_bind_set_history(rt->bind, tag_history, rt);
+    if (tags) {
+        hmi_bind_set_history(rt->bind, tag_history, rt);
+        hmi_tags_set_history_callback(tags, on_history, rt);
+    }
     rt->alarms = hmi_alarms_create(apps_dir);
     hmi_alarms_set_callback(rt->alarms, alarms_changed, rt);
+    rt->overlay = hmi_overlay_create(project, tags != NULL);
     hmi_theme_set_dark(strcmp(project->theme, "light") != 0);
     show_page(rt, project->pages[0]);
     return rt;
@@ -229,6 +272,7 @@ void hmi_runtime_destroy(hmi_runtime_t *rt)
 {
     if (!rt) return;
     teardown_page(rt);
+    hmi_overlay_destroy(rt->overlay);
     hmi_bind_destroy(rt->bind);
     hmi_alarms_destroy(rt->alarms);
     free(rt);
@@ -244,15 +288,46 @@ bool hmi_runtime_navigate(hmi_runtime_t *rt, const char *id)
     if (page == rt->page) return true;
     hmi_log(HMI_LOG_INFO, "navigate to page %s", id);
     rt->pending = page;   // a binding delivery or a widget event may be on the stack
+    rt->pending_is_back = false;
     return true;
+}
+
+bool hmi_runtime_back(hmi_runtime_t *rt)
+{
+    if (!rt || rt->nback == 0) return false;
+    rt->pending = rt->back[--rt->nback];
+    rt->pending_is_back = true;
+    hmi_log(HMI_LOG_INFO, "back to page %s", rt->pending->id);
+    return true;
+}
+
+hmi_alarms_t *hmi_runtime_alarms(const hmi_runtime_t *rt) { return rt ? rt->alarms : NULL; }
+
+void hmi_runtime_alarms_changed(hmi_runtime_t *rt) { if (rt) alarms_changed(rt); }
+
+void hmi_runtime_set_journal(hmi_runtime_t *rt, hmi_journal_t *j)
+{
+    if (rt) hmi_alarms_set_journal(rt->alarms, j);
 }
 
 void hmi_runtime_tick(hmi_runtime_t *rt)
 {
-    if (!rt || !rt->pending) return;
+    if (!rt) return;
+    hmi_alarms_tick(rt->alarms);
+    hmi_overlay_tick(rt->overlay, lv_tick_get(), lv_display_get_inactive_time(NULL));
+    if (!rt->pending) return;
     hmi_page_t *page = rt->pending;
     rt->pending = NULL;
-    if (page != rt->page) show_page(rt, page);
+    if (page == rt->page) return;
+    if (!rt->pending_is_back && rt->page) {
+        if (rt->nback == BACK_DEPTH) {          // oldest dropped
+            memmove(rt->back, rt->back + 1, (BACK_DEPTH - 1) * sizeof rt->back[0]);
+            rt->nback--;
+        }
+        rt->back[rt->nback++] = rt->page;
+    }
+    rt->pending_is_back = false;
+    show_page(rt, page);
 }
 
 const char *hmi_runtime_current_page(const hmi_runtime_t *rt) { return rt->page ? rt->page->id : ""; }
@@ -266,32 +341,12 @@ void hmi_runtime_on_tag(hmi_runtime_t *rt, const char *tag, const hmi_value_t *v
 
 void hmi_runtime_on_online(hmi_runtime_t *rt, bool online)
 {
-    (void)rt;
     hmi_log(HMI_LOG_INFO, "daemon link %s", online ? "online" : "lost");
+    if (rt) hmi_overlay_link(rt->overlay, online);
 }
 
 void hmi_runtime_signal(hmi_widget_t *w, const char *signal, const hmi_value_t *arg)
 {
     hmi_runtime_t *rt = hmi_runtime_of(w);
-    if (!rt) return;
-    for (size_t i = 0; i < w->nactions; ++i) {
-        const hmi_action_t *a = &w->actions[i];
-        if (strcmp(a->signal, signal) != 0) continue;
-        if (strcmp(a->kind, "navigate") == 0) {
-            hmi_runtime_navigate(rt, a->page);
-        } else if (strcmp(signal, "alarmActivated") == 0) {
-            // The table hands over the alarm tag; any action here means "acknowledge".
-            if (hmi_alarms_acknowledge(rt->alarms, hmi_value_as_str(arg, "")))
-                alarms_changed(rt);
-        } else if (!rt->tags) {
-            hmi_log(HMI_LOG_DEBUG, "action %s on %s ignored (no daemon link)", a->kind, w->id);
-        } else if (strcmp(a->kind, "pulse") == 0) {
-            hmi_tags_pulse(rt->tags, a->tag, a->ms);
-        } else {   // write: the model's value, else the signal's argument, else true
-            hmi_value_t v = a->value.kind != HMI_V_NULL ? hmi_value_copy(&a->value)
-                          : arg ? hmi_value_copy(arg) : hmi_value_bool(true);
-            hmi_tags_write(rt->tags, a->tag, &v);
-            hmi_value_free(&v);
-        }
-    }
+    if (rt) hmi_actions_run(rt, w, signal, arg);
 }

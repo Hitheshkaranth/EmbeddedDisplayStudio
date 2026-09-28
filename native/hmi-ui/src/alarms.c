@@ -337,3 +337,12 @@ bool hmi_alarms_acknowledge(hmi_alarms_t *a, const char *tag)
     notify(a);
     return true;
 }
+
+// ---- wave 1 stubs (CONTRACT 13.3): W3 implements ---------------------------
+size_t hmi_alarms_acknowledge_all(hmi_alarms_t *a) { (void)a; return 0; }
+bool hmi_alarms_shelve(hmi_alarms_t *a, const char *tag, int ms) { (void)a; (void)tag; (void)ms; return false; }
+bool hmi_alarms_is_shelved(const hmi_alarms_t *a, const char *tag) { (void)a; (void)tag; return false; }
+void hmi_alarms_tick(hmi_alarms_t *a) { (void)a; }
+void hmi_alarms_set_monotonic(hmi_alarms_t *a, hmi_alarms_mono_fn now, void *user) { (void)a; (void)now; (void)user; }
+void hmi_alarms_set_journal(hmi_alarms_t *a, hmi_journal_t *j) { (void)a; (void)j; }
+hmi_journal_t *hmi_alarms_journal(const hmi_alarms_t *a) { (void)a; return NULL; }

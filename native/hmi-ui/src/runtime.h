@@ -31,6 +31,19 @@ void hmi_runtime_on_online(hmi_runtime_t *rt, bool online);
 // A widget signal (from hmi_widget_emit): run the model's actions.
 void hmi_runtime_signal(hmi_widget_t *w, const char *signal, const hmi_value_t *arg);
 
+// ---- wave 1 (CONTRACT 13) --------------------------------------------------
+// Show the page before the current one (13.1 "back"): navigation pushes the
+// page it leaves (depth 16, oldest dropped); back pops without pushing.
+// false when the history is empty.
+bool hmi_runtime_back(hmi_runtime_t *rt);
+struct hmi_alarms;
+struct hmi_journal;
+struct hmi_alarms *hmi_runtime_alarms(const hmi_runtime_t *rt);
+// Re-deliver the alarm list to the page's tables (after ack/shelve).
+void hmi_runtime_alarms_changed(hmi_runtime_t *rt);
+// Journal for the alarm engine (hmi-ui --journal PATH); NULL = off. Not owned.
+void hmi_runtime_set_journal(hmi_runtime_t *rt, struct hmi_journal *j);
+
 // The runtime that owns `w` (widgets do not need this; the probe does).
 hmi_runtime_t *hmi_runtime_of(const hmi_widget_t *w);
 hmi_tags_t *hmi_runtime_tags(const hmi_runtime_t *rt);

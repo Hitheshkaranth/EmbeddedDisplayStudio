@@ -61,10 +61,12 @@ static hmi_widget_t *load_widget(const cJSON *jw, hmi_widget_t *parent)
         cJSON_ArrayForEach(b, binds) {
             hmi_binding_t *bd = &w->bindings[i++];
             bd->prop = dupstr(b->string);
+            bd->decimals = -1;
             if (cJSON_IsString(b)) {          // legacy short form: "prop": "tag"
                 bd->tag = dupstr(cJSON_GetStringValue(b));
                 bd->format = dupstr(""); bd->unit = dupstr("");
                 bd->warning = dupstr(""); bd->critical = dupstr("");
+                bd->expr = dupstr("");
                 bd->multiplier = 1.0;
                 continue;
             }
@@ -75,22 +77,50 @@ static hmi_widget_t *load_widget(const cJSON *jw, hmi_widget_t *parent)
             bd->unit = dupstr(jstr(b, "unit", ""));
             bd->warning = dupstr(jstr(b, "warning", ""));
             bd->critical = dupstr(jstr(b, "critical", ""));
+            bd->decimals = (int)jnum(b, "decimals", -1);
+            if (bd->decimals > 6) bd->decimals = 6;
+            if (bd->decimals < -1) bd->decimals = -1;
+            bd->expr = dupstr(jstr(b, "expr", ""));
+            const cJSON *rules = cJSON_GetObjectItemCaseSensitive(b, "rules");
+            if (cJSON_IsArray(rules) && cJSON_GetArraySize(rules) > 0) {
+                bd->rules = calloc((size_t)cJSON_GetArraySize(rules), sizeof(hmi_rule_t));
+                const cJSON *r;
+                cJSON_ArrayForEach(r, rules) {
+                    if (!cJSON_IsObject(r)) continue;
+                    hmi_rule_t *ru = &bd->rules[bd->nrules++];
+                    ru->when = dupstr(jstr(r, "if", ""));
+                    ru->prop = dupstr(jstr(r, "prop", ""));
+                    ru->value = hmi_value_from_json(cJSON_GetObjectItemCaseSensitive(r, "value"));
+                }
+            }
         }
     }
     const cJSON *acts = cJSON_GetObjectItemCaseSensitive(jw, "actions");
     if (cJSON_IsObject(acts)) {
-        w->nactions = (size_t)cJSON_GetArraySize(acts);
-        w->actions = w->nactions ? calloc(w->nactions, sizeof(hmi_action_t)) : NULL;
-        size_t i = 0;
+        // 13.1: a signal maps to one action object or a list; flatten to
+        // consecutive entries that share the signal, in list order.
+        size_t total = 0;
         const cJSON *a;
+        cJSON_ArrayForEach(a, acts) total += cJSON_IsArray(a) ? (size_t)cJSON_GetArraySize(a) : 1;
+        w->actions = total ? calloc(total, sizeof(hmi_action_t)) : NULL;
         cJSON_ArrayForEach(a, acts) {
-            hmi_action_t *ac = &w->actions[i++];
-            ac->signal = dupstr(a->string);
-            ac->kind = dupstr(jstr(a, "kind", "write"));
-            ac->tag = dupstr(jstr(a, "tag", ""));
-            ac->value = hmi_value_from_json(cJSON_GetObjectItemCaseSensitive(a, "value"));
-            ac->ms = (int)jnum(a, "ms", 250);
-            ac->page = dupstr(jstr(a, "page", ""));
+            const cJSON *first = cJSON_IsArray(a) ? a->child : a;
+            for (const cJSON *it = first; it; it = cJSON_IsArray(a) ? it->next : NULL) {
+                if (!cJSON_IsObject(it)) continue;
+                hmi_action_t *ac = &w->actions[w->nactions++];
+                ac->signal = dupstr(a->string);
+                ac->kind = dupstr(jstr(it, "kind", "write"));
+                ac->tag = dupstr(jstr(it, "tag", ""));
+                ac->value = hmi_value_from_json(cJSON_GetObjectItemCaseSensitive(it, "value"));
+                ac->ms = (int)jnum(it, "ms", strcmp(ac->kind, "shelve") == 0 ? 600000 : 250);
+                ac->page = dupstr(jstr(it, "page", ""));
+                ac->step = jnum(it, "step", 1.0);
+                const cJSON *mn = cJSON_GetObjectItemCaseSensitive(it, "min");
+                const cJSON *mx = cJSON_GetObjectItemCaseSensitive(it, "max");
+                ac->has_min = cJSON_IsNumber(mn); ac->min = ac->has_min ? mn->valuedouble : 0;
+                ac->has_max = cJSON_IsNumber(mx); ac->max = ac->has_max ? mx->valuedouble : 0;
+                ac->confirm = dupstr(jstr(it, "confirm", ""));
+            }
         }
     }
     const cJSON *kids = cJSON_GetObjectItemCaseSensitive(jw, "children");
@@ -114,11 +144,17 @@ static void free_widget(hmi_widget_t *w)
     for (size_t i = 0; i < w->nbindings; ++i) {
         hmi_binding_t *b = &w->bindings[i];
         free(b->prop); free(b->tag); free(b->format); free(b->unit); free(b->warning); free(b->critical);
+        free(b->expr);
+        for (size_t r = 0; r < b->nrules; ++r) {
+            free(b->rules[r].when); free(b->rules[r].prop); hmi_value_free(&b->rules[r].value);
+        }
+        free(b->rules);
     }
     free(w->bindings);
     for (size_t i = 0; i < w->nactions; ++i) {
         hmi_action_t *a = &w->actions[i];
-        free(a->signal); free(a->kind); free(a->tag); free(a->page); hmi_value_free(&a->value);
+        free(a->signal); free(a->kind); free(a->tag); free(a->page); free(a->confirm);
+        hmi_value_free(&a->value);
     }
     free(w->actions);
     free(w->type); free(w->id);
@@ -148,6 +184,14 @@ hmi_project_t *hmi_project_load(const char *path, char *err, size_t errlen)
     p->height = (int)jnum(screen, "height", 768);
     p->background = dupstr(jstr(screen, "background", "#09090b"));
     p->theme = dupstr(jstr(screen, "theme", "dark"));
+    const cJSON *idle = cJSON_GetObjectItemCaseSensitive(screen, "idle");   // 13.5
+    p->idle_dim_s = (int)jnum(idle, "dimAfterS", 0);
+    p->idle_dim_pct = (int)jnum(idle, "dimPercent", 30);
+    p->idle_off_s = (int)jnum(idle, "offAfterS", 0);
+    if (p->idle_dim_s < 0) p->idle_dim_s = 0;
+    if (p->idle_off_s < 0) p->idle_off_s = 0;
+    if (p->idle_dim_pct < 10) p->idle_dim_pct = 10;
+    if (p->idle_dim_pct > 100) p->idle_dim_pct = 100;
     const char *slash = strrchr(path, '/');
 #ifdef _WIN32
     const char *bslash = strrchr(path, '\\');

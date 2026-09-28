@@ -18,7 +18,11 @@ TAG_RE = re.compile(r"^[a-z][a-z0-9]*(\.[a-z0-9_]+)+$")
 # accepts is one the panel's validator accepts. Two-character operators come
 # first so ">=" is not read as ">" followed by "=5".
 THRESHOLD_OPS = (">=", "<=", "!=", "==", ">", "<")
-ACTION_KINDS = ("write", "pulse", "navigate")
+# CONTRACT 13.1. The first three are the original kinds; validate() checks
+# those here and hands the rest to designer.model.actions_v2.
+ACTION_KINDS = ("write", "pulse", "navigate", "back", "toggle", "increment",
+                "decrement", "ack", "shelve")
+LEGACY_ACTION_KINDS = ("write", "pulse", "navigate")
 # Pulse length limits, CONTRACT 2.2 ("ms": 1..10000).
 PULSE_MS_MIN, PULSE_MS_MAX = 1, 10000
 
@@ -134,6 +138,26 @@ class DesignerBinding:
     unit: str = ""
     warning: str = ""
     critical: str = ""
+    # CONTRACT 13.2 / 13.3. Written only when set, so a design that uses none
+    # of them saves byte-for-byte as before.
+    decimals: int = -1
+    expr: str = ""
+    rules: list = field(default_factory=list)     # [{"if": "> 80", "prop": ..., "value": ...}]
+    alarm: dict = field(default_factory=dict)     # priority / latch / delay_ms / deadband / message
+
+    def to_dict(self) -> dict[str, Any]:
+        data = {"tag": self.tag, "format": self.format, "multiplier": self.multiplier,
+                "offset": self.offset, "unit": self.unit, "warning": self.warning,
+                "critical": self.critical}
+        if self.decimals != -1:
+            data["decimals"] = int(self.decimals)
+        if self.expr:
+            data["expr"] = self.expr
+        if self.rules:
+            data["rules"] = [dict(rule) for rule in self.rules]
+        if self.alarm:
+            data["alarm"] = dict(self.alarm)
+        return data
 
     @classmethod
     def from_data(cls, value: Any) -> "DesignerBinding":
@@ -153,11 +177,25 @@ class DesignerBinding:
                     data[key] = float(data[key])   # "0.001" from a model's JSON is fine
                 except (TypeError, ValueError):
                     raise ValueError(f"binding {key} must be a number") from None
-        for key in ("tag", "format", "unit", "warning", "critical"):
+        for key in ("tag", "format", "unit", "warning", "critical", "expr"):
             if key in data:
                 data[key] = str(data[key])
         if "tag" in data:
             data["tag"] = _lowercase_tag(data["tag"])
+        data.setdefault("tag", "")
+        if "decimals" in data:
+            try:
+                data["decimals"] = int(data["decimals"])
+            except (TypeError, ValueError):
+                raise ValueError("binding decimals must be an integer") from None
+        if "rules" in data:
+            if not isinstance(data["rules"], list) or not all(isinstance(r, dict) for r in data["rules"]):
+                raise ValueError("binding rules must be a list of objects")
+            data["rules"] = [dict(r) for r in data["rules"]]
+        if "alarm" in data:
+            if not isinstance(data["alarm"], dict):
+                raise ValueError("binding alarm must be an object")
+            data["alarm"] = dict(data["alarm"])
         return cls(**data)
 
 
@@ -179,31 +217,78 @@ class DesignerAction:
     value: Any = None
     ms: int = 250
     page: str = ""
+    # CONTRACT 13.1.
+    step: float = 1.0
+    min: float | None = None
+    max: float | None = None
+    confirm: str = ""
+    # Actions 2..n of the signal's list; the widget's actions[signal] is the first.
+    then: list = field(default_factory=list)
 
     @classmethod
     def from_data(cls, value: Any) -> "DesignerAction":
+        if isinstance(value, list):
+            if not value:
+                raise ValueError("action list must not be empty")
+            items = [cls.from_data(item) for item in value]
+            if any(item.then for item in items):
+                raise ValueError("action lists do not nest")
+            first = items[0]
+            first.then = items[1:]
+            return first
         if isinstance(value, str):
             return cls(kind="write", tag=value)
         if not isinstance(value, dict):
             raise ValueError("action must be a tag string or object")
-        data = {k: value[k] for k in cls.__dataclass_fields__ if k in value}
+        data = {k: value[k] for k in cls.__dataclass_fields__ if k in value and k != "then"}
         if "ms" in data:
             data["ms"] = int(data["ms"])
+        elif data.get("kind") == "shelve":
+            data["ms"] = 600000
+        for key in ("step", "min", "max"):
+            if key in data and data[key] is not None:
+                if isinstance(data[key], bool):
+                    raise ValueError(f"action {key} must be a number")
+                data[key] = float(data[key])
+        if "confirm" in data:
+            data["confirm"] = str(data["confirm"] or "")
         if isinstance(data.get("tag"), str):
             data["tag"] = _lowercase_tag(data["tag"])
         return cls(**data)
 
-    def to_dict(self) -> dict[str, Any]:
+    def _item_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {"kind": self.kind}
         if self.kind == "navigate":
             data["page"] = self.page
+        elif self.kind == "back":
+            pass
         else:
-            data["tag"] = self.tag
-            if self.kind == "pulse":
+            if self.tag or self.kind not in ("ack", "shelve"):
+                data["tag"] = self.tag
+            if self.kind in ("pulse", "shelve"):
                 data["ms"] = int(self.ms)
-            elif self.value is not None:
+            elif self.kind == "write" and self.value is not None:
                 data["value"] = self.value
+            elif self.kind in ("increment", "decrement"):
+                if self.step != 1.0:
+                    data["step"] = self.step
+                if self.min is not None:
+                    data["min"] = self.min
+                if self.max is not None:
+                    data["max"] = self.max
+        if self.confirm:
+            data["confirm"] = self.confirm
         return data
+
+    def all(self) -> list["DesignerAction"]:
+        """The signal's whole list: this action, then `then`."""
+        return [self, *self.then]
+
+    def to_dict(self):
+        """An object for a single action; a list (13.1) when `then` is set."""
+        if not self.then:
+            return self._item_dict()
+        return [action._item_dict() for action in self.all()]
 
 
 @dataclass
@@ -235,6 +320,7 @@ class DesignerWidget:
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
+        data["bindings"] = {prop: binding.to_dict() for prop, binding in self.bindings.items()}
         data["geometry"] = {
             key: int(value) if float(value).is_integer() else value
             for key, value in self.geometry.items()
@@ -282,6 +368,15 @@ class DesignerScreen:
     # the manifest, because the app cannot set Theme.mode itself: the shell
     # assigns it after the Loader has already completed the app.
     theme: str = "dark"
+    # CONTRACT 13.5: {"dimAfterS", "dimPercent", "offAfterS"}; {} = never idle.
+    idle: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = {"width": self.width, "height": self.height,
+                "background": self.background, "theme": self.theme}
+        if self.idle:
+            data["idle"] = dict(self.idle)
+        return data
 
 
 @dataclass(frozen=True)
@@ -311,6 +406,7 @@ class DesignerProject:
             int(raw_screen.get("width", 1280)), int(raw_screen.get("height", 800)),
             str(raw_screen.get("background", "#101418")),
             "light" if str(raw_screen.get("theme", "dark")) == "light" else "dark",
+            dict(raw_screen.get("idle") or {}) if isinstance(raw_screen.get("idle"), dict) else {},
         )
         pages = [DesignerPage.from_dict(page) for page in data.get("pages", [])]
         return cls(1, str(data.get("name", "")).strip(), screen,
@@ -318,7 +414,7 @@ class DesignerProject:
 
     def to_dict(self) -> dict[str, Any]:
         return {"version": self.version, "name": self.name,
-                "screen": asdict(self.screen),
+                "screen": self.screen.to_dict(),
                 "pages": [p.to_dict() for p in self.pages]}
 
     @classmethod
@@ -354,8 +450,19 @@ class DesignerProject:
         tags = {binding.tag for widget in self.all_widgets()
                 for binding in widget.bindings.values() if binding.tag and binding.tag != "*"}
         tags |= {action.tag for widget in self.all_widgets()
-                 for action in widget.actions.values()
+                 for first in widget.actions.values() for action in first.all()
                  if action.kind in ("write", "pulse") and action.tag}
+        # 13.1 / 13.2: tags new actions write and expressions read.
+        from .actions_v2 import action_tags
+        from .binding_v2 import binding_tags
+        for widget in self.all_widgets():
+            for first in widget.actions.values():
+                for action in first.all():
+                    tags |= action_tags(action)
+            for binding in widget.bindings.values():
+                tags |= binding_tags(binding)
+        tags.discard("*")
+        tags.discard("")
         return sorted(tags)
 
     def alarms(self) -> list[dict[str, Any]]:
@@ -385,6 +492,9 @@ class DesignerProject:
                     entry["warning"] = {"op": warning[0], "value": warning[1]}
                 if critical:
                     entry["critical"] = {"op": critical[0], "value": critical[1]}
+                if binding.alarm:           # 13.3 options, normalised by W3's module
+                    from .alarm_options import manifest_fields
+                    entry.update(manifest_fields(binding.alarm))
                 entries[binding.tag] = entry
         return list(entries.values())
 
@@ -392,6 +502,12 @@ class DesignerProject:
         issues: list[ValidationIssue] = []
         if self.screen.width <= 0 or self.screen.height <= 0:
             issues.append(ValidationIssue("screen", "width and height must be positive"))
+        if self.screen.idle:
+            from .screen_idle import validate_idle
+            issues.extend(validate_idle(self.screen.idle, "screen.idle"))
+
+        def definition_of(widget):
+            return registry.get(widget.type) if registry is not None else None
         seen: set[str] = set()
         known = set(known_tags) if known_tags is not None else None
         page_ids = {page.id for page in self.pages}
@@ -441,7 +557,15 @@ class DesignerProject:
                     for name in ("multiplier", "offset"):
                         if not math.isfinite(getattr(binding, name)):
                             issues.append(ValidationIssue(f"{path}.bindings.{prop}", f"{name} must be finite"))
-                    if not binding.tag:
+                    from .alarm_options import validate_alarm_options
+                    from .binding_v2 import validate_binding
+                    issues.extend(validate_binding(binding, prop, widget, definition_of(widget),
+                                                   f"{path}.bindings.{prop}"))
+                    if binding.alarm:
+                        issues.extend(validate_alarm_options(binding.alarm, f"{path}.bindings.{prop}.alarm"))
+                    if not binding.tag and binding.expr:
+                        pass  # 13.2: an expression binding needs no tag; W2 validates it
+                    elif not binding.tag:
                         issues.append(ValidationIssue(f"{path}.bindings.{prop}", "empty tag binding"))
                     elif known is not None and binding.tag not in known:
                         issues.append(ValidationIssue(f"{path}.bindings.{prop}", "tag is not defined"))
@@ -450,25 +574,32 @@ class DesignerProject:
                             issues.append(ValidationIssue(f"{path}.bindings.{prop}",
                                                           f"{name} threshold {text!r} is not '<op> <number>'"))
                 definition = registry.get(widget.type) if registry is not None else None
-                for signal, action in widget.actions.items():
-                    apath = f"{path}.actions.{signal}"
-                    if definition is not None and signal not in definition.action_signals:
-                        issues.append(ValidationIssue(apath, f"{widget.type} has no action signal {signal!r}"))
-                    if action.kind not in ACTION_KINDS:
-                        issues.append(ValidationIssue(apath, f"unknown action kind {action.kind!r}"))
-                    elif action.kind == "navigate":
-                        if action.page not in page_ids:
-                            issues.append(ValidationIssue(apath, f"navigate target page {action.page!r} does not exist"))
-                    elif signal == "alarmActivated":
-                        pass  # the table supplies the alarm; the action acknowledges it
-                    else:
-                        if not TAG_RE.fullmatch(action.tag or ""):
-                            lowered = (action.tag or "").lower()
-                            # "do.pumpA.run" is dotted; saying it was not sent
-                            # people looking for the wrong fault.
-                            reason = (f"must be lowercase ({lowered!r})" if TAG_RE.fullmatch(lowered)
-                                      else "is not a lowercase dotted tag name")
-                            issues.append(ValidationIssue(apath, f"action tag {action.tag!r} {reason}"))
-                        if action.kind == "pulse" and not (PULSE_MS_MIN <= int(action.ms) <= PULSE_MS_MAX):
-                            issues.append(ValidationIssue(apath, f"pulse ms must be {PULSE_MS_MIN}..{PULSE_MS_MAX}"))
+                for signal, first in widget.actions.items():
+                    for position, action in enumerate(first.all()):
+                        apath = f"{path}.actions.{signal}" + (f"[{position}]" if first.then else "")
+                        if position == 0 and definition is not None and signal not in definition.action_signals:
+                            issues.append(ValidationIssue(apath, f"{widget.type} has no action signal {signal!r}"))
+                        if action.kind not in ACTION_KINDS:
+                            issues.append(ValidationIssue(apath, f"unknown action kind {action.kind!r}"))
+                        elif action.kind not in LEGACY_ACTION_KINDS:
+                            # 13.1 kinds: designer/model/actions_v2.py (wave 1, W1)
+                            from .actions_v2 import validate_action
+                            issues.extend(validate_action(action, signal, apath, page_ids))
+                        elif action.kind == "navigate":
+                            if action.page not in page_ids:
+                                issues.append(ValidationIssue(apath, f"navigate target page {action.page!r} does not exist"))
+                        elif signal == "alarmActivated":
+                            pass  # the table supplies the alarm; the action acknowledges it
+                        else:
+                            if not TAG_RE.fullmatch(action.tag or ""):
+                                lowered = (action.tag or "").lower()
+                                # "do.pumpA.run" is dotted; saying it was not sent
+                                # people looking for the wrong fault.
+                                reason = (f"must be lowercase ({lowered!r})" if TAG_RE.fullmatch(lowered)
+                                          else "is not a lowercase dotted tag name")
+                                issues.append(ValidationIssue(apath, f"action tag {action.tag!r} {reason}"))
+                            if action.kind == "pulse" and not (PULSE_MS_MIN <= int(action.ms) <= PULSE_MS_MAX):
+                                issues.append(ValidationIssue(apath, f"pulse ms must be {PULSE_MS_MIN}..{PULSE_MS_MAX}"))
+                        if not isinstance(action.confirm, str):
+                            issues.append(ValidationIssue(apath, "confirm must be text"))
         return issues

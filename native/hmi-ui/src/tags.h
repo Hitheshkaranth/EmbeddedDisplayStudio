@@ -58,6 +58,25 @@ const hmi_value_t *hmi_tags_value(const hmi_tags_t *t, const char *tag);   // NU
 // caller frees. Feeds series bindings (ShTrendChart).
 hmi_value_t hmi_tags_history(const hmi_tags_t *t, const char *tag, size_t count);
 bool hmi_tags_online(const hmi_tags_t *t);
+
+// ---- CONTRACT 13.4, FROZEN (wave 1, W4) ---------------------------------
+// Quality: a frame's optional "q" object ({"tag": "bad"|"stale"}) sets each
+// listed tag's quality; a frame that carries "q" resets every tag it does not
+// list to GOOD; a frame without "q" changes nothing. Unknown words = BAD.
+typedef enum { HMI_Q_GOOD = 0, HMI_Q_BAD, HMI_Q_STALE } hmi_quality_t;
+hmi_quality_t hmi_tags_quality(const hmi_tags_t *t, const char *tag);
+
+// History: sends {"id","cmd":"history","tag","seconds","points"} (points
+// clamped 1..200, seconds 1..604800) and returns the id ("" when not sent).
+// When its ack arrives with ok and a "history" object for that tag, the
+// samples' values that are OLDER than the tag's oldest held sample (by the
+// sample timestamps vs. the frames' receive time) are put in front of the
+// ring, never growing it past its 200 entries (oldest dropped first), then
+// the history callback fires with the tag. ok:false, or no older samples:
+// nothing changes and the callback does not fire.
+typedef void (*hmi_history_cb)(const char *tag, void *user);
+void hmi_tags_set_history_callback(hmi_tags_t *t, hmi_history_cb cb, void *user);
+const char *hmi_tags_request_history(hmi_tags_t *t, const char *tag, int seconds, int points);
 uint32_t hmi_tags_rx_errors(const hmi_tags_t *t);
 uint16_t hmi_tags_rx_port(const hmi_tags_t *t);    // the bound port (0 when unbound)
 

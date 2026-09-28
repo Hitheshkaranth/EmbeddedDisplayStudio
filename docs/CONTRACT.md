@@ -69,7 +69,7 @@ required. Max accepted datagram: **8192 bytes** (larger is dropped + counted).
 
 Error codes (closed set): `bad_json`, `not_an_object`, `too_large`,
 `unknown_cmd`, `unknown_tag`, `not_writable`, `bad_value`, `hw_error`,
-`rate_limited`.
+`rate_limited`, `no_history` (13.4).
 
 ### 2.4 Telemetry frame (daemon → subscribers, default every 100 ms)
 
@@ -596,3 +596,214 @@ Minimum icon set to vendor (add more as needed, same names as upstream):
 `info-circle`, `loader-2`, `player-play`, `player-stop`, `power`, `bolt`,
 `activity`, `gauge`, `wifi`, `wifi-off`, `key`, `search`, `plus`, `x`,
 `chevron-down`, `chevron-right`, `clipboard-text`, `history`.
+
+---
+
+## 13. Operator runtime v2 (NORMATIVE)
+
+Everything here is **additive**: a design, manifest or frame that uses none of
+it reads, validates and behaves exactly as before, and an older `hmi-ui`
+ignores the new keys (its loader skips unknown keys). The Python model
+(`designer/model/`) and the C runtime (`native/hmi-ui/src/`) implement the
+same rules; where they could differ, this section decides.
+
+### 13.1 Actions
+
+`actions[<signal>]` is one action object **or a list** of them. A list runs
+in order, as one unit.
+
+| `kind` | Fields | Effect |
+| --- | --- | --- |
+| `write` | `tag`, `value`? | unchanged (`value` absent: the control's own state) |
+| `pulse` | `tag`, `ms` 1..10000 | unchanged |
+| `navigate` | `page` | show page `page`; the page left is pushed on the history |
+| `back` | -- | show the most recent page on the history (depth 16, oldest dropped); nothing when empty |
+| `toggle` | `tag` | write `!truthy(current)`; a tag never seen counts as `false` |
+| `increment` / `decrement` | `tag`, `step` (default 1), `min`?, `max`? | write `current +/- step`, clamped to `[min, max]`; never seen = 0 |
+| `ack` | `tag`? | acknowledge the alarm on `tag`, else the signal's argument; `"*"` = every active alarm |
+| `shelve` | `tag`?, `ms` 1..86400000 (default 600000) | shelve that alarm (13.3) |
+
+Every kind also takes `confirm` (string). When **any** action of a signal's
+list has a non-empty `confirm`, the runtime shows one modal dialog with the
+**first** such text and the buttons **Cancel** / **OK**; OK runs the whole
+list, Cancel runs none of it. While a dialog (or any 13.5 popup) is open,
+another confirmation is refused (logged); lists without `confirm` still run.
+
+`truthy`: bool as is; number != 0; string not in `""`, `"false"`, `"0"`;
+null false. Legacy: on `alarmActivated`, a `write` or `pulse` action still
+means `ack` (designs saved before 13.1).
+
+Python (`DesignerAction`): new fields `step: float = 1.0`, `min`/`max:
+float | None = None`, `confirm: str = ""`, and `then: list[DesignerAction]`
+holding actions 2..n of a list. `widget.actions[signal]` stays the first
+action, so code that knows one action per signal keeps working. It serialises
+as an object when `then` is empty, as a list otherwise; a new field at its
+default is not written.
+
+### 13.2 Bindings
+
+New optional binding fields:
+
+* `decimals` (int, default `-1` = automatic): when >= 0, a numeric reading
+  that becomes text -- through a `format` `%1`, or into a str-typed property
+  -- is written with exactly that many decimals (`"%.*f"`, 0..6).
+* `expr` (string, default `""`): the reading is the expression's value
+  instead of the tag's. `tag` may then be `""`; the binding depends on every
+  tag the expression names. `multiplier`, `offset`, `format`, `decimals`,
+  thresholds and rules apply to the result as to a tag reading. A non-numeric
+  result passes through like a non-numeric tag value.
+* `rules` (list, default `[]`): `{"if": "<op> <number>", "prop": <name>,
+  "value": <JSON scalar>}`. Evaluated on the (scaled) reading each time it
+  changes; per target property the **first** matching rule sets it; a
+  property no rule matches gets the widget's declared value, else the kit
+  default. A rule's `prop` must be a property of the widget type and must not
+  itself be bound.
+
+**Expression language** (identical in `expr.c` and `designer/model/expr.py`):
+
+```
+expr    := or ('?' expr ':' expr)?
+or      := and ('||' and)*
+and     := cmp ('&&' cmp)*
+cmp     := sum (('=='|'!='|'<'|'<='|'>'|'>=') sum)?
+sum     := prod (('+'|'-') prod)*
+prod    := unary (('*'|'/'|'%') unary)*
+unary   := ('!'|'-') unary | primary
+primary := NUMBER | STRING | 'true' | 'false' | TAG
+         | FUNC '(' expr (',' expr)* ')' | '(' expr ')'
+FUNC    := abs/1 | floor/1 | ceil/1 | round/1-2 | min/2+ | max/2+ | clamp/3
+NUMBER  := [0-9]+ ('.' [0-9]+)?
+TAG     := [a-z][a-z0-9]*(\.[a-z0-9_]+)+      (CONTRACT 2.5)
+STRING  := '"' ( any char but " and \ | '\"' | '\\' )* '"'
+```
+
+Values are null, bool, number or string. A tag never seen is null.
+Arithmetic, unary minus and the functions on a null or string operand (bools
+count as 1/0), division or `%` by zero, and a non-finite result are null.
+Comparisons: two strings compare by value (`==`/`!=` only; `<` etc. on
+strings are false); otherwise both sides as numbers; any null operand makes
+the comparison false (`!=` too). `!`, `&&`, `||` and `?:` use `truthy`;
+`!`, `&&`, `||` yield bools. `round(x)` rounds half away from zero; `round(x,
+n)` to n decimals (n 0..6, else null). `clamp(x, lo, hi)`. A wrong function
+name or arity, a bad token, and exceeding a limit are compile errors. Limits:
+512 characters, 16 distinct tags, nesting depth 32 (parentheses, function
+calls and unary operators, counted as they nest). A null result is treated
+as a tag never seen (the binding's fallback value).
+
+### 13.3 Alarms
+
+Manifest `alarms[]` entries (CONTRACT 4) take new optional keys:
+
+| Key | Rule | Meaning |
+| --- | --- | --- |
+| `priority` | int 1..4 | 1 = highest. Default: 1 while critical, 3 while warning |
+| `latch` | bool | stays listed after the condition clears, until acknowledged |
+| `delay_ms` | int 0..600000 | the condition must hold this long before the alarm raises |
+| `deadband` | number >= 0 | an active alarm clears only when the value is `deadband` past the threshold (`> 80`, deadband 2: clears at `<= 78`) |
+| `message` | string | replaces the generated `"<label> <value><unit>"` text |
+
+Life cycle per tag: *normal* -> (condition held `delay_ms`) -> **active,
+unacknowledged** -> ack -> **active, acknowledged** -> clears -> normal. With
+`latch`, clearing while unacknowledged leaves **cleared, unacknowledged**
+(still listed, `value` frozen) until an ack removes it. A null value clears
+immediately (a latched unacknowledged alarm still stays listed). Shelving
+removes an alarm from the active list and stops it raising until the shelve
+expires; on expiry it is re-evaluated on the last value. A shelve on a tag
+with no definition does nothing.
+
+The active list (ShAlarmTable `alarms`) is ordered by priority (1 first),
+then newest first. Each item is the list
+`[tag, label, severity, value, message, timestamp, acknowledged, priority, state]`
+-- the first seven unchanged -- with `state` `"active"` or `"cleared"`.
+
+**Journal.** With `hmi-ui --journal PATH` every raise, clear, ack, shelve and
+unshelve appends one JSON line
+`{"ts": <epoch ms>, "event": "raise"|"clear"|"ack"|"shelve"|"unshelve",
+"tag", "label", "severity", "priority", "value"}`, flushed at once and fsynced
+at most once a second. When the file passes 1 MiB it is renamed `PATH.1`
+(replacing that) and a new one starts. Without `--journal` nothing is written
+(Studio renders never journal). `hmi-ui.service` passes
+`--journal /var/lib/hmi/alarm-journal.jsonl`.
+
+ShAlarmTable `mode`: `"active"` (default) shows the active list;
+`"history"` shows the journal's newest `maxVisible` events, newest first, as
+items `[tag, label, severity, value, event, timestamp, true, priority,
+"cleared"]` (the message column carries the event name).
+
+Python: `DesignerBinding.alarm` (dict, default `{}`) carries these keys for
+the tag's entry; `DesignerProject.alarms()` merges them in.
+
+### 13.4 History and tag quality (additions to section 2)
+
+Command and reply:
+
+```jsonc
+{"id":"gui-9","cmd":"history","tag":"eng.egt","seconds":3600,"points":200}
+{"t":"ack","id":"gui-9","ok":true,
+ "history":{"tag":"eng.egt","samples":[[1790569717123, 612.5], ...]}}
+```
+
+`seconds` 1..604800 (default 3600), `points` 1..200 (default 200). Samples are
+`[epoch ms, number]`, oldest first, at most `points`: when more were stored in
+the period, it is split into `points` equal buckets and each non-empty
+bucket's **last** sample is kept. Errors: `unknown_tag`, `bad_value`, and the
+new code `no_history` (no historian, or it does not log that tag).
+
+**Historian** (`daemon/historian.py`, run inside `hmi-hwd`), configured in
+`hwd.json`:
+
+```jsonc
+"history": {
+  "path": "/var/lib/hmi/history.db",     // SQLite
+  "retention_days": 7,                    // 1..365
+  "tags": {"eng.egt": {"period_ms": 1000, "deadband": 0.5}, "*": {"period_ms": 5000}}
+}
+```
+
+A numeric tag is logged at most once per `period_ms` (100..3600000), and only
+when it moved more than `deadband` (default 0) since its last logged sample,
+or `60 * period_ms` passed since it. `"*"` applies to every numeric tag not
+listed. Commits are batched (at most every 5 s, for flash wear); retention is
+enforced at start and hourly. No `history` key: no historian, and `history`
+answers `no_history`. `python3 historian.py export --db PATH --tag T
+[--since SECONDS]` prints CSV `timestamp_iso,epoch_ms,tag,value` for the
+Studio's `tools/hmi_deployer/history_export.py` (run over SSH).
+
+**Quality.** A telemetry frame may carry `"q": {"<tag>": "bad"|"stale"}`
+listing only tags that are not good (absent = all good). `bad`: the read
+failed (the value is `null`, as before). `stale`: the value is the last good
+one and older than 5 poll periods. `hmi-ui` keeps the latest quality of
+every tag (`hmi_tags_quality`); a tag missing from `q` in a frame that
+carries it is good again.
+
+**Backfill.** When `hmi-ui` shows a page it sends `history` for every
+scalar tag bound to an `ShTrendChart` `data` (points = the chart's
+`maxPoints`, at most 200). Samples older than the oldest one held are put in
+front of the tag's ring (never more than it holds), and the chart redraws.
+`no_history` changes nothing.
+
+### 13.5 Operator input and the screen
+
+* **ShNumInput**: a tap on the value opens a numeric keypad on the top layer
+  (`0`-`9`, `.`, `-`, backspace, `C`, **Cancel**, **OK**) holding the current
+  value. OK with a value outside `[minValue, maxValue]` (or not a number)
+  keeps the keypad open and shows `min..max` in the destructive colour;
+  otherwise the value is rounded to `decimalPlaces`, shown, and
+  `valueChanged(value)` is emitted. Not when `enabled` is false.
+* **ShInput**: a tap opens an on-screen keyboard (text mode) with the text;
+  OK sets `text` and emits the new signal `accepted(text)` (its state
+  property is `text`). Not when `readOnly` or not `enabled`.
+* One popup at a time: a keypad, keyboard or confirmation opening while
+  another is open is refused.
+* **Link lost**: when the daemon link goes offline, or has not come online
+  5 s after start, a banner across the top of the screen reads
+  `No connection to controller - values may be stale`; it goes when the link
+  is back. Never shown without a daemon link (headless renders).
+* **Idle**: `screen.idle` = `{"dimAfterS": N, "dimPercent": 10..100 (30),
+  "offAfterS": N}` (0 or absent = never). After `dimAfterS` without a touch
+  the backlight goes to `dimPercent`; after `offAfterS` it goes to 0 and a
+  black overlay covers the screen. A touch restores full brightness; the
+  touch that wakes an **off** screen does nothing else. Backlight: the first
+  directory in `/sys/class/backlight/` (`HMI_BACKLIGHT_DIR` overrides), its
+  `brightness` written as that share of `max_brightness`. No backlight: the
+  overlay alone.

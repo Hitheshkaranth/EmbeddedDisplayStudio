@@ -3,6 +3,7 @@
 //   hmi-ui --apps-dir DIR [--display /dev/dri/card1] [--rx-port N]
 //          [--daemon-host H] [--daemon-port N] [--ready-file F]
 //          [--exit-after MS] [--log-level L] [--kit DIR] [--theme dark|light]
+//          [--journal PATH]   (CONTRACT 13.3 alarm journal; never in headless)
 //       Loads DIR/project.edsui, shows its first page on the display, talks
 //       to hmi-hwd. The flags are the loaders' (CONTRACT section 5) so
 //       hmi-gui-launch and the test harness need no special case.
@@ -29,6 +30,7 @@
 #include "lvgl/lvgl.h"
 #include "model.h"
 #include "registry.h"
+#include "journal.h"
 #include "runtime.h"
 #include "tags.h"
 #include "theme.h"
@@ -114,6 +116,7 @@ int main(int argc, char **argv)
     const char *theme = NULL;
     const char *render_widget = NULL;
     const char *props = NULL;
+    const char *journal_path = NULL;
     int size_w = 0, size_h = 0;
     long exit_after = 0;
     hmi_tags_options_t topt = {5001, "127.0.0.1", 5000};
@@ -124,7 +127,7 @@ int main(int argc, char **argv)
         {"ready-file", 1, 0, 'f'}, {"exit-after", 1, 0, 'e'}, {"log-level", 1, 0, 'l'},
         {"kit", 1, 0, 'k'}, {"theme", 1, 0, 't'}, {"render-widget", 1, 0, 'W'},
         {"size", 1, 0, 's'}, {"props", 1, 0, 'P'}, {"windowed", 0, 0, 'w'}, {"shell", 1, 0, 'S'},
-        {"touch", 1, 0, 'T'},
+        {"touch", 1, 0, 'T'}, {"journal", 1, 0, 'J'},
         {0, 0, 0, 0}};
     int c;
     while ((c = getopt_long(argc, argv, "", opts, NULL)) != -1) {
@@ -144,6 +147,7 @@ int main(int argc, char **argv)
         case 's': sscanf(optarg, "%dx%d", &size_w, &size_h); break;
         case 'P': props = optarg; break;
         case 'T': touch = optarg; break;
+        case 'J': journal_path = optarg; break;
         case 'w': case 'S': break;   // accepted for flag compatibility with hmi-gui; no effect
         default: fprintf(stderr, "usage: see main.c\n"); return 2;
         }
@@ -211,6 +215,8 @@ int main(int argc, char **argv)
     }
     hmi_runtime_t *rt = hmi_runtime_create(project, screen, tags, render_widget ? NULL : apps_dir);
     cbs.rt = rt;
+    hmi_journal_t *journal = headless ? NULL : hmi_journal_open(journal_path, HMI_JOURNAL_MAX_BYTES);
+    hmi_runtime_set_journal(rt, journal);
     if (tags)
         hmi_tags_set_callbacks(tags, on_tag, on_online, on_ack, &cbs);
 
@@ -242,6 +248,7 @@ int main(int argc, char **argv)
         hmi_log(HMI_LOG_INFO, g_stop ? "exiting on signal" : "exiting after %ld ms", exit_after);
     }
     hmi_runtime_destroy(rt);
+    hmi_journal_close(journal);
     if (tags) hmi_tags_destroy(tags);
     hmi_project_free(project);
     return status;

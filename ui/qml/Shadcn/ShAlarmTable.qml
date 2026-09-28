@@ -7,6 +7,9 @@ Item {
     property string title: "Active Alarms"
     property bool showTimestamp: true
     property real rowHeight: 30
+    // CONTRACT 13.3: "history" shows the panel's alarm journal; the desktop
+    // preview has no journal and shows the active list either way.
+    property string mode: "active"
     signal alarmActivated(var alarm)
     implicitWidth: 350
     implicitHeight: rowHeight * maxVisible + 36

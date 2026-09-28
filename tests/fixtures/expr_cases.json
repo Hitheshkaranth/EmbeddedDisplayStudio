@@ -1,0 +1,551 @@
+[
+ {
+  "expr": "1 + 2",
+  "values": {},
+  "expect": 3
+ },
+ {
+  "expr": "  1+ 2 ",
+  "values": {},
+  "expect": 3
+ },
+ {
+  "expr": "2 * 3 + 4",
+  "values": {},
+  "expect": 10
+ },
+ {
+  "expr": "2 + 3 * 4",
+  "values": {},
+  "expect": 14
+ },
+ {
+  "expr": "(2 + 3) * 4",
+  "values": {},
+  "expect": 20
+ },
+ {
+  "expr": "10 / 4",
+  "values": {},
+  "expect": 2.5
+ },
+ {
+  "expr": "10 % 4",
+  "values": {},
+  "expect": 2
+ },
+ {
+  "expr": "-3 + 1",
+  "values": {},
+  "expect": -2
+ },
+ {
+  "expr": "--3",
+  "values": {},
+  "expect": 3
+ },
+ {
+  "expr": "1 / 0",
+  "values": {},
+  "expect": null
+ },
+ {
+  "expr": "5 % 0",
+  "values": {},
+  "expect": null
+ },
+ {
+  "expr": "2 == 2.0",
+  "values": {},
+  "expect": true
+ },
+ {
+  "expr": "eng.rpm * 2",
+  "values": {
+   "eng.rpm": 1500
+  },
+  "expect": 3000
+ },
+ {
+  "expr": "eng.rpm * 2",
+  "values": {},
+  "expect": null
+ },
+ {
+  "expr": "eng.rpm - 100",
+  "values": {
+   "eng.rpm": 50
+  },
+  "expect": -50
+ },
+ {
+  "expr": "x.y_z * 2",
+  "values": {
+   "x.y_z": 2
+  },
+  "expect": 4
+ },
+ {
+  "expr": "x9.y",
+  "values": {
+   "x9.y": 1
+  },
+  "expect": 1
+ },
+ {
+  "expr": "eng.rpm > 7000",
+  "values": {
+   "eng.rpm": 7500
+  },
+  "expect": true
+ },
+ {
+  "expr": "eng.rpm > 7000",
+  "values": {},
+  "expect": false
+ },
+ {
+  "expr": "eng.rpm != 5",
+  "values": {},
+  "expect": false
+ },
+ {
+  "expr": "a.b == a.b",
+  "values": {
+   "a.b": "x"
+  },
+  "expect": true
+ },
+ {
+  "expr": "a.b == \"RUN\"",
+  "values": {
+   "a.b": "RUN"
+  },
+  "expect": true
+ },
+ {
+  "expr": "a.b != \"RUN\"",
+  "values": {
+   "a.b": "STOP"
+  },
+  "expect": true
+ },
+ {
+  "expr": "a.b < \"Z\"",
+  "values": {
+   "a.b": "A"
+  },
+  "expect": false
+ },
+ {
+  "expr": "a.b + 1",
+  "values": {
+   "a.b": "x"
+  },
+  "expect": null
+ },
+ {
+  "expr": "\"a\\\"b\" == \"a\\\"b\"",
+  "values": {},
+  "expect": true
+ },
+ {
+  "expr": "\"x\" == \"y\"",
+  "values": {},
+  "expect": false
+ },
+ {
+  "expr": "a.b + 1",
+  "values": {
+   "a.b": true
+  },
+  "expect": 2
+ },
+ {
+  "expr": "true + 1",
+  "values": {},
+  "expect": 2
+ },
+ {
+  "expr": "-true",
+  "values": {},
+  "expect": -1
+ },
+ {
+  "expr": "a.b >= 3",
+  "values": {
+   "a.b": true
+  },
+  "expect": false
+ },
+ {
+  "expr": "!a.b",
+  "values": {
+   "a.b": 0
+  },
+  "expect": true
+ },
+ {
+  "expr": "!a.b",
+  "values": {},
+  "expect": true
+ },
+ {
+  "expr": "!\"false\"",
+  "values": {},
+  "expect": true
+ },
+ {
+  "expr": "!\"0\"",
+  "values": {},
+  "expect": true
+ },
+ {
+  "expr": "!\"\"",
+  "values": {},
+  "expect": true
+ },
+ {
+  "expr": "!\"no\"",
+  "values": {},
+  "expect": false
+ },
+ {
+  "expr": "!!1",
+  "values": {},
+  "expect": true
+ },
+ {
+  "expr": "1 && 0",
+  "values": {},
+  "expect": false
+ },
+ {
+  "expr": "1 || 0",
+  "values": {},
+  "expect": true
+ },
+ {
+  "expr": "0 || \"\"",
+  "values": {},
+  "expect": false
+ },
+ {
+  "expr": "true && false",
+  "values": {},
+  "expect": false
+ },
+ {
+  "expr": "2 && 3",
+  "values": {},
+  "expect": true
+ },
+ {
+  "expr": "a.b ? \"ON\" : \"OFF\"",
+  "values": {
+   "a.b": true
+  },
+  "expect": "ON"
+ },
+ {
+  "expr": "a.b ? \"ON\" : \"OFF\"",
+  "values": {
+   "a.b": false
+  },
+  "expect": "OFF"
+ },
+ {
+  "expr": "a.b ? \"ON\" : \"OFF\"",
+  "values": {},
+  "expect": "OFF"
+ },
+ {
+  "expr": "x.y > 5 ? x.y : 0",
+  "values": {
+   "x.y": 9
+  },
+  "expect": 9
+ },
+ {
+  "expr": "x.y > 5 ? x.y : 0",
+  "values": {
+   "x.y": 2
+  },
+  "expect": 0
+ },
+ {
+  "expr": "1 ? 2 : 3 ? 4 : 5",
+  "values": {},
+  "expect": 2
+ },
+ {
+  "expr": "0 ? 2 : 3 ? 4 : 5",
+  "values": {},
+  "expect": 4
+ },
+ {
+  "expr": "0 ? 2 : 0 ? 4 : 5",
+  "values": {},
+  "expect": 5
+ },
+ {
+  "expr": "abs(-4.5)",
+  "values": {},
+  "expect": 4.5
+ },
+ {
+  "expr": "floor(2.7)",
+  "values": {},
+  "expect": 2
+ },
+ {
+  "expr": "floor(-2.2)",
+  "values": {},
+  "expect": -3
+ },
+ {
+  "expr": "ceil(2.1)",
+  "values": {},
+  "expect": 3
+ },
+ {
+  "expr": "round(2.5)",
+  "values": {},
+  "expect": 3
+ },
+ {
+  "expr": "round(-2.5)",
+  "values": {},
+  "expect": -3
+ },
+ {
+  "expr": "round(2.4)",
+  "values": {},
+  "expect": 2
+ },
+ {
+  "expr": "round(3.14159, 2)",
+  "values": {},
+  "expect": 3.14
+ },
+ {
+  "expr": "round(2.25, 1)",
+  "values": {},
+  "expect": 2.3
+ },
+ {
+  "expr": "round(1.5, 7)",
+  "values": {},
+  "expect": null
+ },
+ {
+  "expr": "round(1.5, -1)",
+  "values": {},
+  "expect": null
+ },
+ {
+  "expr": "min(3, 1, 2)",
+  "values": {},
+  "expect": 1
+ },
+ {
+  "expr": "max(3, 1, 2)",
+  "values": {},
+  "expect": 3
+ },
+ {
+  "expr": "max(1, 2)",
+  "values": {},
+  "expect": 2
+ },
+ {
+  "expr": "clamp(15, 0, 10)",
+  "values": {},
+  "expect": 10
+ },
+ {
+  "expr": "clamp(-1, 0, 10)",
+  "values": {},
+  "expect": 0
+ },
+ {
+  "expr": "clamp(5, 0, 10)",
+  "values": {},
+  "expect": 5
+ },
+ {
+  "expr": "min(1, a.b)",
+  "values": {},
+  "expect": null
+ },
+ {
+  "expr": "abs(\"x\")",
+  "values": {},
+  "expect": null
+ },
+ {
+  "expr": "abs(true)",
+  "values": {},
+  "expect": 1
+ },
+ {
+  "expr": "max(eng.a, eng.b) * 2",
+  "values": {
+   "eng.a": 3,
+   "eng.b": 7
+  },
+  "expect": 14
+ },
+ {
+  "expr": "10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000 * 10000000000",
+  "values": {},
+  "expect": null
+ },
+ {
+  "expr": "1 +",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "(1 + 2",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "1 + 2)",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "sqrt(4)",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "abs(1, 2)",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "clamp(1, 2)",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "min(1)",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "round()",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "Eng.rpm",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "rpm",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "1 < 2 == true",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "1.5.2",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": ".5",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "1e3",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "\"unterminated",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "a.b ? 1",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "1 $ 2",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "eng.",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "+1",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1",
+  "values": {},
+  "expect": 256
+ },
+ {
+  "expr": "t.v0 + t.v1 + t.v2 + t.v3 + t.v4 + t.v5 + t.v6 + t.v7 + t.v8 + t.v9 + t.v10 + t.v11 + t.v12 + t.v13 + t.v14 + t.v15 + t.v16",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "t.v0 + t.v1 + t.v2 + t.v3 + t.v4 + t.v5 + t.v6 + t.v7 + t.v8 + t.v9 + t.v10 + t.v11 + t.v12 + t.v13 + t.v14 + t.v15",
+  "values": {
+   "t.v0": 1,
+   "t.v1": 1,
+   "t.v2": 1,
+   "t.v3": 1,
+   "t.v4": 1,
+   "t.v5": 1,
+   "t.v6": 1,
+   "t.v7": 1,
+   "t.v8": 1,
+   "t.v9": 1,
+   "t.v10": 1,
+   "t.v11": 1,
+   "t.v12": 1,
+   "t.v13": 1,
+   "t.v14": 1,
+   "t.v15": 1
+  },
+  "expect": 16
+ },
+ {
+  "expr": "((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))",
+  "values": {},
+  "error": true
+ },
+ {
+  "expr": "((((((((((1))))))))))",
+  "values": {},
+  "expect": 1
+ }
+]

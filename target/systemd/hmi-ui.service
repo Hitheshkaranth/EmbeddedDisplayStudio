@@ -39,10 +39,12 @@ Environment=HMI_LOG_LEVEL=INFO
 Environment=HMI_UI_EXTRA_ARGS=
 
 ExecStartPre=/bin/mkdir -p /run/hmi
+# CONTRACT 13.3: the alarm journal survives restarts and reboots.
+ExecStartPre=/bin/mkdir -p /var/lib/hmi
 # A leftover compositor releases the DRM master a moment after its unit
 # reports stopped; wait for it (at most 5 s) so the modeset never races.
 ExecStartPre=/bin/sh -c "for i in $$(seq 50); do systemctl is-active -q weston.service || exit 0; sleep 0.1; done; exit 0"
-ExecStart=/usr/lib/hmi/ui/hmi-ui --apps-dir /opt/hmi_apps/current --display ${HMI_UI_DISPLAY} --log-level ${HMI_LOG_LEVEL} --ready-file /run/hmi/gui-ready $HMI_UI_EXTRA_ARGS
+ExecStart=/usr/lib/hmi/ui/hmi-ui --apps-dir /opt/hmi_apps/current --display ${HMI_UI_DISPLAY} --log-level ${HMI_LOG_LEVEL} --ready-file /run/hmi/gui-ready --journal /var/lib/hmi/alarm-journal.jsonl $HMI_UI_EXTRA_ARGS
 
 # Never leave a dead panel: restart on any exit.
 Restart=always

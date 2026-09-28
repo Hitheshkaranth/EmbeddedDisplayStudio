@@ -90,6 +90,8 @@ ACTION_SIGNALS = {
     "ShNumInput": (("valueChanged",), "value"),
     "ShSelect": (("activated",), "currentIndex"),
     "ShAlarmTable": (("alarmActivated",), ""),
+    # CONTRACT 13.5: the on-screen keyboard's OK.
+    "ShInput": (("accepted",), "text"),
     # Automotive: the mode selector fires activated(index) on a tap like
     # ShSelect; the tile is a button with an icon.
     "ShDriveMode": (("activated",), "currentIndex"),
@@ -311,9 +313,10 @@ def default_registry() -> WidgetRegistry:
         {}, ("lineColor", "fillColor"))
     add("ShAlarmTable", "Alarm Table", "Industrial", "ShAlarmTable", 350, 216,
         {"maxVisible": int, "title": str, "showTimestamp": bool, "rowHeight": float,
-         **common},
+         "mode": str, **common},
         {"maxVisible": 6, "title": "Active Alarms", "showTimestamp": True,
-         "rowHeight": 30.0, **common_defaults}, ("alarms",))
+         "rowHeight": 30.0, "mode": "active", **common_defaults}, ("alarms",), False,
+        {"mode": ("active", "history")})
     add("ShFlightDirector", "Flight Director", "Avionics", "ShFlightDirector", 180, 120,
         {"pitchCommand": float, "rollCommand": float, "pitchLimit": float,
          "rollLimit": float, "active": bool, "mode": str, **common},

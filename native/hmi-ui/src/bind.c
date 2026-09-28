@@ -482,6 +482,17 @@ static void apply_tag_value(hmi_widget_t *widget, void *user)
     }
 }
 
+void hmi_bind_refresh_series(hmi_bind_t *b, const char *tag)
+{
+    if (!b->history || !b->idx || !tag) return;
+    for (size_t k = 0; k < b->n_idx; k++) {
+        const hmi_binding_t *bd = b->idx[k].binding;
+        hmi_widget_t *w = b->idx[k].widget;
+        if (strcmp(b->idx[k].tag, tag) == 0 && is_series_property(w->type, bd->prop))
+            apply_series_history(b, w, bd);
+    }
+}
+
 void hmi_bind_on_tag(hmi_bind_t *b, const char *tag, const hmi_value_t *value)
 {
     if (!b->idx) return;

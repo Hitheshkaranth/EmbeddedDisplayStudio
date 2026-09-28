@@ -58,6 +58,7 @@ static const hmi_prop_schema_t props_ShAlarmTable[] = {
     {"title", HMI_KIND_STR, "Active Alarms", false},
     {"showTimestamp", HMI_KIND_BOOL, "true", false},
     {"rowHeight", HMI_KIND_FLOAT, "30.0", false},
+    {"mode", HMI_KIND_STR, "active", false},
     {"opacity", HMI_KIND_FLOAT, "1.0", false},
     {"visible", HMI_KIND_BOOL, "true", false},
     {NULL, HMI_KIND_STR, NULL, false}
@@ -315,7 +316,7 @@ static const hmi_prop_schema_t props_ShInput[] = {
     {"visible", HMI_KIND_BOOL, "true", false},
     {NULL, HMI_KIND_STR, NULL, false}
 };
-static const char *const signals_ShInput[] = { NULL};
+static const char *const signals_ShInput[] = {"accepted", NULL};
 static const hmi_prop_schema_t props_ShNumDisplay[] = {
     {"value", HMI_KIND_FLOAT, "0.0", true},
     {"unit", HMI_KIND_STR, "", false},
@@ -543,7 +544,7 @@ const hmi_type_schema_t hmi_kit_types[] = {
     {"Item", "Navigation", 320, 240, true, "", props_Item, 3, signals_Item, 0},
     {"Rectangle", "Basic", 140, 90, false, "", props_Rectangle, 6, signals_Rectangle, 0},
     {"Row", "Containers", 300, 80, true, "", props_Row, 4, signals_Row, 0},
-    {"ShAlarmTable", "Industrial", 350, 216, false, "", props_ShAlarmTable, 6, signals_ShAlarmTable, 1},
+    {"ShAlarmTable", "Industrial", 350, 216, false, "", props_ShAlarmTable, 7, signals_ShAlarmTable, 1},
     {"ShAlert", "Industrial", 260, 90, false, "", props_ShAlert, 5, signals_ShAlert, 0},
     {"ShAnalogDisplay", "Industrial", 240, 64, false, "", props_ShAnalogDisplay, 16, signals_ShAnalogDisplay, 0},
     {"ShAnnunciator", "Avionics", 140, 38, false, "", props_ShAnnunciator, 5, signals_ShAnnunciator, 0},
@@ -564,7 +565,7 @@ const hmi_type_schema_t hmi_kit_types[] = {
     {"ShGauge", "Industrial", 180, 180, false, "", props_ShGauge, 9, signals_ShGauge, 0},
     {"ShGearIndicator", "Automotive", 120, 70, false, "", props_ShGearIndicator, 6, signals_ShGearIndicator, 0},
     {"ShIconTile", "Automotive", 100, 110, false, "", props_ShIconTile, 6, signals_ShIconTile, 1},
-    {"ShInput", "Basic", 180, 40, false, "", props_ShInput, 6, signals_ShInput, 0},
+    {"ShInput", "Basic", 180, 40, false, "text", props_ShInput, 6, signals_ShInput, 1},
     {"ShNumDisplay", "Industrial", 180, 80, false, "", props_ShNumDisplay, 13, signals_ShNumDisplay, 0},
     {"ShNumInput", "Industrial", 240, 64, false, "value", props_ShNumInput, 10, signals_ShNumInput, 1},
     {"ShProgress", "Industrial", 200, 24, false, "", props_ShProgress, 4, signals_ShProgress, 0},

@@ -296,3 +296,12 @@ void hmi_tags_ping(hmi_tags_t *t)
     cJSON_AddStringToObject(o, "id", "qml-ping");
     send_json(t, o);
 }
+
+// ---- wave 1 stubs (CONTRACT 13.4): W4 implements ---------------------------
+hmi_quality_t hmi_tags_quality(const hmi_tags_t *t, const char *tag) { (void)t; (void)tag; return HMI_Q_GOOD; }
+void hmi_tags_set_history_callback(hmi_tags_t *t, hmi_history_cb cb, void *user) { (void)t; (void)cb; (void)user; }
+const char *hmi_tags_request_history(hmi_tags_t *t, const char *tag, int seconds, int points)
+{
+    (void)t; (void)tag; (void)seconds; (void)points;
+    return "";
+}

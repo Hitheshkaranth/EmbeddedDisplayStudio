@@ -243,6 +243,10 @@
      "kind": "float",
      "default": 30.0
     },
+    "mode": {
+     "kind": "str",
+     "default": "active"
+    },
     "opacity": {
      "kind": "float",
      "default": 1.0
@@ -258,7 +262,12 @@
    "signals": [
     "alarmActivated"
    ],
-   "choices": {},
+   "choices": {
+    "mode": [
+     "active",
+     "history"
+    ]
+   },
    "assets": []
   },
   "ShAlert": {
@@ -1318,7 +1327,7 @@
    "default_width": 180,
    "default_height": 40,
    "container": false,
-   "state_property": "",
+   "state_property": "text",
    "properties": {
     "placeholderText": {
      "kind": "str",
@@ -1348,7 +1357,9 @@
    "bindable": [
     "text"
    ],
-   "signals": [],
+   "signals": [
+    "accepted"
+   ],
    "choices": {},
    "assets": []
   },
