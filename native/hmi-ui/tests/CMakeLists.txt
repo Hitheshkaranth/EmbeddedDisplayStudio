@@ -18,6 +18,7 @@ set(HMI_UI_TESTS
     test_tags_history
     test_input
     test_overlay
+    test_wave1_qc
 )
 
 foreach(name IN LISTS HMI_UI_TESTS)

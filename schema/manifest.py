@@ -50,6 +50,7 @@ Outputs: (ok, messages) from validate_bundle(), or an exit status and
 
 import fnmatch
 import json
+import math
 import os
 import re
 import sys
@@ -538,6 +539,49 @@ def validate_bundle(bundle_dir):
                                 "%s: '%s.value' must be a number."
                                 % (prefix, tk)
                             )
+
+                # priority (optional, int 1..4, CONTRACT 13.3)
+                priority = alarm.get("priority")
+                if priority is not None and (
+                        not isinstance(priority, int) or isinstance(priority, bool)
+                        or not (1 <= priority <= 4)):
+                    errors.append(
+                        "%s: 'priority' must be an integer 1..4." % prefix
+                    )
+
+                # latch (optional, bool)
+                latch = alarm.get("latch")
+                if latch is not None and not isinstance(latch, bool):
+                    errors.append(
+                        "%s: 'latch' must be true or false." % prefix
+                    )
+
+                # delay_ms (optional, int 0..600000)
+                delay_ms = alarm.get("delay_ms")
+                if delay_ms is not None and (
+                        not isinstance(delay_ms, int) or isinstance(delay_ms, bool)
+                        or not (0 <= delay_ms <= 600000)):
+                    errors.append(
+                        "%s: 'delay_ms' must be an integer 0..600000." % prefix
+                    )
+
+                # deadband (optional, number >= 0)
+                deadband = alarm.get("deadband")
+                if deadband is not None and (
+                        isinstance(deadband, bool)
+                        or not isinstance(deadband, (int, float))
+                        or not math.isfinite(deadband)
+                        or deadband < 0):
+                    errors.append(
+                        "%s: 'deadband' must be a number >= 0." % prefix
+                    )
+
+                # message (optional, str)
+                message = alarm.get("message")
+                if message is not None and not isinstance(message, str):
+                    errors.append(
+                        "%s: 'message' must be text." % prefix
+                    )
 
                 if not threshold_keys:
                     errors.append(

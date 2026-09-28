@@ -44,6 +44,7 @@ LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda
 SRC_URI = " \
     file://hmi_hwd.py \
     file://modbus.py \
+    file://historian.py \
     file://hwd.json \
     file://hmi-install \
     file://hmi-hwd-launch \
@@ -198,6 +199,9 @@ do_install() {
     # The Modbus client is a sibling module of the daemon (imported as
     # `modbus` from the script's own directory), so it lives beside it.
     install -m 0644 ${S}/modbus.py   ${D}${nonarch_libdir}/hmi/modbus.py
+    # The historian (CONTRACT 13.4): the daemon's optional logging module,
+    # imported by hmi_hwd.py as a sibling module. Installed beside it.
+    install -m 0644 ${S}/historian.py ${D}${nonarch_libdir}/hmi/historian.py
 
     # The single implementation of CONTRACT section 4. hmi-install calls it
     # from /usr/lib/hmi/manifest.py; the host CLI and the desktop tool call

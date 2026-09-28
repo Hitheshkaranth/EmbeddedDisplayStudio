@@ -765,7 +765,8 @@ when it moved more than `deadband` (default 0) since its last logged sample,
 or `60 * period_ms` passed since it. `"*"` applies to every numeric tag not
 listed. Commits are batched (at most every 5 s, for flash wear); retention is
 enforced at start and hourly. No `history` key: no historian, and `history`
-answers `no_history`. `python3 historian.py export --db PATH --tag T
+answers `no_history`. A malformed `history` block is logged as an error at start and
+the daemon runs without a historian (the I/O matters more than the log). `python3 historian.py export --db PATH --tag T
 [--since SECONDS]` prints CSV `timestamp_iso,epoch_ms,tag,value` for the
 Studio's `tools/hmi_deployer/history_export.py` (run over SSH).
 
