@@ -63,6 +63,12 @@ add_library(hmi-ui-core STATIC
     src/alarms.c
     src/tags.c
     src/bind.c
+    src/modal.c
+    src/actions.c
+    src/expr.c
+    src/journal.c
+    src/input.c
+    src/overlay.c
     src/gen/kit_schema.c
     src/widgets/kit.c
     src/widgets/probe.c

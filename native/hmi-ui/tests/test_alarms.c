@@ -331,7 +331,7 @@ static void test_active_value_shape(void)
     CHECK(list.kind == HMI_V_LIST);
     CHECK(list.count == 1);
     const hmi_value_t *row = &list.items[0];
-    CHECK(row->kind == HMI_V_LIST && row->count == 7);
+    CHECK(row->kind == HMI_V_LIST && row->count == 9);   // CONTRACT 13.3: + priority, state
     CHECK_EQ_STR(hmi_value_as_str(&row->items[0], ""), "ai.pot");
     CHECK_EQ_STR(hmi_value_as_str(&row->items[1], ""), "Input Voltage");
     CHECK_EQ_STR(hmi_value_as_str(&row->items[2], ""), "critical");

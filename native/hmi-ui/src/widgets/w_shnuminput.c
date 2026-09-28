@@ -8,6 +8,7 @@
 #include <math.h>
 
 #include "draw_util.h"
+#include "input.h"
 #include "registry.h"
 #include "theme.h"
 
@@ -20,8 +21,12 @@ typedef struct {
     lv_obj_t *plusBtn;
     double value, minValue, maxValue, step;
     int decimalPlaces;
+    bool enabled;
     char unit[16];
 } shnuminput_state_t;
+
+static void numinput_open_cb(lv_event_t *e);
+static void numinput_done(double value, void *user);
 
 static void btn_click_cb(lv_event_t *e)
 {
@@ -50,6 +55,32 @@ static void update_value_text(shnuminput_state_t *st)
     char txt[64];
     snprintf(txt, sizeof txt, "%.*f", st->decimalPlaces, st->value);
     lv_label_set_text(st->valueText, txt);
+}
+
+// A tap on the widget's root opens the numeric keypad (not when disabled):
+// the -/+ buttons keep their own behaviour. On OK the value is shown and
+// "valueChanged" is emitted. See CONTRACT 13.5.
+static void numinput_open_cb(lv_event_t *e)
+{
+    hmi_widget_t *widget = (hmi_widget_t *)lv_event_get_user_data(e);
+    if (!widget) return;
+    shnuminput_state_t *st = widget->state;
+    if (!st || !st->enabled) return;
+    hmi_input_open_numeric(widget, st->value, st->minValue, st->maxValue,
+                           st->decimalPlaces, numinput_done, widget);
+}
+
+// The keypad's OK: show the (rounded) value, then emit valueChanged.
+static void numinput_done(double value, void *user)
+{
+    hmi_widget_t *w = (hmi_widget_t *)user;
+    shnuminput_state_t *st = w ? w->state : NULL;
+    if (!st) return;
+    st->value = value;
+    update_value_text(st);
+    hmi_value_t val = hmi_value_num(value);
+    hmi_widget_emit(w, "valueChanged", &val);
+    hmi_value_free(&val);
 }
 
 static lv_obj_t *create_outline_button(lv_obj_t *parent)
@@ -144,6 +175,7 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     st->maxValue = hmi_widget_num(w, "maxValue", 1000);
     st->step = hmi_widget_num(w, "step", 1);
     st->decimalPlaces = (int)hmi_widget_num(w, "decimalPlaces", 0);
+    st->enabled = hmi_widget_bool(w, "enabled", true);
     strncpy(st->unit, hmi_widget_str(w, "unit", ""), sizeof(st->unit) - 1);
 
     // Set label visibility
@@ -157,7 +189,8 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
 
     update_value_text(st);
 
-    // Set unit visibility
+    // Set unit visibility (and its text: an LVGL label reads "Text" until set)
+    lv_label_set_text(unitText, st->unit);
     if (st->unit[0] != '\0') {
         lv_obj_clear_flag(unitText, LV_OBJ_FLAG_HIDDEN);
         // Position unit text on the right side of value display
@@ -172,6 +205,11 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     // Click handlers
     lv_obj_add_event_cb(minusBtn, btn_click_cb, LV_EVENT_CLICKED, w);
     lv_obj_add_event_cb(plusBtn, btn_click_cb, LV_EVENT_CLICKED, w);
+    // A tap anywhere but -/+ reaches the root: the row and the value box
+    // only lay out, so they let the touch through (the buttons do not).
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(valueDisplay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(bg, numinput_open_cb, LV_EVENT_CLICKED, w);
 
     w->state = st;
     return bg;
@@ -194,6 +232,7 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
         st->step = hmi_value_as_num(value, st->step);
     } else if (strcmp(prop, "unit") == 0) {
         strncpy(st->unit, hmi_value_as_str(value, ""), sizeof(st->unit) - 1);
+        lv_label_set_text(st->unitText, st->unit);
         if (st->unit[0] != '\0') {
             lv_obj_clear_flag(st->unitText, LV_OBJ_FLAG_HIDDEN);
             lv_obj_align(st->unitText, LV_ALIGN_RIGHT_MID, -8, 0);
@@ -208,6 +247,8 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
         } else {
             lv_obj_clear_flag(st->label, LV_OBJ_FLAG_HIDDEN);
         }
+    } else if (strcmp(prop, "enabled") == 0) {
+        st->enabled = hmi_value_as_bool(value, st->enabled);
     } else if (strcmp(prop, "decimalPlaces") == 0) {
         st->decimalPlaces = (int)hmi_value_as_num(value, st->decimalPlaces);
         update_value_text(st);

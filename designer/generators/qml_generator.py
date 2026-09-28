@@ -473,7 +473,9 @@ class QmlGenerator:
             else:
                 lines.append(f"{indent}    {qml_key}: {expression}")
         for signal, action in widget.actions.items():
-            lines.append(f"{indent}    {_handler(signal)}: {self._action_expression(widget, definition, signal, action)}")
+            steps = [self._action_expression(widget, definition, signal, a) for a in action.all()]
+            body = steps[0] if len(steps) == 1 else "{ " + "; ".join(steps) + " }"   # 13.1 list
+            lines.append(f"{indent}    {_handler(signal)}: {body}")
         for child in widget.children:
             lines.extend(self._widget(child, depth + 1, widget.type))
         lines.append(f"{indent}}}")
@@ -553,6 +555,21 @@ class QmlGenerator:
         """The handler body for one action on one signal."""
         if action.kind == "navigate":
             return f"root.navigateRequested({_literal(action.page)})"
+        if action.kind in ("back", "shelve"):
+            return "void 0"                     # panel-only (CONTRACT 13.1)
+        if action.kind == "ack":
+            return f"Bus.acknowledge({_literal(action.tag)})" if action.tag and action.tag != "*" \
+                else ("Bus.acknowledge(alarm.tag)" if signal == "alarmActivated" else "void 0")
+        if action.kind == "toggle":
+            return f"Bus.write({_literal(action.tag)}, !Bus.value({_literal(action.tag)}, false))"
+        if action.kind in ("increment", "decrement"):
+            sign = "+" if action.kind == "increment" else "-"
+            value = f"Bus.value({_literal(action.tag)}, 0) {sign} {float(action.step)!r}"
+            if action.min is not None:
+                value = f"Math.max({float(action.min)!r}, {value})"
+            if action.max is not None:
+                value = f"Math.min({float(action.max)!r}, {value})"
+            return f"Bus.write({_literal(action.tag)}, {value})"
         if signal == "alarmActivated":
             # The table hands the alarm it was tapped on; any action here
             # means "acknowledge it".

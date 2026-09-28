@@ -5,6 +5,11 @@
 // the runtime hands over one changed tag at a time, so every definition
 // keeps the last value seen for its tag and each call re-evaluates all
 // definitions against that cache.
+//
+// CONTRACT 13.3 adds a life cycle per tag: normal -> (held delay_ms) ->
+// active -> ack -> clears -> normal, with latching, deadband and shelving.
+// evaluate() and tick() share one pass (reevaluate) so a delay or a shelve
+// expiring in tick() follows exactly the rules a new value would.
 #include "alarms.h"
 
 #include <stdio.h>
@@ -28,6 +33,16 @@ typedef struct {
     char unit[32];
     threshold_t critical, warning;
     hmi_value_t last;   // last value delivered for `tag` (HMI_V_NULL until seen)
+    // CONTRACT 13.3
+    int priority;           // 1..4; 0 = the severity default (1 critical, 3 warning)
+    bool latch;
+    uint64_t delay_ms;      // 0 = raise at once
+    double deadband;        // >= 0
+    char message[160];      // "" = generate "<label> <value><unit>"
+    bool holding;           // condition holds while not listed: waiting on delay_ms
+    uint64_t hold_since;    // monotonic ms the condition started holding
+    bool shelved;
+    uint64_t shelved_until; // monotonic ms
 } def_t;
 
 typedef struct {
@@ -46,6 +61,9 @@ struct hmi_alarms {
     void *user;
     hmi_alarms_clock_fn clock;
     void *clock_user;
+    hmi_alarms_mono_fn mono;
+    void *mono_user;
+    hmi_journal_t *journal;   // not owned
 };
 
 // -- definitions ------------------------------------------------------------
@@ -63,11 +81,34 @@ static void read_threshold(const cJSON *def, const char *key, threshold_t *t)
     t->present = true;
 }
 
+// The 13.3 keys. Anything out of range (or of the wrong JSON type) keeps the
+// default, so one bad key never drops the whole alarm.
+static void read_v2_keys(const cJSON *d, def_t *def)
+{
+    const cJSON *j = cJSON_GetObjectItemCaseSensitive(d, "priority");
+    if (cJSON_IsNumber(j)) {
+        double p = cJSON_GetNumberValue(j);
+        if (p >= 1 && p <= 4 && p == (double)(int)p) def->priority = (int)p;
+    }
+    def->latch = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(d, "latch"));
+    j = cJSON_GetObjectItemCaseSensitive(d, "delay_ms");
+    if (cJSON_IsNumber(j)) {
+        double ms = cJSON_GetNumberValue(j);
+        if (ms >= 0 && ms <= 600000) def->delay_ms = (uint64_t)ms;
+    }
+    j = cJSON_GetObjectItemCaseSensitive(d, "deadband");
+    if (cJSON_IsNumber(j) && cJSON_GetNumberValue(j) >= 0) def->deadband = cJSON_GetNumberValue(j);
+    j = cJSON_GetObjectItemCaseSensitive(d, "message");
+    if (cJSON_IsString(j))
+        snprintf(def->message, sizeof def->message, "%s", cJSON_GetStringValue(j));
+}
+
 static void load_defs(hmi_alarms_t *a, const cJSON *arr)
 {
     if (!cJSON_IsArray(arr)) return;
     size_t n = (size_t)cJSON_GetArraySize(arr);
     a->defs = calloc(n ? n : 1, sizeof *a->defs);
+    if (!a->defs) return;
     const cJSON *d;
     cJSON_ArrayForEach(d, arr) {
         // Entries that are not objects, or whose "tag" is not a string, are ignored.
@@ -91,6 +132,7 @@ static void load_defs(hmi_alarms_t *a, const cJSON *arr)
         snprintf(def->unit, sizeof def->unit, "%s", cJSON_IsString(unit) ? cJSON_GetStringValue(unit) : "");
         read_threshold(d, "critical", &def->critical);
         read_threshold(d, "warning", &def->warning);
+        read_v2_keys(d, def);
         def->last = hmi_value_null();
     }
 }
@@ -115,7 +157,7 @@ hmi_alarms_t *hmi_alarms_create(const char *apps_dir)
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char *text = malloc((size_t)len + 1);
+    char *text = len >= 0 ? malloc((size_t)len + 1) : NULL;
     size_t got = text ? fread(text, 1, (size_t)len, f) : 0;
     fclose(f);
     if (text) {
@@ -187,6 +229,28 @@ static bool threshold_fired(double value, const char *op, double threshold)
     return false;
 }
 
+// Deadband (13.3): an active alarm clears only once the value is `deadband`
+// past the threshold, away from the operator's direction: "> 80" with
+// deadband 2 still holds at 79 and clears at <= 78; "< 10" clears at >= 12.
+// Equality operators have no direction and ignore it.
+static bool threshold_still_holds(double v, const threshold_t *t, double deadband)
+{
+    if (!t->present) return false;
+    if (threshold_fired(v, t->op, t->value)) return true;
+    if (deadband <= 0) return false;
+    if (strcmp(t->op, ">") == 0 || strcmp(t->op, ">=") == 0) return v > t->value - deadband;
+    if (strcmp(t->op, "<") == 0 || strcmp(t->op, "<=") == 0) return v < t->value + deadband;
+    return false;
+}
+
+static uint64_t now_ms(const hmi_alarms_t *a)
+{
+    if (a->mono) return a->mono(a->mono_user);
+    return (uint64_t)hmi_millis();   // CLOCK_MONOTONIC: immune to wall-clock steps
+}
+
+static int64_t wall_ms(void) { return hmi_wall_ms(); }
+
 static const char *now_text(hmi_alarms_t *a, char *buf, size_t len)
 {
     if (a->clock) return a->clock(a->clock_user);
@@ -204,12 +268,32 @@ static active_t *find_active(const hmi_alarms_t *a, const char *tag)
     return NULL;
 }
 
-// Critical first, then warning; newest timestamp first; then activation order.
+// The first definition for `tag`: it owns the tag's latch and shelve state
+// (the first definition also wins the evaluation, as before).
+static def_t *find_def(const hmi_alarms_t *a, const char *tag)
+{
+    for (size_t d = 0; d < a->ndefs; ++d)
+        if (strcmp(a->defs[d].tag, tag) == 0) return &a->defs[d];
+    return NULL;
+}
+
+static int default_priority(const def_t *def, const char *severity)
+{
+    if (def->priority) return def->priority;
+    return strcmp(severity, "critical") == 0 ? 1 : 3;
+}
+
+static void make_message(const def_t *def, double v, char *out, size_t len)
+{
+    if (def->message[0]) snprintf(out, len, "%s", def->message);
+    else snprintf(out, len, "%s %g%s", def->label, v, def->unit);
+}
+
+// Priority ascending (1 first); newest timestamp first; then activation order.
 static int compare_active(const void *pa, const void *pb)
 {
     const active_t *x = pa, *y = pb;
-    bool xc = strcmp(x->alarm.severity, "critical") == 0, yc = strcmp(y->alarm.severity, "critical") == 0;
-    if (xc != yc) return xc ? -1 : 1;
+    if (x->alarm.priority != y->alarm.priority) return x->alarm.priority < y->alarm.priority ? -1 : 1;
     int ts = strcmp(y->alarm.timestamp, x->alarm.timestamp);
     if (ts) return ts;
     return x->order < y->order ? -1 : x->order > y->order ? 1 : 0;
@@ -219,6 +303,138 @@ static void notify(hmi_alarms_t *a)
 {
     if (a->nactive > 1) qsort(a->active, a->nactive, sizeof *a->active, compare_active);
     if (a->cb) a->cb(a->user);
+}
+
+static void journal(hmi_alarms_t *a, const char *event, const char *tag, const char *label,
+                    const char *severity, int priority, const hmi_value_t *value)
+{
+    if (a->journal)
+        hmi_journal_append(a->journal, wall_ms(), event, tag, label, severity, priority, value);
+}
+
+static void journal_alarm(hmi_alarms_t *a, const char *event, const hmi_alarm_t *al, const hmi_value_t *value)
+{
+    journal(a, event, al->tag, al->label, al->severity, al->priority, value ? value : &al->value);
+}
+
+// Journals an event about a tag that is not listed (shelve/unshelve), under
+// the severity its definition raises first.
+static void journal_def(hmi_alarms_t *a, const char *event, const def_t *def)
+{
+    const char *sev = def->critical.present ? "critical" : "warning";
+    journal(a, event, def->tag, def->label, sev, default_priority(def, sev), &def->last);
+}
+
+static void remove_active(hmi_alarms_t *a, active_t *act)
+{
+    size_t i = (size_t)(act - a->active);
+    hmi_value_free(&act->alarm.value);
+    memmove(&a->active[i], &a->active[i + 1], (a->nactive - i - 1) * sizeof *a->active);
+    --a->nactive;
+}
+
+// Sets the listed alarm's severity, value, message and priority from `def`.
+static void fill_alarm(hmi_alarm_t *al, const def_t *def, const char *severity, double v)
+{
+    snprintf(al->severity, sizeof al->severity, "%s", severity);
+    hmi_value_free(&al->value);
+    al->value = hmi_value_copy(&def->last);
+    make_message(def, v, al->message, sizeof al->message);
+    al->priority = default_priority(def, severity);
+}
+
+// One pass over every definition against its cached value at monotonic `now`.
+// True when the listed set changed (the caller notifies once).
+static bool reevaluate(hmi_alarms_t *a, uint64_t now)
+{
+    bool changed = false;
+    for (size_t i = 0; i < a->nactive; ++i) a->active[i].seen = false;
+    char tsbuf[24];   // the size of hmi_alarm_t.timestamp: nothing to truncate
+    for (size_t d = 0; d < a->ndefs; ++d) {
+        def_t *def = &a->defs[d];
+        const def_t *owner = find_def(a, def->tag);
+        active_t *act = find_active(a, def->tag);
+        if (act && act->seen) continue;    // a second definition for the same tag: the first one won
+        if (owner->shelved) { def->holding = false; continue; }
+        bool valued = def->last.kind != HMI_V_NULL && def->last.kind != HMI_V_LIST;
+        double v = valued ? hmi_value_as_num(&def->last, 0) : 0;
+        const char *severity = NULL;
+        if (valued) {
+            if (def->critical.present && threshold_fired(v, def->critical.op, def->critical.value)) severity = "critical";
+            else if (def->warning.present && threshold_fired(v, def->warning.op, def->warning.value)) severity = "warning";
+        }
+        if (act && !act->alarm.cleared && valued) {
+            // The deadband keeps the listed severity until the value is far enough back.
+            bool crit = strcmp(act->alarm.severity, "critical") == 0;
+            if (crit && (!severity || strcmp(severity, "critical") != 0) &&
+                threshold_still_holds(v, &def->critical, def->deadband))
+                severity = "critical";
+            else if (!severity && !crit && threshold_still_holds(v, &def->warning, def->deadband))
+                severity = "warning";
+        }
+        if (!severity) {
+            def->holding = false;
+            continue;   // a listed alarm left unseen clears below
+        }
+        if (act && !act->alarm.cleared) {
+            act->seen = true;
+            if (strcmp(act->alarm.severity, severity) != 0) {
+                fill_alarm(&act->alarm, def, severity, v);
+                changed = true;
+            }
+            continue;
+        }
+        // Not listed, or latched and cleared: a (re)raise, after the on-delay.
+        if (def->delay_ms > 0) {
+            if (!def->holding) {
+                def->holding = true;
+                def->hold_since = now;
+            }
+            if (now - def->hold_since < def->delay_ms) {
+                if (act) act->seen = true;   // a latched entry stays listed meanwhile
+                continue;
+            }
+        }
+        def->holding = false;
+        if (!act) {
+            active_t *grown = realloc(a->active, (a->nactive + 1) * sizeof *a->active);
+            if (!grown) continue;
+            a->active = grown;
+            act = &a->active[a->nactive++];
+            memset(act, 0, sizeof *act);
+            snprintf(act->alarm.tag, sizeof act->alarm.tag, "%s", def->tag);
+            snprintf(act->alarm.label, sizeof act->alarm.label, "%s", def->label);
+            act->alarm.value = hmi_value_null();
+        }
+        fill_alarm(&act->alarm, def, severity, v);
+        snprintf(act->alarm.timestamp, sizeof act->alarm.timestamp, "%s", now_text(a, tsbuf, sizeof tsbuf));
+        act->alarm.acknowledged = false;
+        act->alarm.cleared = false;
+        act->order = ++a->seq;
+        act->seen = true;
+        journal_alarm(a, "raise", &act->alarm, NULL);
+        changed = true;
+    }
+    // Anything listed that did not fire this time clears -- except a latched,
+    // unacknowledged alarm, which stays listed as "cleared" with its value frozen.
+    for (size_t i = 0; i < a->nactive;) {
+        active_t *act = &a->active[i];
+        if (act->seen) { ++i; continue; }
+        const def_t *owner = find_def(a, act->alarm.tag);
+        if (owner && owner->latch && !act->alarm.acknowledged) {
+            if (!act->alarm.cleared) {
+                act->alarm.cleared = true;
+                journal_alarm(a, "clear", &act->alarm, &owner->last);
+                changed = true;
+            }
+            ++i;
+            continue;
+        }
+        if (!act->alarm.cleared) journal_alarm(a, "clear", &act->alarm, owner ? &owner->last : NULL);
+        remove_active(a, act);
+        changed = true;
+    }
+    return changed;
 }
 
 bool hmi_alarms_evaluate(hmi_alarms_t *a, const char *const *tags, const hmi_value_t *values, size_t n)
@@ -232,56 +448,7 @@ bool hmi_alarms_evaluate(hmi_alarms_t *a, const char *const *tags, const hmi_val
                 a->defs[d].last = hmi_value_copy(&values[i]);
             }
     // 2. evaluate every definition against its cached value
-    bool changed = false;
-    for (size_t i = 0; i < a->nactive; ++i) a->active[i].seen = false;
-    char tsbuf[32];
-    for (size_t d = 0; d < a->ndefs; ++d) {
-        const def_t *def = &a->defs[d];
-        if (def->last.kind == HMI_V_NULL || def->last.kind == HMI_V_LIST) continue;
-        double v = hmi_value_as_num(&def->last, 0);
-        const char *severity = NULL;
-        if (def->critical.present && threshold_fired(v, def->critical.op, def->critical.value)) severity = "critical";
-        else if (def->warning.present && threshold_fired(v, def->warning.op, def->warning.value)) severity = "warning";
-        if (!severity) continue;
-        char message[160];
-        snprintf(message, sizeof message, "%s %g%s", def->label, v, def->unit);
-        active_t *act = find_active(a, def->tag);
-        if (act) {
-            if (act->seen) continue;    // a second definition for the same tag: the first one won
-            act->seen = true;
-            if (strcmp(act->alarm.severity, severity) != 0) {
-                snprintf(act->alarm.severity, sizeof act->alarm.severity, "%s", severity);
-                hmi_value_free(&act->alarm.value);
-                act->alarm.value = hmi_value_copy(&def->last);
-                snprintf(act->alarm.message, sizeof act->alarm.message, "%s", message);
-                changed = true;
-            }
-            continue;
-        }
-        active_t *grown = realloc(a->active, (a->nactive + 1) * sizeof *a->active);
-        if (!grown) continue;
-        a->active = grown;
-        act = &a->active[a->nactive++];
-        memset(act, 0, sizeof *act);
-        snprintf(act->alarm.tag, sizeof act->alarm.tag, "%s", def->tag);
-        snprintf(act->alarm.label, sizeof act->alarm.label, "%s", def->label);
-        snprintf(act->alarm.severity, sizeof act->alarm.severity, "%s", severity);
-        act->alarm.value = hmi_value_copy(&def->last);
-        snprintf(act->alarm.message, sizeof act->alarm.message, "%s", message);
-        snprintf(act->alarm.timestamp, sizeof act->alarm.timestamp, "%s", now_text(a, tsbuf, sizeof tsbuf));
-        act->alarm.acknowledged = false;
-        act->order = ++a->seq;
-        act->seen = true;
-        changed = true;
-    }
-    // 3. anything active that did not fire this time clears
-    for (size_t i = 0; i < a->nactive;) {
-        if (a->active[i].seen) { ++i; continue; }
-        hmi_value_free(&a->active[i].alarm.value);
-        memmove(&a->active[i], &a->active[i + 1], (a->nactive - i - 1) * sizeof *a->active);
-        --a->nactive;
-        changed = true;
-    }
+    bool changed = reevaluate(a, now_ms(a));
     if (changed) notify(a);
     return changed;
 }
@@ -314,8 +481,8 @@ hmi_value_t hmi_alarms_active_value(const hmi_alarms_t *a)
         const hmi_alarm_t *al = &a->active[i].alarm;
         hmi_value_t row = hmi_value_null();
         row.kind = HMI_V_LIST;
-        row.count = 7;
-        row.items = calloc(7, sizeof *row.items);
+        row.count = 9;
+        row.items = calloc(9, sizeof *row.items);
         if (!row.items) { row.count = 0; list.items[i] = row; continue; }
         row.items[0] = hmi_value_str(al->tag);
         row.items[1] = hmi_value_str(al->label);
@@ -324,16 +491,105 @@ hmi_value_t hmi_alarms_active_value(const hmi_alarms_t *a)
         row.items[4] = hmi_value_str(al->message);
         row.items[5] = hmi_value_str(al->timestamp);
         row.items[6] = hmi_value_bool(al->acknowledged);
+        row.items[7] = hmi_value_num((double)al->priority);
+        row.items[8] = hmi_value_str(al->cleared ? "cleared" : "active");
         list.items[i] = row;
     }
     return list;
 }
 
+// Acknowledges one listed alarm; a latched alarm that already cleared goes.
+// False when it was already acknowledged (nothing changed).
+static bool ack_one(hmi_alarms_t *a, active_t *act)
+{
+    if (act->alarm.cleared) {
+        journal_alarm(a, "ack", &act->alarm, NULL);
+        remove_active(a, act);
+        return true;
+    }
+    if (act->alarm.acknowledged) return false;
+    act->alarm.acknowledged = true;
+    journal_alarm(a, "ack", &act->alarm, NULL);
+    return true;
+}
+
 bool hmi_alarms_acknowledge(hmi_alarms_t *a, const char *tag)
 {
     active_t *act = tag ? find_active(a, tag) : NULL;
-    if (!act) return false;
-    act->alarm.acknowledged = true;
+    if (!act || !ack_one(a, act)) return false;
     notify(a);
     return true;
+}
+
+// ---- wave 1 (CONTRACT 13.3) -----------------------------------------------
+
+size_t hmi_alarms_acknowledge_all(hmi_alarms_t *a)
+{
+    size_t changed = 0;
+    for (size_t i = 0; i < a->nactive;) {
+        size_t before = a->nactive;
+        if (ack_one(a, &a->active[i])) ++changed;
+        if (a->nactive == before) ++i;   // removed: the next one moved into slot i
+    }
+    if (changed) notify(a);
+    return changed;
+}
+
+bool hmi_alarms_shelve(hmi_alarms_t *a, const char *tag, int ms)
+{
+    if (!tag || ms < 1 || ms > 86400000) return false;
+    def_t *def = find_def(a, tag);
+    if (!def) return false;
+    def->shelved = true;
+    def->shelved_until = now_ms(a) + (uint64_t)ms;
+    for (size_t d = 0; d < a->ndefs; ++d)
+        if (strcmp(a->defs[d].tag, tag) == 0) a->defs[d].holding = false;
+    active_t *act = find_active(a, tag);
+    if (act) {
+        journal_alarm(a, "shelve", &act->alarm, NULL);
+        remove_active(a, act);
+        notify(a);
+    } else {
+        journal_def(a, "shelve", def);
+    }
+    return true;
+}
+
+bool hmi_alarms_is_shelved(const hmi_alarms_t *a, const char *tag)
+{
+    const def_t *def = tag ? find_def(a, tag) : NULL;
+    return def && def->shelved;
+}
+
+void hmi_alarms_tick(hmi_alarms_t *a)
+{
+    if (a->ndefs == 0) return;
+    uint64_t now = now_ms(a);
+    bool due = false;
+    for (size_t d = 0; d < a->ndefs; ++d) {
+        def_t *def = &a->defs[d];
+        if (def->shelved && now >= def->shelved_until) {
+            def->shelved = false;
+            journal_def(a, "unshelve", def);
+            due = true;   // re-evaluated on the last value below
+        }
+        if (def->holding) due = true;
+    }
+    if (due && reevaluate(a, now)) notify(a);
+}
+
+void hmi_alarms_set_monotonic(hmi_alarms_t *a, hmi_alarms_mono_fn now, void *user)
+{
+    a->mono = now;
+    a->mono_user = user;
+}
+
+void hmi_alarms_set_journal(hmi_alarms_t *a, hmi_journal_t *j)
+{
+    a->journal = j;
+}
+
+hmi_journal_t *hmi_alarms_journal(const hmi_alarms_t *a)
+{
+    return a->journal;
 }

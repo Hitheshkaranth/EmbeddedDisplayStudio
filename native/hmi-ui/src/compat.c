@@ -114,6 +114,20 @@ unsigned long hmi_millis(void)
 #endif
 }
 
+int64_t hmi_wall_ms(void)
+{
+#ifdef _WIN32
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);   // 100 ns ticks since 1601-01-01
+    uint64_t t = ((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+    return (int64_t)(t / 10000u) - 11644473600000LL;
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#endif
+}
+
 // -- UDP ------------------------------------------------------------------------------
 
 #ifdef _WIN32

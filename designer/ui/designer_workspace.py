@@ -24,7 +24,11 @@ from designer.canvas.qml_previews import QmlPreviewRenderer
 from designer.commands import CallbackCommand, NudgeCommand
 from designer.generators import QmlGenerationError, QmlGenerator
 from designer.model import DesignerAction, DesignerBinding, DesignerPage, DesignerProject, DesignerWidget
-from designer.model.project import drop_unrunnable_actions, ensure_unique_ids
+from designer.model.project import ACTION_KINDS, drop_unrunnable_actions, ensure_unique_ids
+from designer.ui.action_extras import ActionExtras
+from designer.ui.alarm_extras import AlarmExtras
+from designer.ui.binding_extras import BindingExtras
+from designer.ui.screen_idle_editor import ScreenIdleEditor
 from designer.palette.widget_palette import WidgetPalette
 from designer.palette.widget_registry import PROPERTY_MINIMUMS, clamp_property
 from designer.palette.widget_registry import default_registry
@@ -373,6 +377,11 @@ class BindingEditor(QWidget):
             if isinstance(editor, QDoubleSpinBox):
                 editor.setButtonSymbols(QDoubleSpinBox.NoButtons)
             form.addRow(_field_label(label), editor)
+        # CONTRACT 13.2 / 13.3 fields (wave 1): their own widgets, laid out
+        # under the classic ones.
+        self.definition = None
+        self.extras = BindingExtras(); self.alarm_extras = AlarmExtras()
+        form.addRow(self.extras); form.addRow(self.alarm_extras)
         actions = QHBoxLayout(); actions.setContentsMargins(0, 6, 0, 0); actions.setSpacing(6)
         bind = QPushButton("Apply binding"); bind.setObjectName("primaryAction")
         remove = QPushButton("Remove"); remove.setObjectName("secondaryAction")
@@ -389,6 +398,7 @@ class BindingEditor(QWidget):
     def set_widget(self, widget):
         self.widget_model = widget; self.property.clear()
         definition = self.registry.get(widget.type) if widget else None
+        self.definition = definition
         if definition:
             self.property.addItems(definition.bindable_properties)
         self.setEnabled(bool(definition and definition.bindable_properties))
@@ -400,6 +410,7 @@ class BindingEditor(QWidget):
 
     def _load_binding(self, prop):
         binding = self.widget_model.bindings.get(prop) if self.widget_model else None
+        self.extras.load(binding, self.definition); self.alarm_extras.load(binding)
         if binding:
             self.tag.setCurrentText(binding.tag); self.format.setText(binding.format)
             self.multiplier.setValue(binding.multiplier); self.offset.setValue(binding.offset)
@@ -407,9 +418,11 @@ class BindingEditor(QWidget):
 
     def _apply(self):
         prop, tag = self.property.currentText(), self.tag.currentText().strip()
-        if prop and tag:
-            self.bindingEdited.emit(prop, DesignerBinding(tag, self.format.text(), self.multiplier.value(),
-                self.offset.value(), self.unit.text(), self.warning.text(), self.critical.text()))
+        binding = DesignerBinding(tag, self.format.text(), self.multiplier.value(),
+            self.offset.value(), self.unit.text(), self.warning.text(), self.critical.text())
+        binding = self.alarm_extras.apply_to(self.extras.apply_to(binding))
+        if prop and (tag or binding.expr):     # 13.2: an expression needs no tag
+            self.bindingEdited.emit(prop, binding)
 
     def _remove(self):
         if self.property.currentText(): self.bindingEdited.emit(self.property.currentText(), None)
@@ -438,7 +451,7 @@ class ActionEditor(QWidget):
         form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         form.setRowWrapPolicy(QFormLayout.DontWrapRows)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        self.signal = ComboBox(); self.kind = ComboBox(); self.kind.addItems(["write", "pulse", "navigate"])
+        self.signal = ComboBox(); self.kind = ComboBox(); self.kind.addItems(list(ACTION_KINDS))
         self.tag = ComboBox(); self.tag.setEditable(True)
         self.value = QLineEdit(); self.value.setPlaceholderText("empty = the control's own state")
         self.ms = SpinBox(); self.ms.setRange(1, 10000); self.ms.setValue(250); self.ms.setSuffix(" ms")
@@ -449,6 +462,7 @@ class ActionEditor(QWidget):
             if isinstance(editor, QSpinBox):
                 editor.setButtonSymbols(QSpinBox.NoButtons)
             form.addRow(_field_label(label), editor)
+        self.extras = ActionExtras(); form.addRow(self.extras)   # CONTRACT 13.1 (wave 1)
         actions = QHBoxLayout(); actions.setContentsMargins(0, 6, 0, 0); actions.setSpacing(6)
         apply_button = QPushButton("Apply action"); apply_button.setObjectName("primaryAction")
         remove = QPushButton("Remove"); remove.setObjectName("secondaryAction")
@@ -484,11 +498,14 @@ class ActionEditor(QWidget):
         self._load_action(self.signal.currentText())
 
     def _sync_fields(self, kind):
-        self.tag.setEnabled(kind != "navigate"); self.value.setEnabled(kind == "write")
+        self.tag.setEnabled(kind not in ("navigate", "back")); self.value.setEnabled(kind == "write")
         self.ms.setEnabled(kind == "pulse"); self.page.setEnabled(kind == "navigate")
+        if hasattr(self, "extras"):
+            self.extras.set_kind(kind)
 
     def _load_action(self, signal):
         action = self.widget_model.actions.get(signal) if self.widget_model else None
+        self.extras.load(action)
         if not action:
             return
         self.kind.setCurrentText(action.kind); self.tag.setCurrentText(action.tag)
@@ -517,9 +534,13 @@ class ActionEditor(QWidget):
             action = DesignerAction("navigate", page=self.page.currentData() or "")
         elif kind == "pulse":
             action = DesignerAction("pulse", self.tag.currentText().strip(), ms=self.ms.value())
-        else:
+        elif kind == "write":
             action = DesignerAction("write", self.tag.currentText().strip(), value=self._parse_value(self.value.text()))
-        self.actionEdited.emit(signal, action)
+        elif kind == "back":
+            action = DesignerAction("back")
+        else:                                   # 13.1 kinds that name a tag
+            action = DesignerAction(kind, self.tag.currentText().strip())
+        self.actionEdited.emit(signal, self.extras.apply_to(action))
 
     def _remove(self):
         if self.signal.currentText(): self.actionEdited.emit(self.signal.currentText(), None)
@@ -800,6 +821,7 @@ class DesignerWorkspace(QWidget):
         # Align tidies a selection; this tidies the page, with the same
         # composition pass the AI tab runs on everything a model sends.
         action(canvas_bar, "Tidy up", self.tidy_up, "layout-grid", compact=True)
+        action(canvas_bar, "Screen idle", self.edit_screen_idle, "moon", compact=True)
         action(canvas_bar, "Bring to Front", lambda: self.z_order("front"), "arrow-bar-to-up", compact=True)
         action(canvas_bar, "Send to Back", lambda: self.z_order("back"), "arrow-bar-to-down", compact=True)
         spacer(canvas_bar)
@@ -1689,6 +1711,25 @@ class DesignerWorkspace(QWidget):
         def undo():
             self.project.pages.insert(index, page); self.current_page_index = index; self._load_page()
         self.undo_stack.push(CallbackCommand("Delete page", redo, undo))
+    def edit_screen_idle(self, _checked=False, *, dialog_exec=None):
+        """CONTRACT 13.5: dim / off after inactivity, one undo step.
+        `dialog_exec` replaces QDialog.exec in tests (returns the result code)."""
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox, QVBoxLayout
+        dialog = QDialog(self); dialog.setWindowTitle("Screen idle")
+        editor = ScreenIdleEditor(dialog); editor.load(dict(self.project.screen.idle))
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject)
+        layout = QVBoxLayout(dialog); layout.addWidget(editor); layout.addWidget(buttons)
+        result = (dialog_exec or (lambda d: d.exec()))(dialog)
+        if result != QDialog.DialogCode.Accepted:
+            return False
+        before, after = dict(self.project.screen.idle), editor.value()
+        if before == after:
+            return False
+        def set_idle(value):
+            self.project.screen.idle = dict(value)
+        self.undo_stack.push(CallbackCommand("Screen idle", lambda: set_idle(after), lambda: set_idle(before)))
+        return True
     def select_all(self):
         for item in self.scene.items():
             if hasattr(item, "widget_model"): item.setSelected(True)

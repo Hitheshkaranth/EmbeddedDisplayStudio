@@ -11,6 +11,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <time.h>
 
@@ -32,6 +33,8 @@ int hmi_remove(const char *path);
 // Millisecond sleep and monotonic milliseconds (LVGL's tick source).
 void hmi_sleep_ms(unsigned ms);
 unsigned long hmi_millis(void);
+// Wall-clock epoch milliseconds (journal and history timestamps).
+int64_t hmi_wall_ms(void);
 
 // Minimal UDP socket abstraction for tags.c: an IPv4 datagram socket bound
 // to `port` on 127.0.0.1 (0 = any), non-blocking. hmi_udp_t is a plain int

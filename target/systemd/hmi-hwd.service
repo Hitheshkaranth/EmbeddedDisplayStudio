@@ -95,6 +95,8 @@ ProtectSystem=strict
 #   /tmp     -- Python's tempfile module; PrivateTmp gives a private
 #               view so this is safe even with mode 1777
 ReadWritePaths=/run/hmi
+# CONTRACT 13.4: the historian's database (hwd.json "history".path).
+StateDirectory=hmi
 
 # Give the daemon its own /tmp so it cannot read or tamper with files
 # written by other services.  Without this, a compromised daemon

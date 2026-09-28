@@ -9,6 +9,16 @@ set(HMI_UI_TESTS
     test_alarms
     test_widgets
     test_series
+    # wave 1 gates (CONTRACT 13)
+    test_actions
+    test_expr
+    test_bind_v2
+    test_alarms_v2
+    test_journal
+    test_tags_history
+    test_input
+    test_overlay
+    test_wave1_qc
 )
 
 foreach(name IN LISTS HMI_UI_TESTS)

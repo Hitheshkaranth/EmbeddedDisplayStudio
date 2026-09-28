@@ -29,15 +29,33 @@ typedef struct hmi_binding {
     char *unit;         // "" = none; derives the widget's unit/units property
     char *warning;      // threshold text "> 6.5", "" = none
     char *critical;
+    // CONTRACT 13.2 (all optional in the file):
+    int decimals;       // -1 = automatic; 0..6 = fixed decimals when the reading becomes text
+    char *expr;         // "" = none; else the reading is this expression's value
+    struct hmi_rule *rules; size_t nrules;   // file order; first match per prop wins
 } hmi_binding_t;
 
+// CONTRACT 13.2 rule: when the reading satisfies `when` ("> 80"), `prop` = `value`.
+typedef struct hmi_rule {
+    char *when;         // threshold text, parsed with hmi_bind_parse_threshold
+    char *prop;
+    hmi_value_t value;
+} hmi_rule_t;
+
+// One action. A signal with a list of actions (CONTRACT 13.1) loads as
+// consecutive entries sharing `signal`, in list order.
 typedef struct hmi_action {
     char *signal;       // "clicked", "toggled", "activated", "alarmActivated", ...
-    char *kind;         // "write" | "pulse" | "navigate"
-    char *tag;          // write/pulse
+    char *kind;         // write | pulse | navigate | back | toggle | increment |
+                        // decrement | ack | shelve  (13.1)
+    char *tag;          // "" = none
     hmi_value_t value;  // write: the value; HMI_V_NULL = the control's own state
-    int ms;             // pulse
+    int ms;             // pulse (default 250); shelve (default 600000)
     char *page;         // navigate: page id
+    double step;        // increment/decrement, default 1
+    bool has_min, has_max;
+    double min, max;    // increment/decrement clamp
+    char *confirm;      // "" = none; else ask before running the signal's list
 } hmi_action_t;
 
 typedef struct hmi_widget {
@@ -67,6 +85,9 @@ typedef struct hmi_project {
     int width, height;
     char *background;   // "#rrggbb"
     char *theme;        // "dark" | "light"
+    int idle_dim_s;     // CONTRACT 13.5 screen.idle; 0 = never
+    int idle_dim_pct;   // 10..100, default 30
+    int idle_off_s;     // 0 = never
     char *dir;          // directory of the .edsui (assets/ resolve against it)
     hmi_page_t **pages; size_t npages;
 } hmi_project_t;

@@ -40,6 +40,9 @@ void hmi_bind_destroy(hmi_bind_t *b);
 // passes hmi_tags_history). Without one, only list-valued tags feed series.
 typedef hmi_value_t (*hmi_bind_history_cb)(const char *tag, size_t count, void *user);
 void hmi_bind_set_history(hmi_bind_t *b, hmi_bind_history_cb history, void *user);
+// Re-deliver every series binding on `tag` from the history source (after a
+// backfill grew the tag's ring). Nothing when no history source is set.
+void hmi_bind_refresh_series(hmi_bind_t *b, const char *tag);
 
 // Registers every binding of a page (and unregisters the previous page's).
 // Applies the initial (fallback) values immediately.

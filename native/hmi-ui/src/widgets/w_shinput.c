@@ -2,10 +2,12 @@
 //
 // Spec: ui/qml/Shadcn/ShInput.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): placeholderText, text, enabled, readOnly, opacity, visible.
-// Default size 180x40. Signals: none.
+// Default size 180x40. Signals: accepted.
+#include <stdio.h>
 #include <string.h>
 
 #include "draw_util.h"
+#include "input.h"
 #include "registry.h"
 #include "theme.h"
 
@@ -14,8 +16,42 @@ typedef struct {
     lv_obj_t *text;
     lv_obj_t *placeholder;
     char placeholder_text[256];
+    char text_buf[256];
     bool has_text;
+    bool enabled, read_only;
 } shinput_state_t;
+
+// Forward declarations so the click handler can name the OK callback.
+static void shinput_open_cb(lv_event_t *e);
+static void shinput_done(const char *text, void *user);
+
+// A tap on the widget's root opens the text keyboard (not when readOnly or
+// disabled); on OK the text is shown and "accepted" is emitted. See 13.5.
+static void shinput_open_cb(lv_event_t *e)
+{
+    hmi_widget_t *widget = (hmi_widget_t *)lv_event_get_user_data(e);
+    shinput_state_t *st = widget ? widget->state : NULL;
+    if (!st || !st->enabled || st->read_only) return;
+    // The shown text: a binding may have changed it since create.
+    hmi_input_open_text(widget, lv_label_get_text(st->text), shinput_done, widget);
+}
+
+// The keyboard's OK: show the text, then emit "accepted".
+static void shinput_done(const char *text, void *user)
+{
+    hmi_widget_t *w = (hmi_widget_t *)user;
+    shinput_state_t *st = w ? w->state : NULL;
+    if (!st) return;
+    strncpy(st->text_buf, text, sizeof st->text_buf - 1);
+    st->text_buf[sizeof st->text_buf - 1] = '\0';
+    lv_label_set_text(st->text, st->text_buf);
+    st->has_text = st->text_buf[0] != '\0';
+    if (st->has_text) lv_obj_add_flag(st->placeholder, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_clear_flag(st->placeholder, LV_OBJ_FLAG_HIDDEN);
+    hmi_value_t val = hmi_value_str(st->text_buf);
+    hmi_widget_emit(w, "accepted", &val);
+    hmi_value_free(&val);
+}
 
 static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
 {
@@ -49,6 +85,8 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     st->placeholder = placeholder;
     strncpy(st->placeholder_text, hmi_widget_str(w, "placeholderText", ""), sizeof(st->placeholder_text) - 1);
     st->has_text = false;
+    st->enabled = hmi_widget_bool(w, "enabled", true);
+    st->read_only = hmi_widget_bool(w, "readOnly", false);
 
     const char *txt = hmi_widget_str(w, "text", "");
     lv_label_set_text(text, txt);
@@ -70,6 +108,9 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     lv_obj_set_pos(placeholder, margin, (H - lv_font_get_line_height(hmi_font(hmi_font_size("fontSizeSm"), 400))) / 2);
     lv_obj_set_width(placeholder, W - 2 * margin);
 
+    // A tap on the widget opens the keyboard (not when readOnly/disabled).
+    lv_obj_add_event_cb(bg, shinput_open_cb, LV_EVENT_CLICKED, w);
+
     w->state = st;
     return bg;
 }
@@ -89,6 +130,10 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
             st->has_text = false;
             lv_obj_clear_flag(st->placeholder, LV_OBJ_FLAG_HIDDEN);
         }
+    } else if (strcmp(prop, "enabled") == 0) {
+        st->enabled = hmi_value_as_bool(value, st->enabled);
+    } else if (strcmp(prop, "readOnly") == 0) {
+        st->read_only = hmi_value_as_bool(value, st->read_only);
     } else if (strcmp(prop, "placeholderText") == 0) {
         strncpy(st->placeholder_text, hmi_value_as_str(value, ""), sizeof(st->placeholder_text) - 1);
         lv_label_set_text(st->placeholder, st->placeholder_text);
