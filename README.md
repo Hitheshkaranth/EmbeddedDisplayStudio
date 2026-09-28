@@ -14,6 +14,7 @@ A desktop studio for embedded Linux HMI panels. Write a brief and a model builds
 [![CI](https://img.shields.io/github/actions/workflow/status/Hitheshkaranth/EmbeddedDisplayStudio/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/Hitheshkaranth/EmbeddedDisplayStudio/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-555555?style=for-the-badge)](LICENSE)
 [![As seen at the Berkeley x DeepMind Hackathon](https://img.shields.io/badge/As%20seen%20at-Berkeley%20%C3%97%20DeepMind%20Hackathon-003262?style=for-the-badge&labelColor=FDB515)](#)
+[![Watch the tour](https://img.shields.io/badge/Watch-2%E2%80%91minute%20tour-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://youtu.be/h-ITQebSflg)
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/PySide6-6.8.1-41CD52?style=flat-square&logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
@@ -25,6 +26,16 @@ A desktop studio for embedded Linux HMI panels. Write a brief and a model builds
 <br />
 
 [**Quick start**](#quick-start) &nbsp;·&nbsp; [**The Studio**](#the-studio) &nbsp;·&nbsp; [**AI Design**](#ai-design) &nbsp;·&nbsp; [**Code**](#code) &nbsp;·&nbsp; [**Deploying**](#deploying) &nbsp;·&nbsp; [**The panel runtime**](#the-panel-runtime) &nbsp;·&nbsp; [**Qt apps**](#qt-applications) &nbsp;·&nbsp; [**Changelog**](CHANGELOG.md)
+
+</div>
+
+<br />
+
+<div align="center">
+
+<a href="https://youtu.be/h-ITQebSflg"><img src="docs/assets/video-tour.jpg" alt="Watch the two-minute tour of EmbeddedDisplay Studio 0.1.2 on YouTube: the Cockpit Demo board flying live on a panel" width="720" /></a>
+
+<sub>▶ <strong><a href="https://youtu.be/h-ITQebSflg">Watch the two-minute tour</a></strong> — describe it, draw it, test it and ship it to the glass.</sub>
 
 </div>
 
