@@ -218,7 +218,8 @@ class Historian:
         span = float(now_ms - lo_ms)
         buckets = [None] * points
         for ts, value in rows:
-            idx = int((ts - lo_ms) * points / span) if span > 0 else 0
+            # Buckets are (lo, hi]: a sample on a bucket's upper edge is its last.
+            idx = math.ceil((ts - lo_ms) * points / span) - 1 if span > 0 else 0
             if idx < 0:
                 idx = 0
             if idx >= points:

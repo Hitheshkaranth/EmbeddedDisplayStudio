@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import argparse
 import shlex
+import subprocess
+import sys
 
 from tools.hmi_deployer.ssh import _signed_exit_code, build_ssh_cmd
 
@@ -58,20 +60,24 @@ def main(argv=None) -> int:
     argv = build_ssh_cmd(args.host, args.user, args.port, args.key,
                          remote_command(args.tag, args.since, db=args.db))
 
+    # stdout is the CSV; ssh's warnings and the panel's errors go to stderr so
+    # they never end up inside the file.
     try:
-        import subprocess
-        proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-                                errors="replace")
-        out, _ = proc.communicate()
-        code = _signed_exit_code(proc.returncode)
-    except Exception:
-        out, code = "", 1
-
+        proc = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+        out, err, code = proc.stdout, proc.stderr, _signed_exit_code(proc.returncode)
+    except OSError as exc:
+        out, err, code = "", f"history_export: cannot run ssh: {exc}\n", 1
+    if err:
+        sys.stderr.write(err)
+    if code != 0:
+        return code                 # an existing --out file is left as it was
     if args.out:
-        with open(args.out, "w", encoding="utf-8") as f:
+        with open(args.out, "w", encoding="utf-8", newline="") as f:
             f.write(out)
-    return code
+    else:
+        sys.stdout.write(out)
+    return 0
 
 
 if __name__ == "__main__":
