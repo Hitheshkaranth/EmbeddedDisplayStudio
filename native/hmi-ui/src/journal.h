@@ -17,6 +17,10 @@
 typedef struct hmi_journal hmi_journal_t;
 
 #define HMI_JOURNAL_MAX_BYTES (1024u * 1024u)
+#define HMI_JOURNAL_PATH_MAX 600
+#define HMI_JOURNAL_STR_MAX  160
+#define HMI_JOURNAL_VALUE_MAX 48
+#define HMI_JOURNAL_LINE_MAX 512
 
 // Open (create if missing) for append. NULL for a NULL/empty path or when the
 // file cannot be opened (logged at warning): callers treat NULL as "off".
