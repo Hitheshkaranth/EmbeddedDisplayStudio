@@ -14,12 +14,18 @@ static const char *DESIGN =
     " {\"type\":\"ShButton\",\"id\":\"asks\",\"geometry\":{\"x\":0,\"y\":50,\"width\":100,\"height\":40},"
     "  \"actions\":{\"clicked\":{\"kind\":\"write\",\"tag\":\"q.asks\",\"value\":1,\"confirm\":\"Go?\"}}},"
     " {\"type\":\"ShAlarmTable\",\"id\":\"table\",\"geometry\":{\"x\":200,\"y\":0,\"width\":350,\"height\":216},"
-    "  \"actions\":{\"alarmActivated\":{\"kind\":\"write\",\"tag\":\"q.legacy\"}}}"
+    "  \"actions\":{\"alarmActivated\":{\"kind\":\"write\",\"tag\":\"q.legacy\"}}},"
+    " {\"type\":\"ShButton\",\"id\":\"ackall\",\"geometry\":{\"x\":0,\"y\":100,\"width\":100,\"height\":40},"
+    "  \"actions\":{\"clicked\":{\"kind\":\"ack\",\"tag\":\"*\"}}},"
+    " {\"type\":\"ShButton\",\"id\":\"shelve\",\"geometry\":{\"x\":0,\"y\":150,\"width\":100,\"height\":40},"
+    "  \"actions\":{\"clicked\":{\"kind\":\"shelve\",\"tag\":\"q.u\",\"ms\":60000}}}"
     "]}]}";
 
 static const char *MANIFEST =
     "{\"schema\":1,\"name\":\"qc\",\"version\":\"1.0.0\",\"entry\":\"project.edsui\",\"runtime\":\"edsui\","
-    "\"alarms\":[{\"tag\":\"q.t\",\"label\":\"T\",\"critical\":{\"op\":\">\",\"value\":5}}]}";
+    "\"alarms\":[{\"tag\":\"q.t\",\"label\":\"T\",\"critical\":{\"op\":\">\",\"value\":5}},"
+    "            {\"tag\":\"q.u\",\"label\":\"U\",\"warning\":{\"op\":\">\",\"value\":5}},"
+    "            {\"tag\":\"q.v\",\"label\":\"V\",\"warning\":{\"op\":\">\",\"value\":5}}]}";
 
 int main(void)
 {
@@ -62,6 +68,18 @@ int main(void)
     c = rt_next_command(&h, 300);
     CHECK(c == NULL);
     cJSON_Delete(c);
+
+    // 4. Across workers: W1's dispatch into W3's engine -- ack "*" and shelve.
+    rt_frame(&h, "{\"q.u\":9,\"q.v\":9}");
+    hmi_runtime_signal(rt_widget(&h, "ackall"), "clicked", NULL);
+    list = hmi_alarms_active(hmi_runtime_alarms(h.rt), &n);
+    size_t acked = 0;
+    for (size_t i = 0; i < n; i++) acked += list[i].acknowledged;
+    CHECK(n == 3 && acked == 3);
+    hmi_runtime_signal(rt_widget(&h, "shelve"), "clicked", NULL);
+    CHECK(hmi_alarms_is_shelved(hmi_runtime_alarms(h.rt), "q.u"));
+    list = hmi_alarms_active(hmi_runtime_alarms(h.rt), &n);
+    CHECK(n == 2);
 
     rt_close(&h);
     remove(path);
