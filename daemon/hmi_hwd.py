@@ -98,6 +98,7 @@ ERR_NOT_WRITABLE = "not_writable"
 ERR_BAD_VALUE = "bad_value"
 ERR_HW_ERROR = "hw_error"
 ERR_RATE_LIMITED = "rate_limited"
+ERR_NO_HISTORY = "no_history"
 
 logger = logging.getLogger("hmi-hwd")
 
@@ -1191,6 +1192,8 @@ class CommandProtocol(asyncio.DatagramProtocol):
             self._cmd_list(msg_id, addr)
         elif cmd == "ping":
             self._cmd_ping(msg_id, addr)
+        elif cmd == "history":
+            self._cmd_history(msg, msg_id, addr)
         else:
             self._daemon.error_count += 1
             _rl_log.warning(ERR_UNKNOWN_CMD, "Unknown command '%s' from %s", cmd, addr)
@@ -1332,6 +1335,56 @@ class CommandProtocol(asyncio.DatagramProtocol):
         if msg_id:
             reply["id"] = msg_id
         self._send_raw(reply, addr)
+
+    def _cmd_history(self, msg: dict, msg_id: Optional[str], addr: Tuple[str, int]) -> None:
+        """Handle the 'history' command (CONTRACT 13.4).
+
+        Replies no_history when the daemon has no historian or the tag is not
+        logged, unknown_tag for an unregistered tag, bad_value for out of
+        range seconds/points, otherwise a compact history object whose
+        datagram stays within the 8192 B limit (200 samples fit).
+        """
+        if self._historian is None:
+            if msg_id:
+                self._send_nack(msg_id, ERR_NO_HISTORY, addr)
+            return
+        tag = msg.get("tag")
+        if not isinstance(tag, str) or not self._daemon.tags.exists(tag):
+            self._daemon.error_count += 1
+            if msg_id:
+                self._send_nack(msg_id, ERR_UNKNOWN_TAG, addr)
+            return
+        seconds = msg.get("seconds", 3600)
+        points = msg.get("points", 200)
+        if (not isinstance(seconds, (int, float)) or isinstance(seconds, bool)
+                or not math.isfinite(seconds) or not (1 <= seconds <= 604800)):
+            if msg_id:
+                self._send_nack(msg_id, ERR_BAD_VALUE, addr)
+            return
+        if (not isinstance(points, (int, float)) or isinstance(points, bool)
+                or not math.isfinite(points) or not (1 <= points <= 200)):
+            if msg_id:
+                self._send_nack(msg_id, ERR_BAD_VALUE, addr)
+            return
+        samples = self._historian.query(tag, int(seconds), int(points))
+        if msg_id:
+            self._send_history_ack(msg_id, addr, tag, samples)
+
+    def _send_history_ack(self, msg_id: str, addr: Tuple[str, int], tag: str,
+                          samples: list) -> None:
+        """Serialise a history ack as compact JSON, keeping it under the
+        datagram ceiling; 200 samples fit, so cap the result there."""
+        history = {"tag": tag, "samples": samples}
+        reply = {"t": "ack", "ok": True, "id": msg_id, "history": history}
+        try:
+            payload = json.dumps(reply, separators=(",", ":")).encode("utf-8")
+            if len(payload) <= MAX_DGRAM_BYTES:
+                self._send_raw(payload if isinstance(payload, bytes) else payload, addr)
+            else:
+                self._send_raw({"t": "ack", "ok": True, "id": msg_id,
+                                "history": {"tag": tag, "samples": []}}, addr)
+        except Exception:
+            pass
 
     # -- Ack/nack helpers --
 
