@@ -47,6 +47,7 @@ struct hmi_tags {
     hmi_online_cb on_online;
     hmi_ack_cb on_ack;
     hmi_history_cb on_history;
+    void *history_user;          // its own: the other callbacks share `user`
     void *user;
     int64_t last_wall_ms;
 };
@@ -96,8 +97,10 @@ static void apply_quality(hmi_tags_t *t, const cJSON *q)
     if (!q) return;
     for (size_t i = 0; i < t->ntags; ++i) t->tags[i].q = HMI_Q_GOOD;
     const cJSON *item;
-    cJSON_ArrayForEach(item, q)
-        if (tag_entry_t *e = find_tag(t, item->string)) e->q = parse_qual(cJSON_GetStringValue(item));
+    cJSON_ArrayForEach(item, q) {
+        tag_entry_t *e = find_tag(t, item->string);
+        if (e) e->q = parse_qual(cJSON_GetStringValue(item));
+    }
 }
 
 // -- sending -----------------------------------------------------------------------
@@ -177,11 +180,13 @@ static void handle_telemetry(hmi_tags_t *t, const cJSON *obj)
 // the ring never grows past HISTORY_LEN (oldest dropped first). The
 // prepended samples' receive times become their own epoch so a later backfill
 // still ages them.
-static void merge_history(hmi_tags_t *t, tag_entry_t *e, const cJSON *samples)
+static size_t merge_history(hmi_tags_t *t, tag_entry_t *e, const cJSON *samples)
 {
     (void)t;
-    if (!e || !cJSON_IsArray(samples)) return;
-    int64_t newest_recv = e->hist_count ? e->hist_ts[(e->hist_next - 1 + HISTORY_LEN) % HISTORY_LEN] : 0;
+    if (!e || !cJSON_IsArray(samples)) return 0;
+    // Only samples older than the oldest one held go in front (13.4).
+    int64_t oldest_recv = e->hist_count
+        ? e->hist_ts[(e->hist_next + HISTORY_LEN - e->hist_count) % HISTORY_LEN] : INT64_MAX;
     int n = cJSON_GetArraySize(samples);
 
     // Oldest-first list: the accepted backfill samples, then the ring's values.
@@ -192,12 +197,14 @@ static void merge_history(hmi_tags_t *t, tag_entry_t *e, const cJSON *samples)
         const cJSON *s = cJSON_GetArrayItem(samples, i);
         if (!cJSON_IsArray(s) || cJSON_GetArraySize(s) < 2) continue;
         int64_t ts = (int64_t)(cJSON_GetArrayItem(s, 0)->valuedouble + 0.5);
-        if (ts >= newest_recv) continue;       // a sample no older than the newest frame is ignored
+        if (ts >= oldest_recv) continue;
         if (m && (int64_t)(merge_ts[m - 1]) >= ts) continue;   // keep strictly oldest-first
         merge_v[m] = cJSON_GetArrayItem(s, 1)->valuedouble;
         merge_ts[m] = ts;
         ++m;
     }
+    size_t accepted = m;
+    if (accepted == 0) return 0;
     if (e->hist_count > 0) {
         size_t oldest = (e->hist_next + HISTORY_LEN - e->hist_count) % HISTORY_LEN;
         for (size_t i = 0; i < e->hist_count && m < 2 * HISTORY_LEN; ++i) {
@@ -217,11 +224,10 @@ static void merge_history(hmi_tags_t *t, tag_entry_t *e, const cJSON *samples)
         e->hist_ts[i] = merge_ts[drop + i];
     }
     e->hist_count = keep;
-    e->hist_next = keep;
+    e->hist_next = keep % HISTORY_LEN;
+    return accepted;
 }
 
-// Match a history ack carrying a "history" object and its id, merge the ack's
-// older samples, then fire the history callback.
 // Match a history ack by id: merge its older samples into the tag's ring, then
 // fire the history callback. A sample is ignored unless it is older than the
 // newest frame the tag received; the ring never grows past HISTORY_LEN.
@@ -232,8 +238,8 @@ static void handle_history_ack(hmi_tags_t *t, const cJSON *hist)
     if (!cJSON_IsString(tag)) return;
     tag_entry_t *e = find_tag(t, cJSON_GetStringValue(tag));
     if (!e) return;
-    merge_history(t, e, cJSON_GetObjectItemCaseSensitive(hist, "samples"));
-    if (t->on_history) t->on_history(e->name, t->user);
+    if (merge_history(t, e, cJSON_GetObjectItemCaseSensitive(hist, "samples")) && t->on_history)
+        t->on_history(e->name, t->history_user);
 }
 
 static void handle_ack(hmi_tags_t *t, const cJSON *obj)
@@ -413,7 +419,8 @@ hmi_quality_t hmi_tags_quality(const hmi_tags_t *t, const char *tag)
 // whose samples were merged into the tag's ring.
 void hmi_tags_set_history_callback(hmi_tags_t *t, hmi_history_cb cb, void *user)
 {
-    t->on_history = cb; t->user = user;
+    t->on_history = cb;
+    t->history_user = user;
 }
 
 // seconds 1..604800 (default 3600), points 1..200 (default 200); return the id
