@@ -13,6 +13,7 @@ A desktop studio for embedded Linux HMI panels. Write a brief and a model builds
 [![Release](https://img.shields.io/github/v/release/Hitheshkaranth/EmbeddedDisplayStudio?style=for-the-badge&label=Release&color=006FEE)](../../releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/Hitheshkaranth/EmbeddedDisplayStudio/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/Hitheshkaranth/EmbeddedDisplayStudio/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-555555?style=for-the-badge)](LICENSE)
+[![As seen at the Berkeley x DeepMind Hackathon](https://img.shields.io/badge/As%20seen%20at-Berkeley%20%C3%97%20DeepMind%20Hackathon-003262?style=for-the-badge&labelColor=FDB515)](#)
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/PySide6-6.8.1-41CD52?style=flat-square&logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
