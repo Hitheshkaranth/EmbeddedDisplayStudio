@@ -1,12 +1,17 @@
 // journal.c -- see journal.h (CONTRACT 13.3).
+//
+// The panel can lose power at any moment, so every line is flushed to the
+// kernel at once; fsync (the flash write) is rate-limited to once a second
+// to spare the eMMC. Rotation keeps exactly one old file, PATH.1.
 #include "journal.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <stdint.h>
-#ifndef _WIN32
+#ifdef _WIN32
+#include <io.h>
+#else
 #include <unistd.h>
 #endif
 
@@ -14,133 +19,93 @@
 #include "compat.h"
 #include "log.h"
 
-typedef struct hmi_journal {
+struct hmi_journal {
     FILE *f;
-    char path[HMI_JOURNAL_PATH_MAX];
+    char *path;
     size_t max_bytes;
-    int64_t last_sync_ms;   // wall-clock ms of the last fsync; -1 = unsynced
-} journal_mem;
-
-// Copy src to dst as a JSON string literal (including surrounding quotes),
-// escaping the characters a JSON string must quote.
-static void json_str(char *dst, size_t dstsz, const char *src)
-{
-    size_t j = 0;
-    dst[j++] = '"';
-    for (size_t i = 0; src[i] && j + 4 < dstsz; ++i) {
-        unsigned char c = (unsigned char)src[i];
-        switch (c) {
-        case '"':  dst[j++] = '\\', dst[j++] = '"'; break;
-        case '\\': dst[j++] = '\\', dst[j++] = '\\'; break;
-        case '\n': dst[j++] = '\\', dst[j++] = 'n'; break;
-        case '\r': dst[j++] = '\\', dst[j++] = 'r'; break;
-        case '\t': dst[j++] = '\\', dst[j++] = 't'; break;
-        default:
-            if (c < 0x20) { snprintf(dst + j, dstsz - j, "\\u%04x", c); j += 6; }
-            else dst[j++] = (char)c;
-        }
-    }
-    if (j < dstsz) dst[j++] = '"';
-    if (j < dstsz) dst[j] = '\0';
-}
-
-// Serialize one hmi_value_t to a compact JSON fragment ("9.5", "\"OPEN\"",
-// "true", "null"). A list/unknown renders as the JSON null.
-static void value_to_json(char *out, size_t outsz, const hmi_value_t *v)
-{
-    if (!v || v->kind == HMI_V_NULL) { snprintf(out, outsz, "null"); return; }
-    switch (v->kind) {
-    case HMI_V_NUM:  snprintf(out, outsz, "%g", v->n); break;
-    case HMI_V_BOOL: snprintf(out, outsz, "%s", v->b ? "true" : "false"); break;
-    case HMI_V_STR:  json_str(out, outsz, v->s ? v->s : ""); break;
-    default:         snprintf(out, outsz, "null"); break;
-    }
-}
-
-// Build one JSON object line into `out`.
-static void format_line(char *out, size_t outsz, int64_t ts_ms, const char *event,
-                        const char *tag, const char *label, const char *severity,
-                        int priority, const hmi_value_t *value)
-{
-    char ev[64], tagbuf[HMI_JOURNAL_STR_MAX], labelbuf[HMI_JOURNAL_STR_MAX],
-         sevbuf[HMI_JOURNAL_STR_MAX], val[HMI_JOURNAL_VALUE_MAX];
-    json_str(ev, sizeof ev, event);
-    json_str(tagbuf, sizeof tagbuf, tag);
-    json_str(labelbuf, sizeof labelbuf, label);
-    json_str(sevbuf, sizeof sevbuf, severity);
-    value_to_json(val, sizeof val, value);
-    snprintf(out, outsz, "{\"ts\":%lld,\"event\":%s,\"tag\":%s,\"label\":%s,\"severity\":%s,\"priority\":%d,\"value\":%s}\n",
-             (long long)ts_ms, ev, tagbuf, labelbuf, sevbuf, priority, val);
-}
-
-static int64_t wall_ms(void)
-{
-    time_t t = time(NULL);
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    return (int64_t)t * 1000LL + ts.tv_nsec / 1000000;
-}
-
-// fsync at most once a second.
-static void sync_if_due(journal_mem *m)
-{
-    int64_t now = wall_ms();
-    if (now - m->last_sync_ms >= 1000) {
-        if (fflush(m->f) != 0) {
-            hmi_log(HMI_LOG_WARNING, "journal: flush failed");
-            return;
-        }
-        if (fsync(fileno(m->f)) != 0)
-            hmi_log(HMI_LOG_WARNING, "journal: fsync failed");
-        m->last_sync_ms = now;
-    }
-}
-
-// When the current file passes max_bytes, rename it to PATH.1 (replacing any
-// stale PATH.1) and reopen PATH. A single append past the limit starts a new
-// PATH without producing a (near-)empty PATH.1.
-static void rotate_if_needed(journal_mem *m)
-{
-    fseek(m->f, 0, SEEK_END);
-    long sz = ftell(m->f);
-    fseek(m->f, 0, SEEK_SET);
-    if ((size_t)sz == 0) return;
-    if ((size_t)sz <= m->max_bytes) return;
-    fclose(m->f);
-    char old[HMI_JOURNAL_PATH_MAX + 32];
-    snprintf(old, sizeof old, "%s.1", m->path);
-    remove(old);
-    if (rename(m->path, old) != 0) {
-        hmi_log(HMI_LOG_WARNING, "journal: rotation rename failed");
-        return;
-    }
-    m->f = fopen(m->path, "a");
-    m->last_sync_ms = -1;
-}
+    size_t written;               // bytes this handle appended to the current PATH
+    bool synced_once;
+    unsigned long last_sync_ms;   // hmi_millis() of the last fsync
+    bool write_error_logged;
+};
 
 hmi_journal_t *hmi_journal_open(const char *path, size_t max_bytes)
 {
     if (!path || !*path) return NULL;
     FILE *f = fopen(path, "a");
     if (!f) {
-        hmi_log(HMI_LOG_WARNING, "journal: cannot open '%s'", path);
+        hmi_log(HMI_LOG_WARNING, "journal: cannot open %s", path);
         return NULL;
     }
-    journal_mem *j = malloc(sizeof *j);
-    if (!j) { fclose(f); return NULL; }
+    hmi_journal_t *j = calloc(1, sizeof *j);
+    char *copy = malloc(strlen(path) + 1);
+    if (!j || !copy) {
+        free(j);
+        free(copy);
+        fclose(f);
+        return NULL;
+    }
+    strcpy(copy, path);
     j->f = f;
-    snprintf(j->path, sizeof j->path, "%s", path);
+    j->path = copy;
     j->max_bytes = max_bytes ? max_bytes : HMI_JOURNAL_MAX_BYTES;
-    j->last_sync_ms = -1;
-    return (hmi_journal_t *)j;
+    return j;
 }
 
 void hmi_journal_close(hmi_journal_t *j)
 {
     if (!j) return;
-    journal_mem *m = (journal_mem *)j;
-    if (m->f) fclose(m->f);
-    free(m);
+    if (j->f) {
+        fflush(j->f);
+#ifdef _WIN32
+        _commit(_fileno(j->f));
+#else
+        fsync(fileno(j->f));
+#endif
+        fclose(j->f);
+    }
+    free(j->path);
+    free(j);
+}
+
+static char *old_path(const hmi_journal_t *j)
+{
+    size_t n = strlen(j->path) + 3;
+    char *p = malloc(n);
+    if (p) snprintf(p, n, "%s.1", j->path);
+    return p;
+}
+
+static void sync_if_due(hmi_journal_t *j)
+{
+    unsigned long now = hmi_millis();
+    if (j->synced_once && now - j->last_sync_ms < 1000) return;
+#ifdef _WIN32
+    _commit(_fileno(j->f));
+#else
+    fsync(fileno(j->f));
+#endif
+    j->synced_once = true;
+    j->last_sync_ms = now;
+}
+
+// Once PATH has passed max_bytes, the next append renames it PATH.1
+// (replacing that) and starts a new PATH, so PATH is never left empty.
+// The size is what this handle appended: what an earlier run left in PATH is
+// not counted, so a restart never rotates the previous run's tail away
+// (test_journal's rotation check relies on this).
+static void rotate_if_full(hmi_journal_t *j)
+{
+    if (j->written <= j->max_bytes) return;
+    char *old = old_path(j);
+    if (!old) return;
+    fclose(j->f);
+    remove(old);   // Windows rename() does not replace
+    if (rename(j->path, old) != 0) hmi_log(HMI_LOG_WARNING, "journal: cannot rotate %s", j->path);
+    free(old);
+    j->written = 0;
+    j->f = fopen(j->path, "a");
+    if (!j->f) hmi_log(HMI_LOG_WARNING, "journal: cannot reopen %s", j->path);
 }
 
 bool hmi_journal_append(hmi_journal_t *j, int64_t ts_ms, const char *event, const char *tag,
@@ -148,159 +113,125 @@ bool hmi_journal_append(hmi_journal_t *j, int64_t ts_ms, const char *event, cons
                         const hmi_value_t *value)
 {
     if (!j) return false;
-    journal_mem *m = (journal_mem *)j;
-
-    char line[HMI_JOURNAL_LINE_MAX];
-    format_line(line, sizeof line, ts_ms, event, tag, label, severity, priority, value);
-
-    sync_if_due(m);
-    rotate_if_needed(m);
-    if (fputs(line, m->f) == EOF) {
-        hmi_log(HMI_LOG_WARNING, "journal: write error");
-        return false;
-    }
-    if (fflush(m->f) != 0) {
-        hmi_log(HMI_LOG_WARNING, "journal: flush error");
-        return false;
-    }
-    return true;
-}
-
-// Parse one line into a 9-field history row (CONTRACT 13.3); false to skip.
-static bool parse_to_row(const char *line, hmi_value_t *row)
-{
-    cJSON *o = cJSON_Parse(line);
-    if (!cJSON_IsObject(o)) { cJSON_Delete(o); return false; }
-
-    const cJSON *j;
-    const char *label = NULL, *severity = NULL, *event = NULL, *tag = NULL;
-    cJSON *val = NULL;
-    int priority = 3;
-    if ((j = cJSON_GetObjectItemCaseSensitive(o, "tag"))) tag = cJSON_GetStringValue(j);
-    if ((j = cJSON_GetObjectItemCaseSensitive(o, "label"))) label = cJSON_GetStringValue(j);
-    if ((j = cJSON_GetObjectItemCaseSensitive(o, "severity"))) severity = cJSON_GetStringValue(j);
-    if ((j = cJSON_GetObjectItemCaseSensitive(o, "event"))) event = cJSON_GetStringValue(j);
-    if ((j = cJSON_GetObjectItemCaseSensitive(o, "value"))) val = j;
-    if ((j = cJSON_GetObjectItemCaseSensitive(o, "priority"))) priority = j->valueint;
-
-    fprintf(stderr, "DBG parse: val=%p tag=%s valnum=%g\n", (void*)val, tag ? tag : "-", val ? cJSON_GetNumberValue(val) : -1);
-
-    char tsbuf[24]; tsbuf[0] = '\0';
-    if ((j = cJSON_GetObjectItemCaseSensitive(o, "ts"))) {
-        time_t t = (time_t)(j->valuedouble / 1000);
-        struct tm tm;
-        hmi_localtime(t, &tm);
-        strftime(tsbuf, sizeof tsbuf, "%Y-%m-%dT%H:%M:%S", &tm);
-    }
-
-    row->kind = HMI_V_LIST;
-    row->count = 9;
-    row->items = calloc(9, sizeof *row->items);
-    if (!row->items) { cJSON_Delete(o); return false; }
-    row->items[0] = hmi_value_str(tag ? tag : "");
-    row->items[1] = hmi_value_str(label ? label : "");
-    row->items[2] = hmi_value_str(severity ? severity : "");
-    row->items[3] = val ? hmi_value_from_json(val) : hmi_value_null();
-    if (row->items[3].kind == HMI_V_NULL && val && cJSON_IsNumber(val))
-        row->items[3] = hmi_value_num(val->valuedouble);
-    if (row->items[3].kind == HMI_V_NULL && val && cJSON_IsNumber(val))
-        row->items[3] = hmi_value_num(val->valuedouble);
-    row->items[4] = hmi_value_str(event ? event : "");
-    row->items[5] = hmi_value_str(tsbuf);
-    row->items[6] = hmi_value_bool(true);
-    row->items[7] = hmi_value_num((double)priority);
-    row->items[8] = hmi_value_str("cleared");
-
+    if (j->f) rotate_if_full(j);
+    if (!j->f) j->f = fopen(j->path, "a");   // a failed reopen after rotation retries here
+    cJSON *o = cJSON_CreateObject();
+    if (!o) return false;
+    cJSON_AddNumberToObject(o, "ts", (double)ts_ms);
+    cJSON_AddStringToObject(o, "event", event ? event : "");
+    cJSON_AddStringToObject(o, "tag", tag ? tag : "");
+    cJSON_AddStringToObject(o, "label", label ? label : "");
+    cJSON_AddStringToObject(o, "severity", severity ? severity : "");
+    cJSON_AddNumberToObject(o, "priority", priority);
+    cJSON_AddItemToObject(o, "value", hmi_value_to_json(value));
+    char *line = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
-    fprintf(stderr, "DBG parse done: items3 kind=%d n=%g\n", row->items[3].kind, (double)row->items[3].n);
+    bool ok = line && j->f && fputs(line, j->f) >= 0 && fputc('\n', j->f) != EOF && fflush(j->f) == 0;
+    if (ok) j->written += strlen(line) + 1;
+    free(line);
+    if (!ok) {
+        if (!j->write_error_logged)
+            hmi_log(HMI_LOG_WARNING, "journal: cannot write %s", j->path);
+        j->write_error_logged = true;
+        return false;
+    }
+    sync_if_due(j);
     return true;
 }
 
-// Read a file's newest `n` lines as history rows, newest first.
-static hmi_value_t read_rows(const char *path, size_t n)
+// -- reading back ------------------------------------------------------------
+
+static char *read_file(const char *path)
 {
     FILE *f = fopen(path, "rb");
-    hmi_value_t out = hmi_value_null();
-    if (!f) return out;
-
-    // Buffer each line, newest first: the last line is the most recent.
-    // Count total lines, then read them in reverse.
-    char *lines[16384];
-    size_t total = 0, cap = 0;
-    char *buf = malloc(4096);
-    size_t bufsz = 4096;
-    ssize_t len;
-    while ((len = getline(&buf, &bufsz, f)) != -1) {
-        if (total < sizeof lines / sizeof lines[0]) {
-            char *copy = malloc((size_t)len + 1);
-            if (copy) { memcpy(copy, buf, (size_t)len); copy[len] = '\0'; lines[total] = copy; }
-        }
-        ++total;
-    }
-    free(buf);
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *text = len >= 0 ? malloc((size_t)len + 1) : NULL;
+    size_t got = text ? fread(text, 1, (size_t)len, f) : 0;
     fclose(f);
+    if (text) text[got] = '\0';
+    return text;
+}
 
-    size_t want = n < total ? n : total;
-    out.kind = HMI_V_LIST;
-    out.items = calloc(want ? want : 1, sizeof *out.items);
-    out.count = 0;
-    for (size_t i = 0; i < want && out.count < want; ++i) {
-        char *line = lines[total - 1 - i];   // newest first
-        if (!line) continue;
-        char *nl = strchr(line, '\n'); if (nl) *nl = '\0';
-        char *cr = strchr(line, '\r'); if (cr) *cr = '\0';
-        if (line[0]) {
-            hmi_value_t row;
-            if (parse_to_row(line, &row)) out.items[out.count++] = row;
-        }
-        free(line);
+// One journal line as a ShAlarmTable history item; false for a line that is
+// not a journal object.
+static bool line_to_item(const char *line, hmi_value_t *out)
+{
+    cJSON *o = cJSON_Parse(line);
+    if (!cJSON_IsObject(o)) {
+        cJSON_Delete(o);
+        return false;
     }
-    fprintf(stderr, "DBG read_rows(%s): count=%d item0items3kind=%d n=%g\n", path, out.count, out.count ? out.items[0].items[3].kind : -1, out.count ? (double)out.items[0].items[3].n : -1);
-    return out;
+    const cJSON *ts = cJSON_GetObjectItemCaseSensitive(o, "ts");
+    const cJSON *pr = cJSON_GetObjectItemCaseSensitive(o, "priority");
+    const char *tag = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o, "tag"));
+    const char *label = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o, "label"));
+    const char *sev = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o, "severity"));
+    const char *event = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o, "event"));
+    char stamp[24] = "";
+    if (cJSON_IsNumber(ts)) {
+        struct tm tm;
+        hmi_localtime((time_t)(cJSON_GetNumberValue(ts) / 1000.0), &tm);
+        strftime(stamp, sizeof stamp, "%Y-%m-%dT%H:%M:%S", &tm);
+    }
+    hmi_value_t item = hmi_value_null();
+    item.kind = HMI_V_LIST;
+    item.items = calloc(9, sizeof *item.items);
+    if (!item.items) {
+        cJSON_Delete(o);
+        return false;
+    }
+    item.count = 9;
+    item.items[0] = hmi_value_str(tag ? tag : "");
+    item.items[1] = hmi_value_str(label ? label : "");
+    item.items[2] = hmi_value_str(sev ? sev : "");
+    item.items[3] = hmi_value_from_json(cJSON_GetObjectItemCaseSensitive(o, "value"));
+    item.items[4] = hmi_value_str(event ? event : "");
+    item.items[5] = hmi_value_str(stamp);
+    item.items[6] = hmi_value_bool(true);
+    item.items[7] = hmi_value_num(cJSON_IsNumber(pr) ? cJSON_GetNumberValue(pr) : 3);
+    item.items[8] = hmi_value_str("cleared");
+    cJSON_Delete(o);
+    *out = item;
+    return true;
+}
+
+// Appends the newest items of `path` to `list`, newest first, until it holds `n`.
+static void collect(const char *path, size_t n, hmi_value_t *list)
+{
+    if (list->count >= n) return;
+    char *text = read_file(path);
+    if (!text) return;
+    char *end = text + strlen(text);
+    while (end > text && list->count < n) {
+        char *p = end;
+        while (p > text && p[-1] != '\n') --p;   // start of the last line before `end`
+        char *next_end = p > text ? p - 1 : text;
+        *end = '\0';
+        if (end > p && end[-1] == '\r') end[-1] = '\0';
+        hmi_value_t item;
+        if (*p && line_to_item(p, &item)) list->items[list->count++] = item;
+        end = next_end;
+    }
+    free(text);
 }
 
 hmi_value_t hmi_journal_recent(hmi_journal_t *j, size_t n)
 {
-    if (!j) {
-        hmi_value_t out = hmi_value_null();
-        out.kind = HMI_V_LIST;
-        return out;
-    }
-    journal_mem *m = (journal_mem *)j;
-
-    // PATH (newest lines) then PATH.1 (older), concatenated.
-    hmi_value_t out = read_rows(m->path, n);
-    char oldpath[HMI_JOURNAL_PATH_MAX];
-    snprintf(oldpath, sizeof oldpath, "%s.1", m->path);
-    hmi_value_t old = read_rows(oldpath, n);
-    if (old.count == 0) return out;
-    fprintf(stderr, "DBG merge: out.count=%d old.count=%d out0i3kind=%d\n", out.count, old.count, out.items ? out.items[0].items[3].kind : -1);
-
-    // Concatenate: every line in PATH.1 predates the rotation, so it is older
-    // than everything currently in PATH. Both files are newest-first.
-    size_t total = out.count + old.count;
-    size_t want = n < total ? n : total;
-    hmi_value_t merged = hmi_value_null();
-    merged.kind = HMI_V_LIST;
-    merged.items = calloc(want ? want : 1, sizeof *merged.items);
-    if (!merged.items) {
+    hmi_value_t out = hmi_value_null();
+    out.kind = HMI_V_LIST;
+    if (!j || n == 0) return out;
+    out.items = calloc(n, sizeof *out.items);
+    if (!out.items) return out;
+    collect(j->path, n, &out);
+    char *old = old_path(j);
+    if (old) collect(old, n, &out);
+    free(old);
+    if (out.count == 0) {
         free(out.items);
-        free(old.items);
         out.items = NULL;
-        old.items = NULL;
-        out.count = 0;
-        old.count = 0;
-        return out;
     }
-    size_t k = 0;
-    for (size_t i = 0; i < out.count && k < want; ++i) merged.items[k++] = *out.items[i];
-    for (size_t i = 0; i < old.count && k < want; ++i) merged.items[k++] = *old.items[i];
-    merged.count = want;
-    free(out.items);
-    free(old.items);
-    out.items = NULL;
-    old.items = NULL;
-    out.count = 0;
-    old.count = 0;
-    return merged;
+    return out;
 }
