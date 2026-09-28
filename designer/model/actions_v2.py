@@ -43,17 +43,17 @@ def validate_action(action, signal: str, path: str, page_ids) -> list:
     whose kind is in NEW_KINDS. Messages, exactly:
 
     toggle/increment/decrement with a tag that is not a lowercase dotted tag
-         "action tag {tag!r} is not a lowercase dotted tag name"
+        "action tag {tag!r} is not a lowercase dotted tag name"
     increment/decrement with step <= 0 or not finite
-         "step must be a positive number"
+        "step must be a positive number"
     increment/decrement with min > max (both set)
-         "min must not be greater than max"
+        "min must not be greater than max"
     ack/shelve with a tag that is neither "", "*" nor a dotted tag
-         "action tag {tag!r} is not a lowercase dotted tag name"
+        "action tag {tag!r} is not a lowercase dotted tag name"
     shelve with ms outside 1..86400000
-         "shelve ms must be 1..86400000"
+        "shelve ms must be 1..86400000"
     ack/shelve with tag "" on any signal other than "alarmActivated"
-         "ack and shelve need a tag unless the signal is alarmActivated"
+        "ack and shelve need a tag unless the signal is alarmActivated"
     back: no issues.
     Nothing is reported for kinds outside NEW_KINDS.
     """

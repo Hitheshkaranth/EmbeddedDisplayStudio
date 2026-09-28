@@ -8,7 +8,10 @@ fields (`_mark(editor, "propField")` is the workspace's job, not this one's).
 """
 from __future__ import annotations
 
-from PySide6.QtWidgets import QLineEdit, QListWidget, QPushButton, QDoubleSpinBox, QSpinBox, QWidget
+import copy
+
+from PySide6.QtWidgets import (QDoubleSpinBox, QFormLayout, QHBoxLayout, QLineEdit, QListWidget,
+                               QPushButton, QSpinBox, QWidget)
 
 
 class ActionExtras(QWidget):
@@ -34,126 +37,98 @@ class ActionExtras(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._kind = ""
-        self._rows = []
         self._edited = None
+        # The list's further actions as whole actions: a row's text is only a
+        # view, so nothing (value, ms, page, confirm) is lost on the way back.
+        self._steps = []
 
-        self.step = QDoubleSpinBox(self); self.step.setRange(-1e9, 1e9)
-        self.min = QLineEdit(self)
-        self.max = QLineEdit(self)
-        self.ms = QSpinBox(self)
-        self.ms.setRange(self.SHELVE_MS_MIN, self.SHELVE_MS_MAX)
-        self.ms.setValue(600000)
-        self.confirm = QLineEdit(self)
-        self.then = QListWidget(self)
-        self.add = QPushButton("Add step", self)
-        self.clear = QPushButton("Clear steps", self)
-        self._named = {
-            "extraStep": self.step,
-            "extraMin": self.min,
-            "extraMax": self.max,
-            "extraMs": self.ms,
-            "extraConfirm": self.confirm,
-            "extraThen": self.then,
-        }
-        for name, widget in self._named.items():
-            widget.setObjectName(name)
-        self.add.setObjectName("extraAddThen")
-        self.clear.setObjectName("extraClearThen")
+        self.step = QDoubleSpinBox(); self.step.setObjectName("extraStep")
+        self.step.setRange(-1e9, 1e9); self.step.setDecimals(3); self.step.setValue(1.0)
+        self.min = QLineEdit(); self.min.setObjectName("extraMin"); self.min.setPlaceholderText("none")
+        self.max = QLineEdit(); self.max.setObjectName("extraMax"); self.max.setPlaceholderText("none")
+        self.ms = QSpinBox(); self.ms.setObjectName("extraMs")
+        self.ms.setRange(self.SHELVE_MS_MIN, self.SHELVE_MS_MAX); self.ms.setValue(600000)
+        self.ms.setSuffix(" ms")
+        self.confirm = QLineEdit(); self.confirm.setObjectName("extraConfirm")
+        self.confirm.setPlaceholderText("no confirmation")
+        self.then = QListWidget(); self.then.setObjectName("extraThen")
+        self.then.setMaximumHeight(84)
+        self.add = QPushButton("Add step"); self.add.setObjectName("extraAddThen")
+        self.clear = QPushButton("Clear steps"); self.clear.setObjectName("extraClearThen")
+        buttons = QHBoxLayout(); buttons.setContentsMargins(0, 0, 0, 0); buttons.setSpacing(6)
+        buttons.addWidget(self.add); buttons.addWidget(self.clear); buttons.addStretch(1)
+
+        self.form = QFormLayout(self)
+        self.form.setContentsMargins(0, 0, 0, 0)
+        self.form.setVerticalSpacing(6)
+        for label, field in (("Step", self.step), ("Min", self.min), ("Max", self.max),
+                             ("Shelve for", self.ms), ("Confirm", self.confirm),
+                             ("Then", self.then)):
+            self.form.addRow(label, field)
+        self.form.addRow("", buttons)
         self.add.clicked.connect(self._add_then)
         self.clear.clicked.connect(self._clear_then)
+        self.set_kind("write")
 
     def set_kind(self, kind: str) -> None:
         """Which fields are visible depends on the action kind."""
         self._kind = kind or ""
-        step_visible = self._kind in self.STEP_KINDS
-        self.step.setVisible(step_visible)
-        self.min.setVisible(step_visible)
-        self.max.setVisible(step_visible)
-        self.ms.setVisible(self._kind == "shelve")
-        if not step_visible:
-            self.step.setValue(1.0)
-            self.min.clear()
-            self.max.clear()
+        stepping = self._kind in self.STEP_KINDS
+        for field in (self.step, self.min, self.max):
+            self.form.setRowVisible(field, stepping)
+        self.form.setRowVisible(self.ms, self._kind == "shelve")
 
     def load(self, action) -> None:
         """Show `action`'s 13.1 fields (None clears them)."""
-        self._rows = []
-        if action is None:
-            self.step.clear()
-            self.min.clear()
-            self.max.clear()
-            self.ms.clear()
-            self.confirm.clear()
-            self._edited = None
-            return
-
-        self._edited = action
-        self.step.setValue(float(action.step))
-        self.min.setText("%g" % action.min if action.min is not None else "")
-        self.max.setText("%g" % action.max if action.max is not None else "")
-        self.confirm.setText(action.confirm)
-        if action.kind == "shelve":
-            self.ms.setValue(int(action.ms))
-        self._rows = [self._row_label(sibling) for sibling in action.then]
+        self._edited = copy.deepcopy(action) if action is not None else None
+        self.step.setValue(float(action.step) if action is not None else 1.0)
+        self.min.setText("%g" % action.min if action is not None and action.min is not None else "")
+        self.max.setText("%g" % action.max if action is not None and action.max is not None else "")
+        self.ms.setValue(int(action.ms) if action is not None and action.kind == "shelve" else 600000)
+        self.confirm.setText(action.confirm if action is not None else "")
+        self._steps = [copy.deepcopy(a) for a in action.then] if action is not None else []
         self._refresh_then()
 
     def apply_to(self, action):
         """Return `action` with step / min / max / ms (shelve) / confirm /
         then taken from the fields (a min/max field that is empty or not a
         number becomes None). The argument is not modified."""
-        import copy
-
         result = copy.deepcopy(action)
-        result.step = self.step.value()
-        result.min = self._parse_minmax(self.min.text())
-        result.max = self._parse_minmax(self.max.text())
-        result.confirm = self.confirm.text()
+        if result.kind in self.STEP_KINDS:
+            result.step = self.step.value()
+            result.min = self._parse_minmax(self.min.text())
+            result.max = self._parse_minmax(self.max.text())
         if result.kind == "shelve":
             result.ms = self.ms.value()
-        result.then = [self._row_action(row) for row in self._rows]
+        result.confirm = self.confirm.text()
+        result.then = [copy.deepcopy(a) for a in self._steps]
         return result
 
     def _add_then(self):
-        self._rows.append(self._current_label())
+        if self._edited is None:
+            return
+        step = copy.deepcopy(self._edited)
+        step.then = []
+        self._steps.append(step)
         self._refresh_then()
 
     def _clear_then(self):
-        self._rows = []
+        self._steps = []
         self._refresh_then()
-
-    # --- helpers -------------------------------------------------------
-
-    def _current_label(self):
-        """Text for a copy of the action currently on the fields."""
-        if self._edited is not None:
-            return self._row_label(self._edited)
-        return self._kind
 
     @staticmethod
     def _parse_minmax(text):
-        text = (text or "").strip()
-        if not text:
-            return None
         try:
-            return float(text)
+            return float(text) if (text or "").strip() else None
         except ValueError:
             return None
 
-    def _row_label(self, action):
-        """The text a further action row displays."""
-        return f"{action.kind} {action.tag}" if action else self._kind
-
-    def _row_action(self, label):
-        """Rebuild the further action stored in a row."""
-        from designer.model.project import DesignerAction
-
-        text = label.strip()
-        kind, _, rest = text.partition(" ")
-        rest = rest.strip()
-        if kind == "navigate":
-            return DesignerAction("navigate", page=rest)
-        return DesignerAction(kind, rest)
+    @staticmethod
+    def _row_label(action) -> str:
+        """ "<kind> <tag|page>" -- navigate names its page, back nothing."""
+        target = action.page if action.kind == "navigate" else action.tag
+        return f"{action.kind} {target}".strip()
 
     def _refresh_then(self):
         self.then.clear()
-        self.then.addItems(self._rows)
+        self.then.addItems([self._row_label(a) for a in self._steps])

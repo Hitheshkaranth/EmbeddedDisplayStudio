@@ -31,6 +31,8 @@ class AlarmExtras(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         form = QFormLayout(self)
+        form.setContentsMargins(0, 0, 0, 0)   # flush with the binding fields above
+        form.setVerticalSpacing(6)
         self.priority = QComboBox(self)
         self.priority.setObjectName("alarmPriority")
         self.priority.addItems(list(ALARM_PRIORITY))
