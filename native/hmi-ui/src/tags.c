@@ -56,12 +56,7 @@ static uint32_t now_ms(void) { return lv_tick_get(); }
 
 // Wall-clock epoch ms. A frame's receive time is the wall clock, not LVGL's
 // monotonic tick, so a backfill sample can be aged against it.
-static int64_t wall_ms(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-}
+static int64_t wall_ms(void) { return hmi_wall_ms(); }
 
 static hmi_quality_t parse_qual(const char *s)
 {
