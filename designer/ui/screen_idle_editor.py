@@ -31,16 +31,19 @@ class ScreenIdleEditor(QWidget):
         self.dim.setObjectName("idleDim")
         self.dim.setRange(0, SPIN_MAX)
         self.dim.setSpecialValueText("never")
+        self.dim.setSuffix(" s")
 
         self.percent = QSpinBox()
         self.percent.setObjectName("idleDimPercent")
         self.percent.setRange(10, 100)
         self.percent.setValue(30)
+        self.percent.setSuffix(" %")
 
         self.off = QSpinBox()
         self.off.setObjectName("idleOff")
         self.off.setRange(0, SPIN_MAX)
         self.off.setSpecialValueText("never")
+        self.off.setSuffix(" s")
 
         self.problem = QLabel()
         self.problem.setObjectName("idleProblem")
@@ -75,10 +78,17 @@ class ScreenIdleEditor(QWidget):
         }
 
     def load(self, idle: dict) -> None:
+        idle = idle or {}
+
+        def number(key, default):
+            # A hand-edited file can hold anything; validate() names it.
+            value = idle.get(key, default)
+            return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else default
+
         self._updating = True
-        self.dim.setValue(int(idle.get("dimAfterS", 0)))
-        self.percent.setValue(int(idle.get("dimPercent", 30)))
-        self.off.setValue(int(idle.get("offAfterS", 0)))
+        self.dim.setValue(number("dimAfterS", 0))
+        self.percent.setValue(number("dimPercent", 30))
+        self.off.setValue(number("offAfterS", 0))
         self._updating = False
         self.refresh_problem()
 

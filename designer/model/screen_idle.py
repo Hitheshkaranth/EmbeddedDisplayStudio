@@ -1,4 +1,4 @@
-﻿"""CONTRACT 13.5 screen idle settings. FROZEN API (wave 1, W5)."""
+"""CONTRACT 13.5 screen idle settings. FROZEN API (wave 1, W5)."""
 from __future__ import annotations
 
 from .project import ValidationIssue
@@ -47,6 +47,7 @@ def validate_idle(idle: dict, path: str) -> list:
 def normalise_idle(idle: dict) -> dict:
     """The settings to save: known keys only, zeros and the default
     dimPercent (30) dropped; {} when nothing is left."""
+    idle = idle or {}
     out: dict = {}
     for key in IDLE_KEYS:
         if key not in idle:
