@@ -39,12 +39,15 @@ class TelemetrySimulator(QObject):
         expected_tags: List[str],
         parent: Optional[QObject] = None,
         udp_port: int = 5001,
+        daemon_addr: Optional[tuple] = ("127.0.0.1", 5000),
     ) -> None:
         """
         Args:
             expected_tags: Tags the bundle declared in tags_required.
             parent:        Parent QObject.
             udp_port:      Destination port for outgoing frames (default 5001).
+            daemon_addr:   Where a local daemon would answer a ping; while
+                           one does, no frames are sent. None never probes.
         """
         super().__init__(parent)
         self.expected_tags = expected_tags
@@ -74,6 +77,22 @@ class TelemetrySimulator(QObject):
         )
         self._closed: bool = False
 
+        # A real daemon on this PC (hmi-hwd --sim, tagsim) owns the tags: this
+        # simulator stands down while one answers on the daemon's port. It
+        # used to keep sending every tag at its frozen value, and the engine
+        # took both streams in turn, so gauges flipped between 0 and the live
+        # value instead of moving. A separate socket, so an ICMP "port
+        # unreachable" for a ping never surfaces on the frame socket.
+        self._daemon_addr = daemon_addr
+        self._probe: Optional[socket.socket] = None
+        self._last_probe = float("-inf")
+        self._daemon_seen = float("-inf")
+        try:
+            self._probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._probe.setblocking(False)
+        except OSError:
+            self._probe = None
+
     def start(self) -> None:
         if self._closed:
             return
@@ -90,6 +109,12 @@ class TelemetrySimulator(QObject):
                 except OSError:
                     pass
                 self._sock = None
+            if self._probe is not None:
+                try:
+                    self._probe.close()
+                except OSError:
+                    pass
+                self._probe = None
 
     # ------------------------------------------------------------------
     # Split: value advancement vs sending
@@ -133,10 +158,38 @@ class TelemetrySimulator(QObject):
         except OSError as exc:
             self._report_send_failure(exc)
 
+    #: Seconds between pings, and how long an answer keeps the simulator quiet.
+    PROBE_EVERY_S = 1.0
+    DAEMON_HOLD_S = 3.0
+
+    def daemon_present(self, now: Optional[float] = None) -> bool:
+        """True while a local daemon has answered within DAEMON_HOLD_S."""
+        now = time.monotonic() if now is None else now
+        return now - self._daemon_seen < self.DAEMON_HOLD_S
+
+    def _probe_daemon(self, now: float) -> None:
+        if self._probe is None or self._daemon_addr is None:
+            return
+        while True:   # anything back from the daemon's port means it is there
+            try:
+                self._probe.recvfrom(65536)
+            except (BlockingIOError, OSError):
+                break
+            self._daemon_seen = now
+        if now - self._last_probe >= self.PROBE_EVERY_S:
+            self._last_probe = now
+            try:
+                self._probe.sendto(b'{"cmd":"ping","id":"studio-sim-probe"}', self._daemon_addr)
+            except OSError:
+                pass
+
     def _step(self) -> None:
-        """Timer tick: advance values then send."""
+        """Timer tick: advance values then send, unless a daemon owns the tags."""
         self._advance()
-        self._send_frame()
+        now = time.monotonic()
+        self._probe_daemon(now)
+        if not self.daemon_present(now):
+            self._send_frame()
 
 
     def _report_send_failure(self, exc: OSError) -> None:
