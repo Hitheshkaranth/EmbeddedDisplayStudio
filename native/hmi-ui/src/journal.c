@@ -23,7 +23,7 @@ struct hmi_journal {
     FILE *f;
     char *path;
     size_t max_bytes;
-    size_t written;               // bytes this handle appended to the current PATH
+    size_t written;               // size of the current PATH, including what a previous run left
     bool synced_once;
     unsigned long last_sync_ms;   // hmi_millis() of the last fsync
     bool write_error_logged;
@@ -49,6 +49,11 @@ hmi_journal_t *hmi_journal_open(const char *path, size_t max_bytes)
     j->f = f;
     j->path = copy;
     j->max_bytes = max_bytes ? max_bytes : HMI_JOURNAL_MAX_BYTES;
+    // CONTRACT 13.3 bounds the file, not a run: start from its size.
+    if (fseek(f, 0, SEEK_END) == 0) {
+        long size = ftell(f);
+        if (size > 0) j->written = (size_t)size;
+    }
     return j;
 }
 
@@ -91,9 +96,6 @@ static void sync_if_due(hmi_journal_t *j)
 
 // Once PATH has passed max_bytes, the next append renames it PATH.1
 // (replacing that) and starts a new PATH, so PATH is never left empty.
-// The size is what this handle appended: what an earlier run left in PATH is
-// not counted, so a restart never rotates the previous run's tail away
-// (test_journal's rotation check relies on this).
 static void rotate_if_full(hmi_journal_t *j)
 {
     if (j->written <= j->max_bytes) return;

@@ -113,8 +113,10 @@ int main(void)
     }
     CHECK(size_of(old) > 0);
     CHECK(size_of(path) < 600 + 200);
+    // The file already held ~250 bytes, and lines are ~110: rotation keeps
+    // PATH.1 (one full file) plus the new PATH, so 6..11 events survive.
     r = hmi_journal_recent(j, 50);                 // reads PATH then PATH.1
-    CHECK(r.count >= 10);
+    CHECK(r.count >= 6 && r.count < 12);
     if (r.count >= 1 && r.items[0].count == 9)
         CHECK_NEAR(r.items[0].items[3].n, 11, 1e-9);   // newest first across files
     hmi_value_free(&r);
