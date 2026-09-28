@@ -29,6 +29,14 @@ static char p_signal[P_SIGNAL_MAX];
 static hmi_value_t p_arg;
 static const char *p_text;
 
+// The msgbox's two footer buttons carry the slot index (0 = Cancel, 1 = OK)
+// as user_data; a click answers the matching value and closes the box.
+static void confirm_clicked(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    hmi_actions_answer_confirm(lv_event_get_user_data(e) != NULL);
+}
+
 static void run_one(hmi_runtime_t *rt, hmi_widget_t *w, const hmi_action_t *a, hmi_value_t *arg)
 {
     hmi_tags_t *tags = hmi_runtime_tags(rt);
@@ -88,7 +96,7 @@ void hmi_actions_run(hmi_runtime_t *rt, hmi_widget_t *w, const char *signal, con
 {
     if (!rt || !w || !signal) return;
     // A confirmation (or any 13.5 popup) already open refuses this list.
-    if (confirm_open()) {
+    if (hmi_modal_owner()) {
         hmi_log(HMI_LOG_WARNING, "action on %s: dialog open, cancelled", w->id);
         return;
     }
@@ -104,10 +112,12 @@ void hmi_actions_run(hmi_runtime_t *rt, hmi_widget_t *w, const char *signal, con
         snprintf(p_signal, sizeof p_signal, "%s", signal);
         p_arg = arg ? hmi_value_copy(arg) : hmi_value_null();
         p_text = confirm;
-        lv_obj_t *box = lv_msgbox_create(NULL, "", p_text, NULL, true);
-        lv_msgbox_add_button(box, box, "Cancel", confirm_clicked, NULL);
-        lv_msgbox_add_button(box, box, "OK", confirm_clicked, NULL);
-        lv_modal_set_mode(lv_obj_get_child(box, 0), LV_MODAL_MODE_OVERLAY);
+        lv_obj_t *box = lv_msgbox_create(NULL);
+        lv_msgbox_add_text(box, p_text);
+        lv_obj_t *cancel = lv_msgbox_add_footer_button(box, "Cancel");
+        lv_obj_t *ok = lv_msgbox_add_footer_button(box, "OK");
+        lv_obj_add_event_cb(cancel, confirm_clicked, LV_EVENT_CLICKED, NULL);
+        lv_obj_add_event_cb(ok, confirm_clicked, LV_EVENT_CLICKED, (void *)1);
         hmi_modal_claim("confirm");
         return;
     }
