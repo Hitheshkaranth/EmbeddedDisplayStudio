@@ -80,6 +80,18 @@ static uint32_t rt_now_ms(void)
     return (uint32_t)(ts.tv_sec * 1000u + ts.tv_nsec / 1000000u);
 }
 
+// The tag engine -> runtime wiring main.c does (tag changes reach bindings
+// and alarms; the link state reaches the overlay).
+static void rt_on_tag(const char *tag, const hmi_value_t *value, void *user)
+{
+    hmi_runtime_on_tag((hmi_runtime_t *)user, tag, value);
+}
+
+static void rt_on_online(bool online, void *user)
+{
+    hmi_runtime_on_online((hmi_runtime_t *)user, online);
+}
+
 // apps_dir may be NULL (no manifest alarms).
 static bool rt_open_dir(rt_t *h, const char *design_json, bool with_link, const char *apps_dir)
 {
@@ -102,6 +114,7 @@ static bool rt_open_dir(rt_t *h, const char *design_json, bool with_link, const 
         h->tags = hmi_tags_create(&opt);
     }
     h->rt = hmi_runtime_create(h->project, lv_screen_active(), h->tags, apps_dir);
+    if (h->tags && h->rt) hmi_tags_set_callbacks(h->tags, rt_on_tag, rt_on_online, NULL, h->rt);
     return h->rt != NULL;
 }
 
