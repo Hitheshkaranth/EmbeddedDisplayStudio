@@ -2,375 +2,326 @@
 //
 // The numeric keypad (ShNumInput) and the text keyboard (ShInput) both claim
 // the single modal.h slot ("keypad" / "keyboard") while open and refuse to
-// open when it is taken. They build their LVGL objects on lv_layer_top() and
-// delete them (releasing the slot) on OK/Cancel. See input.h for the exact
-// contract of each key and outcome.
+// open when it is taken. Each builds one tree under a full-screen scrim on
+// lv_layer_top() -- the scrim keeps taps off the page underneath -- and
+// closing deletes that tree and releases the slot. The on-screen buttons and
+// the test hook hmi_input_press run the same code, so what the gate drives is
+// what an operator touches.
 #include "input.h"
 
-#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "compat.h"
-#include "log.h"
 #include "modal.h"
 #include "theme.h"
 
-#define KEY_PAD_OWNER "keypad"
+#define KEYPAD_OWNER "keypad"
 #define KEYBOARD_OWNER "keyboard"
 
-#define MAX_KEYS 16
-
-// One open popup (keypad or keyboard): one modal slot, one at a time.
-struct hmi_input_popup {
-    lv_obj_t *pad;            // the editing object (keypad entry label / textarea)
-    lv_obj_t *errlabel;       // the range message (keypad)
-    lv_obj_t *ok_btn;         // the OK button (keypad)
-    lv_obj_t *cancel_btn;     // the Cancel button (keypad)
-
-    hmi_widget_t *w;          // the widget that opened it
-    hmi_input_numeric_cb done_num;
-    hmi_input_text_cb done_txt;
-    void *user;
+typedef struct {
     bool is_text;             // true: keyboard, false: numeric keypad
+    lv_obj_t *root;           // the scrim; deleting it frees the whole popup
+    lv_obj_t *entry_label;    // keypad: shows `entry`
+    lv_obj_t *error_label;    // keypad: the range message
+    lv_obj_t *textarea;       // keyboard
+    hmi_input_numeric_cb done_num;
+    hmi_input_text_cb done_text;
+    void *user;
+    double min, max;
+    int decimals;
+    char entry[64];           // keypad entry text
+} popup_t;
 
-    char entry[256];          // the entry text (keypad)
-    double min, max;          // range for the numeric pad
-    int decimals;             // decimals for the numeric pad
+static popup_t *g_popup;
 
-    lv_obj_t *keys[MAX_KEYS]; // keypad key buttons (label: digit/BS/C/-)
-    int nkeys;
-};
-
-static struct hmi_input_popup *g_popup;
-
-// Round half away from zero to `decimals` decimals.
-static double round_half(double v, int decimals)
+// Round half away from zero to `decimals`. The product is nudged by a hair
+// first: 12.25 * 10 is exact, but 1.005 * 100 lands on 100.49999..., and an
+// operator who typed the 5 means the half.
+static double round_half_away(double v, int decimals)
 {
-    double p = pow(10.0, (double)decimals);
-    return round(v * p) / p;
+    double scale = pow(10.0, (double)decimals);
+    double s = fabs(v) * scale;
+    double r = floor(s);
+    if (s - r >= 0.5 - 1e-9 * (s > 1.0 ? s : 1.0)) r += 1.0;
+    return copysign(r / scale, v);
 }
 
-// Parse the entry as a finite number; false when empty or not a number.
 static bool parse_entry(const char *text, double *out)
 {
     if (!text || !*text) return false;
     char *end = NULL;
-    errno = 0;
     double v = strtod(text, &end);
     if (end == text || *end != '\0' || !isfinite(v)) return false;
     *out = v;
     return true;
 }
 
-// The shared accessor for the current entry text ("" when closed).
-const char *hmi_input_entry(void)
+static void close_popup(void)
 {
-    return g_popup ? g_popup->entry : "";
-}
-
-bool hmi_input_error_shown(void)
-{
-    return g_popup && g_popup->errlabel &&
-           !lv_obj_has_flag(g_popup->errlabel, LV_OBJ_FLAG_HIDDEN);
-}
-
-bool hmi_input_is_open(void) { return g_popup != NULL; }
-
-// Show the range message "<min>..<max>" in the destructive colour.
-static void show_error(hmi_widget_t *w, double min, double max)
-{
-    (void)w;
-    char msg[96];
-    snprintf(msg, sizeof msg, "%g..%g", min, max);
-    lv_label_set_text(g_popup->errlabel, msg);
-    lv_obj_remove_flag(g_popup->errlabel, LV_OBJ_FLAG_HIDDEN);
-}
-
-static void hide_error(void)
-{
-    lv_obj_add_flag(g_popup->errlabel, LV_OBJ_FLAG_HIDDEN);
-}
-
-static void finish_popup_free(struct hmi_input_popup *p)
-{
-    if (p->is_text)
-        hmi_modal_release(KEYBOARD_OWNER);
-    else
-        hmi_modal_release(KEY_PAD_OWNER);
+    popup_t *p = g_popup;
+    if (!p) return;
+    g_popup = NULL;
+    // Deleting from inside one of its own button callbacks is safe in LVGL 9:
+    // the running event chain is marked deleted and the indev is reset.
+    if (p->root) lv_obj_delete(p->root);
+    hmi_modal_release(p->is_text ? KEYBOARD_OWNER : KEYPAD_OWNER);
     free(p);
 }
 
-// The numeric keypad's OK: validate, then call the widget's numeric callback.
-static void keypad_ok_cb(lv_event_t *e)
+static lv_obj_t *make_scrim(void)
 {
-    (void)e;
+    lv_obj_t *scrim = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(scrim);
+    lv_obj_set_size(scrim, lv_pct(100), lv_pct(100));
+    lv_obj_set_style_bg_color(scrim, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(scrim, LV_OPA_50, 0);
+    lv_obj_add_flag(scrim, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(scrim, LV_OBJ_FLAG_SCROLLABLE);
+    return scrim;
+}
+
+// -- numeric keypad -------------------------------------------------------------
+
+static void keypad_show_entry(void)
+{
+    lv_label_set_text(g_popup->entry_label, g_popup->entry);
+}
+
+static void keypad_ok(void)
+{
     double v = 0;
     if (!parse_entry(g_popup->entry, &v) || v < g_popup->min || v > g_popup->max) {
-        show_error(g_popup->w, g_popup->min, g_popup->max);
-        return;   // keep the pad open
+        char msg[80];
+        snprintf(msg, sizeof msg, "%g..%g", g_popup->min, g_popup->max);
+        lv_label_set_text(g_popup->error_label, msg);
+        lv_obj_remove_flag(g_popup->error_label, LV_OBJ_FLAG_HIDDEN);
+        return;   // the pad stays open
     }
-    hide_error();
-    double rounded = round_half(v, g_popup->decimals);
-    int n = snprintf(g_popup->entry, sizeof g_popup->entry, "%.*f",
-                     g_popup->decimals, rounded);
-    if (n > 0 && (size_t)n < sizeof g_popup->entry) g_popup->entry[n] = '\0';
-    lv_obj_delete(g_popup->pad);
-    struct hmi_input_popup *p = g_popup;
-    g_popup = NULL;
-    finish_popup_free(p);
-    if (p->done_num) p->done_num(rounded, p->user);
+    double value = round_half_away(v, g_popup->decimals);
+    hmi_input_numeric_cb done = g_popup->done_num;
+    void *user = g_popup->user;
+    close_popup();   // before the callback: it may open the next popup
+    if (done) done(value, user);
 }
 
-static void keypad_cancel_cb(lv_event_t *e)
+// One keypad key; false for a key the keypad does not have.
+static bool keypad_key(const char *key)
 {
-    (void)e;
-    lv_obj_delete(g_popup->pad);
-    struct hmi_input_popup *p = g_popup;
-    g_popup = NULL;
-    finish_popup_free(p);
-}
-
-// A keypad digit/operation key on the shared row.
-static void keypad_key_cb(lv_event_t *e)
-{
-    lv_obj_t *b = lv_event_get_target(e);
-    size_t len = strlen(g_popup->entry);
-    for (int i = 0; i < g_popup->nkeys; i++) {
-        if (g_popup->keys[i] != b) continue;
-        const char *label = "";
-        lv_obj_t *t = lv_obj_get_child(b, 0);
-        if (t) label = lv_label_get_text(t);
-        if (!label) return;
-        if (strcmp(label, "BS") == 0) {
-            if (len) g_popup->entry[len - 1] = '\0';
-        } else if (strcmp(label, "C") == 0) {
-            g_popup->entry[0] = '\0';
-        } else if (strcmp(label, "-") == 0) {
-            if (g_popup->entry[0] == '-') {
-                memmove(g_popup->entry, g_popup->entry + 1, strlen(g_popup->entry));
-            } else if (len < (sizeof g_popup->entry) - 1) {
-                memmove(g_popup->entry + 1, g_popup->entry, strlen(g_popup->entry) + 1);
-                g_popup->entry[0] = '-';
-            }
-        } else if (strcmp(label, ".") == 0) {
-            if (len < (sizeof g_popup->entry) - 1 &&
-                strstr(g_popup->entry, ".") == NULL) {
-                g_popup->entry[len] = '.';
-                g_popup->entry[len + 1] = '\0';
-            }
-        } else if (label[0] >= '0' && label[0] <= '9' &&
-                   len < (sizeof g_popup->entry) - 1) {
-            g_popup->entry[len] = label[0];
-            g_popup->entry[len + 1] = '\0';
-        }
-        break;
+    char *e = g_popup->entry;
+    size_t len = strlen(e);
+    if (strcmp(key, "OK") == 0) { keypad_ok(); return true; }
+    if (strcmp(key, "CANCEL") == 0) { close_popup(); return true; }
+    if (strcmp(key, "BS") == 0) {
+        if (len) e[len - 1] = '\0';
+    } else if (strcmp(key, "C") == 0) {
+        e[0] = '\0';
+    } else if (strcmp(key, "-") == 0) {
+        if (e[0] == '-') memmove(e, e + 1, len);
+        else if (len + 1 < sizeof g_popup->entry) { memmove(e + 1, e, len + 1); e[0] = '-'; }
+    } else if (strcmp(key, ".") == 0) {
+        if (!strchr(e, '.') && len + 1 < sizeof g_popup->entry) { e[len] = '.'; e[len + 1] = '\0'; }
+    } else if (key[0] >= '0' && key[0] <= '9' && key[1] == '\0') {
+        if (len + 1 < sizeof g_popup->entry) { e[len] = key[0]; e[len + 1] = '\0'; }
+    } else {
+        return false;
     }
-    if (g_popup->pad) lv_label_set_text(g_popup->pad, g_popup->entry);
+    lv_obj_add_flag(g_popup->error_label, LV_OBJ_FLAG_HIDDEN);   // the range hint was for the old entry
+    keypad_show_entry();
+    return true;
 }
 
-static lv_obj_t *make_key(lv_obj_t *row, const char *text, lv_event_cb_t cb)
+static void keypad_button_cb(lv_event_t *e)
 {
-    lv_obj_t *b = lv_button_create(row);
+    // The key name is the static string passed as user data.
+    if (g_popup && !g_popup->is_text) keypad_key((const char *)lv_event_get_user_data(e));
+}
+
+static void make_key(lv_obj_t *grid, const char *key, const char *caption, const char *bg,
+                     const char *fg, int col, int row, int span)
+{
+    lv_obj_t *b = lv_button_create(grid);
     lv_obj_remove_style_all(b);
-    lv_obj_set_flex_grow(b, 1);
-    lv_obj_set_style_radius(b, hmi_radius("md"), 0);
-    lv_obj_set_style_bg_color(b, hmi_colour("secondary"), 0);
+    lv_obj_set_grid_cell(b, LV_GRID_ALIGN_STRETCH, col, span, LV_GRID_ALIGN_STRETCH, row, 1);
+    lv_obj_set_style_radius(b, hmi_radius("radiusMd"), 0);
+    lv_obj_set_style_bg_color(b, hmi_colour(bg), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_70, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(b, hmi_colour("border"), 0);
+    lv_obj_set_style_border_width(b, 1, 0);
     lv_obj_t *t = lv_label_create(b);
-    lv_label_set_text(t, text);
+    lv_obj_set_style_text_font(t, hmi_font(hmi_font_size("fontSizeLg"), 500), 0);
+    lv_obj_set_style_text_color(t, hmi_colour(fg), 0);
+    lv_label_set_text(t, caption);
     lv_obj_center(t);
-    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
-    return b;
+    lv_obj_add_event_cb(b, keypad_button_cb, LV_EVENT_CLICKED, (void *)key);
 }
 
-static lv_obj_t *make_action_key(lv_obj_t *row, const char *text, lv_color_t bg,
-                                 lv_event_cb_t cb)
-{
-    lv_obj_t *b = make_key(row, text, cb);
-    lv_obj_set_style_bg_color(b, bg, 0);
-    return b;
-}
-
-// A key that hmi_input_press must reach by label: register it and style it.
-static lv_obj_t *register_key(const char *text, lv_event_cb_t cb, lv_obj_t *row,
-                              lv_color_t bg)
-{
-    lv_obj_t *b = make_key(row, text, cb);
-    lv_obj_set_style_bg_color(b, bg, 0);
-    if (g_popup->nkeys < MAX_KEYS) g_popup->keys[g_popup->nkeys++] = b;
-    return b;
-}
-
-// Build the whole keypad on lv_layer_top.
 static void build_keypad(void)
 {
-    lv_obj_t *root = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(root);
-    lv_obj_set_size(root, lv_pct(100), LV_SIZE_CONTENT);
-    lv_obj_align(root, LV_ALIGN_BOTTOM_MID, 0, -64);
-    lv_obj_set_flex_flow(root, LV_FLEX_FLOW_COLUMN);
+    popup_t *p = g_popup;
+    p->root = make_scrim();
 
-    // The editing line.
-    lv_obj_t *entry = lv_obj_create(root);
-    lv_obj_remove_style_all(entry);
-    lv_obj_set_size(entry, lv_pct(100), 44);
-    lv_obj_set_style_border_color(entry, hmi_colour("input"), 0);
-    lv_obj_set_style_border_width(entry, 1, 0);
-    lv_obj_t *lbl = lv_label_create(entry);
-    lv_label_set_text(lbl, g_popup->entry);
-    lv_obj_set_style_text_font(lbl, hmi_font(hmi_font_size("fontSizeMd"), 500), 0);
-    lv_label_set_long_mode(lbl, LV_LABEL_LONG_SCROLL);
-    g_popup->pad = lbl;   // the entry label: edited by the keys, read on OK
+    lv_obj_t *card = lv_obj_create(p->root);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_size(card, 300, LV_SIZE_CONTENT);
+    lv_obj_center(card);
+    lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(card, hmi_colour("card"), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, hmi_colour("border"), 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, hmi_radius("radiusLg"), 0);
+    lv_obj_set_style_pad_all(card, 12, 0);
+    lv_obj_set_style_pad_row(card, 8, 0);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
 
-    // The hidden range message.
-    g_popup->errlabel = lv_label_create(root);
-    lv_obj_remove_style_all(g_popup->errlabel);
-    lv_label_set_text(g_popup->errlabel, "");
-    lv_obj_set_style_text_color(g_popup->errlabel, hmi_colour("destructive"), 0);
-    lv_obj_add_flag(g_popup->errlabel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_t *box = lv_obj_create(card);
+    lv_obj_remove_style_all(box);
+    lv_obj_set_size(box, lv_pct(100), 48);
+    lv_obj_remove_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(box, hmi_colour("background"), 0);
+    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(box, hmi_colour("input"), 0);
+    lv_obj_set_style_border_width(box, 1, 0);
+    lv_obj_set_style_radius(box, hmi_radius("radiusMd"), 0);
+    p->entry_label = lv_label_create(box);
+    lv_obj_set_style_text_font(p->entry_label, hmi_font(hmi_font_size("fontSizeXl"), 600), 0);
+    lv_obj_set_style_text_color(p->entry_label, hmi_colour("foreground"), 0);
+    lv_obj_align(p->entry_label, LV_ALIGN_RIGHT_MID, -12, 0);
+    keypad_show_entry();
 
-// Keypad rows: 1-2-3, 4-5-6, 7-8-9, .-0-BS.
-    static const char *keys[4][3] = {{"1", "2", "3"}, {"4", "5", "6"}, {"7", "8", "9"},
-                                       {".", "0", "BS"}};
-    for (int r = 0; r < 4; r++) {
-        lv_obj_t *row = lv_obj_create(root);
-        lv_obj_remove_style_all(row);
-        lv_obj_set_size(row, lv_pct(100), 40);
-        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    p->error_label = lv_label_create(card);
+    lv_obj_set_style_text_font(p->error_label, hmi_font(hmi_font_size("fontSizeSm"), 500), 0);
+    lv_obj_set_style_text_color(p->error_label, hmi_colour("destructive"), 0);
+    lv_label_set_text(p->error_label, "");
+    lv_obj_add_flag(p->error_label, LV_OBJ_FLAG_HIDDEN);
+
+    static const int32_t cols[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1),
+                                   LV_GRID_TEMPLATE_LAST};
+    static const int32_t rows[] = {52, 52, 52, 52, 52, LV_GRID_TEMPLATE_LAST};
+    lv_obj_t *grid = lv_obj_create(card);
+    lv_obj_remove_style_all(grid);
+    lv_obj_set_size(grid, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_remove_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_row(grid, 6, 0);
+    lv_obj_set_style_pad_column(grid, 6, 0);
+    lv_obj_set_grid_dsc_array(grid, cols, rows);
+
+    static const char *digits[3][3] = {{"7", "8", "9"}, {"4", "5", "6"}, {"1", "2", "3"}};
+    for (int r = 0; r < 3; r++)
         for (int c = 0; c < 3; c++)
-            register_key(keys[r][c], keypad_key_cb, row, hmi_colour("secondary"));
-    }
-
-    // Bottom control row: C, "-", CANCEL, OK.
-    lv_obj_t *row5 = lv_obj_create(root);
-    lv_obj_remove_style_all(row5);
-    lv_obj_set_size(row5, lv_pct(100), 44);
-    lv_obj_set_flex_flow(row5, LV_FLEX_FLOW_ROW);
-register_key("C", keypad_key_cb, row5, hmi_colour("secondary"));
-    register_key("-", keypad_key_cb, row5, hmi_colour("secondary"));
-    lv_obj_t *cancel = make_action_key(row5, "CANCEL", hmi_colour("secondary"), keypad_cancel_cb);
-    g_popup->cancel_btn = cancel;
-    g_popup->ok_btn = make_action_key(row5, "OK", hmi_colour("brand"), keypad_ok_cb);
+            make_key(grid, digits[r][c], digits[r][c], "secondary", "secondaryForeground", c, r, 1);
+    // Inter has no FontAwesome glyphs, so the backspace key is spelled out.
+    make_key(grid, "BS", "Del", "muted", "foreground", 3, 0, 1);
+    make_key(grid, "C", "C", "muted", "foreground", 3, 1, 1);
+    make_key(grid, "-", "+/-", "muted", "foreground", 3, 2, 1);
+    make_key(grid, "0", "0", "secondary", "secondaryForeground", 0, 3, 2);
+    make_key(grid, ".", ".", "secondary", "secondaryForeground", 2, 3, 1);
+    make_key(grid, "CANCEL", "Cancel", "muted", "foreground", 0, 4, 2);
+    make_key(grid, "OK", "OK", "primary", "primaryForeground", 2, 4, 2);
 }
 
 bool hmi_input_open_numeric(hmi_widget_t *w, double value, double min, double max, int decimals,
                             hmi_input_numeric_cb done, void *user)
 {
-    if (g_popup) return false;   // one popup at a time
-    if (!hmi_modal_claim(KEY_PAD_OWNER)) return false;
-    struct hmi_input_popup *p = calloc(1, sizeof *p);
-    if (!p) { hmi_modal_release(KEY_PAD_OWNER); return false; }
-    p->w = w;
+    (void)w;
+    if (g_popup || !hmi_modal_claim(KEYPAD_OWNER)) return false;
+    popup_t *p = calloc(1, sizeof *p);
+    if (!p) { hmi_modal_release(KEYPAD_OWNER); return false; }
+    if (decimals < 0) decimals = 0;
+    if (decimals > 12) decimals = 12;
     p->done_num = done;
     p->user = user;
     p->min = min;
     p->max = max;
     p->decimals = decimals;
-    int n = snprintf(p->entry, sizeof p->entry, "%.*f", decimals, value);
-    if (n > 0 && (size_t)n < sizeof p->entry) p->entry[n] = '\0';
+    snprintf(p->entry, sizeof p->entry, "%.*f", decimals, value);
     g_popup = p;
     build_keypad();
-    return g_popup->pad != NULL;
+    return true;
 }
 
 // -- text keyboard --------------------------------------------------------------
 
-static void keyboard_ready_cb(lv_event_t *e)
+static void keyboard_ok(void)
 {
-    (void)e;
-    const char *t = lv_textarea_get_text(g_popup->pad);
-    char dup[256];
-    snprintf(dup, sizeof dup, "%s", t ? t : "");
-    lv_obj_delete(g_popup->pad);
-    struct hmi_input_popup *p = g_popup;
-    g_popup = NULL;
-    hmi_input_text_cb done_txt = p->done_txt;
-    void *user = p->user;
-    finish_popup_free(p);
-    if (done_txt) done_txt(dup, user);
+    char text[256];
+    snprintf(text, sizeof text, "%s", lv_textarea_get_text(g_popup->textarea));
+    hmi_input_text_cb done = g_popup->done_text;
+    void *user = g_popup->user;
+    close_popup();
+    if (done) done(text, user);
 }
 
-static void keyboard_cancel_cb(lv_event_t *e)
+static void keyboard_event_cb(lv_event_t *e)
 {
-    (void)e;
-    lv_obj_delete(g_popup->pad);
-    struct hmi_input_popup *p = g_popup;
-    g_popup = NULL;
-    finish_popup_free(p);
+    if (!g_popup || !g_popup->is_text) return;
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_READY) keyboard_ok();
+    else if (code == LV_EVENT_CANCEL) close_popup();
 }
 
-// Open the text keyboard; returns false when the slot is taken.
 bool hmi_input_open_text(hmi_widget_t *w, const char *text, hmi_input_text_cb done, void *user)
 {
-    if (g_popup) return false;
-    if (!hmi_modal_claim(KEYBOARD_OWNER)) return false;
-    struct hmi_input_popup *p = calloc(1, sizeof *p);
+    (void)w;
+    if (g_popup || !hmi_modal_claim(KEYBOARD_OWNER)) return false;
+    popup_t *p = calloc(1, sizeof *p);
     if (!p) { hmi_modal_release(KEYBOARD_OWNER); return false; }
-    p->w = w;
-    p->done_txt = done;
-    p->user = user;
     p->is_text = true;
-    snprintf(p->entry, sizeof p->entry, "%s", text ? text : "");
-
-    lv_obj_t *area = lv_textarea_create(lv_layer_top());
-    lv_obj_remove_style_all(area);
-    lv_obj_set_size(area, lv_pct(100), 44);
-    lv_textarea_set_text(area, p->entry);
-    lv_textarea_set_one_line(area, true);
-
-    lv_obj_t *kb = lv_keyboard_create(lv_layer_top());
-    lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_TEXT_LOWER);
-    lv_keyboard_set_textarea(kb, area);
-    lv_obj_add_event_cb(kb, keyboard_ready_cb, LV_EVENT_READY, NULL);
-    lv_obj_add_event_cb(kb, keyboard_cancel_cb, LV_EVENT_CANCEL, NULL);
-
+    p->done_text = done;
+    p->user = user;
     g_popup = p;
-    g_popup->pad = area;   // the editing object: the textarea
-    return g_popup->pad != NULL;
+    p->root = make_scrim();
+
+    lv_obj_t *ta = lv_textarea_create(p->root);
+    lv_textarea_set_one_line(ta, true);
+    lv_textarea_set_max_length(ta, 255);
+    lv_obj_set_width(ta, lv_pct(90));
+    lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 16);
+    lv_obj_set_style_text_font(ta, hmi_font(hmi_font_size("fontSizeLg"), 400), 0);
+    lv_textarea_set_text(ta, text ? text : "");
+    lv_obj_add_state(ta, LV_STATE_FOCUSED);   // show the cursor
+    p->textarea = ta;
+
+    lv_obj_t *kb = lv_keyboard_create(p->root);
+    lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_TEXT_LOWER);
+    lv_keyboard_set_textarea(kb, ta);
+    lv_obj_add_event_cb(kb, keyboard_event_cb, LV_EVENT_READY, NULL);
+    lv_obj_add_event_cb(kb, keyboard_event_cb, LV_EVENT_CANCEL, NULL);
+    return true;
 }
 
-// The on-screen buttons (and the widget's ready/cancel) call the same code.
+// -- shared ---------------------------------------------------------------------
+
+bool hmi_input_is_open(void) { return g_popup != NULL; }
+
 bool hmi_input_press(const char *key)
 {
-    if (!g_popup) return false;
-    if (g_popup->is_text) {
-        if (strcmp(key, "OK") == 0) {
-            lv_obj_send_event(g_popup->pad, LV_EVENT_READY, NULL);
-            return true;
-        }
-        if (strcmp(key, "CANCEL") == 0) {
-            lv_obj_send_event(g_popup->pad, LV_EVENT_CANCEL, NULL);
-            return true;
-        }
-        return false;
-    }
-    if (strcmp(key, "OK") == 0) {
-        lv_obj_send_event(g_popup->ok_btn, LV_EVENT_CLICKED, NULL);
-        return true;
-    }
-    if (strcmp(key, "CANCEL") == 0) {
-        lv_obj_send_event(g_popup->cancel_btn, LV_EVENT_CLICKED, NULL);
-        return true;
-    }
-    // Drive the key button whose label matches `key` (digit/BS/C/-).
-    for (int i = 0; i < g_popup->nkeys; i++) {
-        const char *label = "";
-        lv_obj_t *t = lv_obj_get_child(g_popup->keys[i], 0);
-        if (t) label = lv_label_get_text(t);
-        if (label && strcmp(label, key) == 0) {
-            lv_obj_send_event(g_popup->keys[i], LV_EVENT_CLICKED, NULL);
-            return true;
-        }
-    }
+    if (!g_popup || !key) return false;
+    if (!g_popup->is_text) return keypad_key(key);
+    if (strcmp(key, "OK") == 0) { keyboard_ok(); return true; }
+    if (strcmp(key, "CANCEL") == 0) { close_popup(); return true; }
     return false;
 }
 
-// Replace the keyboard's text; not supported by the keypad.
+const char *hmi_input_entry(void)
+{
+    if (!g_popup) return "";
+    if (g_popup->is_text) return lv_textarea_get_text(g_popup->textarea);
+    return g_popup->entry;
+}
+
 bool hmi_input_set_text(const char *text)
 {
     if (!g_popup || !g_popup->is_text) return false;
-    lv_textarea_set_text(g_popup->pad, text ? text : "");
+    lv_textarea_set_text(g_popup->textarea, text ? text : "");
     return true;
+}
+
+bool hmi_input_error_shown(void)
+{
+    return g_popup && !g_popup->is_text && g_popup->error_label &&
+           !lv_obj_has_flag(g_popup->error_label, LV_OBJ_FLAG_HIDDEN);
 }

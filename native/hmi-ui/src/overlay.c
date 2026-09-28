@@ -1,239 +1,144 @@
-// overlay.c -- see overlay.h (CONTRACT 13.5). STUB: wave 1 W5 implements.
+// overlay.c -- see overlay.h (CONTRACT 13.5). Wave 1 W5 implements.
+//
+// Both objects live on lv_layer_top() and are created lazily: a panel that
+// never loses its link and never idles has nothing extra in its tree.
 #include "overlay.h"
-
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include "compat.h"
-#include "log.h"
-#include "theme.h"
 
 #include <dirent.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
 
-#define IDLE_GRACE_MS 5000u
+#include "log.h"
+#include "theme.h"
 
+#define LINK_GRACE_MS 5000u
 #define MAXPATH 512
 
 struct hmi_overlay {
     // Link banner.
-    lv_obj_t *banner;             // NULL until shown
     bool has_link;
     bool online;
-    uint32_t first_tick;          // ms of the first tick; 0 = never ticked
-    bool grace_used;              // the 5 s grace since the first tick elapsed
+    bool was_online;              // a link(false) only counts after an online period
+    bool ticked;
+    bool grace_over;              // 5 s since the first tick
+    uint32_t first_tick;
+    lv_obj_t *banner;             // NULL until first shown
 
     // Idle / backlight.
-    int idle_dim_s;
-    int idle_dim_pct;
-    int idle_off_s;
+    int dim_s, dim_pct, off_s;
     int bl_percent;               // what hmi_overlay_backlight_percent reports
-    int bl_max;                   // max_brightness, read once; 0 = no backlight dir
-    char dir[MAXPATH];            // the brightness-bearing directory (trailing /)
-    lv_obj_t *blank;              // black full-screen object while off
-    lv_obj_t *wake;               // clickable layer that swallows the waking touch
-    bool blanked;
+    int bl_max;                   // max_brightness, read once; 0 = no backlight
+    char bright_path[MAXPATH];    // <dir>/brightness
+    lv_obj_t *blank;              // black, clickable, full screen while off
 };
 
 static const char *BANNER_TEXT = "No connection to controller - values may be stale";
 
-// Forward declarations for the bottom-layer helpers.
-static void wake_cb(lv_event_t *e);
-
-// Resolve the brightness file's directory: the first entry of
-// $HMI_BACKLIGHT_DIR or /sys/class/backlight/. On success store max_brightness
-// in *max_out and the directory base in base (with a trailing '/').
-static bool resolve_backlight_dir(char *base, size_t len, int *max_out)
+// The first directory in $HMI_BACKLIGHT_DIR or /sys/class/backlight/ with a
+// readable max_brightness; false (and nothing set) when there is none.
+static bool find_backlight(hmi_overlay_t *o)
 {
     const char *env = getenv("HMI_BACKLIGHT_DIR");
     const char *root = (env && *env) ? env : "/sys/class/backlight";
-
     DIR *d = opendir(root);
-    if (!d) { *max_out = 0; return false; }
-
+    if (!d) return false;
     char name[256] = "";
     struct dirent *ent;
     while ((ent = readdir(d)) != NULL) {
-        if (ent->d_name[0] == '.' || ent->d_name[0] == '-') continue;
+        if (ent->d_name[0] == '.') continue;
         snprintf(name, sizeof name, "%s", ent->d_name);
         break;
     }
     closedir(d);
-    if (!name[0]) { *max_out = 0; return false; }
+    if (!name[0]) return false;
 
-    char basep[MAXPATH];
-    snprintf(basep, sizeof basep, "%s/%s/", root, name);
-    char maxp[MAXPATH];
-    snprintf(maxp, sizeof maxp, "%smax_brightness", basep);
-    FILE *f = fopen(maxp, "r");
-    if (!f) { *max_out = 0; return false; }
-    long m = 1;
-    if (fscanf(f, "%ld", &m) != 1 || m <= 0) m = 1;
+    char path[MAXPATH];
+    snprintf(path, sizeof path, "%s/%s/max_brightness", root, name);
+    FILE *f = fopen(path, "r");
+    if (!f) return false;
+    long m = 0;
+    if (fscanf(f, "%ld", &m) != 1) m = 0;
     fclose(f);
-
-    snprintf(base, len, "%s", basep);
-    *max_out = (int)m;
+    if (m <= 0) {
+        hmi_log(HMI_LOG_WARNING, "backlight %s: unreadable max_brightness", path);
+        return false;
+    }
+    o->bl_max = (int)m;
+    snprintf(o->bright_path, sizeof o->bright_path, "%s/%s/brightness", root, name);
     return true;
 }
 
-static void set_backlight(hmi_overlay_t *o_, int pct)
+// Callers only come here on a change, so the file is written only then.
+static void set_backlight(hmi_overlay_t *o, int pct)
 {
-    struct hmi_overlay *o = (struct hmi_overlay *)o_;
     o->bl_percent = pct;
-    if (o->bl_max <= 0) return;                     // no backlight: only the report changes
-    char abs[MAXPATH];
-    snprintf(abs, sizeof abs, "%s/brightness", o->dir);
-    long v = (long)lround((double)o->bl_max * pct / 100.0);
-    FILE *f = fopen(abs, "w");
-    if (f) { fprintf(f, "%ld\n", v); fclose(f); }
-}
-
-static void show_banner(hmi_overlay_t *o_)
-{
-    struct hmi_overlay *o = (struct hmi_overlay *)o_;
-    if (o->banner) { lv_obj_clear_flag(o->banner, LV_OBJ_FLAG_HIDDEN); return; }
-    lv_obj_t *bar = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(bar);
-    lv_obj_set_size(bar, lv_pct(100), LV_SIZE_CONTENT);
-    lv_obj_align(bar, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(bar, hmi_colour("destructive"), 0);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-    lv_obj_t *lbl = lv_label_create(bar);
-    lv_label_set_text(lbl, BANNER_TEXT);
-    lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 6);
-    lv_obj_update_layout(bar);
-    o->banner = bar;
-}
-
-static void hide_banner(hmi_overlay_t *o_)
-{
-    struct hmi_overlay *o = (struct hmi_overlay *)o_;
-    if (!o->banner) return;
-    lv_obj_add_flag(o->banner, LV_OBJ_FLAG_HIDDEN);
-}
-
-static void show_blank(hmi_overlay_t *o_)
-{
-    struct hmi_overlay *o = (struct hmi_overlay *)o_;
-    // The black full-screen object is the visible "off" screen; the separate
-    // clickable wake object above it swallows the touch that wakes it.
-    lv_obj_t *blk = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(blk);
-    lv_obj_set_size(blk, lv_pct(100), lv_pct(100));
-    lv_obj_set_style_bg_color(blk, lv_color_hex(0x000000), LV_OPA_COVER);
-    lv_obj_set_style_bg_opa(blk, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(blk, 0, 0);
-    lv_obj_remove_flag(blk, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *wake = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(wake);
-    lv_obj_set_size(wake, lv_pct(100), lv_pct(100));
-    lv_obj_set_style_bg_color(wake, lv_color_hex(0x000000), LV_OPA_TRANSP);
-    lv_obj_set_style_radius(wake, 0, 0);
-    lv_obj_add_flag(wake, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(wake, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ON_FOCUS);
-    lv_obj_add_event_cb(wake, wake_cb, LV_EVENT_CLICKED, o);
-
-    o->blank = blk;
-    o->wake = wake;
-    o->blanked = true;
-}
-
-static void hide_blank(hmi_overlay_t *o_)
-{
-    struct hmi_overlay *o = (struct hmi_overlay *)o_;
-    if (o->blank) { lv_obj_delete(o->blank); o->blank = NULL; }
-    if (o->wake) { lv_obj_delete(o->wake); o->wake = NULL; }
-    o->blanked = false;
-}
-
-static void wake_cb(lv_event_t *e)
-{
-    // The touch that wakes an off screen is swallowed here; hmi_overlay_wake
-    // performs the unblank on the next tick / call.
-    (void)e;
-}
-
-bool hmi_overlay_banner_visible(const hmi_overlay_t *o)
-{
-    return o && o->banner && !lv_obj_has_flag(o->banner, LV_OBJ_FLAG_HIDDEN);
-}
-
-int hmi_overlay_backlight_percent(const hmi_overlay_t *o)
-{
-    return o ? o->bl_percent : 100;
-}
-
-bool hmi_overlay_blanked(const hmi_overlay_t *o)
-{
-    return o && o->blanked;
-}
-
-bool hmi_overlay_wake(hmi_overlay_t *o_)
-{
-    struct hmi_overlay *o = (struct hmi_overlay *)o_;
-    if (!o || !o->blanked) return false;
-    set_backlight(o, 100);                          // the touch restores full brightness
-    hide_blank(o);
-    return true;
-}
-
-void hmi_overlay_link(hmi_overlay_t *o_, bool online)
-{
-    struct hmi_overlay *o = (struct hmi_overlay *)o_;
-    if (!o) return;
-    o->online = online;
-    // A connection loss always shows the banner (even right after being
-    // online); the 5 s grace only governs the "never came online" case.
-    if (o->has_link && !online) show_banner(o);
-    else hide_banner(o);
-}
-
-void hmi_overlay_tick(hmi_overlay_t *o_, uint32_t now_ms, uint32_t inactive_ms)
-{
-    struct hmi_overlay *o = (struct hmi_overlay *)o_;
-    if (!o) return;
-    if (!o->first_tick) o->first_tick = now_ms;
-    if (now_ms - o->first_tick >= IDLE_GRACE_MS) o->grace_used = true;
-
-    // Link banner: after the 5 s grace while still offline, or once online is
-    // dropped again.
-    if (o->has_link && !o->online) {
-        if (o->grace_used) show_banner(o);
-    } else {
-        hide_banner(o);
+    if (o->bl_max <= 0) return;   // no backlight: the overlay alone
+    FILE *f = fopen(o->bright_path, "w");
+    if (!f) {
+        hmi_log(HMI_LOG_WARNING, "backlight %s: cannot write", o->bright_path);
+        return;
     }
-
-    // Idle: off first, then dim, else full.
-    int target = 100;
-    bool blank = false;
-    if (o->idle_off_s && inactive_ms >= (uint32_t)o->idle_off_s * 1000u) {
-        target = 0;
-        blank = true;
-    } else if (o->idle_dim_s && inactive_ms >= (uint32_t)o->idle_dim_s * 1000u) {
-        target = o->idle_dim_pct;
-    }
-    if (target != o->bl_percent) set_backlight(o, target);
-    if (blank) {
-        if (!o->blanked) show_blank(o);
-    } else if (o->blanked) {
-        hide_blank(o);
-    }
+    fprintf(f, "%ld\n", lround((double)o->bl_max * pct / 100.0));
+    fclose(f);
 }
 
-void hmi_overlay_destroy(hmi_overlay_t *o_)
+static void set_banner(hmi_overlay_t *o, bool show)
 {
-    struct hmi_overlay *o = (struct hmi_overlay *)o_;
-    if (!o) return;
-    hide_blank(o);
-    if (o->banner) { lv_obj_delete(o->banner); o->banner = NULL; }
-    free(o);
+    if (!show) {
+        if (o->banner) lv_obj_add_flag(o->banner, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    if (!o->banner) {
+        lv_obj_t *bar = lv_obj_create(lv_layer_top());
+        lv_obj_remove_style_all(bar);
+        lv_obj_set_size(bar, lv_pct(100), LV_SIZE_CONTENT);
+        lv_obj_align(bar, LV_ALIGN_TOP_MID, 0, 0);
+        lv_obj_remove_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(bar, LV_OBJ_FLAG_CLICKABLE);   // the page under it stays usable
+        lv_obj_set_style_bg_color(bar, hmi_colour("destructive"), 0);
+        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_ver(bar, 6, 0);
+        lv_obj_t *lbl = lv_label_create(bar);
+        lv_obj_set_style_text_font(lbl, hmi_font(hmi_font_size("fontSizeSm"), 600), 0);
+        lv_obj_set_style_text_color(lbl, hmi_colour("destructiveForeground"), 0);
+        lv_label_set_text(lbl, BANNER_TEXT);
+        lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 0);
+        o->banner = bar;
+    }
+    lv_obj_remove_flag(o->banner, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void update_banner(hmi_overlay_t *o)
+{
+    if (!o->has_link || o->online) set_banner(o, false);
+    else set_banner(o, o->was_online || o->grace_over);
+}
+
+static void blank_pressed_cb(lv_event_t *e)
+{
+    hmi_overlay_wake(lv_event_get_user_data(e));
+}
+
+static void set_blank(hmi_overlay_t *o, bool on)
+{
+    if (!on) {
+        if (o->blank) { lv_obj_delete(o->blank); o->blank = NULL; }
+        return;
+    }
+    if (o->blank) return;
+    // Clickable and on top of everything: the waking touch lands here and
+    // never reaches the widget underneath.
+    lv_obj_t *b = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(b);
+    lv_obj_set_size(b, lv_pct(100), lv_pct(100));
+    lv_obj_set_style_bg_color(b, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(b, blank_pressed_cb, LV_EVENT_PRESSED, o);
+    o->blank = b;
 }
 
 hmi_overlay_t *hmi_overlay_create(const hmi_project_t *project, bool has_link)
@@ -243,12 +148,69 @@ hmi_overlay_t *hmi_overlay_create(const hmi_project_t *project, bool has_link)
     o->has_link = has_link;
     o->bl_percent = 100;
     if (project) {
-        o->idle_dim_s = project->idle_dim_s;
-        o->idle_dim_pct = project->idle_dim_pct;
-        o->idle_off_s = project->idle_off_s;
+        o->dim_s = project->idle_dim_s > 0 ? project->idle_dim_s : 0;
+        o->dim_pct = project->idle_dim_pct;
+        if (o->dim_pct < 10 || o->dim_pct > 100) o->dim_pct = 30;
+        o->off_s = project->idle_off_s > 0 ? project->idle_off_s : 0;
     }
-    char dir[MAXPATH];
-    if (!resolve_backlight_dir(dir, sizeof dir, &o->bl_max))
-        o->bl_max = 0;
+    // Only a panel that can idle needs the backlight.
+    if (o->dim_s || o->off_s) find_backlight(o);
     return o;
+}
+
+void hmi_overlay_destroy(hmi_overlay_t *o)
+{
+    if (!o) return;
+    set_blank(o, false);
+    if (o->banner) lv_obj_delete(o->banner);
+    free(o);
+}
+
+void hmi_overlay_link(hmi_overlay_t *o, bool online)
+{
+    if (!o) return;
+    o->online = online;
+    if (online) o->was_online = true;
+    update_banner(o);
+}
+
+void hmi_overlay_tick(hmi_overlay_t *o, uint32_t now_ms, uint32_t inactive_ms)
+{
+    if (!o) return;
+    if (!o->ticked) { o->ticked = true; o->first_tick = now_ms; }
+    if (!o->grace_over && now_ms - o->first_tick >= LINK_GRACE_MS) {
+        o->grace_over = true;
+        update_banner(o);
+    }
+
+    int pct = 100;
+    bool off = false;
+    if (o->off_s && inactive_ms >= (uint32_t)o->off_s * 1000u) {
+        pct = 0;
+        off = true;
+    } else if (o->dim_s && inactive_ms >= (uint32_t)o->dim_s * 1000u) {
+        pct = o->dim_pct;
+    }
+    if (pct != o->bl_percent) set_backlight(o, pct);
+    set_blank(o, off);
+}
+
+bool hmi_overlay_banner_visible(const hmi_overlay_t *o)
+{
+    return o && o->banner && !lv_obj_has_flag(o->banner, LV_OBJ_FLAG_HIDDEN);
+}
+
+int hmi_overlay_backlight_percent(const hmi_overlay_t *o) { return o ? o->bl_percent : 100; }
+
+bool hmi_overlay_blanked(const hmi_overlay_t *o) { return o && o->blank != NULL; }
+
+bool hmi_overlay_wake(hmi_overlay_t *o)
+{
+    if (!o) return false;
+    bool was_blank = o->blank != NULL;
+    if (o->bl_percent != 100) set_backlight(o, 100);
+    // Deleting the pressed object from its own PRESSED callback is safe in
+    // LVGL 9 (the indev is reset), and that reset is what drops the release.
+    set_blank(o, false);
+    return was_blank;
 }

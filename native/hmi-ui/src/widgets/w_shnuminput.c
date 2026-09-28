@@ -21,6 +21,7 @@ typedef struct {
     lv_obj_t *plusBtn;
     double value, minValue, maxValue, step;
     int decimalPlaces;
+    bool enabled;
     char unit[16];
 } shnuminput_state_t;
 
@@ -63,9 +64,8 @@ static void numinput_open_cb(lv_event_t *e)
 {
     hmi_widget_t *widget = (hmi_widget_t *)lv_event_get_user_data(e);
     if (!widget) return;
-    if (!hmi_widget_bool(widget, "enabled", true)) return;
     shnuminput_state_t *st = widget->state;
-    if (!st) return;
+    if (!st || !st->enabled) return;
     hmi_input_open_numeric(widget, st->value, st->minValue, st->maxValue,
                            st->decimalPlaces, numinput_done, widget);
 }
@@ -175,6 +175,7 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     st->maxValue = hmi_widget_num(w, "maxValue", 1000);
     st->step = hmi_widget_num(w, "step", 1);
     st->decimalPlaces = (int)hmi_widget_num(w, "decimalPlaces", 0);
+    st->enabled = hmi_widget_bool(w, "enabled", true);
     strncpy(st->unit, hmi_widget_str(w, "unit", ""), sizeof(st->unit) - 1);
 
     // Set label visibility
@@ -203,6 +204,10 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     // Click handlers
     lv_obj_add_event_cb(minusBtn, btn_click_cb, LV_EVENT_CLICKED, w);
     lv_obj_add_event_cb(plusBtn, btn_click_cb, LV_EVENT_CLICKED, w);
+    // A tap anywhere but -/+ reaches the root: the row and the value box
+    // only lay out, so they let the touch through (the buttons do not).
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(valueDisplay, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(bg, numinput_open_cb, LV_EVENT_CLICKED, w);
 
     w->state = st;
@@ -240,6 +245,8 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
         } else {
             lv_obj_clear_flag(st->label, LV_OBJ_FLAG_HIDDEN);
         }
+    } else if (strcmp(prop, "enabled") == 0) {
+        st->enabled = hmi_value_as_bool(value, st->enabled);
     } else if (strcmp(prop, "decimalPlaces") == 0) {
         st->decimalPlaces = (int)hmi_value_as_num(value, st->decimalPlaces);
         update_value_text(st);
