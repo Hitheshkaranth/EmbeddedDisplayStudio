@@ -8,10 +8,7 @@ from __future__ import annotations
 
 import math
 
-try:
-    from designer.model.project import ValidationIssue
-except ImportError:  # running as part of the model package directly
-    from project import ValidationIssue
+from .project import ValidationIssue
 
 ALARM_KEYS = ("priority", "latch", "delay_ms", "deadband", "message")
 
@@ -86,7 +83,7 @@ def manifest_fields(options: dict) -> dict:
                 result["delay_ms"] = value
         elif key == "deadband":
             if (not isinstance(value, (int, float)) or isinstance(value, bool)
-                    or not math.isfinite(value)):
+                    or not math.isfinite(value) or value < 0):
                 continue
             if value != 0:
                 result["deadband"] = value

@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import copy
 
-from PySide6.QtWidgets import QWidget, QFormLayout, QComboBox, QCheckBox, QSpinBox, \
-    QDoubleSpinBox, QLineEdit
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QLineEdit,
+                               QSpinBox, QWidget)
+
+from designer.model.alarm_options import manifest_fields
 
 
 ALARM_PRIORITY = ("Auto", "1", "2", "3", "4")
-DEFAULTS = {"priority": None, "latch": False, "delay_ms": 0, "deadband": 0.0, "message": ""}
 
 
 class AlarmExtras(QWidget):
@@ -52,16 +53,14 @@ class AlarmExtras(QWidget):
 
     def load(self, binding) -> None:
         """Show `binding.alarm` in the fields; Auto priority when it has none."""
-        alarm = getattr(binding, "alarm", None) or {}
-        priority = alarm.get("priority")
-        if priority is None:
-            self.priority.setCurrentIndex(0)
-        else:
-            self.priority.setCurrentIndex(int(priority))
-        self.latch.setChecked(bool(alarm.get("latch", False)))
-        self.delay.setValue(int(alarm.get("delay_ms", 0)))
-        self.deadband.setValue(alarm.get("deadband", 0.0) or 0.0)
-        self.message.setText(alarm.get("message", "") or "")
+        # Only valid options are shown: a hand-edited file can hold anything,
+        # and validate() is what names it.
+        alarm = manifest_fields(getattr(binding, "alarm", None) or {})
+        self.priority.setCurrentIndex(alarm.get("priority", 0))
+        self.latch.setChecked(alarm.get("latch", False))
+        self.delay.setValue(alarm.get("delay_ms", 0))
+        self.deadband.setValue(float(alarm.get("deadband", 0.0)))
+        self.message.setText(alarm.get("message", ""))
 
     def apply_to(self, binding):
         """Return a copy of `binding` whose `alarm` dict holds only the
