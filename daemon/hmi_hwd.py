@@ -52,6 +52,16 @@ except ImportError:
         register_count = None
         scale_read = None
 
+# The historian is imported (not inlined) so the panel ships one copy; it is
+# optional -- "history" absent from hwd.json means no historian at all.
+try:
+    from . import historian as _historian_mod
+except ImportError:
+    try:
+        import historian as _historian_mod
+    except ImportError:
+        _historian_mod = None
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -98,6 +108,7 @@ ERR_NOT_WRITABLE = "not_writable"
 ERR_BAD_VALUE = "bad_value"
 ERR_HW_ERROR = "hw_error"
 ERR_RATE_LIMITED = "rate_limited"
+ERR_NO_HISTORY = "no_history"
 
 logger = logging.getLogger("hmi-hwd")
 
@@ -1191,6 +1202,8 @@ class CommandProtocol(asyncio.DatagramProtocol):
             self._cmd_list(msg_id, addr)
         elif cmd == "ping":
             self._cmd_ping(msg_id, addr)
+        elif cmd == "history":
+            self._cmd_history(msg, msg_id, addr)
         else:
             self._daemon.error_count += 1
             _rl_log.warning(ERR_UNKNOWN_CMD, "Unknown command '%s' from %s", cmd, addr)
@@ -1333,6 +1346,60 @@ class CommandProtocol(asyncio.DatagramProtocol):
             reply["id"] = msg_id
         self._send_raw(reply, addr)
 
+    def _cmd_history(self, msg: dict, msg_id: Optional[str], addr: Tuple[str, int]) -> None:
+        """Handle the 'history' command (CONTRACT 13.4).
+
+        Replies no_history when the daemon has no historian or the tag is not
+        logged, unknown_tag for an unregistered tag, bad_value for out of
+        range seconds/points, otherwise a compact history object whose
+        datagram stays within the 8192 B limit (200 samples fit).
+        """
+        if self._daemon._historian is None:
+            if msg_id:
+                self._send_nack(msg_id, ERR_NO_HISTORY, addr)
+            return
+        tag = msg.get("tag")
+        if not isinstance(tag, str) or not self._daemon.tags.exists(tag):
+            self._daemon.error_count += 1
+            if msg_id:
+                self._send_nack(msg_id, ERR_UNKNOWN_TAG, addr)
+            return
+        if not self._daemon._historian.logs(tag):
+            if msg_id:
+                self._send_nack(msg_id, ERR_NO_HISTORY, addr)
+            return
+        seconds = msg.get("seconds", 3600)
+        points = msg.get("points", 200)
+        if (not isinstance(seconds, (int, float)) or isinstance(seconds, bool)
+                or not math.isfinite(seconds) or not (1 <= seconds <= 604800)):
+            if msg_id:
+                self._send_nack(msg_id, ERR_BAD_VALUE, addr)
+            return
+        if (not isinstance(points, (int, float)) or isinstance(points, bool)
+                or not math.isfinite(points) or not (1 <= points <= 200)):
+            if msg_id:
+                self._send_nack(msg_id, ERR_BAD_VALUE, addr)
+            return
+        samples = self._daemon._historian.query(tag, int(seconds), int(points))
+        if msg_id:
+            self._send_history_ack(msg_id, addr, tag, samples)
+
+    def _send_history_ack(self, msg_id: str, addr: Tuple[str, int], tag: str,
+                          samples: list) -> None:
+        """Serialise a history ack as compact JSON, keeping it under the
+        datagram ceiling; 200 samples fit, so cap the result there."""
+        history = {"tag": tag, "samples": samples}
+        reply = {"t": "ack", "ok": True, "id": msg_id, "history": history}
+        try:
+            payload = json.dumps(reply, separators=(",", ":")).encode("utf-8")
+            if len(payload) <= MAX_DGRAM_BYTES:
+                self._send_raw(reply, addr)
+            else:
+                self._send_raw({"t": "ack", "ok": True, "id": msg_id,
+                                "history": {"tag": tag, "samples": []}}, addr)
+        except Exception:
+            pass
+
     # -- Ack/nack helpers --
 
     def _send_ack(self, msg_id: str, addr: Tuple[str, int]) -> None:
@@ -1431,6 +1498,21 @@ class HwDaemon:
         self._seq: int = 0
         # Wallclock at daemon start for sys.uptime calculation.
         self._start_mono: float = time.monotonic()
+        # Tags whose read failed on the most recent poll (CONTRACT 13.4
+        # quality map). Cleared each poll and only "bad" tags are added.
+        self._bad_read: set = set()
+
+        # -- Historian (CONTRACT 13.4), created after the tag set is known so
+        #    it can validate against the configured "history" block. A malformed
+        #    block is a config error at startup; no block means no historian.
+        self._historian = None
+        hist_cfg = cfg.get("history")
+        if hist_cfg is not None and _historian_mod is not None:
+            try:
+                self._historian = _historian_mod.from_config(hist_cfg)
+            except _historian_mod.HistoryConfigError as exc:
+                logger.error("history config error: %s", exc)
+                self._historian = None
 
         # -- Parse daemon section --
         dcfg = cfg["daemon"]
@@ -1904,6 +1986,10 @@ class HwDaemon:
         Called once per poll cycle.  Errors degrade the tag to None (for ADC)
         or to the last known value (for GPIO), and increment the error counter.
         """
+        # A tag absent from the quality map this cycle is good again, so clear
+        # it before each poll (CONTRACT 13.4).
+        self._bad_read.clear()
+
         # GPIO inputs.
         for tag, offset in self._input_map.items():
             try:
@@ -1924,6 +2010,7 @@ class HwDaemon:
                 if val is None:
                     self.error_count += 1
                     _rl_log.warning(ERR_HW_ERROR, "ADC read error for %s", tag)
+                    self._bad_read.add(tag)
                 self.tags.set(tag, val)
 
         # UART tags.
@@ -1941,6 +2028,14 @@ class HwDaemon:
         elif self._modbus_tags:
             self.tags.set("sys.modbus_online", False)
 
+        # Feed the historian every numeric tag of this frame (CONTRACT 13.4).
+        # A bad read is left out of observe() as well: only real numbers log.
+        if self._historian is not None:
+            for tag, val in self.tags.snapshot().items():
+                if self._historian.logs(tag) and isinstance(val, (int, float)) \
+                        and not isinstance(val, bool):
+                    self._historian.observe(tag, val)
+
     def _build_telemetry_frame(self) -> bytes:
         """Build a single telemetry JSON frame per CONTRACT 2.4.
 
@@ -1955,6 +2050,12 @@ class HwDaemon:
             "tags": self.tags.snapshot(),
         }
         self._seq = (self._seq + 1) % SEQ_WRAP
+
+        # Tag quality map (CONTRACT 13.4): only tags whose read failed this
+        # cycle appear, each "bad"; a tag absent from the map is good again.
+        if self._bad_read:
+            frame["q"] = {tag: "bad" for tag in self._bad_read}
+
         return json.dumps(frame, separators=(",", ":")).encode("utf-8")
 
     def _safe_shutdown(self) -> None:
@@ -2005,6 +2106,11 @@ class HwDaemon:
             except Exception:
                 pass
 
+        # Flush and close the historian before we let the OS reap our sockets.
+        # close() is safe to call when the daemon has no historian.
+        if self._historian is not None:
+            self._historian.close()
+
     async def _publisher(self, send_sock: socket.socket) -> None:
         """Async task: poll inputs and publish telemetry at the configured rate.
 
@@ -2021,6 +2127,10 @@ class HwDaemon:
         while True:
             try:
                 self._poll_inputs()
+                # Batched commit for the historian (CONTRACT 13.4): at most
+                # every 5 s, except it flushes on this first call.
+                if self._historian is not None:
+                    self._historian.maybe_commit()
                 frame = self._build_telemetry_frame()
                 targets = self.subscribers.get_targets()
                 for addr in targets:
