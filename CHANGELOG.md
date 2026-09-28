@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.1.2
+
+**Code: the design's widgets and its backend, side by side**
+
+* **Outline** -- every widget of every page as one tree, with its tags and
+  binding issues; filter to bound widgets, to issues or to one tag; a click
+  selects the widget (switching page), a double-click opens its line in
+  `project.edsui`.
+* **Backend** -- one row per tag: read/write access, the widgets that use it,
+  its live value and status (`ok`, `unused`, `not declared`). Values come
+  from the Studio's tag engine while a panel is connected, else from a
+  simulator scaled to each widget's range; double-click a writable tag to
+  write it.
+* **Generate backend...** writes `backend/` into the project: a runnable
+  CONTRACT 2 UDP backend with one read/write stub per tag, `tags.json` and
+  `tags.h`.
+* The coding agent is told about the design -- pages, the selected widget,
+  its bindable properties, tags and issues -- with one-click quick actions.
+
+**Panel runtime (`hmi-ui`)**
+
+* A trend chart bound to an ordinary numeric tag draws that tag's recent
+  samples; it used to stay empty unless the tag itself carried a list.
+* ShToggle flips on a tap and draws `checked` on the right side; alarm tags
+  of 64 bytes or more fire; ShTrendChart draws the reference gradient in
+  O(width); ShClusterGauge no longer freezes on a tiny `majorStep`.
+
+**Designer**
+
+* Adding, duplicating and deleting pages, and arrow-key nudges, are undo
+  steps (a run of nudges is one); a multi-widget paste is one step. Before,
+  a later undo could replay geometry the design no longer had.
+* Arrange is 9x faster on busy pages; text alignment applies to every
+  selected text widget; image widgets are no longer decoded on every paint.
+
+**Daemon and deployment**
+
+* Commands with `NaN`/`Infinity` are rejected; subscribe TTL is capped at
+  60 s; a dead Modbus server is retried every `reconnect_s`, not at the poll
+  rate.
+* An upload the panel aborted reports the panel's own error; following panel
+  logs no longer repaints the whole view per line.
+* The Yocto layer installs `hwd.json` 0640.
+
+**CI** is green again: the Linux job builds `hmi-ui` and runs its C tests and
+the conformance and parity suites against it; the shell and native-loader
+jobs find their scripts.
+
 ## 0.1.1
 
 **Qt applications on a Qt-free panel**
