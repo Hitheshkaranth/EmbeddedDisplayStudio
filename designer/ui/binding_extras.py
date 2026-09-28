@@ -7,8 +7,9 @@ fields, calls `load(binding, definition)` when a binding is shown and
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
-from PySide6.QtWidgets import (QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
                                QPushButton, QSpinBox, QTableWidget, QWidget, QStyledItemDelegate,
                                QTableWidgetItem)
 from PySide6.QtCore import Qt
@@ -34,6 +35,8 @@ class BindingExtras(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QFormLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)   # flush with the binding fields above
+        layout.setVerticalSpacing(6)
 
         self.decimals = QSpinBox()
         self.decimals.setRange(-1, 6)
@@ -50,16 +53,20 @@ class BindingExtras(QWidget):
 
         self.state = QLabel()
         self.state.setObjectName("extraExprState")
-        self.state.setTextInteractionFlags(Qt.NoTextInteraction)
-        layout.addRow("Expression state", self.state)
+        self.state.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self.state.setWordWrap(True)
+        self.state.setStyleSheet("color: #ef4444;")   # only ever shows a problem
+        layout.addRow("", self.state)
 
         self.rules = QTableWidget(0, 3)
         self.rules.setObjectName("extraRules")
         self.rules.setHorizontalHeaderLabels(["If", "Property", "Value"])
         self.rules.setItemDelegateForColumn(2, QStyledItemDelegate())
         self.rules.verticalHeader().setVisible(False)
-        self.rules.setSelectionBehavior(QTableWidget.SelectRows)
-        layout.addRow(self.rules)
+        self.rules.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.rules.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.rules.setMaximumHeight(120)
+        layout.addRow("Rules", self.rules)
 
         buttons = QHBoxLayout()
         self.add_rule = QPushButton("Add rule")
@@ -101,7 +108,7 @@ class BindingExtras(QWidget):
         """Return a copy of `binding` with decimals / expr / rules from the
         fields (a Value cell is parsed as JSON when it is valid JSON, else
         kept as text). The argument is not modified."""
-        copy = type(binding)(**binding.__dict__)
+        copy = deepcopy(binding)
         copy.decimals = self.decimals.value()
         copy.expr = self.expr.text()
         copy.rules = []
@@ -132,8 +139,7 @@ class BindingExtras(QWidget):
     def _remove_rule(self) -> None:
         row = self.rules.currentRow()
         if row < 0:
-            rows = self.rules.rowCount()
-            row = rows - 1 if rows else 0
+            return   # nothing selected: removing an arbitrary rule would surprise
         if 0 <= row < self.rules.rowCount():
             self.rules.removeRow(row)
 

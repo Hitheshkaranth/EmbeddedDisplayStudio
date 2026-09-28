@@ -59,5 +59,22 @@ class AlarmExtrasHandEdited(unittest.TestCase):
         self.assertEqual(x.apply_to(DesignerBinding("a.b")).alarm, {})
 
 
+class RuleValidationFollowsTheContract(unittest.TestCase):
+    """validate_binding once refused null rule values, only saw the binding's
+    own property as "bound", and rejected '>80' that thresholds accept."""
+
+    def test_rules(self):
+        from designer.model import DesignerWidget
+        from designer.model.binding_v2 import validate_binding
+        from designer.palette.widget_registry import default_registry
+        w = DesignerWidget("ShValueTile", "t", {"x": 0, "y": 0, "width": 200, "height": 100})
+        w.bindings["title"] = DesignerBinding("a.name")
+        b = DesignerBinding("a.b", rules=[{"if": ">80", "prop": "state", "value": None},
+                                          {"if": "> 1", "prop": "title", "value": "X"}])
+        w.bindings["value"] = b
+        got = [i.message for i in validate_binding(b, "value", w, default_registry().get("ShValueTile"), "p")]
+        self.assertEqual(got, ["rule 1: property 'title' is bound"])
+
+
 if __name__ == "__main__":
     unittest.main()

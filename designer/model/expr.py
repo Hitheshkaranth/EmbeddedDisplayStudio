@@ -23,6 +23,16 @@ _COMPARATORS = {"==", "!=", "<", "<=", ">", ">="}
 _TAG_RE = re.compile(r"[a-z][a-z0-9]*(\.[a-z0-9_]+)+$")
 
 
+_TOKEN_NAMES = {"end": "end of expression", "rparen": "')'", "lparen": "'('", "comma": "','",
+                "qmark": "'?'", "colon": "':'", "number": "number", "string": "string",
+                "tag": "name", "keyword": "keyword"}
+
+
+def _describe(tok):
+    """How an author reads a token in an error: "'+'" for an operator."""
+    return repr(tok.value) if tok.kind == "op" else _TOKEN_NAMES.get(tok.kind, tok.kind)
+
+
 class ExprError(ValueError):
     """A compile error; str(e) is a one-line reason."""
 
@@ -486,12 +496,14 @@ class _Parser:
 
     def _expect(self, kind):
         if self._cur().kind != kind:
-            self.error("unexpected %s" % self._cur().kind)
+            self.error("expected %s, found %s" % (_TOKEN_NAMES.get(kind, kind), _describe(self._cur())))
         return self._next()
 
     def _tag(self, name):
         if not _TAG_RE.fullmatch(name):
-            self.error("bad tag %r" % name)
+            if self._cur().kind == "lparen" or name in ("sqrt", "pow", "log", "exp", "sin", "cos"):
+                self.error("unknown function %r" % name)
+            self.error("%r is not a tag name (lowercase, dotted: area.name)" % name)
         if len(self._tags) >= MAX_TAGS and name not in self._tags:
             self.error("too many tags")
         if name not in self._tags:
@@ -509,8 +521,9 @@ class _Parser:
         self._expect("rparen")
         count = len(args)
         if count < min_a or (max_a is not None and count > max_a):
-            self.error("function %s takes %s args" %
-                       (name, min_a if max_a is None else "%d..%d" % (min_a, max_a)))
+            wanted = ("at least %d" % min_a if max_a is None else
+                      "%d" % min_a if min_a == max_a else "%d or %d" % (min_a, max_a))
+            self.error("%s() takes %s argument%s, got %d" % (name, wanted, "" if wanted == "1" else "s", count))
         return _Call(name, args)
 
     def _enter(self):
@@ -604,8 +617,8 @@ class _Parser:
             self._expect("rparen")
             return node
         if tok.kind in ("op", "rparen", "comma", "qmark", "colon", "end"):
-            self.error("unexpected %s" % tok.value if tok.kind == "op" else tok.kind)
-        self.error("unexpected %s" % tok.kind)
+            self.error("unexpected %s" % _describe(tok))
+        self.error("unexpected %s" % _describe(tok))
 
 
 if __name__ == "__main__":  # pragma: no cover
