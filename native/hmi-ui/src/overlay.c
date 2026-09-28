@@ -1,6 +1,7 @@
 // overlay.c -- see overlay.h (CONTRACT 13.5). STUB: wave 1 W5 implements.
 #include "overlay.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,7 +10,15 @@
 #include "log.h"
 #include "theme.h"
 
+#include <dirent.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+
 #define IDLE_GRACE_MS 5000u
+
 #define MAXPATH 512
 
 struct hmi_overlay {
@@ -34,6 +43,9 @@ struct hmi_overlay {
 
 static const char *BANNER_TEXT = "No connection to controller - values may be stale";
 
+// Forward declarations for the bottom-layer helpers.
+static void wake_cb(lv_event_t *e);
+
 // Resolve the brightness file's directory: the first entry of
 // $HMI_BACKLIGHT_DIR or /sys/class/backlight/. On success store max_brightness
 // in *max_out and the directory base in base (with a trailing '/').
@@ -42,24 +54,17 @@ static bool resolve_backlight_dir(char *base, size_t len, int *max_out)
     const char *env = getenv("HMI_BACKLIGHT_DIR");
     const char *root = (env && *env) ? env : "/sys/class/backlight";
 
-    char cmd[MAXPATH];
-    snprintf(cmd, sizeof cmd, "ls '%s' 2>/dev/null", root);
-    FILE *d = popen(cmd, "r");
+    DIR *d = opendir(root);
     if (!d) { *max_out = 0; return false; }
 
     char name[256] = "";
-    char line[256];
-    while (fgets(line, sizeof line, d)) {
-        size_t n = strlen(line);
-        while (n && (line[n - 1] == '\n' || line[n - 1] == '\r' || line[n - 1] == ' ' ||
-                     line[n - 1] == '\t'))
-            line[--n] = '\0';
-        if (n && line[0] != '.') {
-            snprintf(name, sizeof name, "%s", line);
-            break;
-        }
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (ent->d_name[0] == '.' || ent->d_name[0] == '-') continue;
+        snprintf(name, sizeof name, "%s", ent->d_name);
+        break;
     }
-    pclose(d);
+    closedir(d);
     if (!name[0]) { *max_out = 0; return false; }
 
     char basep[MAXPATH];
@@ -75,14 +80,6 @@ static bool resolve_backlight_dir(char *base, size_t len, int *max_out)
     snprintf(base, len, "%s", basep);
     *max_out = (int)m;
     return true;
-}
-
-static void read_backlight(hmi_overlay_t *o_)
-{
-    struct hmi_overlay *o = (struct hmi_overlay *)o_;
-    char dir[MAXPATH];
-    if (!resolve_backlight_dir(dir, sizeof dir, &o->bl_max))
-        o->bl_max = 0;
 }
 
 static void set_backlight(hmi_overlay_t *o_, int pct)
@@ -131,14 +128,14 @@ static void show_blank(hmi_overlay_t *o_)
     lv_obj_set_size(blk, lv_pct(100), lv_pct(100));
     lv_obj_set_style_bg_color(blk, lv_color_hex(0x000000), LV_OPA_COVER);
     lv_obj_set_style_bg_opa(blk, LV_OPA_COVER, 0);
-    lv_obj_set_radius(blk, 0);
+    lv_obj_set_style_radius(blk, 0, 0);
     lv_obj_remove_flag(blk, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *wake = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(wake);
     lv_obj_set_size(wake, lv_pct(100), lv_pct(100));
     lv_obj_set_style_bg_color(wake, lv_color_hex(0x000000), LV_OPA_TRANSP);
-    lv_obj_set_radius(wake, 0);
+    lv_obj_set_style_radius(wake, 0, 0);
     lv_obj_add_flag(wake, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(wake, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     lv_obj_add_event_cb(wake, wake_cb, LV_EVENT_CLICKED, o);
@@ -192,7 +189,10 @@ void hmi_overlay_link(hmi_overlay_t *o_, bool online)
     struct hmi_overlay *o = (struct hmi_overlay *)o_;
     if (!o) return;
     o->online = online;
-    hide_banner(o);
+    // A connection loss always shows the banner (even right after being
+    // online); the 5 s grace only governs the "never came online" case.
+    if (o->has_link && !online) show_banner(o);
+    else hide_banner(o);
 }
 
 void hmi_overlay_tick(hmi_overlay_t *o_, uint32_t now_ms, uint32_t inactive_ms)

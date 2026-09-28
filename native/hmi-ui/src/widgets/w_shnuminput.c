@@ -8,6 +8,7 @@
 #include <math.h>
 
 #include "draw_util.h"
+#include "input.h"
 #include "registry.h"
 #include "theme.h"
 
@@ -22,6 +23,9 @@ typedef struct {
     int decimalPlaces;
     char unit[16];
 } shnuminput_state_t;
+
+static void numinput_open_cb(lv_event_t *e);
+static void numinput_done(double value, void *user);
 
 static void btn_click_cb(lv_event_t *e)
 {
@@ -50,6 +54,33 @@ static void update_value_text(shnuminput_state_t *st)
     char txt[64];
     snprintf(txt, sizeof txt, "%.*f", st->decimalPlaces, st->value);
     lv_label_set_text(st->valueText, txt);
+}
+
+// A tap on the widget's root opens the numeric keypad (not when disabled):
+// the -/+ buttons keep their own behaviour. On OK the value is shown and
+// "valueChanged" is emitted. See CONTRACT 13.5.
+static void numinput_open_cb(lv_event_t *e)
+{
+    hmi_widget_t *widget = (hmi_widget_t *)lv_event_get_user_data(e);
+    if (!widget) return;
+    if (!hmi_widget_bool(widget, "enabled", true)) return;
+    shnuminput_state_t *st = widget->state;
+    if (!st) return;
+    hmi_input_open_numeric(widget, st->value, st->minValue, st->maxValue,
+                           st->decimalPlaces, numinput_done, widget);
+}
+
+// The keypad's OK: show the (rounded) value, then emit valueChanged.
+static void numinput_done(double value, void *user)
+{
+    hmi_widget_t *w = (hmi_widget_t *)user;
+    shnuminput_state_t *st = w ? w->state : NULL;
+    if (!st) return;
+    st->value = value;
+    update_value_text(st);
+    hmi_value_t val = hmi_value_num(value);
+    hmi_widget_emit(w, "valueChanged", &val);
+    hmi_value_free(&val);
 }
 
 static lv_obj_t *create_outline_button(lv_obj_t *parent)
@@ -172,6 +203,7 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     // Click handlers
     lv_obj_add_event_cb(minusBtn, btn_click_cb, LV_EVENT_CLICKED, w);
     lv_obj_add_event_cb(plusBtn, btn_click_cb, LV_EVENT_CLICKED, w);
+    lv_obj_add_event_cb(bg, numinput_open_cb, LV_EVENT_CLICKED, w);
 
     w->state = st;
     return bg;
