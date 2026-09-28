@@ -1,9 +1,5 @@
 // actions.c -- see actions.h (CONTRACT 13.1).
 //
-// SKELETON (wave 1): carries the pre-13.1 behaviour moved out of runtime.c
-// (write / pulse / navigate / legacy ack) so nothing regresses while W1
-// implements the rest: back, toggle, increment, decrement, ack, shelve,
-// truthy, and the confirmation dialog.
 #include "actions.h"
 
 #include <stdio.h>
@@ -28,6 +24,7 @@ static hmi_widget_t *p_widget;
 static char p_signal[P_SIGNAL_MAX];
 static hmi_value_t p_arg;
 static const char *p_text;
+static lv_obj_t *p_box;
 
 // The msgbox's two footer buttons carry the slot index (0 = Cancel, 1 = OK)
 // as user_data; a click answers the matching value and closes the box.
@@ -37,10 +34,18 @@ static void confirm_clicked(lv_event_t *e)
     hmi_actions_answer_confirm(lv_event_get_user_data(e) != NULL);
 }
 
-static void run_one(hmi_runtime_t *rt, hmi_widget_t *w, const hmi_action_t *a, hmi_value_t *arg)
+static void run_one(hmi_runtime_t *rt, hmi_widget_t *w, const char *signal,
+                    const hmi_action_t *a, hmi_value_t *arg)
 {
     hmi_tags_t *tags = hmi_runtime_tags(rt);
     struct hmi_alarms *alarms = hmi_runtime_alarms(rt);
+    // Designs saved before 13.1: on the alarm table any write or pulse meant
+    // "acknowledge the alarm the table hands over".
+    if (strcmp(signal, "alarmActivated") == 0 &&
+        (strcmp(a->kind, "write") == 0 || strcmp(a->kind, "pulse") == 0)) {
+        if (hmi_alarms_acknowledge(alarms, hmi_value_as_str(arg, ""))) hmi_runtime_alarms_changed(rt);
+        return;
+    }
     if (strcmp(a->kind, "navigate") == 0) {
         hmi_runtime_navigate(rt, a->page);
     } else if (strcmp(a->kind, "back") == 0) {
@@ -80,6 +85,8 @@ static void run_one(hmi_runtime_t *rt, hmi_widget_t *w, const hmi_action_t *a, h
         int ms = a->ms ? a->ms : 600000;
         if (hmi_alarms_shelve(alarms, a->tag[0] ? a->tag
                     : hmi_value_as_str(arg, ""), ms)) hmi_runtime_alarms_changed(rt);
+    } else if (!tags && (strcmp(a->kind, "pulse") == 0 || strcmp(a->kind, "write") == 0)) {
+        hmi_log(HMI_LOG_DEBUG, "action %s on %s ignored (no daemon link)", a->kind, w->id);
     } else if (strcmp(a->kind, "pulse") == 0) {
         hmi_tags_pulse(tags, a->tag, a->ms);
     } else if (strcmp(a->kind, "write") == 0) {
@@ -95,11 +102,6 @@ static void run_one(hmi_runtime_t *rt, hmi_widget_t *w, const hmi_action_t *a, h
 void hmi_actions_run(hmi_runtime_t *rt, hmi_widget_t *w, const char *signal, const hmi_value_t *arg)
 {
     if (!rt || !w || !signal) return;
-    // A confirmation (or any 13.5 popup) already open refuses this list.
-    if (hmi_modal_owner()) {
-        hmi_log(HMI_LOG_WARNING, "action on %s: dialog open, cancelled", w->id);
-        return;
-    }
     bool need = false;
     const char *confirm = NULL;
     for (size_t i = 0; i < w->nactions; ++i) {
@@ -108,17 +110,23 @@ void hmi_actions_run(hmi_runtime_t *rt, hmi_widget_t *w, const char *signal, con
         if (a->confirm && a->confirm[0]) { need = true; if (!confirm) confirm = a->confirm; }
     }
     if (need) {   // show the FIRST confirm text and run only after an answer
+        // One popup at a time (13.5): a second confirmation is refused; lists
+        // without one still run below whatever is open.
+        if (!hmi_modal_claim("confirm")) {
+            hmi_log(HMI_LOG_WARNING, "action on %s: %s is open, confirmation refused", w->id,
+                    hmi_modal_owner() ? hmi_modal_owner() : "a dialog");
+            return;
+        }
         p_widget = w;
         snprintf(p_signal, sizeof p_signal, "%s", signal);
         p_arg = arg ? hmi_value_copy(arg) : hmi_value_null();
         p_text = confirm;
-        lv_obj_t *box = lv_msgbox_create(NULL);
+        lv_obj_t *box = p_box = lv_msgbox_create(NULL);
         lv_msgbox_add_text(box, p_text);
         lv_obj_t *cancel = lv_msgbox_add_footer_button(box, "Cancel");
         lv_obj_t *ok = lv_msgbox_add_footer_button(box, "OK");
         lv_obj_add_event_cb(cancel, confirm_clicked, LV_EVENT_CLICKED, NULL);
         lv_obj_add_event_cb(ok, confirm_clicked, LV_EVENT_CLICKED, (void *)1);
-        hmi_modal_claim("confirm");
         return;
     }
     for (size_t i = 0; i < w->nactions; ++i) {
@@ -126,7 +134,7 @@ void hmi_actions_run(hmi_runtime_t *rt, hmi_widget_t *w, const char *signal, con
         if (strcmp(a->signal, signal) != 0) continue;
         hmi_value_t saved; hmi_value_t *argp = NULL;
         if (arg) { saved = hmi_value_copy(arg); argp = &saved; }
-        run_one(rt, w, a, argp);
+        run_one(rt, w, signal, a, argp);
         if (argp) hmi_value_free(argp);
     }
 }
@@ -158,9 +166,12 @@ void hmi_actions_answer_confirm(bool ok)
             for (size_t i = 0; i < p_widget->nactions; ++i) {
                 const hmi_action_t *a = &p_widget->actions[i];
                 if (strcmp(a->signal, p_signal) != 0) continue;
-                run_one(rt, p_widget, a, &p_arg);
+                run_one(rt, p_widget, p_signal, a, &p_arg);
             }
     }
+    // Deleted after the event that answered it has finished with it.
+    if (p_box) lv_msgbox_close_async(p_box);   // the box and its modal backdrop
+    p_box = NULL;
     hmi_modal_release("confirm");
     hmi_value_free(&p_arg);
     p_text = NULL; p_widget = NULL;
