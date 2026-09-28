@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+**The panel, for an operator** (CONTRACT section 13; everything is additive --
+designs and bundles that use none of it are unchanged)
+
+* **Actions**: a signal can run a list of actions; new kinds `toggle`,
+  `increment` / `decrement` (step, min, max), `back` (page history), `ack`
+  (one alarm or `*`) and `shelve`; any list can ask **Cancel / OK** first.
+* **Bindings**: an expression instead of a tag (`eng1.egt > eng2.egt ? "ENG 1"
+  : "ENG 2"`, `round(fuel.l + fuel.r, 1)`, ...), fixed decimals, and rules that
+  set another property from the reading (a title turns "HOT" above 80). The
+  Designer checks expressions as you type.
+* **Alarms**: priorities 1-4, latching until acknowledged, on-delay, deadband,
+  custom message, shelving; a journal on the panel
+  (`/var/lib/hmi/alarm-journal.jsonl`) and an alarm table `history` mode.
+* **History**: `hmi-hwd` keeps a SQLite history of the tags `hwd.json` lists;
+  trend charts fill from it when a page opens; per-tag quality (`bad`) in every
+  frame; `python -m tools.hmi_deployer.history_export` pulls a CSV over SSH.
+* **Operator input**: a numeric keypad (range-checked) for numeric inputs, an
+  on-screen keyboard for text inputs, a "No connection to controller" banner,
+  and screen dim / off after inactivity (Designer: **Screen idle**).
+
+**Fixes**
+
+* The panel never showed a bound Value Tile / Status Dot / Data Field /
+  Annunciator value -- only a state colour, even without thresholds.
+* Numeric inputs on the panel showed "Text" where their unit belongs.
+* The offline tag simulator no longer fights a local daemon or tagsim for the
+  Live Preview's values.
+
 ## 0.1.2
 
 **Code: the design's widgets and its backend, side by side**
