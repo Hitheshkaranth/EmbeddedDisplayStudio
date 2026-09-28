@@ -7,7 +7,14 @@ always shown so the author sees what an alarm will do.
 """
 from __future__ import annotations
 
-from PySide6.QtWidgets import QWidget
+import copy
+
+from PySide6.QtWidgets import QWidget, QFormLayout, QComboBox, QCheckBox, QSpinBox, \
+    QDoubleSpinBox, QLineEdit
+
+
+ALARM_PRIORITY = ("Auto", "1", "2", "3", "4")
+DEFAULTS = {"priority": None, "latch": False, "delay_ms": 0, "deadband": 0.0, "message": ""}
 
 
 class AlarmExtras(QWidget):
@@ -20,11 +27,61 @@ class AlarmExtras(QWidget):
     "alarmMessage"  QLineEdit  "" = generated message
     """
 
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        form = QFormLayout(self)
+        self.priority = QComboBox(self)
+        self.priority.setObjectName("alarmPriority")
+        self.priority.addItems(list(ALARM_PRIORITY))
+        self.latch = QCheckBox("Latch until acknowledged", self)
+        self.latch.setObjectName("alarmLatch")
+        self.delay = QSpinBox(self)
+        self.delay.setObjectName("alarmDelay")
+        self.delay.setRange(0, 600000)
+        self.delay.setSuffix(" ms")
+        self.deadband = QDoubleSpinBox(self)
+        self.deadband.setObjectName("alarmDeadband")
+        self.deadband.setRange(0.0, 1e9)
+        self.message = QLineEdit(self)
+        self.message.setObjectName("alarmMessage")
+        form.addRow("Priority", self.priority)
+        form.addRow("Latch", self.latch)
+        form.addRow("Delay", self.delay)
+        form.addRow("Deadband", self.deadband)
+        form.addRow("Message", self.message)
+
     def load(self, binding) -> None:
-        pass   # W3
+        """Show `binding.alarm` in the fields; Auto priority when it has none."""
+        alarm = getattr(binding, "alarm", None) or {}
+        priority = alarm.get("priority")
+        if priority is None:
+            self.priority.setCurrentIndex(0)
+        else:
+            self.priority.setCurrentIndex(int(priority))
+        self.latch.setChecked(bool(alarm.get("latch", False)))
+        self.delay.setValue(int(alarm.get("delay_ms", 0)))
+        self.deadband.setValue(alarm.get("deadband", 0.0) or 0.0)
+        self.message.setText(alarm.get("message", "") or "")
 
     def apply_to(self, binding):
         """Return a copy of `binding` whose `alarm` dict holds only the
         options that differ from the defaults (Auto priority, no latch, 0 ms,
         0 deadband, "" message); {} when all are defaults."""
-        return binding   # W3
+        alarm = {}
+        priority = self.priority.currentText()
+        if priority != "Auto":
+            alarm["priority"] = int(priority)
+        if self.latch.isChecked():
+            alarm["latch"] = True
+        if self.delay.value() != 0:
+            alarm["delay_ms"] = self.delay.value()
+        deadband = self.deadband.value()
+        if deadband != 0.0:
+            alarm["deadband"] = deadband
+        message = self.message.text()
+        if message:
+            alarm["message"] = message
+
+        cloned = copy.copy(binding)
+        cloned.alarm = alarm
+        return cloned
