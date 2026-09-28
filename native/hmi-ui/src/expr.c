@@ -34,7 +34,7 @@ typedef struct node {
     // N_TERN: struct node *a (cond), *b (then), *c (else)
     // N_CALL: char *fname; struct node **args; size_t nargs
     double d;
-    bool b;
+    bool bv;
     char *s;
     size_t slen;
     struct node *a, *b, *c;
@@ -51,7 +51,7 @@ typedef struct {
 } tagset_t;
 
 typedef struct {
-    const char *p, *end;
+    const char *start, *p, *end;
     node_t *root;
     tagset_t *tags;
     char err[80];
@@ -97,10 +97,18 @@ static void free_node(node_t *n)
     free(n);
 }
 
+static bool tag_has(tagset_t *ts, const char *name, size_t len)
+{
+    for (size_t i = 0; i < ts->ntags; i++)
+        if (len == strlen(ts->tags[i]) && memcmp(ts->tags[i], name, len) == 0)
+            return true;
+    return false;
+}
+
 static void tag_add(tagset_t *ts, const char *name, size_t len)
 {
     for (size_t i = 0; i < ts->ntags; i++)
-        if (strncpy(ts->tags[i], name, len + 1) && len == strlen(ts->tags[i]))
+        if (len == strlen(ts->tags[i]) && memcmp(ts->tags[i], name, len) == 0)
             return;
     if (ts->ntags >= MAX_TAGS) return;   // overflow: caller checks via error
     char *dup = malloc(len + 1);
@@ -113,7 +121,7 @@ static void tag_add(tagset_t *ts, const char *name, size_t len)
 // parser
 // ---------------------------------------------------------------------------
 
-static bool compile_error(parser_t *ps, const char *msg, int *tags_seen)
+static bool compile_error(parser_t *ps, const char *msg)
 {
     if (!ps->err[0]) snprintf(ps->err, sizeof ps->err, "%s at %ld", msg, (long)(ps->p - ps->start));
     return false;
@@ -124,19 +132,20 @@ static node_t *parse_tag(parser_t *ps)
 {
     const char *start = ps->p;
     if (!is_ident_start(*ps->p)) return NULL;
+    // consume the first segment, then dot-separated segments, accepting
+    // digits and '_' in every segment except the final one.
     ps->p++;
-    while (is_ident_char(*ps->p)) ps->p++;
-    // must contain at least one dot
-    if (memchr(start, '.', (size_t)(ps->p - start)) == NULL) return NULL;
-    while (*ps->p == '.') {
-        ps->p++;
-        if (!is_ident_char(*ps->p)) return NULL;
-        while (is_ident_char(*ps->p)) ps->p++;
+    while (*ps->p == '.' || is_ident_char(*ps->p)) {
+        if (*ps->p == '.') {
+            ps->p++;
+            if (!is_ident_char(*ps->p)) return NULL;   // trailing/empty dot
+        } else {
+            ps->p++;
+        }
     }
+    if (memchr(start, '.', (size_t)(ps->p - start)) == NULL) return NULL;   // no dot at all
+    if (memchr(start, '_', (size_t)(ps->p - start)) != NULL) return NULL;   // '_' in first segment
     size_t len = (size_t)(ps->p - start);
-    // the segment after the final dot may not end in '_'
-    char after = ps->p[-1];
-    if (after == '_') return NULL;
     node_t *n = node_new();
     n->kind = N_TAG;
     n->s = malloc(len + 1);
@@ -200,7 +209,7 @@ static bool parse_call(parser_t *ps, node_t **out)
         if (memcmp(start, FUNCTIONS[i], len) != 0) continue;
         // expect '('
         const char *paren = skip_ws(ps->p);
-        if (*paren != '(') return compile_error(ps, "unknown function", ps->tags);
+        if (*paren != '(') return compile_error(ps, "unknown function");
         ps->p = paren + 1;
         node_t *n = node_new();
         n->kind = N_CALL;
@@ -213,7 +222,7 @@ static bool parse_call(parser_t *ps, node_t **out)
             node_t *arg;
             if (!parse_binary(&inner, 4, &arg)) {
                 // error already logged on the inner parser; discard it
-                node_free(n); free(args);
+free_node(n); free(args);
                 ps->p = inner.p;
                 return false;
             }
@@ -223,36 +232,37 @@ static bool parse_call(parser_t *ps, node_t **out)
             const char *q = skip_ws(ps->p);
             if (*q == ',') { ps->p = q + 1; continue; }
             if (*q == ')') { ps->p = q + 1; break; }
-            compile_error(ps, "expected ',' or ')'", ps->tags);
-            node_free(n); free(args);
+            compile_error(ps, "expected ',' or ')'");
+            free_node(n); free(args);
             return false;
         }
         int min = FUNC_MIN[i], max = FUNC_MAX[i];
         if (nargs < (size_t)min || (max >= 0 && nargs > (size_t)max)) {
-            compile_error(ps, "wrong number of arguments", ps->tags);
-            node_free(n); free(args);
+            compile_error(ps, "wrong number of arguments");
+            free_node(n); free(args);
             return false;
         }
         n->args = args; n->nargs = nargs;
         *out = n;
         return true;
     }
-    return compile_error(ps, "bad token", ps->tags);
+    return compile_error(ps, "bad token");
 }
 
 static bool parse_primary(parser_t *ps, node_t **out)
 {
-    if (ps->depth >= MAX_DEPTH) return compile_error(ps, "too nested", ps->tags);
+    fprintf(stderr, "DBGpp p=%s\n", ps->p);
+    if (ps->depth >= MAX_DEPTH) return compile_error(ps, "too nested");
     const char *p = skip_ws(ps->p);
     ps->p = p;
 
-    if (*p == '-') {
-        if (!is_digit(p[1]) && p[1] != '.') {
-            ps->p = p + 1;
-            node_t *n = node_new();
-            n->kind = N_UNARY;
-            n->op = 1;   // negate
-            if (!parse_primary(ps, &n->a)) { node_free(n); return false; }
+if (*p == '-') {
+            if (!is_digit(p[1]) && p[1] != '.') {
+                ps->p = p + 1;
+                node_t *n = node_new();
+                n->kind = N_UNARY;
+                n->op = 1;   // negate
+            if (!parse_primary(ps, &n->a)) { free_node(n); return false; }
             *out = n;
             return true;
         }
@@ -263,7 +273,7 @@ static bool parse_primary(parser_t *ps, node_t **out)
         node_t *n = node_new();
         n->kind = N_UNARY;
         n->op = 0;   // logical not
-        if (!parse_primary(ps, &n->a)) { ps->depth--; node_free(n); return false; }
+        if (!parse_primary(ps, &n->a)) { ps->depth--; free_node(n); return false; }
         ps->depth--;
         *out = n;
         return true;
@@ -273,9 +283,9 @@ static bool parse_primary(parser_t *ps, node_t **out)
         ps->p = p + 1;
         ps->depth++;
         node_t *inner;
-        if (!parse_binary(ps, 4, &inner)) { ps->depth--; return false; }
+        if (!parse_binary(ps, 0, &inner)) { ps->depth--; return false; }
         const char *q = skip_ws(ps->p);
-        if (*q != ')') { ps->depth--; return compile_error(ps, "expected ')'", ps->tags); }
+        if (*q != ')') { ps->depth--; return compile_error(ps, "expected ')'"); }
         ps->p = q + 1;
         ps->depth--;
         *out = inner;
@@ -284,7 +294,7 @@ static bool parse_primary(parser_t *ps, node_t **out)
 
     if (*p == '"') {
         node_t *n = parse_string(ps);
-        if (!n) return compile_error(ps, "bad string", ps->tags);
+        if (!n) return compile_error(ps, "bad string");
         *out = n;
         return true;
     }
@@ -296,23 +306,36 @@ static bool parse_primary(parser_t *ps, node_t **out)
         size_t len = (size_t)(p - start);
         if (len == 4 && memcmp(start, "true", 4) == 0) {
             node_t *n = node_new();
-            n->kind = N_BOOL; n->b = true;
+            n->kind = N_BOOL; n->bv = true;
             ps->p = p;
             *out = n;
             return true;
         }
         if (len == 5 && memcmp(start, "false", 5) == 0) {
             node_t *n = node_new();
-            n->kind = N_BOOL; n->b = false;
+            n->kind = N_BOOL; n->bv = false;
             ps->p = p;
             *out = n;
             return true;
         }
+        // function call? "func ( ... )"
+        {
+            const char *q = skip_ws(p);
+            if (*q == '(') {
+                for (size_t i = 0; i < sizeof(FUNCTIONS) / sizeof(FUNCTIONS[0]); i++) {
+                    if (len == strlen(FUNCTIONS[i]) && memcmp(start, FUNCTIONS[i], len) == 0) {
+                        ps->p = start;
+                        if (!parse_call(ps, out)) return false;
+                        return true;
+                    }
+                }
+            }
+        }
         // tag
         ps->p = start;
         node_t *n = parse_tag(ps);
-        if (!n) return compile_error(ps, "bad tag", ps->tags);
-        if (ps->tags->ntags > MAX_TAGS) { node_free(n); return compile_error(ps, "too many tags", ps->tags); }
+        if (!n) return compile_error(ps, "bad tag");
+        if (ps->tags->ntags >= MAX_TAGS && !tag_has(ps->tags, n->s, n->slen)) { free_node(n); return compile_error(ps, "too many tags"); }
         tag_add(ps->tags, n->s, n->slen);
         *out = n;
         return true;
@@ -320,12 +343,12 @@ static bool parse_primary(parser_t *ps, node_t **out)
 
     if (is_digit(*p) || (*p == '.' && is_digit(p[1]))) {
         node_t *n = parse_number(ps);
-        if (!isfinite(n->d)) return compile_error(ps, "bad number", ps->tags);
+        if (!isfinite(n->d)) return compile_error(ps, "bad number");
         *out = n;
         return true;
     }
 
-    return compile_error(ps, "unexpected character", ps->tags);
+    return compile_error(ps, "unexpected character");
 }
 
 // Precedence climbing: * / % bind tightest, then + -, then comparisons, then
@@ -333,47 +356,46 @@ static bool parse_primary(parser_t *ps, node_t **out)
 static bool parse_binary(parser_t *ps, int maxprec, node_t **out)
 {
     node_t *left;
+    fprintf(stderr, "DBGpb maxprec=%d p=%s\n", maxprec, ps->p);
     if (!parse_primary(ps, &left)) return false;
     for (;;) {
         const char *p = skip_ws(ps->p);
-        ps->p = p;
-        if (*p == '*') { ps->p = p + 1; if (maxprec < 3) break; node_t *n = node_new(); n->kind = N_BIN; n->op = 0; n->a = left; if (!parse_binary(ps, 3, &n->b)) { node_free(n); return false; } left = n; continue; }
-        if (*p == '/') { ps->p = p + 1; if (maxprec < 3) break; node_t *n = node_new(); n->kind = N_BIN; n->op = 1; n->a = left; if (!parse_binary(ps, 3, &n->b)) { node_free(n); return false; } left = n; continue; }
-        if (*p == '%') { ps->p = p + 1; if (maxprec < 3) break; node_t *n = node_new(); n->kind = N_BIN; n->op = 2; n->a = left; if (!parse_binary(ps, 3, &n->b)) { node_free(n); return false; } left = n; continue; }
-        if (*p == '+') { ps->p = p + 1; if (maxprec < 2) break; node_t *n = node_new(); n->kind = N_BIN; n->op = 3; n->a = left; if (!parse_binary(ps, 2, &n->b)) { node_free(n); return false; } left = n; continue; }
-        if (*p == '-') { ps->p = p + 1; if (maxprec < 2) break; node_t *n = node_new(); n->kind = N_BIN; n->op = 4; n->a = left; if (!parse_binary(ps, 2, &n->b)) { node_free(n); return false; } left = n; continue; }
-        if (*p == '=' && p[1] == '=') { ps->p = p + 2; if (maxprec < 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '='; n->a = left; if (!parse_binary(ps, 1, &n->b)) { node_free(n); return false; } left = n; continue; }
-        if (*p == '!' && p[1] == '=') { ps->p = p + 2; if (maxprec < 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '!'; n->a = left; if (!parse_binary(ps, 1, &n->b)) { node_free(n); return false; } left = n; continue; }
-        if (*p == '<') { ps->p = p + 1; if (maxprec < 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '<'; n->a = left; if (!parse_binary(ps, 1, &n->b)) { node_free(n); return false; } left = n; continue; }
-        if (*p == '>') { ps->p = p + 1; if (maxprec < 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '>'; n->a = left; if (!parse_binary(ps, 1, &n->b)) { node_free(n); return false; } left = n; continue; }
-        if (*p == '<' && p[1] == '=') { ps->p = p + 2; if (maxprec < 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '<'; n->a = left; if (!parse_binary(ps, 1, &n->b)) { node_free(n); return false; } left = n; continue; }
-        if (*p == '>' && p[1] == '=') { ps->p = p + 2; if (maxprec < 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '>'; n->a = left; if (!parse_binary(ps, 1, &n->b)) { node_free(n); return false; } left = n; continue; }
-        if (*p == '&' && p[1] == '&') { ps->p = p + 2; if (maxprec < 0) break; node_t *n = node_new(); n->kind = N_AND; n->a = left; if (!parse_binary(ps, 0, &n->b)) { node_free(n); return false; } left = n; continue; }
-        if (*p == '|' && p[1] == '|') { ps->p = p + 2; if (maxprec < 0) break; node_t *n = node_new(); n->kind = N_OR; n->a = left; if (!parse_binary(ps, 0, &n->b)) { node_free(n); return false; } left = n; continue; }
+        if (*p == '*') { ps->p = p + 1; if (maxprec > 3) break; node_t *n = node_new(); n->kind = N_BIN; n->op = 0; n->a = left; if (!parse_binary(ps, 3, &n->b)) { free_node(n); return false; } left = n; continue; }
+        if (*p == '/') { ps->p = p + 1; if (maxprec > 3) break; node_t *n = node_new(); n->kind = N_BIN; n->op = 1; n->a = left; if (!parse_binary(ps, 3, &n->b)) { free_node(n); return false; } left = n; continue; }
+        if (*p == '%') { ps->p = p + 1; if (maxprec > 3) break; node_t *n = node_new(); n->kind = N_BIN; n->op = 2; n->a = left; if (!parse_binary(ps, 3, &n->b)) { free_node(n); return false; } left = n; continue; }
+        if (*p == '+') { ps->p = p + 1; if (maxprec > 2) break; node_t *n = node_new(); n->kind = N_BIN; n->op = 3; n->a = left; if (!parse_binary(ps, 2, &n->b)) { free_node(n); return false; } left = n; continue; }
+        if (*p == '-') { ps->p = p + 1; if (maxprec > 2) break; node_t *n = node_new(); n->kind = N_BIN; n->op = 4; n->a = left; if (!parse_binary(ps, 2, &n->b)) { free_node(n); return false; } left = n; continue; }
+        if (*p == '=' && p[1] == '=') { ps->p = p + 2; if (maxprec > 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '='; n->a = left; if (!parse_binary(ps, 1, &n->b)) { free_node(n); return false; } left = n; continue; }
+        if (*p == '!' && p[1] == '=') { ps->p = p + 2; if (maxprec > 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '!'; n->a = left; if (!parse_binary(ps, 1, &n->b)) { free_node(n); return false; } left = n; continue; }
+        if (*p == '<' && p[1] == '=') { ps->p = p + 2; if (maxprec > 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '<'; n->a = left; if (!parse_binary(ps, 1, &n->b)) { free_node(n); return false; } left = n; continue; }
+        if (*p == '>' && p[1] == '=') { ps->p = p + 2; if (maxprec > 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '>'; n->a = left; if (!parse_binary(ps, 1, &n->b)) { free_node(n); return false; } left = n; continue; }
+        if (*p == '<') { ps->p = p + 1; if (maxprec > 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '<'; n->a = left; if (!parse_binary(ps, 1, &n->b)) { free_node(n); return false; } left = n; continue; }
+        if (*p == '>') { ps->p = p + 1; if (maxprec > 1) break; node_t *n = node_new(); n->kind = N_CMP; n->cop = '>'; n->a = left; if (!parse_binary(ps, 1, &n->b)) { free_node(n); return false; } left = n; continue; }
+        if (*p == '&' && p[1] == '&') { ps->p = p + 2; if (maxprec > 0) break; node_t *n = node_new(); n->kind = N_AND; n->a = left; if (!parse_binary(ps, 0, &n->b)) { free_node(n); return false; } left = n; continue; }
+        if (*p == '|' && p[1] == '|') { ps->p = p + 2; if (maxprec > 0) break; node_t *n = node_new(); n->kind = N_OR; n->a = left; if (!parse_binary(ps, 0, &n->b)) { free_node(n); return false; } left = n; continue; }
         break;
     }
     *out = left;
-    return true;
 }
 
 static bool parse_expr(parser_t *ps, node_t **out)
 {
     node_t *n;
-    if (!parse_binary(ps, 1, &n)) return false;
+    if (!parse_binary(ps, 0, &n)) return false;
     const char *p = skip_ws(ps->p);
     ps->p = p;
     if (*p != '?') { *out = n; return true; }
     ps->p = p + 1;
     ps->depth++;
     node_t *a;
-    if (!parse_binary(ps, 1, &a)) { ps->depth--; node_free(n); return false; }
+    if (!parse_binary(ps, 1, &a)) { ps->depth--; free_node(n); return false; }
     const char *q = skip_ws(ps->p);
     ps->p = q;
-    if (*q != ':') { compile_error(ps, "expected ':'", ps->tags); ps->depth--; node_free(n); node_free(a); return false; }
+    if (*q != ':') { compile_error(ps, "expected ':'"); ps->depth--; free_node(n); free_node(a); return false; }
     ps->p = q + 1;
     ps->depth++;
     node_t *c;
-    if (!parse_binary(ps, 1, &c)) { ps->depth--; node_free(n); node_free(a); return false; }
+    if (!parse_binary(ps, 1, &c)) { ps->depth--; free_node(n); free_node(a); return false; }
     ps->depth--;
     node_t *tern = node_new();
     tern->kind = N_TERN;
@@ -407,6 +429,7 @@ hmi_expr_t *hmi_expr_compile(const char *text, char *err, size_t errlen)
         return NULL;
     }
     parser_t ps;
+    tagset_t ts = {0};
     memset(&ps, 0, sizeof ps);
     ps.start = text;
     ps.p = text;
@@ -483,6 +506,96 @@ static hmi_value_t boolval(bool b) { return hmi_value_bool(b); }
 static const char *FUNC_NAME[] = {"abs", "floor", "ceil", "round", "min", "max", "clamp"};
 static int FUNC_NARGS[] = {1, 1, 1, -1, 2, 2, 3};
 
+static hmi_value_t eval_bin(int op, hmi_value_t *a, hmi_value_t *b)
+{
+    if (a->kind == HMI_V_NULL || b->kind == HMI_V_NULL) {
+        hmi_value_free(a); hmi_value_free(b); return nullval();
+    }
+    bool an = a->kind == HMI_V_NUM || a->kind == HMI_V_BOOL;
+    bool bn = b->kind == HMI_V_NUM || b->kind == HMI_V_BOOL;
+    if (!an || !bn) { hmi_value_free(a); hmi_value_free(b); return nullval(); }
+    switch (op) {
+    case 0: { hmi_value_t r = numval(a->n * b->n); hmi_value_free(a); hmi_value_free(b); return r; }
+    case 1: { if (b->n == 0.0) { hmi_value_free(a); hmi_value_free(b); return nullval(); } hmi_value_t r = numval(a->n / b->n); hmi_value_free(a); hmi_value_free(b); return r; }
+    case 2: { if (b->n == 0.0) { hmi_value_free(a); hmi_value_free(b); return nullval(); } hmi_value_t r = numval(fmod(a->n, b->n)); hmi_value_free(a); hmi_value_free(b); return r; }
+    case 3: { hmi_value_t r = numval(a->n + b->n); hmi_value_free(a); hmi_value_free(b); return r; }
+    case 4: { hmi_value_t r = numval(a->n - b->n); hmi_value_free(a); hmi_value_free(b); return r; }
+    default: { hmi_value_free(a); hmi_value_free(b); return nullval(); }
+    }
+}
+
+static hmi_value_t eval(expr_impl_t *e_, const node_t *n,
+                          hmi_expr_lookup_cb lookup, void *user);
+static hmi_value_t eval_cmp(int op, hmi_value_t a, hmi_value_t b);
+static hmi_value_t eval_call(expr_impl_t *e_, const node_t *n,
+                             hmi_expr_lookup_cb lookup, void *user);
+
+static bool truthy_expr(expr_impl_t *e_, const node_t *n,
+                          hmi_expr_lookup_cb lookup, void *user)
+{
+    if (!n) return false;
+    hmi_value_t v = eval(e_, n, lookup, user);
+    bool t = truthy_val(&v);
+    hmi_value_free(&v);
+    return t;
+}
+
+static hmi_value_t eval(expr_impl_t *e_, const node_t *n,
+                          hmi_expr_lookup_cb lookup, void *user)
+{
+    if (!n) return nullval();
+    switch (n->kind) {
+    case N_NUM: return hmi_value_num(n->d);
+    case N_BOOL: return boolval(n->b);
+    case N_STR: return hmi_value_str(n->s ? n->s : "");
+    case N_TAG: {
+        const hmi_value_t *v = lookup(n->s, user);
+        if (!v) return nullval();
+        return hmi_value_copy(v);
+    }
+    case N_UNARY: {
+        hmi_value_t a = eval(e_, n->a, lookup, user);
+        if (n->op == 1) {   // unary minus
+            if (a.kind != HMI_V_NUM && a.kind != HMI_V_BOOL) { hmi_value_free(&a); return nullval(); }
+            hmi_value_t r = numval(-a.n);
+            hmi_value_free(&a);
+            return r;
+        }
+        bool t = truthy_val(&a);   // logical not
+        hmi_value_free(&a);
+        return boolval(!t);
+    }
+    case N_BIN: {
+        hmi_value_t a = eval(e_, n->a, lookup, user);
+        hmi_value_t b = eval(e_, n->b, lookup, user);
+        return eval_bin(n->op, &a, &b);
+    }
+    case N_CMP: {
+        hmi_value_t a = eval(e_, n->a, lookup, user);
+        hmi_value_t b = eval(e_, n->b, lookup, user);
+        return eval_cmp(n->cop, a, b);
+    }
+    case N_AND: {
+        bool t = truthy_expr(e_, n->a, lookup, user);
+        return boolval(t && truthy_expr(e_, n->b, lookup, user));
+    }
+    case N_OR: {
+        bool t = truthy_expr(e_, n->a, lookup, user);
+        return boolval(t || truthy_expr(e_, n->b, lookup, user));
+    }
+    case N_TERN: {
+        bool c = truthy_expr(e_, n->a, lookup, user);
+        const node_t *br = c ? n->b : n->c;
+        return eval(e_, br, lookup, user);
+    }
+    case N_CALL: {
+        if (strcmp(n->fname, "sqrt") == 0) return nullval();
+        return eval_call(e_, n, lookup, user);
+    }
+    default: return nullval();
+    }
+}
+
 static hmi_value_t eval_call(expr_impl_t *e_, const node_t *n,
                              hmi_expr_lookup_cb lookup, void *user)
 {
@@ -495,31 +608,31 @@ static hmi_value_t eval_call(expr_impl_t *e_, const node_t *n,
         }
         switch (i) {
         case 0: {   // abs
-            hmi_value_t a = eval(n->a, lookup, user);
+            hmi_value_t a = eval(e_, n->a, lookup, user);
             if (a.kind != HMI_V_NUM && a.kind != HMI_V_BOOL) { hmi_value_free(&a); return nullval(); }
             hmi_value_t r = numval(fabs(a.n));
             hmi_value_free(&a);
             return r;
         }
         case 1: {   // floor
-            hmi_value_t a = eval(n->a, lookup, user);
+            hmi_value_t a = eval(e_, n->a, lookup, user);
             if (a.kind != HMI_V_NUM && a.kind != HMI_V_BOOL) { hmi_value_free(&a); return nullval(); }
             hmi_value_t r = hmi_value_num(floor(a.n));
             hmi_value_free(&a);
             return r;
         }
         case 2: {   // ceil
-            hmi_value_t a = eval(n->a, lookup, user);
+            hmi_value_t a = eval(e_, n->a, lookup, user);
             if (a.kind != HMI_V_NUM && a.kind != HMI_V_BOOL) { hmi_value_free(&a); return nullval(); }
             hmi_value_t r = hmi_value_num(ceil(a.n));
             hmi_value_free(&a);
             return r;
         }
         case 3: {   // round
-            hmi_value_t a = eval(n->a, lookup, user);
+            hmi_value_t a = eval(e_, n->a, lookup, user);
             if (a.kind != HMI_V_NUM && a.kind != HMI_V_BOOL) { hmi_value_free(&a); return nullval(); }
             if (n->nargs == 2) {
-                hmi_value_t b = eval(n->b, lookup, user);
+                hmi_value_t b = eval(e_, n->b, lookup, user);
                 if (b.kind != HMI_V_NUM) { hmi_value_free(&a); hmi_value_free(&b); return nullval(); }
                 int digits = (int)b.n;
                 hmi_value_free(&b);
@@ -536,7 +649,7 @@ static hmi_value_t eval_call(expr_impl_t *e_, const node_t *n,
         case 4: {   // min
             double m = INFINITY;
             for (size_t k = 0; k < n->nargs; k++) {
-                hmi_value_t v = eval(n->args[k], lookup, user);
+                hmi_value_t v = eval(e_, n->args[k], lookup, user);
                 if (v.kind != HMI_V_NUM && v.kind != HMI_V_BOOL) { hmi_value_free(&v); return nullval(); }
                 if (v.n < m) m = v.n;
                 hmi_value_free(&v);
@@ -546,7 +659,7 @@ static hmi_value_t eval_call(expr_impl_t *e_, const node_t *n,
         case 5: {   // max
             double m = -INFINITY;
             for (size_t k = 0; k < n->nargs; k++) {
-                hmi_value_t v = eval(n->args[k], lookup, user);
+                hmi_value_t v = eval(e_, n->args[k], lookup, user);
                 if (v.kind != HMI_V_NUM && v.kind != HMI_V_BOOL) { hmi_value_free(&v); return nullval(); }
                 if (v.n > m) m = v.n;
                 hmi_value_free(&v);
@@ -554,9 +667,9 @@ static hmi_value_t eval_call(expr_impl_t *e_, const node_t *n,
             return numval(m);
         }
         case 6: {   // clamp
-            hmi_value_t x = eval(n->args[0], lookup, user);
-            hmi_value_t lo = eval(n->args[1], lookup, user);
-            hmi_value_t hi = eval(n->args[2], lookup, user);
+            hmi_value_t x = eval(e_, n->args[0], lookup, user);
+            hmi_value_t lo = eval(e_, n->args[1], lookup, user);
+            hmi_value_t hi = eval(e_, n->args[2], lookup, user);
             bool ok = x.kind != HMI_V_NULL && lo.kind != HMI_V_NULL && hi.kind != HMI_V_NULL;
             double r = (ok && lo.n > hi.n) ? hi.n : (ok ? x.n : 0.0);
             if (ok) {
@@ -597,5 +710,5 @@ hmi_value_t hmi_expr_eval(const hmi_expr_t *e, hmi_expr_lookup_cb lookup, void *
 {
     expr_impl_t *e_ = (expr_impl_t *)e;
     if (!e_) return nullval();
-    return eval(e_->root, lookup, user);
+    return eval(e_, e_->root, lookup, user);
 }
