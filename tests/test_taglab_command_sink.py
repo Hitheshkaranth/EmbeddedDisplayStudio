@@ -16,6 +16,13 @@ from tools.hmi_deployer.taglab import (
 )
 
 
+
+def _wait_readable(sink, timeout=2.0):
+    """Wait until the sink's socket has a datagram (a fixed sleep lost the
+    race under a loaded full-suite run)."""
+    import select
+    select.select([sink._sock], [], [], timeout)
+
 class SubscribersTests(unittest.TestCase):
     """Tests for the internal _Subscribers class."""
 
@@ -444,7 +451,7 @@ class CommandSinkIntegrationTests(unittest.TestCase):
             })
             sock.sendto(cmd.encode("utf-8"), ("127.0.0.1", 50060))
 
-            time.sleep(0.05)
+            _wait_readable(sink)
             result = sink._handle_datagrams()
             self.assertEqual(sink.errors, 0)
             entry = model.find("do.test")
@@ -462,7 +469,7 @@ class CommandSinkIntegrationTests(unittest.TestCase):
 
         try:
             sock.sendto(b"not json", ("127.0.0.1", 50061))
-            time.sleep(0.05)
+            _wait_readable(sink)
             sink._handle_datagrams()
             self.assertEqual(sink.errors, 1)
         finally:
@@ -480,7 +487,7 @@ class CommandSinkIntegrationTests(unittest.TestCase):
             # Send datagram larger than _COMMAND_MAX_BYTES (8192)
             large_data = json.dumps({"cmd": "set", "tag": "x", "value": 1}) * 200
             sock.sendto(large_data.encode("utf-8"), ("127.0.0.1", 50062))
-            time.sleep(0.05)
+            _wait_readable(sink)
             sink._handle_datagrams()
             self.assertEqual(sink.errors, 1)
         finally:
@@ -496,7 +503,7 @@ class CommandSinkIntegrationTests(unittest.TestCase):
 
         try:
             sock.sendto(b'"just a string"', ("127.0.0.1", 50063))
-            time.sleep(0.05)
+            _wait_readable(sink)
             sink._handle_datagrams()
             self.assertEqual(sink.errors, 1)
         finally:
@@ -512,7 +519,7 @@ class CommandSinkIntegrationTests(unittest.TestCase):
 
         try:
             sock.sendto(b'{"cmd": ""}', ("127.0.0.1", 50064))
-            time.sleep(0.05)
+            _wait_readable(sink)
             sink._handle_datagrams()
             self.assertEqual(sink.errors, 1)
         finally:

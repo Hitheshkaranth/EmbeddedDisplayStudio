@@ -5,6 +5,7 @@ They need the Linux hmi-ui binary
 """
 import os
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -197,10 +198,13 @@ class NativeRendererBehaviourTests(unittest.TestCase):
                                   properties={"label": f"K{i}", "value": i}) for i in range(6)]
         for w in widgets:
             r.image_for(w, 200, 200, "dark")
-        # Let the pump start the first processes.
-        loop = QEventLoop()
-        QTimer.singleShot(50, loop.quit)
-        loop.exec()
+        # Let the pump start the first processes. Poll rather than wait a
+        # fixed 50 ms: a fast machine can finish a render inside that window.
+        deadline = time.monotonic() + 5
+        while not r._running and time.monotonic() < deadline:
+            loop = QEventLoop()
+            QTimer.singleShot(2, loop.quit)
+            loop.exec()
         self.assertGreater(len(r._running), 0)
         tmp_dirs = [job.tmp for job in r._running.values()]
         landed = []

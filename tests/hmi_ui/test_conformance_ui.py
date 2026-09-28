@@ -17,7 +17,10 @@ import shlex
 import time
 import unittest
 
-from tests.native.loader_harness import LoaderHarness
+try:  # python -m unittest tests.hmi_ui... from the repo root
+    from tests.native.loader_harness import LoaderHarness
+except ModuleNotFoundError:  # tests/run_all.py discovers with tests/ as the top level
+    from native.loader_harness import LoaderHarness
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "probe-app")
 

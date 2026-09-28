@@ -22,7 +22,7 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 BIN = REPO_ROOT / "native" / "hmi-ui" / "out" / "hmi-ui"
-FIXTURE = REPO_ROOT / "tests" / "ui" / "fixtures" / "engine-dashboard"
+FIXTURE = REPO_ROOT / "tests" / "hmi_ui" / "fixtures" / "engine-dashboard"
 
 
 def _wait(condition, timeout_ms=15000):
