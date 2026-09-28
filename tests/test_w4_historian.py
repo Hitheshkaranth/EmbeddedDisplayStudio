@@ -157,14 +157,22 @@ class ExportCommand(unittest.TestCase):
         self.assertIn("'a;b'", remote_command("a;b", 1.5))
 
 
+def _free_port():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
 class DaemonHistory(unittest.TestCase):
     """hmi_hwd.py with a "history" block answers the history command and
     publishes the 13.4 "q" map for a failing read."""
-    _port = 5150
 
     def start(self, history, fail_pot=False):
-        DaemonHistory._port += 2
-        self.cmd_port, self.tel_port = DaemonHistory._port, DaemonHistory._port + 1
+        # Free ports from the OS: fixed ones collided with the daemon protocol
+        # suite's in a full run.
+        self.cmd_port, self.tel_port = _free_port(), _free_port()
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
         cfg = {"daemon": {"cmd_port": self.cmd_port, "telemetry_sink": f"127.0.0.1:{self.tel_port}",
