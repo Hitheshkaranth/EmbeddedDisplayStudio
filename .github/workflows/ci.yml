@@ -145,7 +145,7 @@ jobs:
             qml6-module-qtquick qml6-module-qtquick-shapes \
             qml6-module-qtquick-controls qml6-module-qtquick-layouts \
             qml6-module-qtquick-window qml6-module-qtquick-templates \
-            qml6-module-qtqml-workerscript \
+            qml6-module-qtqml-workerscript qt6-svg-plugins \
             libegl1 libgl1 libgl1-mesa-dev libxkbcommon-x11-0 libdbus-1-3
 
       - name: Build and run the C++ unit tests
