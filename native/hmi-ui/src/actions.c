@@ -12,6 +12,7 @@
 #include "modal.h"
 #include "runtime.h"
 #include "tags.h"
+#include "theme.h"
 
 #include "lvgl/lvgl.h"
 
@@ -99,6 +100,51 @@ static void run_one(hmi_runtime_t *rt, hmi_widget_t *w, const char *signal,
     }
 }
 
+// The kit's card and buttons, not LVGL's default light message box.
+static void style_button(lv_obj_t *b, const char *bg, const char *fg)
+{
+    lv_obj_set_style_bg_color(b, hmi_colour(bg), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(b, hmi_radius("radiusMd"), 0);
+    lv_obj_set_style_shadow_width(b, 0, 0);
+    lv_obj_set_style_min_width(b, 96, 0);
+    lv_obj_set_style_height(b, 40, 0);
+    lv_obj_t *label = lv_obj_get_child(b, 0);
+    if (label) {
+        lv_obj_set_style_text_color(label, hmi_colour(fg), 0);
+        lv_obj_set_style_text_font(label, hmi_font(hmi_font_size("fontSizeSm"), 500), 0);
+    }
+}
+
+static void style_confirm(lv_obj_t *box, lv_obj_t *text, lv_obj_t *cancel, lv_obj_t *ok)
+{
+    lv_obj_t *backdrop = lv_obj_get_parent(box);
+    if (backdrop && backdrop != lv_layer_top()) {
+        lv_obj_set_style_bg_color(backdrop, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(backdrop, LV_OPA_50, 0);
+    }
+    lv_obj_set_width(box, 420);
+    lv_obj_set_style_bg_color(box, hmi_colour("card"), 0);
+    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(box, hmi_colour("border"), 0);
+    lv_obj_set_style_border_width(box, 1, 0);
+    lv_obj_set_style_radius(box, hmi_radius("radiusLg"), 0);
+    lv_obj_set_style_pad_all(box, 20, 0);
+    lv_obj_set_style_shadow_width(box, 0, 0);
+    lv_obj_t *footer = lv_msgbox_get_footer(box);
+    if (footer) {
+        lv_obj_set_style_bg_opa(footer, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_pad_top(footer, 12, 0);
+        lv_obj_set_flex_align(footer, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    }
+    if (text) {
+        lv_obj_set_style_text_color(text, hmi_colour("foreground"), 0);
+        lv_obj_set_style_text_font(text, hmi_font(hmi_font_size("fontSizeBase"), 500), 0);
+    }
+    style_button(cancel, "secondary", "secondaryForeground");
+    style_button(ok, "primary", "primaryForeground");
+}
+
 void hmi_actions_run(hmi_runtime_t *rt, hmi_widget_t *w, const char *signal, const hmi_value_t *arg)
 {
     if (!rt || !w || !signal) return;
@@ -122,9 +168,10 @@ void hmi_actions_run(hmi_runtime_t *rt, hmi_widget_t *w, const char *signal, con
         p_arg = arg ? hmi_value_copy(arg) : hmi_value_null();
         p_text = confirm;
         lv_obj_t *box = p_box = lv_msgbox_create(NULL);
-        lv_msgbox_add_text(box, p_text);
+        lv_obj_t *text = lv_msgbox_add_text(box, p_text);
         lv_obj_t *cancel = lv_msgbox_add_footer_button(box, "Cancel");
         lv_obj_t *ok = lv_msgbox_add_footer_button(box, "OK");
+        style_confirm(box, text, cancel, ok);
         lv_obj_add_event_cb(cancel, confirm_clicked, LV_EVENT_CLICKED, NULL);
         lv_obj_add_event_cb(ok, confirm_clicked, LV_EVENT_CLICKED, (void *)1);
         return;

@@ -189,7 +189,8 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
 
     update_value_text(st);
 
-    // Set unit visibility
+    // Set unit visibility (and its text: an LVGL label reads "Text" until set)
+    lv_label_set_text(unitText, st->unit);
     if (st->unit[0] != '\0') {
         lv_obj_clear_flag(unitText, LV_OBJ_FLAG_HIDDEN);
         // Position unit text on the right side of value display
@@ -231,6 +232,7 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
         st->step = hmi_value_as_num(value, st->step);
     } else if (strcmp(prop, "unit") == 0) {
         strncpy(st->unit, hmi_value_as_str(value, ""), sizeof(st->unit) - 1);
+        lv_label_set_text(st->unitText, st->unit);
         if (st->unit[0] != '\0') {
             lv_obj_clear_flag(st->unitText, LV_OBJ_FLAG_HIDDEN);
             lv_obj_align(st->unitText, LV_ALIGN_RIGHT_MID, -8, 0);

@@ -281,6 +281,16 @@ bool hmi_input_open_text(hmi_widget_t *w, const char *text, hmi_input_text_cb do
     lv_obj_set_width(ta, lv_pct(90));
     lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 16);
     lv_obj_set_style_text_font(ta, hmi_font(hmi_font_size("fontSizeLg"), 400), 0);
+    // The kit's input look, not LVGL's default light theme.
+    lv_obj_set_style_bg_color(ta, hmi_colour("background"), 0);
+    lv_obj_set_style_bg_opa(ta, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(ta, hmi_colour("foreground"), 0);
+    lv_obj_set_style_border_color(ta, hmi_colour("input"), 0);
+    lv_obj_set_style_border_color(ta, hmi_colour("primary"), LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(ta, 1, 0);
+    lv_obj_set_style_radius(ta, hmi_radius("radiusMd"), 0);
+    lv_obj_set_style_bg_color(ta, hmi_colour("foreground"), LV_PART_CURSOR | LV_STATE_FOCUSED);
+    lv_obj_set_style_border_color(ta, hmi_colour("foreground"), LV_PART_CURSOR | LV_STATE_FOCUSED);
     lv_textarea_set_text(ta, text ? text : "");
     lv_obj_add_state(ta, LV_STATE_FOCUSED);   // show the cursor
     p->textarea = ta;
@@ -288,6 +298,21 @@ bool hmi_input_open_text(hmi_widget_t *w, const char *text, hmi_input_text_cb do
     lv_obj_t *kb = lv_keyboard_create(p->root);
     lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_TEXT_LOWER);
     lv_keyboard_set_textarea(kb, ta);
+    // Kit colours; the key captions keep LVGL's font, which carries the
+    // backspace/enter/arrow symbols Inter does not have.
+    lv_obj_set_style_bg_color(kb, hmi_colour("card"), 0);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(kb, hmi_colour("border"), 0);
+    lv_obj_set_style_border_width(kb, 1, 0);
+    lv_obj_set_style_border_side(kb, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_bg_color(kb, hmi_colour("secondary"), LV_PART_ITEMS);
+    lv_obj_set_style_text_color(kb, hmi_colour("foreground"), LV_PART_ITEMS);
+    lv_obj_set_style_radius(kb, hmi_radius("radiusMd"), LV_PART_ITEMS);
+    lv_obj_set_style_border_width(kb, 0, LV_PART_ITEMS);
+    lv_obj_set_style_shadow_width(kb, 0, LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(kb, hmi_colour("muted"), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(kb, hmi_colour("foreground"), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(kb, hmi_colour("primary"), LV_PART_ITEMS | LV_STATE_PRESSED);
     lv_obj_add_event_cb(kb, keyboard_event_cb, LV_EVENT_READY, NULL);
     lv_obj_add_event_cb(kb, keyboard_event_cb, LV_EVENT_CANCEL, NULL);
     return true;
