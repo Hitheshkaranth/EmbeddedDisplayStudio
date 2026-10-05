@@ -48,12 +48,33 @@ static void layout(hmi_widget_t *w)
     if (unit[0]) lv_obj_remove_flag(st->unit, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(st->unit, LV_OBJ_FLAG_HIDDEN);
     lv_obj_update_layout(st->unit);
     int unitW = unit[0] ? lv_obj_get_width(st->unit) : 0;
+    int numW = (int)fmax(10, blockW - unitW - 3);
+    // The number is sized from the height; a value wider than its slot
+    // ("90.00" in a compact readout) was cut off at the aligned edge.
+    // Re-run on every value change. First the icon, which is decoration,
+    // gives its slot to the value; then the value's face shrinks, to no less
+    // than 0.3 h so it stays the thing the readout is for.
+    lv_obj_set_width(st->number, LV_SIZE_CONTENT);
+    lv_obj_update_layout(st->number);
+    int textW = lv_obj_get_width(st->number);
+    if (textW > numW && iconSlot > 0) {
+        lv_obj_add_flag(st->icon, LV_OBJ_FLAG_HIDDEN);
+        iconSlot = 0;
+        blockX = 0;
+        blockW = (int)W;
+        numW = (int)fmax(10, blockW - unitW - 3);
+    } else if (icon[0]) {
+        lv_obj_remove_flag(st->icon, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (textW > numW) {
+        numFs = (int)fmax(fmax(8, H * 0.3), floor(numFs * (double)numW / textW));
+        lv_obj_set_style_text_font(st->number, hmi_font(numFs, 600), 0);
+    }
     int numH = lv_font_get_line_height(hmi_font(numFs, 600));
     int unitH = lv_font_get_line_height(hmi_font(unitFs, 400));
     int blockH = capH + numH;
     int top = (int)round(H / 2 - blockH / 2.0);
     lv_obj_set_pos(st->caption, blockX, top);
-    int numW = (int)fmax(10, blockW - unitW - 3);
     lv_obj_set_width(st->number, numW);
     lv_obj_set_style_text_align(st->number, iconLeft ? LV_TEXT_ALIGN_LEFT : LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_pos(st->number, blockX, top + capH);

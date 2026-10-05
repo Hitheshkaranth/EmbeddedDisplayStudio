@@ -97,12 +97,21 @@ static void layout(hmi_widget_t *w)
     double span = fmax(0.0001, st->maximumValue - st->minimumValue);
     double startAngle = 90 + (360 - st->sweep) / 2;
     lv_color_t line = hmi_colour("autoLine"), redline = hmi_colour("autoRedline");
-    // scale numbers at radius 0.47 d, centred on the angle
-    int fs = hmi_px_min(0.068 * dim, 7);
     double step = fmax(0.0001, st->majorStep);
     // As many decimals as the step needs: a 0..2.5 scale every 0.5 printed
     // with none read "0 0 1 2 2".
     int stepDp = step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
+    // scale numbers at radius 0.47 d, centred on the angle; numbers longer
+    // than four characters ("10000") get a smaller face so they stay off
+    // the arc.
+    int longest = 1;
+    for (double v = st->minimumValue; v <= st->maximumValue + 0.0001; v += step) {
+        char probe[24];
+        int n = snprintf(probe, sizeof probe, "%.*f", stepDp, v);
+        if (n > longest) longest = n;
+        if (v > st->minimumValue + step * MAX_MAJORS) break;
+    }
+    int fs = hmi_px_min(0.068 * dim * (longest > 4 ? 4.0 / longest : 1.0), 7);
     int i = 0;
     for (double v = st->minimumValue; v <= st->maximumValue + 0.0001 && i < MAX_MAJORS; v += step, ++i) {
         lv_obj_t *l = st->scale[i];
@@ -124,7 +133,18 @@ static void layout(hmi_widget_t *w)
     lv_obj_align(st->readout, LV_ALIGN_CENTER, 0, -hmi_px(0.07 * dim));
     lv_obj_set_style_text_font(st->unit, hmi_font(hmi_px(0.08 * dim), 400), 0);
     lv_obj_align_to(st->unit, st->readout, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
-    lv_obj_set_style_text_font(st->caption, hmi_font(hmi_px(0.07 * dim), 500), 0);
+    // The caption sits about 0.26 d above the centre, inside the ring of
+    // scale numbers (inner edge ~0.40 d): its width is that chord, and a long
+    // caption takes a smaller face rather than running into the numbers.
+    double chord = 2.0 * sqrt(0.40 * 0.40 - 0.26 * 0.26) * dim;
+    const char *cap = lv_label_get_text(st->caption);
+    size_t capLen = cap ? strlen(cap) : 0;
+    double capFs = 0.07 * dim;
+    if (capLen > 0 && capLen * capFs * 0.56 > chord) capFs = chord / (capLen * 0.56);
+    lv_obj_set_style_text_font(st->caption, hmi_font(hmi_px_min(capFs, 7), 500), 0);
+    lv_obj_set_width(st->caption, hmi_px(chord));
+    lv_label_set_long_mode(st->caption, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(st->caption, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align_to(st->caption, st->readout, LV_ALIGN_OUT_TOP_MID, 0, -4);
     int lfs = hmi_px_min(0.045 * dim, 7);
     lv_obj_set_style_text_font(st->label, hmi_font(lfs, 400), 0);
@@ -211,6 +231,7 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
             const char *s = hmi_value_as_str(value, "");
             lv_label_set_text(st->caption, s);
             if (s[0]) lv_obj_remove_flag(st->caption, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(st->caption, LV_OBJ_FLAG_HIDDEN);
+            layout(w);   // the caption's face depends on its length
         } else {
             const char *s = hmi_value_as_str(value, "");
             lv_label_set_text(st->label, s);

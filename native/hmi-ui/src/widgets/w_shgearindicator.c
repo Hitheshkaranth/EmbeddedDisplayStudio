@@ -26,10 +26,6 @@ static void layout(hmi_widget_t *w)
 {
     state_t *st = w->state;
     double W = fmax(1, w->width), H = fmax(1, w->height);
-    int spacing = (int)round(H * 0.12);
-    int activeFs = hmi_px_min(H * 0.62, 8);
-    int dimFs = hmi_px_min(H * 0.4, 7);
-    int modeNumFs = hmi_px_min(H * 0.45, 8);
     int modeNumMargin = (int)round(H * 0.02);
 
     /* Parse gear list */
@@ -84,25 +80,39 @@ static void layout(hmi_widget_t *w)
     int bottom = (int)H - (int)round(H * 0.12);
     int widths[32];
     int total = 0;
-    for (int i = 0; i < st->count; i++) {
-        bool current = strcmp(st->gear_label[i], st->gear) == 0;
-        lv_label_set_text(st->gear_obj[i], st->gear_label[i]);
-        lv_obj_set_style_text_font(st->gear_obj[i], hmi_font(current ? activeFs : dimFs, current ? 600 : 500), 0);
-        lv_obj_set_style_text_color(st->gear_obj[i], current ? hmi_colour("autoText") : hmi_colour("autoMuted"), 0);
-        lv_obj_remove_flag(st->gear_obj[i], LV_OBJ_FLAG_HIDDEN);
-        lv_obj_update_layout(st->gear_obj[i]);
-        widths[i] = lv_obj_get_width(st->gear_obj[i]);
-        if (current && st->modeNumber > 0) {
-            lv_label_set_text_fmt(st->num_obj[i], "%d", st->modeNumber);
-            lv_obj_set_style_text_font(st->num_obj[i], hmi_font(modeNumFs, 400), 0);
-            lv_obj_set_style_text_color(st->num_obj[i], hmi_colour("autoLine"), 0);
-            lv_obj_remove_flag(st->num_obj[i], LV_OBJ_FLAG_HIDDEN);
-            lv_obj_update_layout(st->num_obj[i]);
-            widths[i] += 1 + lv_obj_get_width(st->num_obj[i]);
-        } else {
-            lv_obj_add_flag(st->num_obj[i], LV_OBJ_FLAG_HIDDEN);
+    int spacing = 0;
+    // The glyphs are sized from the height; a row that comes out wider than
+    // the widget (P R N D plus a mode number in a short, wide box) is
+    // measured again with every face scaled to fit, instead of spilling.
+    double fit = 1.0;
+    for (int pass = 0; pass < 3; ++pass) {
+        spacing = (int)round(H * 0.12 * fit);
+        int activeFs = hmi_px_min(H * 0.62 * fit, 8);
+        int dimFs = hmi_px_min(H * 0.4 * fit, 7);
+        int modeNumFs = hmi_px_min(H * 0.45 * fit, 8);
+        total = 0;
+        for (int i = 0; i < st->count; i++) {
+            bool current = strcmp(st->gear_label[i], st->gear) == 0;
+            lv_label_set_text(st->gear_obj[i], st->gear_label[i]);
+            lv_obj_set_style_text_font(st->gear_obj[i], hmi_font(current ? activeFs : dimFs, current ? 600 : 500), 0);
+            lv_obj_set_style_text_color(st->gear_obj[i], current ? hmi_colour("autoText") : hmi_colour("autoMuted"), 0);
+            lv_obj_remove_flag(st->gear_obj[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_update_layout(st->gear_obj[i]);
+            widths[i] = lv_obj_get_width(st->gear_obj[i]);
+            if (current && st->modeNumber > 0) {
+                lv_label_set_text_fmt(st->num_obj[i], "%d", st->modeNumber);
+                lv_obj_set_style_text_font(st->num_obj[i], hmi_font(modeNumFs, 400), 0);
+                lv_obj_set_style_text_color(st->num_obj[i], hmi_colour("autoLine"), 0);
+                lv_obj_remove_flag(st->num_obj[i], LV_OBJ_FLAG_HIDDEN);
+                lv_obj_update_layout(st->num_obj[i]);
+                widths[i] += 1 + lv_obj_get_width(st->num_obj[i]);
+            } else {
+                lv_obj_add_flag(st->num_obj[i], LV_OBJ_FLAG_HIDDEN);
+            }
+            total += widths[i] + (i ? spacing : 0);
         }
-        total += widths[i] + (i ? spacing : 0);
+        if (total <= W * 0.96) break;
+        fit *= (W * 0.96) / total;
     }
     for (int i = st->count; i < 32; i++) {
         if (st->gear_obj[i]) lv_obj_add_flag(st->gear_obj[i], LV_OBJ_FLAG_HIDDEN);

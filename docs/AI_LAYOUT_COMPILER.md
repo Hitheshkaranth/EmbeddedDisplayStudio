@@ -71,6 +71,13 @@ brief --> model: content plan (no geometry) --> intake (repair, normalise)
      row sized to the button text. Lamps are labelled lamps on a grid, with
      a compact grid used before anything spills. Charts and tables fill
      what is left.
+   - **Minimums first:** slicing gives every card the minimum its content
+     needs before sharing the rest out by weight, so a three-button card is
+     never a sliver beside a large hero.
+   - **No repeated names:** a hero dial's caption folds into its card title,
+     a card holding only an alarm table has no heading of its own, tile
+     labels lose the card's leading word ("Current" inside "Motor"), and a
+     heading too long for its card falls back to its first part.
    - **Density (size constraints):** the same search runs at widget scales
      1.0, 0.9, 0.8, 0.7 and 0.6. Each scale shrinks design sizes, minimums,
      control height and in-card spacing together. A screen keeps its design
@@ -93,6 +100,18 @@ brief --> model: content plan (no geometry) --> intake (repair, normalise)
    old path). The variant strip offers the runner-up layout families via
    `compile_candidates`. In `auto` mode, a geometry reply still goes
    through polish.
+
+## Kit faces that fit any size
+
+These were fixed in hmi-ui (C) and the QML kit alike:
+- ShClusterGauge: the caption is fitted to the chord inside the ring of
+  scale numbers, and long scale numbers ("10000") use a smaller face.
+- ShGearIndicator: a row wider than its box is measured again with the
+  glyphs scaled to fit.
+- ShAutoReadout: a value wider than its slot first takes the icon's place,
+  then a smaller face (no less than 0.3 h), instead of being cut off.
+- ShEngineBar: the label is held to the bar's width; it shrinks, then
+  ends in an ellipsis.
 
 ## How it was tested
 
@@ -117,21 +136,14 @@ brief --> model: content plan (no geometry) --> intake (repair, normalise)
 2. **Size constraints in the Properties panel.** Expose `_size`
    (compact/normal/large) and a per-page density override, so a designer can
    pin a card's prominence without editing JSON.
-3. **Kit faces that read at any size.** A few faces still misbehave when
-   large or compact, and those are kit fixes, not layout fixes:
-   - ShClusterGauge caption and tick labels collide at large sizes (scale
-     the caption font with the inner dial).
-   - ShGearIndicator glyphs overflow their box.
-   - ShAutoReadout clips its value under its design width.
-   - ShEngineBar's label is wider than the bar.
-4. **Critic aligned with the compiler.** Add pixel checks for text past a
+3. **Critic aligned with the compiler.** Add pixel checks for text past a
    widget's box (the clipping axis exists; feed it per-widget bounds) and
    score the compiled variants with the hmi-ui render, not geometry alone.
-5. **Plan validation round-trip.** When intake had to repair heavily or a
+4. **Plan validation round-trip.** When intake had to repair heavily or a
    section came back empty, ask the model once for a corrected plan, sending
    it the validator's notes rather than retrying blind.
-6. **Multi-page plans.** Navigation strips and a per-system detail-page
+5. **Multi-page plans.** Navigation strips and a per-system detail-page
    template, compiled with the same tokens so pages look like one product.
-7. **Light theme and brand tokens.** The compiler takes every colour from
+6. **Light theme and brand tokens.** The compiler takes every colour from
    Theme tokens already; add a brief-driven accent and verify contrast with
    the critic's contrast axis.

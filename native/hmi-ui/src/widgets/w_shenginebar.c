@@ -38,9 +38,18 @@ static void layout(hmi_widget_t *w)
     lv_obj_set_style_radius(st->face, hmi_radius("radiusSm"), 0);
 
     /* Label */
+    /* Label: the bar's width at most -- a long name ("Power / Regen") on a
+       76 px bar takes a smaller face, then an ellipsis, never the next widget. */
     lv_label_set_text(st->label, st->label_text);
-    lv_obj_set_style_text_font(st->label, hmi_font(hmi_font_size("fontSizeSm"), 600), 0);
+    double labelFs = hmi_font_size("fontSizeSm");
+    size_t labelLen = strlen(st->label_text);
+    if (labelLen > 0 && labelLen * labelFs * 0.6 > W)
+        labelFs = fmax(8, W / (labelLen * 0.6));
+    lv_obj_set_style_text_font(st->label, hmi_font((int)labelFs, 600), 0);
     lv_obj_set_style_text_color(st->label, hmi_colour("efisText"), 0);
+    lv_obj_set_width(st->label, (int32_t)W);
+    lv_label_set_long_mode(st->label, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(st->label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(st->label, LV_ALIGN_TOP_MID, 0, 0);
 
     /* Well frame */
@@ -142,7 +151,8 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
     else if (strcmp(prop, "cautionValue") == 0) st->cautionValue = hmi_value_as_num(value, st->cautionValue);
     else if (strcmp(prop, "warningValue") == 0) st->warningValue = hmi_value_as_num(value, st->warningValue);
     else if (strcmp(prop, "units") == 0) { lv_label_set_text(st->readout, hmi_value_as_str(value, "%")); }
-    else if (strcmp(prop, "label") == 0) { lv_label_set_text(st->label, hmi_value_as_str(value, "")); return; }
+    else if (strcmp(prop, "label") == 0)   // through layout(), which fits it to the bar
+        snprintf(st->label_text, sizeof st->label_text, "%s", hmi_value_as_str(value, ""));
     else return;
 
     layout(w);

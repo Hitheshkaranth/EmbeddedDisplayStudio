@@ -800,21 +800,62 @@ def _compositions(count, limit_parts=4):
                 yield groups
 
 
+# Each section's minimum card (width, height) for the search in progress,
+# so slicing gives a small card what its content needs before sharing out
+# the rest by weight (set by _search).
+_MINIMUMS: dict = {}
+
+
+def _shares(total, weights, minimums):
+    """Split `total` by weight, but no share below its minimum: those are
+    lifted and the rest re-shared among the others. When even the minimums
+    do not fit, everything scales down together."""
+    count = len(weights)
+    if count == 0:
+        return []
+    need = sum(minimums)
+    if need >= total:
+        scale = total / need if need else 0.0
+        return [m * scale for m in minimums]
+    fixed = [False] * count
+    shares = [0.0] * count
+    while True:
+        free = total - sum(minimums[i] for i in range(count) if fixed[i])
+        weight = sum(weights[i] for i in range(count) if not fixed[i]) or 1.0
+        lifted = False
+        for i in range(count):
+            if fixed[i]:
+                shares[i] = minimums[i]
+                continue
+            shares[i] = free * weights[i] / weight
+            if shares[i] < minimums[i]:
+                fixed[i] = lifted = True
+        if not lifted:
+            return shares
+
+
+def _minimum(index, axis):
+    pair = _MINIMUMS.get(index)
+    return pair[axis] if pair else 0.0
+
+
 def _slice(rect, groups, weights, gap, horizontal_first):
-    """Treemap slice-and-dice: groups across one axis, members along the other."""
+    """Treemap slice-and-dice: groups across one axis, members along the other,
+    each share by weight with every card's minimum honoured first."""
     x, y, w, h = rect
     out = {}
+    outer_axis, inner_axis = (1, 0) if horizontal_first else (0, 1)
     totals = [sum(weights[i] for i in group) for group in groups]
-    grand = sum(totals)
     along = (h if horizontal_first else w) - gap * (len(groups) - 1)
+    sizes = _shares(along, totals,
+                    [max(_minimum(i, outer_axis) for i in group) for group in groups])
     cursor = y if horizontal_first else x
-    for group, total in zip(groups, totals):
-        size = along * total / grand
-        inner_total = sum(weights[i] for i in group)
+    for group, size in zip(groups, sizes):
         inner_along = (w if horizontal_first else h) - gap * (len(group) - 1)
+        parts = _shares(inner_along, [weights[i] for i in group],
+                        [_minimum(i, inner_axis) for i in group])
         inner = x if horizontal_first else y
-        for i in group:
-            part = inner_along * weights[i] / inner_total
+        for i, part in zip(group, parts):
             if horizontal_first:
                 out[i] = (inner, cursor, part, size)
             else:
@@ -873,11 +914,10 @@ def _candidates(sections, weights, body, gap):
 
 def _column(indices, rect, weights, gap):
     x, y, w, h = rect
-    total = sum(weights[i] for i in indices)
     along = h - gap * (len(indices) - 1)
+    parts = _shares(along, [weights[i] for i in indices], [_minimum(i, 1) for i in indices])
     out, cursor = {}, y
-    for i in indices:
-        part = along * weights[i] / total
+    for i, part in zip(indices, parts):
         out[i] = (x, cursor, w, part)
         cursor += part + gap
     return out
@@ -908,7 +948,7 @@ def _cost(registry, sections, layout, tokens, body):
         if section.role == "hero":
             # The hero card is the screen's focus: its instrument should fill
             # it, not sit small in a wide band.
-            cost += max(0.0, 0.55 - density) * 14.0
+            cost += max(0.0, 0.65 - density) * 20.0
         elif section.role not in ("alarms", "trend"):
             # Any card that is mostly air was given room another card needed.
             cost += max(0.0, 0.3 - density) * 6.0
@@ -1008,6 +1048,8 @@ def _search(registry, sections, tokens, width, height, has_header):
     if not sections:
         return [], 0, body
     weights = _weights(registry, sections)
+    _MINIMUMS.clear()
+    _MINIMUMS.update({i: section_minimum(registry, s, tokens) for i, s in enumerate(sections)})
     family_best, count = {}, 0
     for name, layout in _candidates(sections, weights, body, tokens.gap):
         count += 1
@@ -1159,6 +1201,19 @@ def _hero_caption(sections, notes):
     """A long caption on the hero dial collides with its scale; the card's
     title says it instead. A label that only repeats the title goes too."""
     for section in sections:
+        if section.widgets and all(w.type == "ShAlarmTable" for w in section.widgets):
+            # The table's own header names it; a card heading says it twice.
+            section.title = ""
+        if section.role == "hero" and len(section.widgets) == 1:
+            hero = section.widgets[0]
+            caption = str(hero.properties.get("caption", "") or "").strip()
+            title = str(section.title or "").strip()
+            if caption and title and (caption.lower() in title.lower() or title.lower() in caption.lower()):
+                # "Steam Pressure" over a dial captioned "Steam Pressure": the
+                # card keeps the fuller name, the dial its readout.
+                section.title = caption if len(caption) > len(title) else title
+                hero.properties["caption"] = ""
+                notes.append(f"{hero.id}: caption folded into the card title")
         for other in section.widgets if section.role != "hero" else ():
             caption = str(other.properties.get("caption", "") or "")
             if other.type == "ShClusterGauge" and len(caption) > CAPTION_LIMIT:
@@ -1236,12 +1291,19 @@ def _prepare(registry, section, notes):
         if not label_prop or widget.type in ("Text", "ShButton"):
             continue
         current = str(widget.properties.get(label_prop, "") or "").strip()
-        default = str(definition.defaults.get(label_prop, "") or "").strip()
-        if not current or current == default:
+        # Only an absent or empty label is filled: one the model wrote stays,
+        # even when it happens to be the kit's default ("Active Alarms").
+        if not current:
             text = _widget_label(widget)
             if text:
                 widget.properties[label_prop] = text
                 notes.append(f"{widget.id}: {label_prop} '{text}'")
+                current = text
+        trimmed = _without_heading(current, section.title)
+        if trimmed != current and len(section.widgets) > 1:
+            # "Motor Current" in the card "Motor" reads "Current": the card
+            # already says whose current it is, and small tiles clip the rest.
+            widget.properties[label_prop] = trimmed
 
 
 _UNIT_PROPERTIES = ("unit", "units", "readoutUnit")
@@ -1271,6 +1333,15 @@ def _bands_inside_range(widget, notes):
         if isinstance(value, (int, float)) and not (low <= value <= high):
             widget.properties[key] = high if key == "warningHigh" else low
             notes.append(f"{widget.id}: {key} {value:g} outside {low:g}..{high:g}, clamped")
+
+
+def _without_heading(label: str, heading: str) -> str:
+    """`label` without a leading `heading` word ("Motor Current", "Motor")."""
+    first = str(heading or "").split(" & ")[0].strip()
+    if not first or not label.lower().startswith(first.lower() + " "):
+        return label
+    rest = label[len(first):].strip()
+    return rest[:1].upper() + rest[1:] if len(rest) >= 3 else label
 
 
 def _live_readout(definition, widget, notes):
@@ -1457,10 +1528,11 @@ def _card(project, registry, section, rect, tokens):
                  "borderWidth": 1, "radius": tokens.radius})
     inner_top = tokens.pad
     if section.title:
+        heading = _fit_heading(section.title, w - 2 * tokens.pad, tokens.card_title_font)
         card.children.append(_text(project, (_slug(section.title) or "card") + "Heading",
                                    (tokens.pad, tokens.pad - 2, w - 2 * tokens.pad,
                                     tokens.card_title),
-                                   section.title, tokens.card_title_font,
+                                   heading, tokens.card_title_font,
                                    _theme(project, "mutedForeground"), bold=True))
         inner_top += tokens.card_title
     inner_w = w - 2 * tokens.pad
@@ -1484,6 +1556,20 @@ def _card(project, registry, section, rect, tokens):
                                        (tokens.pad + ex, inner_top + ey, ew, eh), text,
                                        tokens.label_font, _theme(project, "foreground")))
     return card
+
+
+def _fit_heading(title: str, width: float, font: int) -> str:
+    """A card heading that fits its card: the full title, else the part
+    before " & " (a merged card), else cut with an ellipsis."""
+    def fits(text):
+        return len(text) * font * 0.6 <= width
+    if fits(title):
+        return title
+    first = title.split(" & ")[0].strip()
+    if first != title and fits(first):
+        return first
+    keep = max(3, int(width / (font * 0.6)) - 1)
+    return title[:keep].rstrip() + "…"
 
 
 def _slug(text):
