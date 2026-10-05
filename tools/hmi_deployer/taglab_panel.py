@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -433,53 +434,29 @@ class TagLabPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
+        """Studio 2 layout: one toolbar row, then the tag table filling the
+        page. The commands log is built here but not placed: the Studio docks
+        `commands_widget` in the Simulate view's bottom drawer beside the
+        panel journal (a bare panel shows it under the table instead)."""
         self.setObjectName("tagLabPage")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(12)
+        layout.setContentsMargins(12, 10, 12, 8)
+        layout.setSpacing(8)
 
-        # The heading carries the same mark as this page's tab. The pixmap is
-        # left to MainWindow, which owns the icon registry that re-renders every
-        # icon on a theme toggle; a pixmap set here would go black in dark mode.
-        heading = QHBoxLayout()
-        heading.setContentsMargins(0, 0, 0, 0)
-        heading.setSpacing(10)
+        # MainWindow paints this mark (its icon registry follows the theme);
+        # the toolbar shows it beside the run controls.
         self.title_icon = QLabel()
         self.title_icon.setObjectName("pageTitleIcon")
-        self.title_icon.setFixedSize(26, 26)
+        self.title_icon.setFixedSize(22, 22)
         self.title_icon.setAlignment(Qt.AlignCenter)
-        page_title = QLabel("Tag Lab")
-        page_title.setObjectName("consolePageTitle")
-        heading.addWidget(self.title_icon)
-        heading.addWidget(page_title)
-        heading.addStretch()
 
-        page_subtitle = QLabel(
-            "Inject controlled tag values, save scenarios, and validate panel behaviour."
-        )
-        page_subtitle.setObjectName("consolePageSubtitle")
-        page_subtitle.setWordWrap(True)
-        layout.addLayout(heading)
-        layout.addWidget(page_subtitle)
+        # ── Toolbar: run, scenario, tags, status ──────────────────────────
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(6)
+        page_title = QLabel("Tag simulator")
+        page_title.setObjectName("sectionTitle")
 
-        # ── Toolbar ──────────────────────────────────────────────────────
-        controls_panel = QFrame()
-        controls_panel.setProperty("class", "consoleSectionPanel")
-        controls_layout = QVBoxLayout(controls_panel)
-        controls_layout.setContentsMargins(14, 14, 14, 14)
-        controls_layout.setSpacing(8)
-        controls_title = QLabel("Tag Controls")
-        controls_title.setObjectName("sectionTitle")
-        controls_layout.addWidget(controls_title)
-        # The five actions wrap onto a grid rather than stretching across one
-        # row. As a single row they set a ~970px floor under this page, and
-        # because a QTabWidget takes the widest page as its minimum, opening
-        # Tag Lab once shoved the splitter over and shrank the bezel preview
-        # for the rest of the session.
-        toolbar = QGridLayout()
-        toolbar.setSpacing(8)
-
-        self._btn_send = QPushButton("Start Sending")
+        self._btn_send = QPushButton("Run")
         self._btn_send.setProperty("variant", "default")
         self._btn_send.setToolTip("Begin injecting tag values over UDP to the TagEngine")
         self._btn_send.setAccessibleName("Start Tag Lab sender")
@@ -492,19 +469,19 @@ class TagLabPanel(QWidget):
         self._btn_stop.setEnabled(False)
         self._btn_stop.clicked.connect(self._on_stop)
 
-        self._btn_save = QPushButton("Save Scenario…")
+        self._btn_save = QPushButton("Save scenario…")
         self._btn_save.setProperty("variant", "secondary")
         self._btn_save.setToolTip("Save the current tag assignments to a .json scenario file")
         self._btn_save.setAccessibleName("Save scenario")
         self._btn_save.clicked.connect(self._on_save_scenario)
 
-        self._btn_load = QPushButton("Load Scenario…")
+        self._btn_load = QPushButton("Load scenario…")
         self._btn_load.setProperty("variant", "outline")
         self._btn_load.setToolTip("Load a previously saved scenario file")
         self._btn_load.setAccessibleName("Load scenario")
         self._btn_load.clicked.connect(self._on_load_scenario)
 
-        self._btn_add = QPushButton("Add Tag…")
+        self._btn_add = QPushButton("Add tag…")
         self._btn_add.setProperty("variant", "ghost")
         self._btn_add.setToolTip("Manually add a tag name that is not in the bundle manifest")
         self._btn_add.setAccessibleName("Add custom tag")
@@ -512,21 +489,30 @@ class TagLabPanel(QWidget):
 
         self._lbl_status = QLabel("Status: Idle")
         self._lbl_status.setObjectName("tagLabStatus")
+        self._lbl_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        for position, button in enumerate((
-            self._btn_send,
-            self._btn_stop,
-            self._btn_save,
-            self._btn_load,
-            self._btn_add,
-        )):
-            toolbar.addWidget(button, position // _TOOLBAR_COLUMNS,
-                              position % _TOOLBAR_COLUMNS)
-        for column in range(_TOOLBAR_COLUMNS):
-            toolbar.setColumnStretch(column, 1)
-        controls_layout.addLayout(toolbar)
-        controls_layout.addWidget(self._lbl_status)
-        layout.addWidget(controls_panel)
+        # A QTabWidget takes its minimum width from its widest page, and a
+        # wide Simulate page would shrink the bezel preview on every tab: the
+        # title and the status give way first, the buttons keep their text.
+        for label in (page_title, self._lbl_status):
+            label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            label.setMinimumWidth(0)
+        toolbar.addWidget(self.title_icon)
+        toolbar.addWidget(page_title, 1)
+        toolbar.addWidget(self._lbl_status, 1)
+        layout.addLayout(toolbar)
+        # Five actions in one row put a ~730 px floor under the page; three
+        # columns keep it under the bound and every label whole.
+        actions = QGridLayout()
+        actions.setHorizontalSpacing(6)
+        actions.setVerticalSpacing(6)
+        for position, button in enumerate((self._btn_send, self._btn_stop, self._btn_add,
+                                           self._btn_save, self._btn_load)):
+            button.setFixedHeight(30)
+            actions.addWidget(button, position // 3, position % 3)
+        for column in range(3):
+            actions.setColumnStretch(column, 1)
+        layout.addLayout(actions)
 
         # ── Tag table ─────────────────────────────────────────────────────
         self._table = QTableWidget(0, _NUM_COLS)
@@ -535,8 +521,11 @@ class TagLabPanel(QWidget):
         self._table.setSelectionBehavior(QTableWidget.SelectRows)
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setVisible(False)
-        self._table.setToolTip("Tag signal assignments.  Select a row and click Edit to change the waveform.")
+        self._table.verticalHeader().setDefaultSectionSize(32)
+        self._table.setShowGrid(False)
+        self._table.setToolTip("Tag signal assignments.  Click Edit to change a waveform.")
         self._table.setAccessibleName("Tag Lab tag table")
+        self._table.setObjectName("tagLabTable")
 
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(_COL_TAG, QHeaderView.Stretch)
@@ -544,43 +533,29 @@ class TagLabPanel(QWidget):
         hdr.setSectionResizeMode(_COL_WAVEFORM, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(_COL_PARAMS, QHeaderView.Stretch)
         hdr.setSectionResizeMode(_COL_TOGGLE, QHeaderView.Fixed)
-        self._table.setColumnWidth(_COL_TOGGLE, 80)
+        self._table.setColumnWidth(_COL_TOGGLE, 72)
         hdr.setSectionResizeMode(_COL_REMOVE, QHeaderView.Fixed)
-        self._table.setColumnWidth(_COL_REMOVE, 44)
-
-        workspace_panel = QFrame()
-        workspace_panel.setProperty("class", "consoleSectionPanel")
-        workspace_layout = QVBoxLayout(workspace_panel)
-        workspace_layout.setContentsMargins(14, 14, 14, 14)
-        workspace_layout.setSpacing(8)
-        workspace_title = QLabel("Signal Workspace")
-        workspace_title.setObjectName("sectionTitle")
-        workspace_layout.addWidget(workspace_title)
-        workspace_body = QFrame()
-        workspace_body.setProperty("class", "consoleSectionBody")
-        workspace_body_layout = QVBoxLayout(workspace_body)
-        workspace_body_layout.setContentsMargins(12, 12, 12, 12)
-        workspace_body_layout.addWidget(self._table, 1)
+        self._table.setColumnWidth(_COL_REMOVE, 40)
+        layout.addWidget(self._table, 1)
 
         # ── Empty-state label (shown when model is empty) ─────────────────
         self._lbl_empty = QLabel(
             "No tags loaded.\n"
-            "Open a bundle to bind its tags_required, or click Add Tag… to add one manually."
+            "Open a bundle to bind its tags_required, or click Add tag… to add one manually."
         )
         self._lbl_empty.setAlignment(Qt.AlignCenter)
         self._lbl_empty.setWordWrap(True)
         self._lbl_empty.setObjectName("tagLabEmptyState")
-        workspace_body_layout.addWidget(self._lbl_empty)
-        workspace_layout.addWidget(workspace_body, 1)
-        layout.addWidget(workspace_panel, 1)
+        layout.addWidget(self._lbl_empty, 1)
 
-        # ── Commands log ──────────────────────────────────────────────────
+        # ── Commands log (docked by the Studio) ───────────────────────────
         self._cmd_log: QTableWidget = QTableWidget(0, _NUM_CMD_COLS)
         self._cmd_log.setHorizontalHeaderLabels(_CMD_HEADERS)
         self._cmd_log.setEditTriggers(QTableWidget.NoEditTriggers)
         self._cmd_log.setSelectionBehavior(QTableWidget.SelectRows)
         self._cmd_log.setAlternatingRowColors(True)
         self._cmd_log.verticalHeader().setVisible(False)
+        self._cmd_log.setShowGrid(False)
         self._cmd_log.horizontalHeader().setStretchLastSection(True)
         self._cmd_log.horizontalHeader().setSectionResizeMode(_COL_CMD_SEQ, QHeaderView.Fixed)
         self._cmd_log.setColumnWidth(_COL_CMD_SEQ, 40)
@@ -596,23 +571,11 @@ class TagLabPanel(QWidget):
         self._cmd_log.setObjectName("tagLabCommandsLog")
         self._cmd_log.setToolTip("Incoming commands received by the CommandSink")
         self._cmd_log.setAccessibleName("Commands log")
-        self._cmd_log.setMaximumHeight(180)
-
-        cmd_panel = QFrame()
-        cmd_panel.setProperty("class", "consoleSectionPanel")
-        cmd_layout = QVBoxLayout(cmd_panel)
-        cmd_layout.setContentsMargins(14, 14, 14, 14)
-        cmd_layout.setSpacing(8)
-        cmd_title = QLabel("Commands Log")
-        cmd_title.setObjectName("sectionTitle")
-        cmd_layout.addWidget(cmd_title)
-        cmd_body = QFrame()
-        cmd_body.setProperty("class", "consoleSectionBody")
-        cmd_body_layout = QVBoxLayout(cmd_body)
-        cmd_body_layout.setContentsMargins(12, 12, 12, 12)
-        cmd_body_layout.addWidget(self._cmd_log)
-        cmd_layout.addWidget(cmd_body, 1)
-        layout.addWidget(cmd_panel)
+        self.commands_widget = QWidget()
+        self.commands_widget.setObjectName("tagLabCommands")
+        commands_layout = QVBoxLayout(self.commands_widget)
+        commands_layout.setContentsMargins(0, 0, 0, 0)
+        commands_layout.addWidget(self._cmd_log)
 
         self._cmd_seq: int = 0
         self._sink: Optional["CommandSink"] = None  # noqa: F821

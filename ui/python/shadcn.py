@@ -696,6 +696,47 @@ QLabel#statusItem {{
     color: {p['mutedForeground']};
     font-size: 11px;
 }}
+/* Simulate view: tags on top, a drawer of Commands / Panel log below. The
+   drawer's tabs sit inside workspaceTabs, whose rule would give them a 96px
+   floor and the selected-tab primary fill; these are quieter. */
+QSplitter#simulateSplit::handle {{ background-color: {p['border']}; }}
+QTabWidget#simulateDrawer::pane {{ border: none; border-top: 1px solid {p['border']}; top: -1px; }}
+QTabWidget#workspaceTabs QTabWidget#simulateDrawer QTabBar::tab {{
+    min-width: 0px;
+    background-color: transparent;
+    color: {p['mutedForeground']};
+    border: none;
+    border-radius: 6px;
+    padding: 5px 12px;
+    margin: 6px 2px 6px 0;
+    font-size: 12px;
+    font-weight: 500;
+}}
+QTabWidget#workspaceTabs QTabWidget#simulateDrawer QTabBar::tab:first {{ margin-left: 10px; }}
+QTabWidget#workspaceTabs QTabWidget#simulateDrawer QTabBar::tab:selected {{
+    background-color: {hex_to_rgba(p['foreground'], 0.09)};
+    color: {p['foreground']};
+}}
+QWidget#tagLabPage QPushButton, QWidget#panelLogPage QPushButton {{
+    height: 30px;
+    min-height: 30px;
+    max-height: 30px;
+    padding: 0 14px;
+    font-size: 12px;
+    border-radius: 8px;
+}}
+QLabel#tagLabStatus {{ color: {p['mutedForeground']}; font-size: 12px; }}
+QPlainTextEdit#panelLogView {{
+    font-family: "Cascadia Mono", Consolas, Menlo, monospace;
+    font-size: 12px;
+    border: 1px solid {p['border']};
+    border-radius: {r['md']}px;
+}}
+QTableWidget#tagLabTable, QTableWidget#tagLabCommandsLog {{
+    border: 1px solid {p['border']};
+    border-radius: {r['md']}px;
+    font-size: 12px;
+}}
 QLabel#statusItem[linkState="connected"] {{ color: {p['success']}; }}
 QLabel#statusItem[linkState="fault"] {{ color: {p['destructive']}; }}
 QLabel#statusItem[linkState="connecting"] {{ color: {p['brand']}; }}

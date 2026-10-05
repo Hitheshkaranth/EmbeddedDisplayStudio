@@ -1389,36 +1389,35 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         # Phase B: wire the CommandSink so incoming commands are logged
         if hasattr(self, "_cmd_sink") and self._cmd_sink is not None:
             self.taglab_panel.sink = self._cmd_sink
-        taglab_scroll = self._scrollable(self.taglab_panel)
-        self._right_tabs.addTab(taglab_scroll, "Tag Lab")
-        self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(taglab_scroll), "gauge")
+        # ── Simulate (Studio 2): Tag Lab and the panel journal, one view ───
+        # The tags you drive on top; underneath, a drawer with what the
+        # screen sent back (Commands) and what the panel's services said
+        # (Panel log). The bezel preview to the left is the live screen.
+        # Reading the journal used to be a tab of its own, away from the
+        # tags that caused what it reports.
+        simulate_page = QWidget()
+        simulate_page.setObjectName("simulatePage")
+        simulate_layout = QVBoxLayout(simulate_page)
+        simulate_layout.setContentsMargins(0, 0, 0, 0)
+        simulate_layout.setSpacing(0)
+        simulate_split = QSplitter(Qt.Vertical)
+        simulate_split.setObjectName("simulateSplit")
+        simulate_split.setChildrenCollapsible(False)
+        simulate_split.setHandleWidth(1)
+        simulate_split.addWidget(self.taglab_panel)
 
-        # ── Panel Logs tab ────────────────────────────────────────────────
-        # The deploy console shows what this tool did. It says nothing about
-        # what the panel does afterwards, and an application that dies an hour
-        # later leaves no trace here -- the journal on the board is the only
-        # record, and until now reading it meant leaving the window for a
-        # terminal.
+        self.simulate_drawer = QTabWidget()
+        self.simulate_drawer.setObjectName("simulateDrawer")
+        self.simulate_drawer.setDocumentMode(True)
+        self.simulate_drawer.tabBar().setUsesScrollButtons(False)
+        self.simulate_drawer.tabBar().setExpanding(False)
+        self.simulate_drawer.addTab(self.taglab_panel.commands_widget, "Commands")
+
         logs_page = QWidget()
+        logs_page.setObjectName("panelLogPage")
         logs_layout = QVBoxLayout(logs_page)
-        logs_layout.setContentsMargins(12, 12, 12, 12)
-        logs_layout.setSpacing(12)
-        logs_layout.addLayout(self._page_heading("Panel Logs", "terminal-2"))
-        logs_subtitle = QLabel(
-            "Live journal from the panel's own services: the loader hosting "
-            "your application, and the hardware daemon."
-        )
-        logs_subtitle.setObjectName("consolePageSubtitle")
-        logs_subtitle.setWordWrap(True)
-        logs_layout.addWidget(logs_subtitle)
-
-        logs_box = QGroupBox()
-        logs_box.setProperty("class", "consoleSectionPanel")
-        logs_outer = QVBoxLayout(logs_box)
-        logs_outer.setContentsMargins(14, 14, 14, 14)
-        logs_outer.setSpacing(8)
-        logs_outer.addLayout(self._section_heading("Journal", "terminal-2"))
-
+        logs_layout.setContentsMargins(10, 8, 10, 8)
+        logs_layout.setSpacing(6)
         logs_controls = QHBoxLayout()
         logs_controls.setSpacing(8)
         self.btn_logs_follow = QPushButton("Start Following")
@@ -1426,6 +1425,7 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self.btn_logs_follow.setProperty("deploymentAction", True)
         self._themed_icon(self.btn_logs_follow, "activity")
         self.btn_logs_follow.setFixedHeight(28)
+        self.btn_logs_follow.setToolTip("Follow the journal of the panel's loader and hardware daemon")
         self.btn_logs_follow.clicked.connect(self.on_toggle_logs)
 
         self.inp_log_filter = QLineEdit()
@@ -1442,24 +1442,22 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         logs_controls.addWidget(self.btn_logs_follow)
         logs_controls.addWidget(self.inp_log_filter, 1)
         logs_controls.addWidget(self.btn_logs_clear)
-        logs_outer.addLayout(logs_controls)
+        logs_layout.addLayout(logs_controls)
 
-        logs_body = QFrame()
-        logs_body.setProperty("class", "consoleSectionBody")
-        logs_body_layout = QVBoxLayout(logs_body)
-        logs_body_layout.setContentsMargins(12, 12, 12, 12)
         self.logs_view = QPlainTextEdit()
+        self.logs_view.setObjectName("panelLogView")
         self.logs_view.setReadOnly(True)
-        self.logs_view.setMinimumHeight(200)
         self.logs_view.setPlaceholderText(
             "Not following. Connect to the panel and press Start Following."
         )
-        logs_body_layout.addWidget(self.logs_view, 1)
-        logs_outer.addWidget(logs_body, 1)
-        logs_layout.addWidget(logs_box, 1)
-        logs_scroll = self._scrollable(logs_page)
-        self._right_tabs.addTab(logs_scroll, "Panel Logs")
-        self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(logs_scroll), "terminal-2")
+        logs_layout.addWidget(self.logs_view, 1)
+        self.simulate_drawer.addTab(logs_page, "Panel log")
+        simulate_split.addWidget(self.simulate_drawer)
+        simulate_split.setStretchFactor(0, 3)
+        simulate_split.setStretchFactor(1, 2)
+        simulate_layout.addWidget(simulate_split, 1)
+        self._right_tabs.addTab(simulate_page, "Simulate")
+        self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(simulate_page), "activity")
 
         # The profile uses the same cards, labels, and outline button treatment
         # as Deploy so target diagnostics feel like part of one application.
@@ -1556,7 +1554,7 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         # Selecting the tab is the request for the measurement.
         self._right_tabs.currentChanged.connect(self._on_tab_changed)
 
-        tab_icons = ("device-imac", "device-desktop", "bolt", "file-code", "activity", "terminal-2", "cpu")
+        tab_icons = ("device-imac", "device-desktop", "bolt", "file-code", "activity", "cpu")
         for index in range(self._right_tabs.count()):
             self.primary_nav.addTab(self._right_tabs.tabText(index))
             self._themed_tab_icon(self.primary_nav, index, tab_icons[index])
@@ -1660,7 +1658,7 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
     # The Studio's modes and the views (workspace tabs, by title) in each.
     MODES = (
         ("Design", ("Designer", "AI Design")),
-        ("Simulate", ("Tag Lab", "Panel Logs")),
+        ("Simulate", ("Simulate",)),
         ("Code", ("Code",)),
         ("Deploy", ("Display Console", "System Profile")),
     )
