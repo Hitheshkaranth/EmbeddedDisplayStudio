@@ -1091,37 +1091,237 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self._right_tabs.addTab(self._code_tab, "Code")
         self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(self._code_tab), "file-code")
 
-        # ── Deploy tab ────────────────────────────────────────────────────
+        # ── Deploy (Studio 2): Display Console and System Profile, one view ─
+        # The release on top -- what will ship, its actions, and the four
+        # steps of a deploy -- then two columns: is it ready, and what the
+        # panel already holds (left); the device and its health (right); the
+        # console underneath. The bezel to the left is what is on the glass.
         deploy_page = QWidget()
         deploy_page.setObjectName("deployConsolePage")
         right_layout = QVBoxLayout(deploy_page)
         right_layout.setContentsMargins(12, 12, 12, 12)
         right_layout.setSpacing(12)
 
-        page_subtitle = QLabel("Configure the target, validate the bundle, and manage the active panel release.")
-        page_subtitle.setObjectName("consolePageSubtitle")
-        page_subtitle.setWordWrap(True)
-        right_layout.addLayout(self._page_heading("Display Console", "device-desktop"))
-        right_layout.addWidget(page_subtitle)
+        def card(title, icon_name, trailing=None):
+            box = QGroupBox()
+            box.setProperty("class", "consoleSectionPanel")
+            outer = QVBoxLayout(box)
+            outer.setContentsMargins(14, 12, 14, 14)
+            outer.setSpacing(8)
+            heading = self._section_heading(title, icon_name)
+            if trailing is not None:
+                heading.addStretch()
+                heading.addWidget(trailing)
+            outer.addLayout(heading)
+            body = QFrame()
+            body.setProperty("class", "consoleSectionBody")
+            outer.addWidget(body)
+            return box, body
 
-        # Advanced SSH details stay near deployment without competing with the
-        # inline connection strip above.
-        conn_box = QGroupBox()
-        conn_box.setProperty("class", "consoleSectionPanel")
-        conn_layout = QVBoxLayout(conn_box)
-        conn_layout.setContentsMargins(14, 14, 14, 14)
-        conn_layout.setSpacing(8)
-        conn_layout.addLayout(self._section_heading("Target Details", "server"))
-        conn_body = QFrame()
-        conn_body.setProperty("class", "consoleSectionBody")
+        # -- the release: title, what will ship, the actions --------------
+        release_box = QGroupBox()
+        release_box.setProperty("class", "consoleSectionPanel")
+        from ui.python.fx.beam import BorderBeam
+        self._deploy_beam = BorderBeam(release_box, size="line", variant="colorful")
+        release_layout = QVBoxLayout(release_box)
+        release_layout.setContentsMargins(14, 12, 14, 14)
+        release_layout.setSpacing(10)
+        release_layout.addLayout(self._page_heading("Release", "upload"))
+        self.val_label = QLabel("No bundle loaded.")
+        self.val_label.setObjectName("releaseSummary")
+        self.val_label.setWordWrap(True)
+        release_layout.addWidget(self.val_label)
+
+        self.btn_deploy = QPushButton("Deploy to Target")
+        self.btn_deploy.setObjectName("primaryAction")
+        self.btn_deploy.setProperty("variant", "default")
+        self.btn_deploy.setProperty("deploymentAction", True)
+        self._themed_icon(self.btn_deploy, "upload")
+        self.btn_deploy.clicked.connect(self.on_deploy)
+        self.btn_deploy.setEnabled(False)
+        self.btn_deploy.setFixedHeight(30)
+
+        # The bezel shows the screen; this runs it. Same generated QML, same
+        # tag engine, in a window of its own at the panel's real size, so
+        # the buttons and selectors can actually be operated.
+        self.btn_live_preview = QPushButton("Live preview")
+        self.btn_live_preview.setToolTip(
+            "Runs the design's generated QML in a window on this desktop's Qt, "
+            "on the Studio's tag feed. The bezel and the Code section show what "
+            "the panel draws (hmi-ui)."
+        )
+        self.btn_live_preview.setProperty("variant", "outline")
+        self._themed_icon(self.btn_live_preview, "eye")
+        self.btn_live_preview.clicked.connect(self.open_live_preview)
+        self.btn_live_preview.setEnabled(False)
+        self.btn_live_preview.setFixedHeight(30)
+        self._live_preview = None
+
+        # The bezel draws the design as hmi-ui would render it, once, with
+        # nothing behind it. Once an application is actually running on a
+        # panel that still frame disagrees with the glass, whose values are
+        # moving; this mirrors the panel itself, a frame a second.
+        self.btn_mirror = QPushButton("Mirror the panel")
+        self.btn_mirror.setToolTip(
+            "Shows what the connected panel is displaying right now, live "
+            "values and all, refreshed once a second."
+        )
+        self.btn_mirror.setProperty("variant", "outline")
+        self.btn_mirror.setCheckable(True)
+        self._themed_icon(self.btn_mirror, "device-desktop")
+        self.btn_mirror.toggled.connect(self.toggle_panel_mirror)
+        self.btn_mirror.setEnabled(False)
+        self.btn_mirror.setFixedHeight(30)
+
+        self.btn_restart = QPushButton("Restart GUI")
+        self.btn_restart.setProperty("variant", "outline")
+        self.btn_restart.setProperty("deploymentAction", True)
+        self._themed_icon(self.btn_restart, "refresh")
+        self.btn_restart.clicked.connect(self.on_restart)
+        self.btn_restart.setFixedHeight(30)
+
+        self.btn_rollback = QPushButton("Rollback")
+        self.btn_rollback.setProperty("variant", "destructive")
+        self.btn_rollback.setProperty("deploymentAction", True)
+        self._themed_icon(self.btn_rollback, "history")
+        self.btn_rollback.clicked.connect(self.on_rollback)
+        self.btn_rollback.setFixedHeight(30)
+
+        release_actions = QGridLayout()
+        release_actions.setHorizontalSpacing(8)
+        release_actions.setVerticalSpacing(8)
+        release_actions.addWidget(self.btn_deploy, 0, 0, 1, 2)
+        release_actions.addWidget(self.btn_live_preview, 0, 2)
+        release_actions.addWidget(self.btn_mirror, 1, 0)
+        release_actions.addWidget(self.btn_restart, 1, 1)
+        release_actions.addWidget(self.btn_rollback, 1, 2)
+        for column in range(3):
+            release_actions.setColumnStretch(column, 1)
+        release_layout.addLayout(release_actions)
+
+        # The four steps, driven by the same calls as the bar below.
+        from .deploy_steps import DeploySteps
+        self.deploy_steps = DeploySteps()
+        release_layout.addWidget(self.deploy_steps)
+
+        # Deployment progress. A deploy spends most of its wall clock inside
+        # one silent scp, so without this the tool looks frozen for minutes on
+        # a large bundle -- which has been reported as a hang more than once.
+        # The fixed slot keeps the card's height steady while it fills.
+        self.progress_slot = QWidget()
+        self.progress_slot.setObjectName("deploymentProgressSlot")
+        self.progress_slot.setFixedHeight(46)
+        progress_layout = QVBoxLayout(self.progress_slot)
+        progress_layout.setContentsMargins(0, 0, 0, 0)
+        progress_layout.setSpacing(4)
+        self.progress = QProgressBar()
+        self.progress.setObjectName("deploymentProgressBar")
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        # The percentage belongs in the stage line; the bar stays a clean
+        # visual indicator.
+        self.progress.setTextVisible(False)
+        self.progress.setFormat("%p%")
+        self.progress.setFixedHeight(8)
+        self.progress.setVisible(True)
+        progress_layout.addWidget(self.progress)
+        self.lbl_stage = QLabel("Ready to deploy")
+        self.lbl_stage.setWordWrap(False)
+        self.lbl_stage.setFixedHeight(24)
+        self.lbl_stage.setStyleSheet("color: #a1a1aa;")
+        self.lbl_stage.setVisible(True)
+        progress_layout.addWidget(self.lbl_stage)
+        release_layout.addWidget(self.progress_slot)
+        right_layout.addWidget(release_box)
+
+        columns = QHBoxLayout()
+        columns.setSpacing(12)
+        left_column = QVBoxLayout()
+        left_column.setSpacing(12)
+        right_column = QVBoxLayout()
+        right_column.setSpacing(12)
+        columns.addLayout(left_column, 1)
+        columns.addLayout(right_column, 1)
+        right_layout.addLayout(columns)
+
+        # -- readiness: a checklist ------------------------------------------
+        readiness_box, readiness_body = card("Readiness", "circle-check")
+        readiness_body_layout = QVBoxLayout(readiness_body)
+        readiness_body_layout.setContentsMargins(12, 10, 12, 10)
+        readiness_body_layout.setSpacing(6)
+        self._readiness_labels = {}
+        self._readiness_marks = {}
+        for row_name in ("Bundle", "Target", "Display", "Tags"):
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            mark = QLabel("•")
+            mark.setObjectName("readinessMark")
+            mark.setFixedSize(20, 20)
+            mark.setAlignment(Qt.AlignCenter)
+            lbl = QLabel("—")
+            lbl.setObjectName("readinessRow")
+            lbl.setWordWrap(True)
+            row.addWidget(mark, 0, Qt.AlignTop)
+            row.addWidget(lbl, 1)
+            self._readiness_labels[row_name] = lbl
+            self._readiness_marks[row_name] = mark
+            readiness_body_layout.addLayout(row)
+        self._readiness_summary = QLabel("")
+        self._readiness_summary.setObjectName("readinessSummary")
+        self._readiness_summary.setWordWrap(True)
+        self._readiness_summary.setStyleSheet("color: #a1a1aa;")
+        readiness_body_layout.addWidget(self._readiness_summary)
+        self._refresh_readiness()
+        left_column.addWidget(readiness_box)
+
+        # -- installed releases ------------------------------------------------
+        # The panel retains KEEP_RELEASES beyond current and previous, but
+        # Rollback reaches exactly one back. A regression noticed two deploys
+        # late could be listed and never returned to.
+        releases_box, releases_body = card("Installed releases", "history")
+        releases_body_layout = QVBoxLayout(releases_body)
+        releases_body_layout.setContentsMargins(12, 10, 12, 10)
+        releases_body_layout.setSpacing(8)
+        self.cmb_releases = QComboBox()
+        self.cmb_releases.setAccessibleName("Installed releases on the panel")
+        self.cmb_releases.setToolTip(
+            "Releases the panel still holds. Activating one re-points the "
+            "panel at it and restarts the GUI; the release running now becomes "
+            "the rollback target."
+        )
+        self.cmb_releases.addItem("Connect to list releases")
+        self.cmb_releases.setEnabled(False)
+        releases_body_layout.addWidget(self.cmb_releases)
+        releases_actions = QHBoxLayout()
+        releases_actions.setSpacing(8)
+        self.btn_refresh_releases = QPushButton("Refresh")
+        self.btn_refresh_releases.setProperty("variant", "outline")
+        self.btn_refresh_releases.setProperty("deploymentAction", True)
+        self._themed_icon(self.btn_refresh_releases, "refresh")
+        self.btn_refresh_releases.clicked.connect(self.refresh_releases)
+        self.btn_refresh_releases.setFixedHeight(28)
+        self.btn_activate = QPushButton("Activate release")
+        self.btn_activate.setProperty("variant", "secondary")
+        self.btn_activate.setProperty("deploymentAction", True)
+        self._themed_icon(self.btn_activate, "upload")
+        self.btn_activate.clicked.connect(self.on_activate_release)
+        self.btn_activate.setFixedHeight(28)
+        self.btn_activate.setEnabled(False)
+        releases_actions.addWidget(self.btn_refresh_releases)
+        releases_actions.addWidget(self.btn_activate)
+        releases_body_layout.addLayout(releases_actions)
+        left_column.addWidget(releases_box)
+        left_column.addStretch()
+
+        # -- the device: login, keys, the display it reported ----------------
+        conn_box, conn_body = card("Device", "server")
         conn_form = QFormLayout(conn_body)
-        conn_form.setContentsMargins(14, 12, 14, 12)
+        conn_form.setContentsMargins(12, 10, 12, 10)
         self.inp_user = QLineEdit(self.settings.value("user", "root"))
         self.inp_user.setObjectName("targetDetailInput")
         self.inp_key = QLineEdit(self.settings.value("key", ""))
         self.inp_key.setObjectName("targetDetailInput")
         self.inp_key.setPlaceholderText("Leave empty for default agent")
-
         conn_form.addRow("User:", self.inp_user)
         conn_form.addRow("Key:", self.inp_key)
         # The key the panel trusts lives in one person's ~/.ssh. A deploy key
@@ -1142,241 +1342,59 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         key_row.addWidget(self.btn_import_key)
         key_row.addStretch(1)
         conn_form.addRow("", key_row)
-
         self.lbl_target_resolution = QLabel("Not detected")
         self.lbl_target_resolution.setObjectName("targetResolution")
         conn_form.addRow("Display:", self.lbl_target_resolution)
-        conn_layout.addWidget(conn_body)
+        right_column.addWidget(conn_box)
 
-        right_layout.addWidget(conn_box)
+        # -- device health (was the System Profile tab) ----------------------
+        self.btn_refresh_profile = QPushButton("Refresh")
+        self._refresh_beam = BorderBeam(self.btn_refresh_profile, size="sm", variant="ocean", radius=10)
+        self.btn_refresh_profile.setProperty("variant", "outline")
+        self.btn_refresh_profile.setProperty("busy", "false")
+        self.btn_refresh_profile.setFixedHeight(28)
+        self._themed_icon(self.btn_refresh_profile, "refresh")
+        self.btn_refresh_profile.clicked.connect(self.refresh_memory_profile)
+        health_box, health_body = card("Device health", "cpu", trailing=self.btn_refresh_profile)
+        health_layout = QVBoxLayout(health_body)
+        health_layout.setContentsMargins(12, 10, 12, 10)
+        health_layout.setSpacing(10)
+        active_layout = QFormLayout()
+        self._add_profile_value(active_layout, "Package:", "RELEASE", "Not queried")
+        self._add_profile_value(active_layout, "Deployed at:", "DEPLOY_PATH", "Not queried")
+        self._add_profile_value(active_layout, "Current application:", "APP_KB", "Not queried")
+        self._add_profile_value(active_layout, "Compressed package:", "COMPRESSED_BYTES", "Not queried")
+        self._add_profile_value(active_layout, "Available RAM:", "RAM_AVAILABLE_KB", "Not queried")
+        self._add_profile_value(active_layout, "Root filesystem:", "ROOT_SUMMARY", "Not queried")
+        self._add_profile_value(active_layout, "Profile status:", "STATUS", "Connect to refresh")
+        health_layout.addLayout(active_layout)
+        storage_layout = QVBoxLayout()
+        storage_layout.setSpacing(6)
+        self._add_profile_bar(storage_layout, "OS image capacity", "ROOT_KB")
+        self._add_profile_bar(storage_layout, "Other system files", "SYSTEM_KB")
+        self._add_profile_bar(storage_layout, "Application storage", "RELEASES_KB")
+        self._add_profile_bar(storage_layout, "Free system storage", "FREE_KB")
+        self._add_profile_bar(storage_layout, "Compressed current package", "COMPRESSED_BYTES")
+        health_layout.addLayout(storage_layout)
+        right_column.addWidget(health_box)
+        right_column.addStretch()
 
-        # Readiness – observational summary of bundle, target, display, tags.
-        readiness_box = QGroupBox()
-        readiness_box.setProperty("class", "consoleSectionPanel")
-        readiness_layout = QVBoxLayout(readiness_box)
-        readiness_layout.setContentsMargins(14, 14, 14, 14)
-        readiness_layout.setSpacing(8)
-        readiness_layout.addLayout(self._section_heading("Readiness", "shield-check"))
-        readiness_body = QFrame()
-        readiness_body.setProperty("class", "consoleSectionBody")
-        readiness_body_layout = QVBoxLayout(readiness_body)
-        readiness_body_layout.setContentsMargins(14, 12, 14, 12)
-        readiness_body_layout.setSpacing(6)
-
-        self._readiness_labels = {}
-        for row_name in ("Bundle", "Target", "Display", "Tags"):
-            lbl = QLabel("—")
-            lbl.setObjectName("readinessRow")
-            lbl.setWordWrap(True)
-            self._readiness_labels[row_name] = lbl
-            readiness_body_layout.addWidget(lbl)
-
-        self._readiness_summary = QLabel("")
-        self._readiness_summary.setObjectName("readinessSummary")
-        self._readiness_summary.setWordWrap(True)
-        self._readiness_summary.setStyleSheet("color: #a1a1aa;")
-        readiness_body_layout.addWidget(self._readiness_summary)
-        self._refresh_readiness()
-        readiness_body_layout.addStretch()
-        readiness_layout.addWidget(readiness_body)
-
-        right_layout.addWidget(readiness_box)
-
-        # Deployment Actions
-        deploy_box = QGroupBox()
-        deploy_box.setProperty("class", "consoleSectionPanel")
-        from ui.python.fx.beam import BorderBeam
-        self._deploy_beam = BorderBeam(deploy_box, size="line", variant="colorful")
-        deploy_layout = QVBoxLayout(deploy_box)
-        deploy_layout.setContentsMargins(14, 14, 14, 14)
-        deploy_layout.setSpacing(8)
-        deploy_layout.addLayout(self._section_heading("Deployment", "upload"))
-        deploy_body = QFrame()
-        deploy_body.setProperty("class", "consoleSectionBody")
-        deploy_body_layout = QVBoxLayout(deploy_body)
-        deploy_body_layout.setContentsMargins(14, 12, 14, 12)
-        deploy_body_layout.setSpacing(8)
-
-        from PySide6.QtWidgets import QLabel
-        self.val_label = QLabel("No bundle loaded.")
-        self.val_label.setWordWrap(True)
-        deploy_body_layout.addWidget(self.val_label)
-
-        self.btn_deploy = QPushButton("Deploy to Target")
-        self.btn_deploy.setObjectName("primaryAction")
-        self.btn_deploy.setProperty("variant", "default")
-        self.btn_deploy.setProperty("deploymentAction", True)
-        self._themed_icon(self.btn_deploy, "upload")
-        self.btn_deploy.clicked.connect(self.on_deploy)
-        self.btn_deploy.setEnabled(False)
-        self.btn_deploy.setFixedHeight(28)
-        deploy_body_layout.addWidget(self.btn_deploy)
-
-        # The bezel shows the screen; this runs it. Same generated QML, same
-        # tag engine, in a window of its own at the panel's real size, so
-        # the buttons and selectors can actually be operated.
-        self.btn_live_preview = QPushButton("Open Live Preview (desktop QML)")
-        self.btn_live_preview.setToolTip(
-            "Runs the design's generated QML in a window on this desktop's Qt, "
-            "on the Studio's tag feed. The bezel and the Code section show what "
-            "the panel draws (hmi-ui)."
-        )
-        self.btn_live_preview.setProperty("variant", "secondary")
-        self._themed_icon(self.btn_live_preview, "eye")
-        self.btn_live_preview.clicked.connect(self.open_live_preview)
-        self.btn_live_preview.setEnabled(False)
-        self.btn_live_preview.setFixedHeight(28)
-        deploy_body_layout.addWidget(self.btn_live_preview)
-        self._live_preview = None
-
-        # The bezel above draws the design as hmi-ui would render it, once,
-        # with nothing behind it. Once an application is actually running on
-        # a panel that still frame disagrees with the glass, whose values are
-        # moving; this mirrors the panel itself, a frame a second.
-        self.btn_mirror = QPushButton("Mirror the panel")
-        self.btn_mirror.setToolTip(
-            "Shows what the connected panel is displaying right now, live "
-            "values and all, refreshed once a second."
-        )
-        self.btn_mirror.setProperty("variant", "secondary")
-        self.btn_mirror.setCheckable(True)
-        self._themed_icon(self.btn_mirror, "device-desktop")
-        self.btn_mirror.toggled.connect(self.toggle_panel_mirror)
-        self.btn_mirror.setEnabled(False)
-        self.btn_mirror.setFixedHeight(28)
-        deploy_body_layout.addWidget(self.btn_mirror)
-
-        # Deployment progress. A deploy spends most of its wall clock inside
-        # one silent scp, so without this the tool looks frozen for minutes on
-        # a large bundle -- which has been reported as a hang more than once.
-        # Keep this slot in the layout at all times.  Progress was previously
-        # added as two hidden widgets, so making them visible after Deploy was
-        # pressed increased the Deployment card (and the whole window) height.
-        # The fixed shell reserves their exact footprint while it is empty.
-        self.progress_slot = QWidget()
-        self.progress_slot.setObjectName("deploymentProgressSlot")
-        self.progress_slot.setFixedHeight(46)
-        progress_layout = QVBoxLayout(self.progress_slot)
-        progress_layout.setContentsMargins(0, 0, 0, 0)
-        progress_layout.setSpacing(4)
-
-        self.progress = QProgressBar()
-        self.progress.setObjectName("deploymentProgressBar")
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        # The percentage belongs in the stage line; the bar follows the
-        # PDB-4000 splash treatment and stays a clean visual indicator.
-        self.progress.setTextVisible(False)
-        self.progress.setFormat("%p%")
-        self.progress.setFixedHeight(12)
-        # Keep the full deployment status treatment on screen from startup.
-        # Besides making the card's expected height clear, this prevents Qt
-        # from recalculating its parent layout when deployment begins.
-        self.progress.setVisible(True)
-        progress_layout.addWidget(self.progress)
-
-        self.lbl_stage = QLabel("Ready to deploy")
-        self.lbl_stage.setWordWrap(False)
-        self.lbl_stage.setFixedHeight(24)
-        self.lbl_stage.setStyleSheet("color: #a1a1aa;")
-        self.lbl_stage.setVisible(True)
-        progress_layout.addWidget(self.lbl_stage)
-        deploy_body_layout.addWidget(self.progress_slot)
-
-        h_layout = QHBoxLayout()
-        self.btn_rollback = QPushButton("Rollback")
-        self.btn_rollback.setProperty("variant", "destructive")
-        self.btn_rollback.setProperty("deploymentAction", True)
-        self._themed_icon(self.btn_rollback, "history")
-        self.btn_rollback.clicked.connect(self.on_rollback)
-        self.btn_rollback.setFixedHeight(28)
-
-        self.btn_restart = QPushButton("Restart GUI")
-        self.btn_restart.setProperty("variant", "outline")
-        self.btn_restart.setProperty("deploymentAction", True)
-        self._themed_icon(self.btn_restart, "refresh")
-        self.btn_restart.clicked.connect(self.on_restart)
-        self.btn_restart.setFixedHeight(28)
-
-        h_layout.addWidget(self.btn_rollback)
-        h_layout.addWidget(self.btn_restart)
-        deploy_body_layout.addLayout(h_layout)
-        deploy_layout.addWidget(deploy_body)
-
-        right_layout.addWidget(deploy_box)
-
-        # Installed releases.
-        #
-        # The panel retains KEEP_RELEASES beyond current and previous, but
-        # Rollback reaches exactly one back. A regression noticed two deploys
-        # late could be listed and never returned to.
-        releases_box = QGroupBox()
-        releases_box.setProperty("class", "consoleSectionPanel")
-        releases_layout = QVBoxLayout(releases_box)
-        releases_layout.setContentsMargins(14, 14, 14, 14)
-        releases_layout.setSpacing(8)
-        releases_layout.addLayout(self._section_heading("Installed Releases", "history"))
-        releases_body = QFrame()
-        releases_body.setProperty("class", "consoleSectionBody")
-        releases_body_layout = QVBoxLayout(releases_body)
-        releases_body_layout.setContentsMargins(14, 12, 14, 12)
-        releases_body_layout.setSpacing(8)
-
-        self.cmb_releases = QComboBox()
-        self.cmb_releases.setAccessibleName("Installed releases on the panel")
-        self.cmb_releases.setToolTip(
-            "Releases the panel still holds. Activating one re-points the "
-            "panel at it and restarts the GUI; the release running now becomes "
-            "the rollback target."
-        )
-        self.cmb_releases.addItem("Connect to list releases")
-        self.cmb_releases.setEnabled(False)
-        releases_body_layout.addWidget(self.cmb_releases)
-
-        releases_actions = QHBoxLayout()
-        releases_actions.setSpacing(8)
-        self.btn_refresh_releases = QPushButton("Refresh")
-        self.btn_refresh_releases.setProperty("variant", "outline")
-        self.btn_refresh_releases.setProperty("deploymentAction", True)
-        self._themed_icon(self.btn_refresh_releases, "refresh")
-        self.btn_refresh_releases.clicked.connect(self.refresh_releases)
-        self.btn_refresh_releases.setFixedHeight(28)
-
-        self.btn_activate = QPushButton("Activate Release")
-        self.btn_activate.setProperty("variant", "secondary")
-        self.btn_activate.setProperty("deploymentAction", True)
-        self._themed_icon(self.btn_activate, "upload")
-        self.btn_activate.clicked.connect(self.on_activate_release)
-        self.btn_activate.setFixedHeight(28)
-        self.btn_activate.setEnabled(False)
-
-        releases_actions.addWidget(self.btn_refresh_releases)
-        releases_actions.addWidget(self.btn_activate)
-        releases_body_layout.addLayout(releases_actions)
-        releases_layout.addWidget(releases_body)
-        right_layout.addWidget(releases_box)
-
-        # Console Output
+        # -- console ------------------------------------------------------------
         self.console = QPlainTextEdit()
+        self.console.setObjectName("deployConsole")
         self.console.setReadOnly(True)
         self.console.setMinimumHeight(150)
-        console_box = QGroupBox()
-        console_box.setProperty("class", "consoleSectionPanel")
-        console_layout = QVBoxLayout(console_box)
-        console_layout.setContentsMargins(14, 14, 14, 14)
-        console_layout.setSpacing(8)
-        console_layout.addLayout(self._section_heading("Console Output", "terminal-2"))
-        console_body = QFrame()
-        console_body.setProperty("class", "consoleSectionBody")
+        console_box, console_body = card("Console", "terminal-2")
         console_body_layout = QVBoxLayout(console_body)
-        console_body_layout.setContentsMargins(12, 12, 12, 12)
+        console_body_layout.setContentsMargins(10, 10, 10, 10)
         console_body_layout.addWidget(self.console, 1)
-        console_layout.addWidget(console_body, 1)
         right_layout.addWidget(console_box, 1)
 
         deploy_scroll = self._scrollable(deploy_page)
-        self._right_tabs.addTab(deploy_scroll, "Display Console")
-        self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(deploy_scroll), "server")
+        self._right_tabs.addTab(deploy_scroll, "Deploy")
+        self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(deploy_scroll), "upload")
+        # Health is measured when this view is first shown (_on_tab_changed).
+        self._profile_page = deploy_scroll
 
         # ── Tag Lab tab ────────────────────────────────────────────────────
         # Imported here (deferred) so the tab is only instantiated after
@@ -1459,102 +1477,10 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self._right_tabs.addTab(simulate_page, "Simulate")
         self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(simulate_page), "activity")
 
-        # The profile uses the same cards, labels, and outline button treatment
-        # as Deploy so target diagnostics feel like part of one application.
-        profile_page = QWidget()
-        profile_layout = QVBoxLayout(profile_page)
-        profile_layout.setContentsMargins(12, 12, 12, 12)
-        profile_layout.setSpacing(12)
-
-        # The page names itself the way Display Console and Tag Lab do: the tab's
-        # own title and the tab's own icon, with the explanatory line demoted to
-        # the subtitle it always was.
-        profile_heading = self._page_heading("System Profile", "cpu")
-        self.btn_refresh_profile = QPushButton("Refresh profile")
-        from ui.python.fx.beam import BorderBeam
-        self._refresh_beam = BorderBeam(self.btn_refresh_profile, size="sm", variant="ocean", radius=10)
-        self.btn_refresh_profile.setProperty("variant", "outline")
-        self.btn_refresh_profile.setProperty("busy", "false")
-        self._themed_icon(self.btn_refresh_profile, "refresh")
-        self.btn_refresh_profile.clicked.connect(self.refresh_memory_profile)
-        profile_heading.addWidget(self.btn_refresh_profile)
-        profile_layout.addLayout(profile_heading)
-
-        profile_copy = QLabel(
-            "Live storage and memory snapshot from the connected SOM."
-        )
-        profile_copy.setObjectName("consolePageSubtitle")
-        profile_copy.setWordWrap(True)
-        profile_layout.addWidget(profile_copy)
-
-        active_box = QGroupBox()
-        active_box.setProperty("class", "consoleSectionPanel")
-        active_outer = QVBoxLayout(active_box)
-        active_outer.setContentsMargins(14, 14, 14, 14)
-        active_outer.setSpacing(8)
-        active_outer.addLayout(self._section_heading("Current Deployment", "device-desktop"))
-        active_body = QFrame()
-        active_body.setProperty("class", "consoleSectionBody")
-        active_layout = QFormLayout(active_body)
-        active_layout.setContentsMargins(14, 12, 14, 12)
-        self._add_profile_value(active_layout, "Package:", "RELEASE", "Not queried")
-        self._add_profile_value(active_layout, "Deployed at:", "DEPLOY_PATH", "Not queried")
-        self._add_profile_value(active_layout, "Current application:", "APP_KB", "Not queried")
-        self._add_profile_value(
-            active_layout,
-            "Compressed package:",
-            "COMPRESSED_BYTES",
-            "Not queried",
-        )
-        active_outer.addWidget(active_body)
-        profile_layout.addWidget(active_box)
-
-        storage_box = QGroupBox()
-        storage_box.setProperty("class", "consoleSectionPanel")
-        storage_outer = QVBoxLayout(storage_box)
-        storage_outer.setContentsMargins(14, 14, 14, 14)
-        storage_outer.setSpacing(8)
-        storage_outer.addLayout(self._section_heading("Storage Distribution", "server"))
-        storage_body = QFrame()
-        storage_body.setProperty("class", "consoleSectionBody")
-        storage_layout = QVBoxLayout(storage_body)
-        storage_layout.setContentsMargins(14, 12, 14, 12)
-        self._add_profile_bar(storage_layout, "OS image capacity", "ROOT_KB")
-        self._add_profile_bar(storage_layout, "Other system files", "SYSTEM_KB")
-        self._add_profile_bar(storage_layout, "Application storage", "RELEASES_KB")
-        self._add_profile_bar(storage_layout, "Free system storage", "FREE_KB")
-        self._add_profile_bar(
-            storage_layout,
-            "Compressed current package",
-            "COMPRESSED_BYTES",
-        )
-        storage_outer.addWidget(storage_body)
-        profile_layout.addWidget(storage_box)
-
-        resources_box = QGroupBox()
-        resources_box.setProperty("class", "consoleSectionPanel")
-        resources_outer = QVBoxLayout(resources_box)
-        resources_outer.setContentsMargins(14, 14, 14, 14)
-        resources_outer.setSpacing(8)
-        resources_outer.addLayout(self._section_heading("System Resources", "cpu"))
-        resources_body = QFrame()
-        resources_body.setProperty("class", "consoleSectionBody")
-        resources_layout = QFormLayout(resources_body)
-        resources_layout.setContentsMargins(14, 12, 14, 12)
-        self._add_profile_value(resources_layout, "Available RAM:", "RAM_AVAILABLE_KB", "Not queried")
-        self._add_profile_value(resources_layout, "Root filesystem:", "ROOT_SUMMARY", "Not queried")
-        self._add_profile_value(resources_layout, "Profile status:", "STATUS", "Connect to refresh")
-        resources_outer.addWidget(resources_body)
-        profile_layout.addWidget(resources_box)
-        profile_layout.addStretch()
-        # Identity is compared against whatever the tab holds, which is now
-        # the scroll area rather than the page itself.
-        self._profile_page = self._scrollable(profile_page)
-        self._right_tabs.addTab(self._profile_page, "System Profile")
         # Selecting the tab is the request for the measurement.
         self._right_tabs.currentChanged.connect(self._on_tab_changed)
 
-        tab_icons = ("device-imac", "device-desktop", "bolt", "file-code", "activity", "cpu")
+        tab_icons = ("device-imac", "device-desktop", "file-code", "upload", "activity")
         for index in range(self._right_tabs.count()):
             self.primary_nav.addTab(self._right_tabs.tabText(index))
             self._themed_tab_icon(self.primary_nav, index, tab_icons[index])
@@ -1660,7 +1586,7 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         ("Design", ("Designer", "AI Design")),
         ("Simulate", ("Simulate",)),
         ("Code", ("Code",)),
-        ("Deploy", ("Display Console", "System Profile")),
+        ("Deploy", ("Deploy",)),
     )
 
     def _mode_of_tab(self, index: int) -> int:
@@ -1902,12 +1828,23 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         labels = getattr(self, "_readiness_labels", None)
         if labels is None:
             return
+        marks = getattr(self, "_readiness_marks", {})
+        glyphs = {"ready": "✓", "warning": "!", "error": "×", "info": "•"}
         for item in items:
             lbl = labels.get(item.name)
             if lbl is not None:
                 color = severity_colors.get(item.severity, "#a1a1aa")
                 lbl.setText(f"{item.name}: {item.detail}")
-                lbl.setStyleSheet(f"color: {color};")
+                mark = marks.get(item.name)
+                if mark is not None:
+                    # A checklist: the mark carries the colour, the words
+                    # stay readable in the body colour.
+                    mark.setText(glyphs.get(item.severity, "•"))
+                    mark.setProperty("severity", item.severity)
+                    mark.setStyleSheet(f"color: {color}; font-weight: 700;")
+                    lbl.setStyleSheet("")
+                else:
+                    lbl.setStyleSheet(f"color: {color};")
             else:
                 lbl = self._readiness_labels.get(item.name, QLabel(item.detail))
                 self._readiness_labels[item.name] = lbl
@@ -2121,7 +2058,13 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
                 with open(os.path.join(self.bundle_dir, "manifest.json"),
                           "r", encoding="utf-8") as handle:
                     self.device_panel.load_bundle(self.bundle_dir, json.load(handle))
-        if self._right_tabs.currentWidget() is self._profile_page and not self.memory_profile:
+        # Device health is measured when the Deploy view is first shown with
+        # a panel to measure. It used to be its own tab, opened on purpose;
+        # Deploy is also where code lands to show a live preview, and an SSH
+        # measurement started then, with nothing connected, outlived the
+        # window it reported to. Refresh still measures on demand.
+        if (self._right_tabs.currentWidget() is self._profile_page and not self.memory_profile
+                and getattr(self, "_link_state", "idle") == "connected"):
             self.refresh_memory_profile()
 
     def show_preview_tab(self) -> None:
@@ -2617,6 +2560,9 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self.lbl_stage.setStyleSheet("color: #a1a1aa;")
         self.lbl_stage.setText("Preparing...")
         self._deploy_failed = False
+        if hasattr(self, "deploy_steps"):
+            self.deploy_steps.reset()
+            self.deploy_steps.advance_to(0, "Preparing...")
 
     def _progress_busy(self, stage: str) -> None:
         """
@@ -2633,6 +2579,10 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self.progress.setRange(0, 0)
         self.progress.setFormat("")
         self.lbl_stage.setText(stage)
+        if hasattr(self, "deploy_steps"):
+            # Checking imports and the panel's packages is validation;
+            # building the archive is packaging.
+            self.deploy_steps.advance_to(1 if "Packag" in stage else 0, stage)
 
     def _progress_cancel(self, reason: str) -> None:
         """
@@ -2651,6 +2601,8 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self.progress.setStyleSheet("")
         self.lbl_stage.setStyleSheet("color: #a1a1aa;")
         self.lbl_stage.setText(reason)
+        if hasattr(self, "deploy_steps"):
+            self.deploy_steps.reset(reason)
 
     def _progress_set(self, percent: int, stage: str = "") -> None:
         """
@@ -2672,6 +2624,14 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self.progress.setValue(max(self.progress.value(), int(percent)))
         if stage:
             self.lbl_stage.setText(stage)
+        if hasattr(self, "deploy_steps"):
+            if percent >= PROGRESS_INSTALL_START:
+                self.deploy_steps.advance_to(3, stage)
+            elif percent >= PROGRESS_UPLOAD_START:
+                self.deploy_steps.advance_to(2, stage)
+            elif percent >= PROGRESS_PACKAGED:
+                self.deploy_steps.set_state(0, "done")
+                self.deploy_steps.set_state(1, "done", stage)
 
     def _progress_fail(self, reason: str) -> None:
         """
@@ -2697,6 +2657,8 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self.lbl_stage.setVisible(True)
         self.lbl_stage.setStyleSheet("color: #ef4444;")
         self.lbl_stage.setText(reason)
+        if hasattr(self, "deploy_steps"):
+            self.deploy_steps.fail_current(reason)
         self.log(f"DEPLOY FAILED: {reason}")
         self.device_panel.set_led_state(3)
 
@@ -2752,6 +2714,8 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         )
         self.lbl_stage.setStyleSheet("color: #22c55e;")
         self.lbl_stage.setText("Running on the panel, and set as the boot default.")
+        if hasattr(self, "deploy_steps"):
+            self.deploy_steps.finish("Running, and the boot default")
 
     def _on_install_line(self, line: str) -> None:
         """

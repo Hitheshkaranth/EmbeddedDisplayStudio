@@ -89,5 +89,61 @@ class ShellTests(unittest.TestCase):
         self.assertTrue(drawer.isAncestorOf(window.taglab_panel._cmd_log))
 
 
+class DeployViewTests(ShellTests.__base__):
+    """Display Console and System Profile as one Deploy view."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.window = MainWindow()
+        self.addCleanup(self._dispose)
+
+    def _dispose(self):
+        self.window._stop_all_senders()
+        self.window.close()
+        self.window.deleteLater()
+        self.app.processEvents()
+
+    def steps(self):
+        return [self.window.deploy_steps.state(i) for i in range(4)]
+
+    def test_the_steps_follow_the_progress_calls(self):
+        import tools.hmi_deployer.mainwindow as module
+        window = self.window
+        window._progress_begin()
+        self.assertEqual(self.steps(), ["running", "waiting", "waiting", "waiting"])
+        window._progress_busy("Packaging bundle...")
+        self.assertEqual(self.steps(), ["done", "running", "waiting", "waiting"])
+        window._progress_set(module.PROGRESS_UPLOAD_START + 10, "Uploading bundle...")
+        self.assertEqual(self.steps(), ["done", "done", "running", "waiting"])
+        window._progress_fail("Could not reach the panel over SSH")
+        self.assertEqual(self.steps(), ["done", "done", "failed", "waiting"])
+        window._progress_begin()
+        window._progress_set(module.PROGRESS_INSTALL_START, "Installing...")
+        window._progress_succeed()
+        self.assertEqual(self.steps(), ["done"] * 4)
+        window._progress_cancel("Cancelled")
+        self.assertEqual(self.steps(), ["waiting"] * 4)
+
+    def test_readiness_is_a_checklist(self):
+        window = self.window
+        window._refresh_readiness()
+        for name, mark in window._readiness_marks.items():
+            with self.subTest(row=name):
+                self.assertIn(mark.text(), ("✓", "!", "×", "•"))
+                self.assertTrue(window._readiness_labels[name].text().startswith(name))
+
+    def test_health_lives_in_deploy_and_waits_for_a_panel(self):
+        window = self.window
+        calls = []
+        window.refresh_memory_profile = lambda: calls.append(True)
+        window.mode_nav.setCurrentIndex(3)
+        self.assertIs(window._right_tabs.currentWidget(), window._profile_page)
+        self.assertEqual(calls, [])                      # nothing connected: no SSH
+        self.assertTrue(window._profile_page.isAncestorOf(window.btn_refresh_profile))
+
+
 if __name__ == "__main__":
     unittest.main()

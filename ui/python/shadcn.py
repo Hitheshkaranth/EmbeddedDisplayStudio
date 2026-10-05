@@ -717,7 +717,8 @@ QTabWidget#workspaceTabs QTabWidget#simulateDrawer QTabBar::tab:selected {{
     background-color: {hex_to_rgba(p['foreground'], 0.09)};
     color: {p['foreground']};
 }}
-QWidget#tagLabPage QPushButton, QWidget#panelLogPage QPushButton {{
+QWidget#tagLabPage QPushButton, QWidget#panelLogPage QPushButton,
+QWidget#deployConsolePage QPushButton {{
     height: 30px;
     min-height: 30px;
     max-height: 30px;
@@ -735,6 +736,25 @@ QPlainTextEdit#panelLogView {{
 QTableWidget#tagLabTable, QTableWidget#tagLabCommandsLog {{
     border: 1px solid {p['border']};
     border-radius: {r['md']}px;
+    font-size: 12px;
+}}
+/* Deploy view: the four steps of a deploy, and the readiness checklist. */
+QFrame#deployStepBar {{ background-color: {p['border']}; border: none; border-radius: 2px; }}
+QFrame#deployStepBar[state="running"] {{ background-color: {p['brand']}; }}
+QFrame#deployStepBar[state="done"] {{ background-color: {p['success']}; }}
+QFrame#deployStepBar[state="failed"] {{ background-color: {p['destructive']}; }}
+QLabel#deployStepName {{ color: {p['mutedForeground']}; font-size: 12px; font-weight: 600; }}
+QLabel#deployStepName[state="running"], QLabel#deployStepName[state="done"],
+QLabel#deployStepName[state="failed"] {{ color: {p['foreground']}; }}
+QLabel#deployStepState {{ color: {p['mutedForeground']}; font-size: 11px; }}
+QLabel#deployStepState[state="running"] {{ color: {p['brand']}; }}
+QLabel#deployStepState[state="done"] {{ color: {p['success']}; }}
+QLabel#deployStepState[state="failed"] {{ color: {p['destructive']}; }}
+QLabel#deployStepDetail {{ color: {p['mutedForeground']}; font-size: 11px; }}
+QLabel#releaseSummary {{ color: {p['mutedForeground']}; font-size: 12px; }}
+QLabel#readinessMark {{ background-color: {p['muted']}; border-radius: 10px; font-size: 12px; }}
+QPlainTextEdit#deployConsole {{
+    font-family: "Cascadia Mono", Consolas, Menlo, monospace;
     font-size: 12px;
 }}
 QLabel#statusItem[linkState="connected"] {{ color: {p['success']}; }}
