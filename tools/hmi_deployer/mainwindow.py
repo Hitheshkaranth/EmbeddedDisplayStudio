@@ -1064,6 +1064,13 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
             lambda: self._right_tabs.setCurrentWidget(self.designer_workspace))
         self._right_tabs.addTab(self._ai_tab, "AI Design")
         self._themed_tab_icon(self._right_tabs.tabBar(), self._right_tabs.indexOf(self._ai_tab), "bolt")
+        # The Designer's composer asks the AI in words; the AI Design view
+        # does the work (its provider, its log) and the result lands on the
+        # canvas the request came from.
+        self.designer_workspace.aiRequested.connect(self._ask_ai_from_canvas)
+        self._ai_watch = QTimer(self)
+        self._ai_watch.setInterval(700)
+        self._ai_watch.timeout.connect(self._watch_canvas_ai)
 
         # ── Code tab ─────────────────────────────────────────────────────
         # The project as code (docs/CODE_SECTION.md): files and widgets on
@@ -1615,6 +1622,40 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self._style_footer()
         self._sync_link_chrome()
         self.cmb_panel.currentIndexChanged.connect(lambda _index: self._sync_link_chrome())
+
+    def _ask_ai_from_canvas(self, prompt: str) -> None:
+        """A request typed over the canvas: send it, with the page and the
+        selection as context, through the AI Design view, and report back in
+        the composer."""
+        tab = self._ai_tab
+        workspace = self.designer_workspace
+        if tab.streaming:
+            workspace.show_composer_reply("The AI is still working on the previous request.", busy=True)
+            return
+        request = (f"{prompt}\n\n{workspace.ai_context()}\n\n"
+                   "Change the current design as asked, keep everything else as it is, "
+                   "and return the whole updated design.")
+        self._ai_before = tab.last_project
+        tab.brief_input.setPlainText(request)
+        tab._on_send()
+        if not tab.streaming:
+            workspace.show_composer_reply("The AI could not start: check the provider and model in AI Design.")
+            return
+        workspace.show_composer_reply("Asking the AI… the result lands on this canvas.", busy=True)
+        self._ai_watch.start()
+
+    def _watch_canvas_ai(self) -> None:
+        tab = self._ai_tab
+        if tab.streaming or getattr(tab, "_queued_section_request", None):
+            return
+        self._ai_watch.stop()
+        workspace = self.designer_workspace
+        if tab.last_project is getattr(self, "_ai_before", None):
+            workspace.show_composer_reply("The AI returned no design. Open AI Design to see its reply.")
+        elif tab.auto_apply.isChecked():
+            workspace.show_composer_reply("Done: applied to the canvas. Ctrl+Z undoes it.")
+        else:
+            workspace.show_composer_reply("Ready in AI Design: press Apply to canvas there.")
 
     # The Studio's modes and the views (workspace tabs, by title) in each.
     MODES = (

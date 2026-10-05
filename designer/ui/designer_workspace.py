@@ -9,13 +9,13 @@ import shutil
 import tempfile
 
 import shiboken6
-from PySide6.QtCore import QEvent, QSize, QStandardPaths, Qt, QTimer, Signal
+from PySide6.QtCore import SIGNAL, QEvent, QSize, QStandardPaths, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSpinBox,
-    QFrame, QPlainTextEdit, QScrollArea, QSizePolicy, QSplitter, QToolBar,
-    QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QFrame, QGraphicsDropShadowEffect, QHeaderView, QPlainTextEdit, QScrollArea, QSizePolicy,
+    QSplitter, QTabWidget, QToolBar, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from designer.canvas import widget_previews
@@ -622,11 +622,12 @@ class DesignerWorkspace(QWidget):
         # hairline between them is the only chrome -- the same surface
         # language as the AI Design tab.
         layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
-        primary = QToolBar("Designer file and edit actions")
-        canvas_bar = QToolBar("Designer page, screen, view and arrange actions")
+        primary = QToolBar("Designer actions")
+        # One row since Studio 2; the name the row-building code used for the
+        # second row now means the same bar.
+        canvas_bar = primary
         primary.setObjectName("designerPrimaryToolbar")
-        canvas_bar.setObjectName("designerCanvasToolbar")
-        for bar, height in ((primary, 46), (canvas_bar, 40)):
+        for bar, height in ((primary, 44),):
             bar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
             bar.setMovable(False)
             bar.setFloatable(False)
@@ -687,16 +688,32 @@ class DesignerWorkspace(QWidget):
             gap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             bar.addWidget(gap)
 
-        # -- row 1: the project, then editing, then what leaves the Studio ----
-        action(primary, "New", self.new_ui, "file-plus")
-        action(primary, "Open", self.open_ui, "folder-open")
-        action(primary, "Save", self.save, "device-floppy", "Ctrl+S")
-        primary.addSeparator()
-        self.project_name = QLineEdit()
-        self.project_name.setPlaceholderText("deployment-name")
-        self.project_name.editingFinished.connect(self._project_name_edited)
-        field(primary, "Project", self.project_name, 150,
-              "Project name used for deployment and release files")
+        # -- one row: file, editing, view, arrange, then what leaves the Studio --
+        # Studio 2: the page, the screen size and the project name moved to the
+        # Pages tab beside Layers, New/Open/Save into the File menu, and the
+        # two rows became one, so the canvas starts 40 px higher.
+        file_button = QToolButton()
+        file_button.setText("File")
+        file_button.setObjectName("fileMenuButton")
+        file_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        file_button.setPopupMode(QToolButton.InstantPopup)
+        file_button.setCursor(Qt.PointingHandCursor)
+        file_button.setFixedHeight(28)
+        file_button.setToolTip("New, open or save the design")
+        self.file_menu = QMenu(self)
+        for text, slot, icon_name, shortcut in (("New design", self.new_ui, "file-plus", None),
+                                                ("Open design...", self.open_ui, "folder-open", None),
+                                                ("Save", self.save, "device-floppy", "Ctrl+S")):
+            item = self.file_menu.addAction(icon(icon_name), text)
+            item.triggered.connect(slot)
+            self._designer_icon_names[item] = icon_name
+            if shortcut:
+                item.setShortcut(QKeySequence(shortcut))
+                # Active while the Designer shows, as the toolbar action was.
+                self.addAction(item)
+        file_button.setMenu(self.file_menu)
+        self._designer_toolbutton_icons[file_button] = ("folder-open", "foreground")
+        primary.addWidget(file_button)
         primary.addSeparator()
         undo = self.undo_stack.createUndoAction(self, "Undo"); undo.setIcon(icon("arrow-back-up")); self._designer_icon_names[undo] = "arrow-back-up"; primary.addAction(undo)
         redo = self.undo_stack.createRedoAction(self, "Redo"); redo.setIcon(icon("arrow-forward-up")); self._designer_icon_names[redo] = "arrow-forward-up"; primary.addAction(redo)
@@ -732,43 +749,6 @@ class DesignerWorkspace(QWidget):
         # while focus moves through the object tree, removing each newly
         # selected row in turn. The toolbar button and context menu remain.
         action(primary, "Delete", self.delete_selected, "trash", compact=True)
-        # Push the actions that leave the Studio to the right, where they read
-        # as the end of the workflow rather than one more editing button.
-        spacer(primary)
-        # The shortcut lives in _shortcuts with the other workspace keys, so
-        # the tooltip carries it by hand rather than through the helper.
-        self.code_action = action(primary, "Code", self.open_code_window, "terminal-2")
-        self.code_action.setToolTip("Show the QML and design JSON of the selection  Ctrl+Shift+K")
-        action(primary, "Preview", self.preview, "eye")
-        action(primary, "Generate", self.generate, "file-code")
-        self.deploy_button = QPushButton("Deploy")
-        self.deploy_button.setObjectName("primaryAction")
-        self.deploy_button.setCursor(Qt.PointingHandCursor)
-        self.deploy_button.setFixedHeight(30)
-        self.deploy_button.setToolTip("Generate, package and install this design on the connected panel")
-        self.deploy_button.clicked.connect(self.deploy)
-        self._designer_toolbutton_icons[self.deploy_button] = ("rocket", "primaryForeground")
-        primary.addWidget(self.deploy_button)
-
-        # -- row 2: pages, the screen being designed for, view and arrange ---
-        self.pages = ComboBox(); self.pages.currentIndexChanged.connect(self.change_page)
-        field(canvas_bar, "Page", self.pages, 140, "The page being edited")
-        action(canvas_bar, "New Page", self.new_page, "plus", compact=True)
-        action(canvas_bar, "Duplicate Page", self.duplicate_page, "copy", compact=True)
-        action(canvas_bar, "Delete Page", self.delete_page, "trash", compact=True)
-        canvas_bar.addSeparator()
-        self.screen_width = SpinBox(); self.screen_width.setRange(64, 16384); self.screen_width.setValue(1280)
-        self.screen_width.setButtonSymbols(QSpinBox.NoButtons)
-        field(canvas_bar, "W", self.screen_width, 78, "Design width in pixels")
-        self.screen_height = SpinBox(); self.screen_height.setRange(64, 16384); self.screen_height.setValue(800)
-        self.screen_height.setButtonSymbols(QSpinBox.NoButtons)
-        field(canvas_bar, "H", self.screen_height, 78, "Design height in pixels")
-        self.screen_theme = ComboBox(); self.screen_theme.addItems(["dark", "light"])
-        field(canvas_bar, "Theme", self.screen_theme, 88,
-              "Shadcn colour mode this design targets; written to the manifest "
-              "and applied by the panel shell before the app loads")
-        self.screen_width.valueChanged.connect(self._screen_changed); self.screen_height.valueChanged.connect(self._screen_changed)
-        self.screen_theme.currentTextChanged.connect(self._screen_changed)
         canvas_bar.addSeparator()
         self.grid_action = action(canvas_bar, "Grid", self.toggle_grid, "grid-dots", checkable=True, compact=True); self.grid_action.setChecked(True)
         self.snap_action = action(canvas_bar, "Snap", self.toggle_snap, "magnet", checkable=True, compact=True); self.snap_action.setChecked(True)
@@ -823,8 +803,8 @@ class DesignerWorkspace(QWidget):
             item.setCheckable(True)
             self._text_align_actions[value] = item
         canvas_bar.addSeparator()
-        # Align tidies a selection; this tidies the page, with the same
-        # composition pass the AI tab runs on everything a model sends.
+        # Align tidies a selection; this tidies the page: a planned page is
+        # compiled again, a hand-drawn one composed by the polish pass.
         action(canvas_bar, "Tidy up", self.tidy_up, "layout-grid", compact=True)
         action(canvas_bar, "Screen idle", self.edit_screen_idle, "moon", compact=True)
         action(canvas_bar, "Bring to Front", lambda: self.z_order("front"), "arrow-bar-to-up", compact=True)
@@ -839,17 +819,54 @@ class DesignerWorkspace(QWidget):
         canvas_bar.addWidget(self.zoom_label)
         action(canvas_bar, "Zoom in", lambda: self.view.set_zoom(round(self.view.transform().m11()*100)+10), "zoom-in", compact=True)
         action(canvas_bar, "Fit to view", self.view_fit, "maximize", compact=True)
+        primary.addSeparator()
+        # The actions that leave the Studio end the row.
+        # The shortcut lives in _shortcuts with the other workspace keys, so
+        # the tooltip carries it by hand rather than through the helper.
+        self.code_action = action(primary, "Code", self.open_code_window, "terminal-2", compact=True)
+        self.code_action.setToolTip("Show the QML and design JSON of the selection  Ctrl+Shift+K")
+        action(primary, "Preview", self.preview, "eye")
+        action(primary, "Generate", self.generate, "file-code")
+        self.deploy_button = QPushButton("Deploy")
+        self.deploy_button.setObjectName("primaryAction")
+        self.deploy_button.setCursor(Qt.PointingHandCursor)
+        self.deploy_button.setFixedHeight(30)
+        self.deploy_button.setToolTip("Generate, package and install this design on the connected panel")
+        self.deploy_button.clicked.connect(self.deploy)
+        self._designer_toolbutton_icons[self.deploy_button] = ("rocket", "primaryForeground")
+        primary.addWidget(self.deploy_button)
 
-        layout.addWidget(primary); layout.addWidget(canvas_bar)
+        # -- the page and screen settings (shown in the Pages tab) -------------
+        self.pages = ComboBox(); self.pages.currentIndexChanged.connect(self.change_page)
+        self.screen_width = SpinBox(); self.screen_width.setRange(64, 16384); self.screen_width.setValue(1280)
+        self.screen_width.setButtonSymbols(QSpinBox.NoButtons)
+        self.screen_height = SpinBox(); self.screen_height.setRange(64, 16384); self.screen_height.setValue(800)
+        self.screen_height.setButtonSymbols(QSpinBox.NoButtons)
+        self.screen_theme = ComboBox(); self.screen_theme.addItems(["dark", "light"])
+        self.screen_theme.setToolTip("Shadcn colour mode this design targets; written to the manifest "
+                                     "and applied by the panel shell before the app loads")
+        self.screen_width.valueChanged.connect(self._screen_changed); self.screen_height.valueChanged.connect(self._screen_changed)
+        self.screen_theme.currentTextChanged.connect(self._screen_changed)
+        self.project_name = QLineEdit()
+        self.project_name.setPlaceholderText("deployment-name")
+        self.project_name.setToolTip("Project name used for deployment and release files")
+        self.project_name.editingFinished.connect(self._project_name_edited)
+        for widget in (self.pages, self.screen_width, self.screen_height, self.screen_theme, self.project_name):
+            widget.setObjectName("barField")
+            widget.setFixedHeight(26)
+        self.screen_width.setFixedWidth(78); self.screen_height.setFixedWidth(78)
+
+        layout.addWidget(primary)
         split = QSplitter(Qt.Horizontal); split.setObjectName("designerMainSplitter"); split.setHandleWidth(1)
         split.setChildrenCollapsible(False)
 
-        # -- left: the widget library over the layer tree ----------------------
+        # -- left: Layers, Widgets and Pages, one tab each ---------------------
         sidebar = QFrame(); sidebar.setObjectName("designerSidebar")
         sidebar_layout = QVBoxLayout(sidebar); sidebar_layout.setContentsMargins(0, 0, 0, 0); sidebar_layout.setSpacing(0)
-        left = QSplitter(Qt.Vertical); left.setObjectName("designerSideSplitter"); left.setHandleWidth(1)
-        left.setChildrenCollapsible(False)
-        sidebar_layout.addWidget(left)
+        self.side_tabs = QTabWidget(); self.side_tabs.setObjectName("designerSideTabs")
+        self.side_tabs.setDocumentMode(True)
+        self._compact_tabs(self.side_tabs)
+        sidebar_layout.addWidget(self.side_tabs)
         self.palette = WidgetPalette(self.registry); self.palette.setObjectName("designerPalette")
         library = QWidget(); library.setObjectName("panelBody"); library_layout = QVBoxLayout(library)
         library_layout.setContentsMargins(0, 0, 0, 0); library_layout.setSpacing(0)
@@ -877,6 +894,8 @@ class DesignerWorkspace(QWidget):
         library_layout.addWidget(search_row)
         self.palette_count = QLabel(f"{len(self.registry.definitions())} widgets")
         self.palette_count.setObjectName("panelMeta")
+        self.palette_count.setContentsMargins(12, 0, 12, 4)
+        library_layout.addWidget(self.palette_count)
         self.palette_empty = QLabel("No matching widgets.\nTry another search or turn off Favorites.")
         self.palette_empty.setObjectName("panelHint")
         self.palette_empty.setAlignment(Qt.AlignCenter)
@@ -892,16 +911,26 @@ class DesignerWorkspace(QWidget):
         self._palette_search_shortcut = QShortcut(QKeySequence("Ctrl+L"), library)
         self._palette_search_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         self._palette_search_shortcut.activated.connect(self.palette_search.setFocus)
-        self.tree = QTreeWidget(); self.tree.setObjectName("designerObjectTree"); self.tree.setHeaderLabel("Pages / Objects")
+        # Layers: what a designer calls each thing (a card's title, a gauge's
+        # label), with the tag it shows beside it; the QML id is the tooltip
+        # and the Properties field. Two columns: name, bound tag.
+        self.tree = QTreeWidget(); self.tree.setObjectName("designerObjectTree")
+        self.tree.setColumnCount(2)
         self.tree.setHeaderHidden(True)
         self.tree.setIndentation(14)
         self.tree.setUniformRowHeights(True)
-        left.addWidget(self._panel("Widgets", "components", library, trailing=(self.palette_count,)))
-        left.addWidget(self._panel("Layers", "list-tree", self.tree))
+        self.tree.header().setStretchLastSection(False)
+        self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        layers = QWidget(); layers.setObjectName("panelBody")
+        layers_layout = QVBoxLayout(layers); layers_layout.setContentsMargins(0, 4, 0, 0); layers_layout.setSpacing(0)
+        layers_layout.addWidget(self.tree, 1)
+        self.side_tabs.addTab(layers, "Layers")
+        self.side_tabs.addTab(library, "Widgets")
+        self.side_tabs.addTab(self._build_pages_tab(), "Pages")
         split.addWidget(sidebar)
-        left.setSizes([420, 260])
 
-        # -- centre: the canvas ------------------------------------------------
+        # -- centre: the canvas, with the AI composer floating over it ---------
         self.scene = DesignerScene(self.registry); self.view = DesignerView(self.scene); self.view.setObjectName("designerCanvas")
         # The scene's renderer is designer.preview.NativeRenderer (the panel's
         # own hmi-ui, headless) when designer.preview.find_hmi_ui() finds a
@@ -916,22 +945,31 @@ class DesignerWorkspace(QWidget):
                                     else "Rendered by Qt/QML (hmi-ui not found)")
         self.view.setFrameShape(QFrame.NoFrame)
         split.addWidget(self.view)
+        self._build_composer()
 
-        # -- right: inspector, bindings, chat ----------------------------------
+        # -- right: what is selected, then Design / Data / Actions -------------
         inspector = QFrame(); inspector.setObjectName("designerInspector")
         inspector_layout = QVBoxLayout(inspector); inspector_layout.setContentsMargins(0, 0, 0, 0); inspector_layout.setSpacing(0)
-        right = QSplitter(Qt.Vertical); right.setObjectName("designerSideSplitter"); right.setHandleWidth(1)
-        right.setChildrenCollapsible(False)
-        inspector_layout.addWidget(right)
         self.properties = PropertyEditor(self.registry); self.bindings = BindingEditor(self.registry)
         self.actions = ActionEditor(self.registry)
-        self.selection_chip = QLabel("None"); self.selection_chip.setObjectName("chip")
-        right.addWidget(self._panel("Properties", "sliders", self._scroll_panel(self.properties),
-                                    trailing=(self.selection_chip,)))
-        right.addWidget(self._panel("Tag binding", "link", self._scroll_panel(self.bindings)))
-        right.addWidget(self._panel("Actions", "bolt", self._scroll_panel(self.actions)))
-        right.addWidget(self._build_chat()); split.addWidget(inspector)
-        right.setSizes([320, 260, 220, 200])
+        head = QFrame(); head.setObjectName("inspectorHead")
+        head_layout = QVBoxLayout(head); head_layout.setContentsMargins(14, 10, 14, 10); head_layout.setSpacing(2)
+        self.selection_title = QLabel("Nothing selected"); self.selection_title.setObjectName("inspectorTitle")
+        self.selection_chip = QLabel("None"); self.selection_chip.setObjectName("panelMeta")
+        head_layout.addWidget(self.selection_title); head_layout.addWidget(self.selection_chip)
+        inspector_layout.addWidget(head)
+        self.inspector_tabs = QTabWidget(); self.inspector_tabs.setObjectName("designerInspectorTabs")
+        self.inspector_tabs.setDocumentMode(True)
+        self._compact_tabs(self.inspector_tabs)
+        design_tab = QWidget(); design_tab.setObjectName("panelBody")
+        design_layout = QVBoxLayout(design_tab); design_layout.setContentsMargins(0, 0, 0, 0); design_layout.setSpacing(0)
+        design_layout.addWidget(self._build_size_row())
+        design_layout.addWidget(self._scroll_panel(self.properties), 1)
+        self.inspector_tabs.addTab(design_tab, "Design")
+        self.inspector_tabs.addTab(self._scroll_panel(self.bindings), "Data")
+        self.inspector_tabs.addTab(self._scroll_panel(self.actions), "Actions")
+        inspector_layout.addWidget(self.inspector_tabs, 1)
+        split.addWidget(inspector)
         split.setStretchFactor(0, 0); split.setStretchFactor(1, 1); split.setStretchFactor(2, 0)
         sidebar.setMinimumWidth(220); inspector.setMinimumWidth(260)
         split.setSizes([250, 700, 300]); layout.addWidget(split, 1)
@@ -1006,6 +1044,7 @@ class DesignerWorkspace(QWidget):
         for name, label in getattr(self, "_panel_icons", {}).items():
             label.setPixmap(icon(name, 14, color("mutedForeground", theme)).pixmap(14, 14))
         self._send_button.setIcon(icon("send", 14, color("primaryForeground", theme)))
+        self._composer_icon.setPixmap(icon("sparkles", 16, color("primary", theme)).pixmap(16, 16))
         for empty in self.findChildren(_EmptyState):
             empty.retheme(theme)
         # The canvas previews read Shadcn's own tokens, which have a light and
@@ -1191,13 +1230,49 @@ class DesignerWorkspace(QWidget):
             QLabel#emptyStateTitle {{ color: {fg}; font-size: 13px; font-weight: 600; }}
             QLabel#emptyStateBody {{ color: {muted_fg}; font-size: 12px; }}
 
+            /* -- Studio 2: side and inspector tabs ------------------------------ */
+            QTabWidget#designerSideTabs::pane, QTabWidget#designerInspectorTabs::pane {{
+                border: none; border-top: 1px solid {border}; background: {surface}; top: -1px; }}
+            QTabWidget#designerSideTabs QTabBar, QTabWidget#designerInspectorTabs QTabBar {{
+                background: {surface}; qproperty-drawBase: 0; }}
+            QTabWidget#designerSideTabs QTabBar::tab, QTabWidget#designerInspectorTabs QTabBar::tab {{
+                background: transparent; color: {muted_fg}; border: none; border-radius: 6px;
+                padding: 5px 12px; margin: 6px 2px 6px 0; font-size: 12px; font-weight: 500;
+                /* The Studio's workspaceTabs rule (min-width 96px) reaches
+                   these nested bars too and pushed the third tab off. */
+                min-width: 0px; }}
+            QTabWidget#designerSideTabs QTabBar::tab:first, QTabWidget#designerInspectorTabs QTabBar::tab:first {{
+                margin-left: 8px; }}
+            QTabWidget#designerSideTabs QTabBar::tab:hover:!selected,
+            QTabWidget#designerInspectorTabs QTabBar::tab:hover:!selected {{ background: {hover}; color: {fg}; }}
+            QTabWidget#designerSideTabs QTabBar::tab:selected,
+            QTabWidget#designerInspectorTabs QTabBar::tab:selected {{ background: {tint(fg, 0.09)}; color: {fg}; }}
+            QFrame#inspectorHead, QFrame#sizeRow {{ background: {surface}; border: none; }}
+            QFrame#inspectorHead {{ border-bottom: 1px solid {border}; }}
+            QFrame#sizeSegment {{ background: {bg}; border: 1px solid {border}; border-radius: 8px; }}
+            QToolButton#sizeOption {{ background: transparent; color: {muted_fg}; border: none; border-radius: 6px;
+                                      font-size: 12px; padding: 0 6px; }}
+            QToolButton#sizeOption:hover {{ color: {fg}; background: {hover}; }}
+            QToolButton#sizeOption:checked {{ background: {tint(fg, 0.10)}; color: {fg}; }}
+            QFrame#sizeRow:disabled QToolButton#sizeOption {{ color: {tint(fg, 0.3)}; }}
+            QToolButton#pageButton, QToolButton#fileMenuButton {{ background: transparent; border: 1px solid transparent;
+                                       border-radius: 6px; color: {fg}; padding: 0 6px; }}
+            QToolButton#pageButton:hover, QToolButton#fileMenuButton:hover {{ background: {hover}; }}
+            QToolButton#fileMenuButton::menu-indicator {{ image: none; width: 0px; }}
+
+            /* -- the AI composer over the canvas -------------------------------- */
+            QFrame#aiComposer {{ background: transparent; border: none; }}
+            QLabel#composerReply {{ background: {card}; color: {fg}; border: 1px solid {border}; border-radius: 10px;
+                                    padding: 7px 12px; margin-bottom: 6px; font-size: 12px; }}
+            QLabel#composerReply[busy="true"] {{ color: {primary}; border-color: {tint(primary, 0.45)}; }}
+
             /* -- design chat --------------------------------------------------- */
             QPlainTextEdit#chatHistory {{
                 background: {surface}; color: {tint(fg, 0.88)}; border: none; border-radius: 0;
                 padding: 6px 8px; font-family: {mono}; font-size: 11px;
                 selection-background-color: {tint(primary, 0.35)};
             }}
-            QFrame#composerCard {{ background: {raised}; border: 1px solid {border}; border-radius: 14px; }}
+            QFrame#composerCard {{ background: {card}; border: 1px solid {tint(primary, 0.35)}; border-radius: 14px; }}
             QFrame#composerCard[focused="true"] {{ border: 1px solid {primary}; background: {tint(primary, 0.07)}; }}
             QLineEdit#chatInput {{ background: transparent; border: none; color: {fg}; font-size: 12px;
                                    padding: 0; min-height: 0; selection-background-color: {tint(primary, 0.35)}; }}
@@ -1208,36 +1283,98 @@ class DesignerWorkspace(QWidget):
                               border: 1px solid {border}; border-radius: 5px; padding: 1px 5px; background: transparent; }}
         """)
 
-    def _build_chat(self):
-        panel = QWidget(); panel.setObjectName("panelBody")
-        layout = QVBoxLayout(panel); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
-        self.chat_history = QPlainTextEdit(); self.chat_history.setReadOnly(True)
-        self.chat_history.setObjectName("chatHistory")
-        self.chat_history.setFrameShape(QFrame.NoFrame)
-        self.chat_history.setPlaceholderText(
-            "Text commands: add Value Tile; remove inputVoltage; "
-            "set inputVoltage title=Input Voltage; bind inputVoltage value=power.input_voltage"
-        )
-        layout.addWidget(self.chat_history, 1)
-        # The composer is the AI Design tab's: a rounded card that lights its
-        # border while the field has focus, and a round send disc.
-        composer_wrap = QWidget(); composer_wrap.setObjectName("panelBody")
-        wrap = QVBoxLayout(composer_wrap); wrap.setContentsMargins(10, 6, 10, 10); wrap.setSpacing(0)
+    # -- Studio 2: the AI composer over the canvas -----------------------------
+    # One field for every change in words. The small vocabulary ("add Value
+    # Tile", "set gauge1 label=Flow", "bind gauge1 value=ai.flow") applies
+    # here, offline and undoable; anything else is a request for the AI, which
+    # the Studio routes to the AI Design view with the page and the selection
+    # as context (aiRequested). Replaces the "Design chat" panel.
+    def _build_composer(self):
+        self.composer = QFrame(self.view); self.composer.setObjectName("aiComposer")
+        shadow = QGraphicsDropShadowEffect(self.composer)
+        shadow.setBlurRadius(28); shadow.setOffset(0, 8); shadow.setColor(QColor(0, 0, 0, 110))
+        self.composer.setGraphicsEffect(shadow)
+        outer = QVBoxLayout(self.composer); outer.setContentsMargins(0, 0, 0, 0); outer.setSpacing(0)
+        self.chat_reply = QLabel(""); self.chat_reply.setObjectName("composerReply")
+        self.chat_reply.setWordWrap(True); self.chat_reply.hide()
+        outer.addWidget(self.chat_reply)
         self.composer_card = QFrame(); self.composer_card.setObjectName("composerCard")
         self.composer_card.setProperty("focused", False)
         row = QHBoxLayout(self.composer_card); row.setContentsMargins(12, 5, 5, 5); row.setSpacing(8)
+        self._composer_icon = QLabel(); self._composer_icon.setFixedSize(16, 16)
         self.chat_input = QLineEdit(); self.chat_input.setObjectName("chatInput")
-        self.chat_input.setPlaceholderText("Describe an edit…")
+        self.chat_input.setPlaceholderText("Ask AI to change this design · or: add Value Tile, set …, bind …")
+        self.chat_input.setAccessibleName("Ask AI to change the design")
         self.chat_input.installEventFilter(self)
-        hint = QLabel("Enter"); hint.setObjectName("kbdHint")
+        self.composer_scope = QLabel("Whole page"); self.composer_scope.setObjectName("kbdHint")
         self._send_button = QToolButton(); self._send_button.setObjectName("sendButton")
         self._send_button.setFixedSize(28, 28); self._send_button.setCursor(Qt.PointingHandCursor)
-        self._send_button.setToolTip("Apply this edit")
-        row.addWidget(self.chat_input, 1); row.addWidget(hint); row.addWidget(self._send_button)
-        wrap.addWidget(self.composer_card)
-        layout.addWidget(composer_wrap)
+        self._send_button.setToolTip("Send (Enter)")
+        row.addWidget(self._composer_icon); row.addWidget(self.chat_input, 1)
+        row.addWidget(self.composer_scope); row.addWidget(self._send_button)
+        outer.addWidget(self.composer_card)
         self._send_button.clicked.connect(self._apply_chat); self.chat_input.returnPressed.connect(self._apply_chat)
-        return self._panel("Design chat", "message", panel)
+        # The text-command log, kept for the record (and code that reads it);
+        # the composer shows only the latest reply.
+        self.chat_history = QPlainTextEdit(self); self.chat_history.setReadOnly(True); self.chat_history.hide()
+        self._reply_timer = QTimer(self); self._reply_timer.setSingleShot(True)
+        self._reply_timer.timeout.connect(self.chat_reply.hide)
+        self.view.viewport().installEventFilter(self)
+        self._place_composer()
+
+    def _place_composer(self):
+        """Bottom centre of the canvas, at most 560 px wide."""
+        if not hasattr(self, "composer"):
+            return
+        area = self.view.viewport().geometry()
+        width = max(260, min(560, area.width() - 48))
+        self.composer.setFixedWidth(width)
+        self.composer.adjustSize()
+        self.composer.move(area.x() + (area.width() - width) // 2,
+                           area.y() + area.height() - self.composer.height() - 18)
+        self.composer.raise_()
+
+    def show_composer_reply(self, text: str, busy: bool = False):
+        """A line above the composer: the last command's result, or the AI's
+        progress. Busy replies stay until replaced; others fade after 8 s."""
+        self.chat_reply.setText(text)
+        self.chat_reply.setProperty("busy", busy)
+        self.chat_reply.style().unpolish(self.chat_reply); self.chat_reply.style().polish(self.chat_reply)
+        self.chat_reply.setVisible(bool(text))
+        self._send_button.setEnabled(not busy)
+        if busy:
+            self._reply_timer.stop()
+        else:
+            self._reply_timer.start(8000)
+        self._place_composer()
+
+    aiRequested = Signal(str)
+
+    def ai_context(self) -> str:
+        """The page and the selection, in the words a planned design uses:
+        what the AI is asked to change."""
+        page = self.current_page
+        lines = [f"Current design: page \"{page.name}\" on a "
+                 f"{self.project.screen.width}x{self.project.screen.height} screen."]
+        try:
+            from designer.layout.compiler import infer_sections
+            title, sections, header, _notes = infer_sections(copy.deepcopy(page), self.registry)
+        except Exception:
+            title, sections, header = "", [], []
+        if title:
+            lines.append(f"Title: {title}")
+        for section in sections:
+            parts = []
+            for widget in section.widgets:
+                tag = next((b.tag for b in widget.bindings.values() if getattr(b, "tag", "")), "")
+                parts.append(f"{self._display_name(widget)} ({widget.type}" + (f", {tag}" if tag else "") + ")")
+            lines.append(f"- {section.title or section.role} [{section.role}]: " + "; ".join(parts))
+        if header:
+            lines.append("Header: " + "; ".join(self._display_name(w) for w in header))
+        selected = self.scene.selected_models()
+        if selected:
+            lines.append("Selected: " + ", ".join(f"{self._display_name(m)} ({m.type}, id {m.id})" for m in selected))
+        return "\n".join(lines)
 
     def eventFilter(self, watched, event):
         # The composer card, not the borderless line edit inside it, is what
@@ -1246,21 +1383,192 @@ class DesignerWorkspace(QWidget):
             self.composer_card.setProperty("focused", event.type() == QEvent.FocusIn)
             self.composer_card.style().unpolish(self.composer_card)
             self.composer_card.style().polish(self.composer_card)
+        if hasattr(self, "view") and watched is self.view.viewport() and event.type() in (QEvent.Resize, QEvent.Show):
+            self._place_composer()
         return super().eventFilter(watched, event)
-    def _apply_chat(self):
-        """Apply a small, deterministic text-edit vocabulary.
 
-        This local adapter makes text-based authoring useful without a network
-        dependency and provides a stable seam for a future LLM provider.
+    def _apply_chat(self):
+        """Apply the small text vocabulary here; send anything else to the AI.
+
+        The vocabulary needs no network and is undoable like any edit; a
+        request in plain words goes out through aiRequested, with the page and
+        the selection as context (the Studio routes it to the AI Design view).
         """
         command = self.chat_input.text().strip()
         if not command: return
-        self.chat_history.appendPlainText(f"> {command}"); self.chat_input.clear()
+        self.chat_history.appendPlainText(f"> {command}")
         try:
             response = self.apply_text_command(command)
         except ValueError as exc:
+            # Only when something will answer: a bare workspace (tests, a
+            # build without the AI view) keeps the old "use add, ..." reply.
+            if str(exc) == "use add, remove, set, or bind" and self.receivers(SIGNAL("aiRequested(QString)")) > 0:
+                self.chat_input.clear()
+                self.chat_history.appendPlainText("Sent to the AI.")
+                self.aiRequested.emit(command)
+                return
             response = f"Could not apply: {exc}"
+        else:
+            self.chat_input.clear()
         self.chat_history.appendPlainText(response)
+        self.show_composer_reply(response)
+
+    # -- Studio 2: Pages tab, size wishes, readable layer names ----------------
+    def _build_pages_tab(self):
+        """The page list and the screen it is designed for, with the project's
+        deployment name: the settings that used to fill a second toolbar."""
+        body = QWidget(); body.setObjectName("panelBody")
+        form = QVBoxLayout(body); form.setContentsMargins(12, 12, 12, 12); form.setSpacing(6)
+
+        def caption(text):
+            label = QLabel(text.upper()); label.setObjectName("panelCaption")
+            form.addWidget(label)
+
+        caption("Page")
+        page_row = QHBoxLayout(); page_row.setSpacing(4)
+        page_row.addWidget(self.pages, 1)
+        for text, slot, icon_name in (("New Page", self.new_page, "plus"),
+                                      ("Duplicate Page", self.duplicate_page, "copy"),
+                                      ("Delete Page", self.delete_page, "trash")):
+            button = QToolButton(); button.setObjectName("pageButton")
+            button.setToolTip(text); button.setFixedSize(26, 26); button.setCursor(Qt.PointingHandCursor)
+            button.clicked.connect(slot)
+            self._designer_toolbutton_icons[button] = (icon_name, "foreground")
+            page_row.addWidget(button)
+        form.addLayout(page_row)
+        form.addSpacing(10)
+        caption("Screen")
+        size_row = QHBoxLayout(); size_row.setSpacing(6)
+        for text, widget in (("W", self.screen_width), ("H", self.screen_height)):
+            tag = QLabel(text); tag.setObjectName("propLabel")
+            size_row.addWidget(tag); size_row.addWidget(widget)
+        size_row.addStretch()
+        form.addLayout(size_row)
+        theme_row = QHBoxLayout(); theme_row.setSpacing(6)
+        tag = QLabel("Theme"); tag.setObjectName("propLabel")
+        theme_row.addWidget(tag); theme_row.addWidget(self.screen_theme, 1)
+        form.addLayout(theme_row)
+        form.addSpacing(10)
+        caption("Deployment name")
+        form.addWidget(self.project_name)
+        form.addStretch()
+        return body
+
+    @staticmethod
+    def _compact_tabs(tabs):
+        """Three short tabs that always fit their pane: no scroll arrows (the
+        app-wide tab style is sized for the Studio's top level)."""
+        bar = tabs.tabBar()
+        bar.setUsesScrollButtons(False)
+        bar.setExpanding(False)
+        bar.setElideMode(Qt.ElideNone)
+
+    SIZE_WISHES = (("compact", "Compact"), ("normal", "Normal"), ("large", "Large"))
+
+    def _build_size_row(self):
+        """Compact / Normal / Large for the selected widget: a wish the layout
+        compiler honours (designer.layout.compiler.SIZE_MARK); on a compiled
+        page it recompiles the page at once."""
+        row = QFrame(); row.setObjectName("sizeRow")
+        layout = QVBoxLayout(row); layout.setContentsMargins(14, 10, 14, 6); layout.setSpacing(6)
+        caption = QLabel("SIZE ON SCREEN"); caption.setObjectName("inspectorSection")
+        layout.addWidget(caption)
+        segment = QFrame(); segment.setObjectName("sizeSegment")
+        seg_layout = QHBoxLayout(segment); seg_layout.setContentsMargins(3, 3, 3, 3); seg_layout.setSpacing(2)
+        self.size_buttons = {}
+        for value, text in self.SIZE_WISHES:
+            button = QToolButton(); button.setObjectName("sizeOption"); button.setText(text)
+            button.setCheckable(True); button.setAutoExclusive(True); button.setCursor(Qt.PointingHandCursor)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed); button.setFixedHeight(26)
+            button.clicked.connect(lambda _checked=False, v=value: self.set_size_wish(v))
+            seg_layout.addWidget(button)
+            self.size_buttons[value] = button
+        layout.addWidget(segment)
+        self.size_hint = QLabel(""); self.size_hint.setObjectName("panelHint"); self.size_hint.setWordWrap(True)
+        layout.addWidget(self.size_hint)
+        self.size_row = row
+        self._sync_size_row([])
+        return row
+
+    def _sync_size_row(self, models):
+        from designer.layout.compiler import SIZE_FACTORS, SIZE_MARK, is_planned
+        model = models[0] if len(models) == 1 else None
+        self.size_row.setEnabled(model is not None)
+        wish = str(model.properties.get(SIZE_MARK, "") if model else "").lower()
+        current = {"small": "compact", "tight": "compact", "big": "large", "prominent": "large"}.get(wish, wish)
+        if current not in SIZE_FACTORS or current in ("medium", "default"):
+            current = "normal"
+        for value, button in self.size_buttons.items():
+            button.blockSignals(True); button.setChecked(model is not None and value == current); button.blockSignals(False)
+        if model is None:
+            self.size_hint.setText("Select a widget to size it.")
+        elif is_planned(self.current_page):
+            self.size_hint.setText("The layout recompiles around the new size.")
+        else:
+            self.size_hint.setText("Applies when the page is compiled (Tidy up on an AI page).")
+
+    def set_size_wish(self, value: str):
+        """Undoably set the selected widget's size wish; on a compiled page,
+        recompile the page around it."""
+        from designer.layout.compiler import SIZE_MARK, compile_page, is_planned
+        models = self.scene.selected_models()
+        if len(models) != 1:
+            return
+        model_id = models[0].id
+        page = self.current_page
+        before = copy.deepcopy(page.widgets)
+        target = next((w for w in page.walk() if w.id == model_id), None)
+        if target is None:
+            return
+        if value == "normal":
+            target.properties.pop(SIZE_MARK, None)
+        else:
+            target.properties[SIZE_MARK] = value
+        if is_planned(page):
+            try:
+                compile_page(self.project, page, self.registry)
+            except Exception as exc:
+                page.widgets[:] = before
+                self._load_page(select=[model_id])
+                self.message.emit(f"Could not recompile: {exc}")
+                return
+        after = copy.deepcopy(page.widgets)
+
+        def apply(widgets):
+            page.widgets[:] = copy.deepcopy(widgets)
+            self._load_page(select=[model_id])
+            self.designChanged.emit()
+
+        page.widgets[:] = before
+        self.undo_stack.push(CallbackCommand(f"Size {value}", lambda: apply(after), lambda: apply(before)))
+
+    def _display_name(self, model) -> str:
+        """What a designer calls a widget: a card's heading, a widget's label
+        or caption, a text's words, else its id in words."""
+        from designer.layout import intake
+        if model.type in ("ShCard", "Rectangle", "Item") and model.children:
+            heading = next((c for c in model.children if c.type == "Text" and c.id.endswith("Heading")), None)
+            if heading is not None and heading.properties.get("text"):
+                return str(heading.properties["text"])
+        if model.type == "Text":
+            text = str(model.properties.get("text", "") or "").strip()
+            if text:
+                return text if len(text) <= 32 else text[:31] + "…"
+        for key in ("_lampLabel", "caption", "title", "label", "text"):
+            value = str(model.properties.get(key, "") or "").strip()
+            if value and len(value) > 1:
+                return value
+        return intake.humanise(model.id) or model.id
+
+    def _tree_item_for(self, widget_id):
+        """The Layers row of a widget id (rows show names, so search by data)."""
+        iterator = [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())]
+        while iterator:
+            item = iterator.pop()
+            if item.data(0, Qt.UserRole) == widget_id:
+                return item
+            iterator.extend(item.child(i) for i in range(item.childCount()))
+        return None
 
     def apply_text_command(self, command: str) -> str:
         text = command.strip()
@@ -1655,11 +1963,26 @@ class DesignerWorkspace(QWidget):
         self.pageChanged.emit(self.current_page_index)
 
     def _refresh_tree(self):
-        self.tree.blockSignals(True); self.tree.clear(); root = QTreeWidgetItem([self.current_page.name]); root.setData(0, Qt.UserRole, "")
+        """Layers: each widget by the name a designer uses for it, the tag it
+        shows in the second column, the QML id in the tooltip. Cards stay
+        expanded; renaming the id is the Properties panel's job."""
+        self.tree.blockSignals(True); self.tree.clear(); root = QTreeWidgetItem([self.current_page.name, ""]); root.setData(0, Qt.UserRole, "")
         self.tree.addTopLevelItem(root)
+        muted = QColor(color("mutedForeground", getattr(self, "theme", "dark")))
+        from designer.layout.compiler import CHROME_MARK
+
         def add(parent, model):
-            item = QTreeWidgetItem([model.id]); item.setData(0, Qt.UserRole, model.id); item.setFlags(item.flags() | Qt.ItemIsEditable); parent.addChild(item)
+            # The compiler's own furniture -- a card's heading, a lamp's words,
+            # the header rule -- is part of its card or lamp, not a layer.
+            if model.properties.get(CHROME_MARK) and not model.children and model.id != "screenTitle":
+                return
+            tag = next((b.tag for b in model.bindings.values() if getattr(b, "tag", "") and b.tag != "*"), "")
+            item = QTreeWidgetItem([self._display_name(model), tag]); item.setData(0, Qt.UserRole, model.id)
+            item.setToolTip(0, f"{model.id} · {model.type}" + (f" · bound to {tag}" if tag else ""))
+            item.setForeground(1, muted)
+            parent.addChild(item)
             for child in model.children: add(item, child)
+            item.setExpanded(bool(model.children))
         for model in self.current_page.widgets: add(root, model)
         root.setExpanded(True); self.tree.blockSignals(False)
 
@@ -1668,13 +1991,16 @@ class DesignerWorkspace(QWidget):
         parent = self._find(self.parent_id_of(model)) if model else None
         self.properties.set_widget(model, positioned=bool(parent and parent.type in POSITIONERS))
         self.bindings.set_widget(model); self.actions.set_widget(model)
-        self.selection_chip.setText(model.id if model else (f"{len(ids)} selected" if ids else "None"))
+        self.selection_chip.setText(f"{model.type} · {model.id}" if model else (f"{len(ids)} selected" if ids else "Select a widget on the canvas or in Layers"))
+        self.selection_title.setText(self._display_name(model) if model else (f"{len(ids)} widgets" if ids else "Nothing selected"))
+        self._sync_size_row(self.scene.selected_models())
+        self.composer_scope.setText(self._display_name(model) if model else (f"{len(ids)} widgets" if ids else "Whole page"))
         self.align_button.setEnabled(len(self._arrangeable_selection()) >= 2)
         self._sync_text_alignment()
         self.tree.blockSignals(True); self.tree.clearSelection()
         if ids:
-            iterator = self.tree.findItems(ids[0], Qt.MatchExactly | Qt.MatchRecursive)
-            if iterator: iterator[0].setSelected(True)
+            row = self._tree_item_for(ids[0])
+            if row is not None: row.setSelected(True)
         self.tree.blockSignals(False)
 
     def _tree_selection(self):
@@ -1915,8 +2241,15 @@ class DesignerWorkspace(QWidget):
             return
         before = copy.deepcopy(page.widgets)
         try:
-            from designer.layout.polish import polish
-            report = polish(self.project, page, self.registry, brief=self.project.name)
+            from designer.layout.compiler import compile_page, is_planned
+            if is_planned(page):
+                # A page the layout compiler built is compiled again, which
+                # keeps its cards; polish would take them apart.
+                compiled = compile_page(self.project, page, self.registry)
+                report = None
+            else:
+                from designer.layout.polish import polish
+                report = polish(self.project, page, self.registry, brief=self.project.name)
         except Exception as exc:
             # Never leave half a composition on the canvas.
             page.widgets[:] = before
@@ -1934,8 +2267,11 @@ class DesignerWorkspace(QWidget):
             self.designChanged.emit()
 
         self.undo_stack.push(CallbackCommand("Tidy up", lambda: apply(after), lambda: apply(before)))
-        self.message.emit(f"Tidy up: {report.archetype or 'composed'}, "
-                          f"{report.before.score:.0f} → {report.after.score:.0f}")
+        if report is None:
+            self.message.emit(f"Tidy up: compiled {compiled.layout}")
+        else:
+            self.message.emit(f"Tidy up: {report.archetype or 'composed'}, "
+                              f"{report.before.score:.0f} → {report.after.score:.0f}")
 
     def z_order(self, mode):
         """Raise or lower the selection, undoably."""

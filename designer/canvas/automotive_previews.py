@@ -39,10 +39,17 @@ def paint_cluster_gauge(painter, rect, props, ctx):
     major_step = _number(props, "majorStep", 1.0)
     redline_from = _number(props, "redlineFrom", 7.0)
     sweep = _number(props, "sweep", 240.0)
-    readout = str(_prop(props, "readout", "137"))
-    readout_unit = str(_prop(props, "readoutUnit", "km/h"))
-    caption = str(_prop(props, "caption", ""))
-    label = str(_prop(props, "label", "x1000 RPM"))
+    # The text properties take the kit's sample only when absent: an empty
+    # string is a value ("show the live reading", "no label"), as hmi-ui
+    # reads it. _prop's empty-means-default made a compiled gauge flash
+    # "137 km/h" until its hmi-ui render arrived.
+    def given(key, default):
+        value = props.get(key)
+        return default if value is None else value
+    readout = str(given("readout", "137"))
+    readout_unit = str(given("readoutUnit", "km/h"))
+    caption = str(given("caption", ""))
+    label = str(given("label", "x1000 RPM"))
     decimals = int(_number(props, "decimals", 0))
     show_inner = bool(_prop(props, "showInnerDial", "true") in ("true", "True", True, 1, "1"))
     span = max(0.0001, maximum - minimum)
