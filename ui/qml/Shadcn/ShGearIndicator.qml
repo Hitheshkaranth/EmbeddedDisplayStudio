@@ -36,6 +36,10 @@ Item {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: root._h * 0.12
         spacing: Math.round(root._h * 0.12)
+        // Sized from the height; a row wider than the widget shrinks to fit
+        // rather than spilling (hmi-ui scales its glyphs the same way).
+        scale: implicitWidth > 0 ? Math.min(1, root.width * 0.96 / implicitWidth) : 1
+        transformOrigin: Item.Bottom
 
         Repeater {
             model: root._list

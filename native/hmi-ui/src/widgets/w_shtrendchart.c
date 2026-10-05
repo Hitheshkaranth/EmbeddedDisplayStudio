@@ -116,8 +116,13 @@ static void update_grid(hmi_widget_t *w)
 
     // Warning zone: rectangle at the height of the warning region
     double yScale = 1.0 / (st->maxValue - st->minValue > 0 ? st->maxValue - st->minValue : 1);
-    double zoneTop = chartH * (st->maxValue - st->warningHigh) * yScale;
-    double zoneH = chartH * (1 - (st->warningHigh - st->warningLow) * yScale);
+    // The band spans warningLow..warningHigh, clipped to the scale: its
+    // height is that span's share of the chart (it was 1 - share, which
+    // drew most of the chart amber and ran past its bottom edge).
+    double bandHigh = st->warningHigh < st->maxValue ? st->warningHigh : st->maxValue;
+    double bandLow = st->warningLow > st->minValue ? st->warningLow : st->minValue;
+    double zoneTop = chartH * (st->maxValue - bandHigh) * yScale;
+    double zoneH = chartH * (bandHigh - bandLow) * yScale;
     if (zoneH > 0 && zoneTop >= 0 && zoneTop < chartH) {
         lv_obj_set_pos(st->warnZone, 0, (int32_t)zoneTop);
         lv_obj_set_size(st->warnZone, (int32_t)W, (int32_t)zoneH);
@@ -136,7 +141,8 @@ static void update_grid(hmi_widget_t *w)
             lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_RIGHT, 0);
             st->yLabels[i] = lbl;
         }
-        double val = st->maxValue - values[i] * (st->maxValue - st->minValue);
+        // Top grid line is the maximum, bottom the minimum.
+        double val = st->minValue + values[i] * (st->maxValue - st->minValue);
         char buf[24];
         snprintf(buf, sizeof buf, "%.0f", val);
         lv_label_set_text(lbl, buf);

@@ -47,6 +47,14 @@ Item {
             out.push(v);
         return out;
     }
+    /** Characters in the longest scale number; past four the numbers shrink. */
+    readonly property int _longestMajor: {
+        var dp = root.majorStep >= 1 ? 0 : root.majorStep >= 0.1 ? 1 : 2;
+        var n = 1;
+        for (var i = 0; i < root._majors.length; ++i)
+            n = Math.max(n, Number(root._majors[i]).toFixed(dp).length);
+        return n;
+    }
     readonly property real _clamped:
         Math.max(root.minimumValue, Math.min(root.maximumValue, root.value))
 
@@ -78,10 +86,11 @@ Item {
             readonly property real angle: (root._startAngle + root.sweep * ((modelData - root.minimumValue) / root._span)) * Math.PI / 180
             x: width / 2 + root.width / 2 + 0.47 * root._d * Math.cos(angle) - width
             y: root.height / 2 + 0.47 * root._d * Math.sin(angle) - height / 2
-            text: Number(modelData).toFixed(0)
+            // As many decimals as the step needs (0.5 steps read "0.5", not "1").
+            text: Number(modelData).toFixed(root.majorStep >= 1 ? 0 : root.majorStep >= 0.1 ? 1 : 2)
             color: modelData >= root.redlineFrom ? Theme.autoRedline : Theme.autoLine
             font.family: Theme.fontFamily
-            font.pixelSize: Math.max(7, Math.round(0.068 * root._d))
+            font.pixelSize: Math.max(7, Math.round(0.068 * root._d * (root._longestMajor > 4 ? 4 / root._longestMajor : 1)))
             font.weight: Theme.fontMedium
         }
     }
@@ -96,7 +105,13 @@ Item {
         text: root.caption
         color: Theme.autoAmber
         font.family: Theme.fontFamily
-        font.pixelSize: Math.round(0.07 * root._d)
+        // Inside the ring of scale numbers: the chord at the caption's
+        // height, and a smaller face for a long caption (as hmi-ui does).
+        width: 2 * Math.sqrt(0.40 * 0.40 - 0.26 * 0.26) * root._d
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+        font.pixelSize: Math.max(7, Math.round(Math.min(0.07 * root._d,
+                                 width / Math.max(1, root.caption.length * 0.56))))
         font.weight: Theme.fontMedium
         visible: root.caption !== ""
     }

@@ -17,7 +17,8 @@ Item {
     readonly property color _color: _value>=warningValue ? Theme.efisWarning : _value>=cautionValue ? Theme.efisCaution : Theme.efisNormal
 
     Rectangle { anchors.fill: parent; color: Theme.efisPanel; radius: Theme.radiusSm }
-    Text { text: root.label; color: Theme.efisText; anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; font.pixelSize: Theme.fontSizeSm; font.weight: Theme.fontSemibold }
+    // The bar's width at most: a long name shrinks, then elides (as hmi-ui).
+    Text { text: root.label; color: Theme.efisText; anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; width: parent.width; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight; fontSizeMode: Text.HorizontalFit; minimumPixelSize: 8; font.pixelSize: Theme.fontSizeSm; font.weight: Theme.fontSemibold }
     Rectangle {
         id: well; width: 18; anchors.top: parent.top; anchors.topMargin: 25; anchors.bottom: valueText.top; anchors.bottomMargin: 5
         anchors.horizontalCenter: parent.horizontalCenter; color: "transparent"; border.color: Theme.efisLine
