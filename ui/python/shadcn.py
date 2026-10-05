@@ -604,31 +604,101 @@ QLabel#connectionBadge {{
 }}
 QLabel#connectionBadge[state="connected"] {{ color: {p['success']}; }}
 QLabel#connectionBadge[state="fault"] {{ color: {p['destructive']}; }}
-QTabBar#primaryNav {{
+/* Studio 2 shell: the mode switch (Design, Simulate, Code, Deploy) and,
+   beside it, the current mode's views -- both compact pills in one row. */
+QTabBar#primaryNav, QTabBar#modeNav {{
     background-color: transparent;
     border: none;
     padding: 0;
 }}
-QTabBar#primaryNav::tab {{
+QTabBar#modeNav::tab {{
     background-color: {p['muted']};
     color: {p['mutedForeground']};
     border: 1px solid {p['border']};
-    border-radius: 16px;
+    border-radius: 10px;
     min-width: 0;
-    margin-right: 8px;
-    padding: 9px 18px;
+    margin-right: 4px;
+    padding: 6px 14px;
     font-size: 12px;
     font-weight: 600;
 }}
-QTabBar#primaryNav::tab:hover:!selected {{
+QTabBar#primaryNav::tab {{
+    background-color: transparent;
+    color: {p['mutedForeground']};
+    border: 1px solid transparent;
+    border-radius: 8px;
+    min-width: 0;
+    margin-right: 2px;
+    padding: 5px 11px;
+    font-size: 12px;
+    font-weight: 500;
+}}
+QTabBar#primaryNav::tab:hover:!selected, QTabBar#modeNav::tab:hover:!selected {{
     background-color: {p['accent']};
     color: {p['accentForeground']};
 }}
-QTabBar#primaryNav::tab:selected {{
+QTabBar#primaryNav::tab:selected, QTabBar#modeNav::tab:selected {{
     background-color: {p['accent']};
     color: {p['foreground']};
     border-color: transparent;
 }}
+QPushButton#projectMenuButton {{
+    background-color: transparent;
+    border: 1px solid transparent;
+    color: {p['foreground']};
+    font-weight: 600;
+    height: 30px;
+    min-height: 30px;
+    max-height: 30px;
+    border-radius: 8px;
+    padding: 0 10px;
+}}
+QPushButton#projectMenuButton:hover {{
+    background-color: {p['muted']};
+}}
+QPushButton#deviceChip {{
+    background-color: {p['muted']};
+    border: 1px solid {p['border']};
+    color: {p['mutedForeground']};
+    font-size: 12px;
+    font-weight: 600;
+    height: 30px;
+    min-height: 30px;
+    max-height: 30px;
+    border-radius: 8px;
+    padding: 0 12px;
+}}
+QPushButton#deviceChip:hover {{
+    border-color: {p['ring']};
+}}
+QPushButton#deviceChip[linkState="connected"] {{
+    color: {p['success']};
+    border-color: {hex_to_rgba(p['success'], 0.45)};
+    background-color: {hex_to_rgba(p['success'], 0.10)};
+}}
+QPushButton#deviceChip[linkState="connecting"] {{
+    color: {p['brand']};
+    border-color: {hex_to_rgba(p['brand'], 0.55)};
+}}
+QPushButton#deviceChip[linkState="fault"] {{
+    color: {p['destructive']};
+    border-color: {hex_to_rgba(p['destructive'], 0.55)};
+}}
+QFrame#devicePopover {{
+    background-color: {p['card']};
+    border: 1px solid {p['border']};
+    border-radius: {r['lg']}px;
+}}
+QWidget#statusStrip {{
+    border-top: 1px solid {p['border']};
+}}
+QLabel#statusItem {{
+    color: {p['mutedForeground']};
+    font-size: 11px;
+}}
+QLabel#statusItem[linkState="connected"] {{ color: {p['success']}; }}
+QLabel#statusItem[linkState="fault"] {{ color: {p['destructive']}; }}
+QLabel#statusItem[linkState="connecting"] {{ color: {p['brand']}; }}
 QLabel#connectionFieldLabel {{
     color: {p['mutedForeground']};
     font-size: 10px;

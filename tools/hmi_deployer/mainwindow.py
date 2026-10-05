@@ -399,6 +399,10 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
             self.btn_disconnect.setEnabled(state in ("connecting", "connected"))
             self.btn_disconnect.setText("Cancel" if state == "connecting" else "Disconnect")
         self._refresh_readiness()
+        # The badge text is set right after this by the callers; read it once
+        # they are done.
+        if hasattr(self, "btn_device"):
+            QTimer.singleShot(0, self._sync_link_chrome)
 
     def _offer_to_forget_host_key(self) -> None:
         """A known_hosts entry from another board at this address blocks the
@@ -738,13 +742,19 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         # apply() is what tells the icon renderer which palette is on screen,
         # so the re-render has to follow it, not precede it.
         self._restyle_icons()
+        if hasattr(self, "view_nav") and hasattr(self, "_right_tabs"):
+            # Its icons are copies of primary_nav's: take the re-rendered ones.
+            self._view_tabs = []
+            mode = self._mode_of_tab(self._right_tabs.currentIndex())
+            if mode >= 0:
+                self._apply_mode_views(mode)
         if hasattr(self, "designer_workspace"):
             self.designer_workspace.apply_theme(self.theme)
         if hasattr(self, "_ai_tab"):
             self._ai_tab.apply_theme(self.theme)
         if hasattr(self, "_code_tab"):
             self._code_tab.apply_theme(self.theme)
-        for effect in ("logo_ring", "_connect_beam", "_deploy_beam", "_refresh_beam", "primary_nav"):
+        for effect in ("logo_ring", "_connect_beam", "_deploy_beam", "_refresh_beam", "primary_nav", "mode_nav", "view_nav"):
             if hasattr(self, effect):
                 getattr(self, effect).set_theme(self.theme)
         logging.getLogger("EmbeddedDisplay Studio").info(
@@ -756,8 +766,8 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self.setCentralWidget(central_widget)
 
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(18, 14, 18, 12)
-        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(12, 8, 12, 0)
+        main_layout.setSpacing(8)
 
         # Top Bar
         top_bar = QHBoxLayout()
@@ -770,14 +780,14 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self.lbl_logo.setObjectName("studioMark")
         self.lbl_logo.setAlignment(Qt.AlignCenter)
         self.lbl_logo.setPixmap(
-            QPixmap(logo_path).scaled(36, 36, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            QPixmap(logo_path).scaled(26, 26, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         )
-        self.lbl_logo.setFixedSize(40, 40)
+        self.lbl_logo.setFixedSize(28, 28)
         # The mark sits in a slowly flowing liquid-metal rim (Libraries.dev
         # metal-fx, ported in ui/python/fx/metal.py); 15 fps, a few px.
         from ui.python.fx.metal import MetalRing
         self.logo_ring = MetalRing(self.lbl_logo, ring=2, padding=1)
-        self.logo_ring.setFixedSize(48, 48)
+        self.logo_ring.setFixedSize(34, 34)
         self.logo_ring.start()
 
         # Wordmark beside the logo, in the design system's heading style.
@@ -863,50 +873,107 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self._themed_icon(self.btn_motion, "sparkles")
         self.btn_motion.toggled.connect(self.on_toggle_motion)
 
-        top_bar.addWidget(self.logo_ring)
-        top_bar.addSpacing(8)
-        top_bar.addWidget(title_wrap)
-        top_bar.addSpacing(24)
-        top_bar.addWidget(self.btn_open)
-        top_bar.addWidget(self.btn_new)
-        top_bar.addStretch()
+        # -- One row of chrome (Studio 2 shell) ---------------------------------
+        # Logo and project menu; the mode switch (Design, Simulate, Code,
+        # Deploy) with the current mode's own views beside it; then the device
+        # chip, whose popover holds the connection controls that used to own
+        # the header on every tab. The old header spent three rows on this.
+        from PySide6.QtWidgets import QFrame, QGridLayout, QMenu
+        self.lbl_title.setText("Studio")
+        self.lbl_subtitle.hide()
+
+        self.btn_project = QPushButton("Project")
+        self.btn_project.setObjectName("projectMenuButton")
+        self.btn_project.setToolTip("New app, open bundle")
+        project_menu = QMenu(self.btn_project)
+        project_menu.addAction("New app...", self.on_new_app)
+        project_menu.addAction("Open bundle...", self.on_open_bundle)
+        self.btn_project.setMenu(project_menu)
+        # The menu is how a person reaches these now; the buttons stay (hidden)
+        # for code and tests that click them.
+        for legacy in (self.btn_open, self.btn_new):
+            legacy.setParent(central_widget)
+            legacy.hide()
+
+        self.btn_device = QPushButton("")
+        self.btn_device.setObjectName("deviceChip")
+        self.btn_device.setCursor(Qt.PointingHandCursor)
+        self.btn_device.clicked.connect(self._toggle_device_popover)
+
+        # The connection controls, in a popover under the chip.
+        self._device_popover = QFrame(self, Qt.Popup)
+        self._device_popover.setObjectName("devicePopover")
+        popover = QGridLayout(self._device_popover)
+        popover.setContentsMargins(14, 14, 14, 14)
+        popover.setHorizontalSpacing(8)
+        popover.setVerticalSpacing(10)
         target_label = QLabel("TARGET IP")
         target_label.setObjectName("connectionFieldLabel")
         port_label = QLabel("PORT")
         port_label.setObjectName("connectionFieldLabel")
-        for caption in (target_label, port_label):
-            caption.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-            caption.setMinimumWidth(0)
-        top_bar.addWidget(target_label)
-        top_bar.addWidget(self.inp_host)
-        top_bar.addSpacing(8)
-        top_bar.addWidget(port_label)
-        top_bar.addWidget(self.inp_port)
-        top_bar.addSpacing(6)
-        top_bar.addWidget(self.btn_test)
-        top_bar.addSpacing(4)
-        top_bar.addWidget(self.btn_disconnect)
-        top_bar.addSpacing(8)
-        top_bar.addWidget(self.lbl_connection)
-        top_bar.addSpacing(8)
-        top_bar.addWidget(self.btn_motion)
-        top_bar.addWidget(self.btn_theme)
+        popover.addWidget(target_label, 0, 0)
+        popover.addWidget(port_label, 0, 1)
+        popover.addWidget(self.inp_host, 1, 0)
+        popover.addWidget(self.inp_port, 1, 1)
+        buttons = QHBoxLayout()
+        buttons.setSpacing(6)
+        buttons.addWidget(self.btn_test)
+        buttons.addWidget(self.btn_disconnect)
+        popover.addLayout(buttons, 2, 0, 1, 2)
+        popover.addWidget(self.lbl_connection, 3, 0, 1, 2)
+        self.inp_host.setMinimumWidth(200)
+        self.inp_host.textChanged.connect(lambda _text: self._sync_link_chrome())
+        self.inp_host.returnPressed.connect(self.btn_test.click)
 
-        main_layout.addLayout(top_bar)
-
-        # A dedicated navigation rail belongs below the product header.  The
-        # content widget keeps its QTabWidget state machine, but its tab bar is
-        # deliberately surfaced here so navigation reads across the whole
-        # Studio rather than as part of only the right-hand pane.
         from ui.python.fx.liquid import LiquidTabBar
+        self.mode_nav = LiquidTabBar()
+        self.mode_nav.setObjectName("modeNav")
+        self.mode_nav.setDrawBase(False)
+        self.mode_nav.setExpanding(False)
+        self.mode_nav.setElideMode(Qt.ElideNone)
+        self.mode_nav.setIconSize(QSize(15, 15))
+        self.mode_nav.setFixedHeight(36)
+        self.mode_nav.setAccessibleName("Studio mode")
+
+        # The workspace views. primary_nav holds all of them and stays in sync
+        # with the content QTabWidget (code reads it), but is not shown: hiding
+        # tabs inside one QTabBar leaves a stale scroll offset. view_nav is
+        # rebuilt with the current mode's views and hides for a mode with one.
         self.primary_nav = LiquidTabBar()
         self.primary_nav.setObjectName("primaryNav")
         self.primary_nav.setDrawBase(False)
         self.primary_nav.setExpanding(False)
         self.primary_nav.setElideMode(Qt.ElideNone)
-        self.primary_nav.setIconSize(QSize(16, 16))
-        self.primary_nav.setFixedHeight(44)
-        main_layout.addWidget(self.primary_nav)
+        self.primary_nav.setIconSize(QSize(14, 14))
+        self.primary_nav.setFixedHeight(32)
+        self.primary_nav.hide()
+        self.view_nav = LiquidTabBar()
+        self.view_nav.setObjectName("primaryNav")
+        self.view_nav.setDrawBase(False)
+        self.view_nav.setExpanding(False)
+        self.view_nav.setElideMode(Qt.ElideNone)
+        self.view_nav.setIconSize(QSize(14, 14))
+        self.view_nav.setFixedHeight(32)
+        self.view_nav.setAccessibleName("Views in this mode")
+        self._view_tabs: list = []      # view_nav position -> workspace tab index
+        self.view_nav.currentChanged.connect(self._on_view_picked)
+        for bar in (self.mode_nav, self.view_nav):
+            bar.setUsesScrollButtons(False)
+
+        top_bar.setSpacing(8)
+        top_bar.addWidget(self.logo_ring)
+        top_bar.addWidget(title_wrap)
+        top_bar.addWidget(self.btn_project)
+        top_bar.addStretch(1)
+        top_bar.addWidget(self.mode_nav)
+        top_bar.addSpacing(6)
+        top_bar.addWidget(self.view_nav)
+        top_bar.addStretch(1)
+        top_bar.addWidget(self.btn_device)
+        top_bar.addWidget(self.btn_motion)
+        top_bar.addWidget(self.btn_theme)
+
+        main_layout.addLayout(top_bar)
 
         # Splitter
         splitter = QSplitter(Qt.Horizontal)
@@ -1490,16 +1557,43 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self.primary_nav.currentChanged.connect(self._right_tabs.setCurrentIndex)
         self._right_tabs.currentChanged.connect(self.primary_nav.setCurrentIndex)
 
+        # Four modes over the seven views: each view belongs to one mode, the
+        # mode switch picks the mode, and primary_nav shows its views.
+        self._mode_last: dict = {}
+        for name, icon in zip((mode for mode, _views in self.MODES),
+                              ("device-imac", "activity", "file-code", "upload")):
+            self.mode_nav.addTab(name)
+            self._themed_tab_icon(self.mode_nav, self.mode_nav.count() - 1, icon)
+        self.mode_nav.currentChanged.connect(self._on_mode_changed)
+        self._right_tabs.currentChanged.connect(self._sync_mode_to_tab)
+        self._sync_mode_to_tab(self._right_tabs.currentIndex())
+
         splitter.addWidget(self._right_tabs)
         splitter.setSizes([800, 400])
         self._on_tab_changed(self._right_tabs.currentIndex())
 
-        # Footer: attribution on the left, version hard right. Kept to the muted
-        # token so it reads as chrome and never competes with the panel preview.
-        footer = QHBoxLayout()
-        footer.setContentsMargins(2, 8, 2, 0)
+        # Status bar: the link, the open application and the display on the
+        # left, attribution and version on the right. It replaces a footer
+        # that carried only the signature, so connection and app state are
+        # visible from every mode.
+        status_strip = QWidget()
+        status_strip.setObjectName("statusStrip")
+        footer = QHBoxLayout(status_strip)
+        footer.setContentsMargins(4, 5, 4, 6)
+        footer.setSpacing(18)
+        self.lbl_status_link = QLabel("")
+        self.lbl_status_app = QLabel("")
+        self.lbl_status_display = QLabel("")
+        for item in (self.lbl_status_link, self.lbl_status_app, self.lbl_status_display):
+            item.setObjectName("statusItem")
+            # Preferred, not Ignored: an Ignored label in a row with a stretch
+            # is laid out at zero width. Minimum 0 keeps them from setting a
+            # floor under the window.
+            item.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+            item.setMinimumWidth(0)
+            footer.addWidget(item)
 
-        self.lbl_footer = QLabel("FLYVI TECHNOLOGIES  •  EMBEDDED DISPLAY ENGINEERING")
+        self.lbl_footer = QLabel("FLYVI TECHNOLOGIES")
         self.lbl_footer.setObjectName("footerText")
 
         self.lbl_version = QLabel(APP_VERSION)
@@ -1513,12 +1607,122 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         for chrome in (self.lbl_footer, self.lbl_version):
             chrome.setMinimumWidth(0)
 
-        footer.addWidget(self.lbl_footer)
         footer.addStretch()
+        footer.addWidget(self.lbl_footer)
         footer.addWidget(self.lbl_version)
-        main_layout.addLayout(footer)
+        main_layout.addWidget(status_strip)
 
         self._style_footer()
+        self._sync_link_chrome()
+        self.cmb_panel.currentIndexChanged.connect(lambda _index: self._sync_link_chrome())
+
+    # The Studio's modes and the views (workspace tabs, by title) in each.
+    MODES = (
+        ("Design", ("Designer", "AI Design")),
+        ("Simulate", ("Tag Lab", "Panel Logs")),
+        ("Code", ("Code",)),
+        ("Deploy", ("Display Console", "System Profile")),
+    )
+
+    def _mode_of_tab(self, index: int) -> int:
+        """The mode a workspace tab belongs to, or -1 for one in no mode."""
+        title = self._right_tabs.tabText(index)
+        for mode, (_name, views) in enumerate(self.MODES):
+            if title in views:
+                return mode
+        return -1
+
+    def _on_mode_changed(self, mode: int) -> None:
+        """A mode was picked: show its views, landing on the one last used."""
+        if not 0 <= mode < len(self.MODES):
+            return
+        self._apply_mode_views(mode)
+        if self._mode_of_tab(self._right_tabs.currentIndex()) == mode:
+            return
+        target = self._mode_last.get(mode)
+        if target is None:
+            views = self.MODES[mode][1]
+            target = next((i for i in range(self._right_tabs.count())
+                           if self._right_tabs.tabText(i) == views[0]), None)
+        if target is not None:
+            self._right_tabs.setCurrentIndex(target)
+
+    def _sync_mode_to_tab(self, index: int) -> None:
+        """A view was shown (by the user or by code, e.g. "Open in Designer"):
+        follow it with the mode switch."""
+        mode = self._mode_of_tab(index)
+        if mode < 0:
+            return
+        self._mode_last[mode] = index
+        if self.mode_nav.currentIndex() != mode:
+            self.mode_nav.blockSignals(True)
+            self.mode_nav.setCurrentIndex(mode)
+            self.mode_nav.blockSignals(False)
+        self._apply_mode_views(mode)
+
+    def _apply_mode_views(self, mode: int) -> None:
+        """view_nav holds the mode's views, the shown one selected; a mode
+        with one view hides it."""
+        views = self.MODES[mode][1]
+        tabs = [i for i in range(self._right_tabs.count()) if self._right_tabs.tabText(i) in views]
+        current = self._right_tabs.currentIndex()
+        self.view_nav.blockSignals(True)
+        if tabs != self._view_tabs:
+            while self.view_nav.count():
+                self.view_nav.removeTab(0)
+            for index in tabs:
+                self.view_nav.addTab(self._right_tabs.tabText(index))
+                self.view_nav.setTabIcon(self.view_nav.count() - 1, self.primary_nav.tabIcon(index))
+            self._view_tabs = tabs
+        if current in tabs:
+            self.view_nav.setCurrentIndex(tabs.index(current))
+        self.view_nav.blockSignals(False)
+        self.view_nav.setVisible(len(tabs) > 1)
+
+    def _on_view_picked(self, position: int) -> None:
+        if 0 <= position < len(self._view_tabs):
+            self._right_tabs.setCurrentIndex(self._view_tabs[position])
+
+    def _toggle_device_popover(self) -> None:
+        """The device chip opens the connection controls under itself."""
+        if self._device_popover.isVisible():
+            self._device_popover.hide()
+            return
+        self._device_popover.adjustSize()
+        anchor = self.btn_device.mapToGlobal(self.btn_device.rect().bottomRight())
+        self._device_popover.move(anchor.x() - self._device_popover.width(), anchor.y() + 6)
+        self._device_popover.show()
+        self.inp_host.setFocus()
+
+    def _sync_link_chrome(self) -> None:
+        """The device chip and the status bar follow the link, the target and
+        the open application."""
+        if not hasattr(self, "btn_device") or not hasattr(self, "lbl_status_link"):
+            return
+        state = getattr(self, "_link_state", "idle")
+        host = self.inp_host.text().strip() or "No target"
+        words = {"connected": "Connected", "connecting": "Connecting",
+                 "fault": "Connection fault"}.get(state, "Not connected")
+        resolution = ""
+        if hasattr(self, "device_panel"):
+            try:
+                resolution = self.device_panel.resolution_text()
+            except Exception:
+                resolution = ""
+        self.btn_device.setText(f"●  {host}")
+        self.btn_device.setToolTip(f"{words} · {host}" + (f" · {resolution}" if resolution else "")
+                                   + "\nClick to connect or change the target")
+        self.lbl_status_link.setText(f"●  {words} · {host}")
+        bundle = getattr(self, "bundle_dir", "") or ""
+        app_name = os.path.basename(bundle.rstrip("/\\")) if bundle else ""
+        self.lbl_status_app.setText(app_name or "No application open")
+        if hasattr(self, "btn_project"):
+            self.btn_project.setText(app_name or "Project")
+        self.lbl_status_display.setText(resolution)
+        for widget in (self.btn_device, self.lbl_status_link):
+            widget.setProperty("linkState", state)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
 
     def _style_footer(self):
         """
@@ -2036,6 +2240,7 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         if is_valid:
             self.bundle_dir = dir_path
             self.settings.setValue("last_bundle", dir_path)
+            self._sync_link_chrome()
             with open(os.path.join(dir_path, "manifest.json"), "r", encoding="utf-8") as f:
                 manifest = json.load(f)
 
