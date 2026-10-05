@@ -84,12 +84,15 @@ Item {
                 radius: Theme.radiusSm
             }
 
-            // Warning zone background
+            // Warning zone background: warningLow..warningHigh, clipped to
+            // the scale (its height was 1 - that share, which ran past the
+            // chart's bottom edge).
             Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
-                height: parent.height * (1 - (root.warningHigh - root.warningLow) * root._yScale)
-                y: parent.height * (root.maxValue - root.warningHigh) * root._yScale
+                height: Math.max(0, parent.height * (Math.min(root.warningHigh, root.maxValue)
+                                                   - Math.max(root.warningLow, root.minValue)) * root._yScale)
+                y: parent.height * (root.maxValue - Math.min(root.warningHigh, root.maxValue)) * root._yScale
                 color: root._warnZoneColor
             }
 

@@ -45,8 +45,8 @@ from PySide6.QtWidgets import (
 
 from tools.hmi_deployer.ai_design import BYOK_PRESETS, ProviderConfig
 from tools.hmi_deployer.ai_generator import (
-    brief_resolution, build_system_prompt, diff_projects, drop_dangling_navigation,
-    merge_project_section, summarize_widgets,
+    brief_resolution, build_plan_prompt, build_system_prompt, diff_projects,
+    drop_dangling_navigation, merge_project_section, summarize_widgets,
 )
 
 try:
@@ -1400,6 +1400,13 @@ class AIDesignTab(QWidget):
         "design section containing at most 8 widgets. Include the section object with index, "
         "label, complete, and next fields. Do not emit later sections in this response."
     )
+    # A planned screen carries no geometry, so the whole of it fits one reply
+    # and is composed as a whole; asking for "section 1" made the model stop
+    # after one card.
+    PLAN_REQUEST = (
+        "Return the whole design now as one complete JSON plan: every page, section and "
+        "widget, with section.complete=true."
+    )
 
     generateRequested = Signal(object)  # DesignerProject ready to place on the canvas
     canvasFocusRequested = Signal()     # user pressed "Apply to canvas": show the Designer
@@ -2257,11 +2264,15 @@ class AIDesignTab(QWidget):
         if renderer is None or project is None or not project.pages:
             return
         try:
+            from designer.layout.compiler import compile_candidates, is_planned
             from designer.layout.polish import polish_candidates
             registry = getattr(self.generator, "registry", None)
             page = project.pages[0]
             items = []
-            for candidate, verdict, archetype in polish_candidates(
+            # A compiled page is offered its runner-up arrangements; a
+            # polished one, its other archetypes.
+            offer = compile_candidates if is_planned(page) else polish_candidates
+            for candidate, verdict, archetype in offer(
                     project, page, registry, brief=self._root_brief, limit=3):
                 variant = copy.deepcopy(project)
                 variant.pages[0] = candidate
@@ -2312,7 +2323,8 @@ class AIDesignTab(QWidget):
         self._section_run = 1
         self._section_project = None
         self._queued_section_request = None
-        request = f"{brief}\n\n{self.SECTION_REQUEST}"
+        planned = self.settings.value("ai/layoutEngine", "compile", type=str) != "polish"
+        request = f"{brief}\n\n{self.PLAN_REQUEST if planned else self.SECTION_REQUEST}"
         self._start_generation(request, brief)
 
     def _start_generation(self, brief: str, display_brief: str):
@@ -2340,7 +2352,16 @@ class AIDesignTab(QWidget):
         try:
             width, height = self._screen_size()
             registry = getattr(self.generator, "registry", None)
-            self.connector.system_prompt = build_system_prompt(registry, width, height, brief=self._root_brief)
+            # "compile" (the default): the model plans content and sections and
+            # designer.layout.compiler lays them out; "polish": the model
+            # writes geometry and designer.layout.polish composes it.
+            engine = self.settings.value("ai/layoutEngine", "compile", type=str)
+            if engine == "polish":
+                self.connector.system_prompt = build_system_prompt(registry, width, height,
+                                                                   brief=self._root_brief)
+            else:
+                self.connector.system_prompt = build_plan_prompt(registry, width, height,
+                                                                 brief=self._root_brief)
             asked = brief_resolution(self._root_brief)
             if asked and asked != (width, height) and not self._resolution_noted:
                 # The brief's size is not the glass; saying so once beats a
@@ -2451,6 +2472,10 @@ class AIDesignTab(QWidget):
         self._scroll_to_bottom()
 
     def _conclude_turn(self, turn: TurnWidget, stopped: bool):
+        # Applying to the canvas refreshes the panel preview, which runs a
+        # nested event loop; the worker's finished signal lands inside it and
+        # must not close this turn a second time as "Cancelled".
+        turn._concluding = True
         shell = turn.shell
         full_text = shell.response_pane.toPlainText() if shell.response_pane is not None else ""
         failed = shell.error_row is not None and not full_text
@@ -2596,7 +2621,7 @@ class AIDesignTab(QWidget):
         self._set_send_icon("player-play")
         # A turn whose worker died before turn_end still needs closing out.
         for turn in self.turns:
-            if turn.shell.running:
+            if turn.shell.running and not getattr(turn, "_concluding", False):
                 self._conclude_turn(turn, stopped=True)
         queued, self._queued_section_request = self._queued_section_request, None
         if queued:

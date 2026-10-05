@@ -14,6 +14,7 @@ from PySide6.QtCore import Signal, QObject
 from designer.model import DesignerAction, DesignerBinding, DesignerProject, DesignerPage, DesignerWidget
 from designer.model.project import TAG_RE
 from designer.palette.widget_registry import WidgetDefinition, WidgetRegistry, default_registry
+from designer.layout.intake import loads_lenient, normalise_properties
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,9 @@ logger = logging.getLogger(__name__)
 QML_BLOCK_RE = re.compile(r"```(?:qml|QML)?\s*\n(.*?)```", re.DOTALL)
 # Regex to extract JSON design payloads.
 JSON_DESIGN_RE = re.compile(r"\{[\s\S]*\"pages\"[\s\S]*\}")
+# The keys of a widget entry that are structure, not properties.
+_WIDGET_KEYS = frozenset(("type", "id", "geometry", "properties", "bindings", "actions",
+                          "children", "role", "section"))
 # A legal QML id: lowercase start, then word characters.
 _QML_ID_RE = re.compile(r"[a-z_][A-Za-z0-9_]*")
 
@@ -116,6 +120,27 @@ _AI_TYPE_ALIASES = {
     "Grid": "Grid",
     "Page": "Item",
     "TabContainer": "ShTabs",
+    # Names a model reaches for that the kit spells differently.
+    "Lamp": "ShStatDot",
+    "Led": "ShStatDot",
+    "LED": "ShStatDot",
+    "Indicator": "ShStatDot",
+    "StatusLamp": "ShStatDot",
+    "StatusLight": "ShStatDot",
+    "StatusIndicator": "ShStatDot",
+    "Switch": "ShToggle",
+    "Chart": "ShTrendChart",
+    "LineChart": "ShTrendChart",
+    "Trend": "ShTrendChart",
+    "Table": "ShAlarmTable",
+    "AlarmList": "ShAlarmTable",
+    "Tile": "ShValueTile",
+    "ValueTile": "ShValueTile",
+    "Kpi": "ShValueTile",
+    "KPI": "ShValueTile",
+    "Metric": "ShValueTile",
+    "Dial": "ShGauge",
+    "BarGauge": "ShEngineBar",
 }
 
 
@@ -420,6 +445,198 @@ def build_system_prompt(registry: Optional[WidgetRegistry] = None,
     return prompt
 
 
+# The widgets a planned screen is built from, by what they are for. Each is
+# quoted with the properties that matter, so the model writes the spelling the
+# widget takes (designer/layout/intake.py maps the rest).
+PLAN_CATALOGUE = (
+    ("hero dial (the one value the screen is about)", ("ShClusterGauge",)),
+    ("dials", ("ShGauge", "ShEngineGauge")),
+    ("levels and bars", ("ShEngineBar", "ShAutoLevel", "ShTape", "ShSegmentBar")),
+    ("value tiles and readouts", ("ShValueTile", "ShNumDisplay", "ShAutoReadout", "ShDataField",
+                                  "ShTripInfo", "ShGearIndicator")),
+    ("trend", ("ShTrendChart",)),
+    ("alarms", ("ShAlarmTable",)),
+    ("status lamps", ("ShStatDot", "ShAnnunciator", "ShTelltale")),
+    ("controls", ("ShButton", "ShToggle", "ShSlider", "ShSelect", "ShNumInput")),
+)
+_PLAN_SKIP_PROPERTIES = {"opacity", "visible", "value", "enabled", "backgroundColor", "textColor",
+                         "borderColor", "borderWidth", "cornerRadius", "normalColor",
+                         "warningColor", "faultColor", "trackColor", "lineColor", "fillColor",
+                         "handleRadius", "size", "sweep", "showInnerDial", "readout"}
+
+
+def _plan_catalogue(registry) -> str:
+    lines = []
+    for purpose, names in PLAN_CATALOGUE:
+        entries = []
+        for name in names:
+            definition = registry.get(name) if registry is not None else None
+            if definition is None:
+                continue
+            props = [p for p in definition.properties if p not in _PLAN_SKIP_PROPERTIES][:9]
+            entries.append(f"{name}({', '.join(props)})")
+        if entries:
+            lines.append(f"- {purpose}: " + "; ".join(entries))
+    return "\n".join(lines)
+
+
+def build_plan_prompt(registry: Optional[WidgetRegistry] = None,
+                      screen_width: int = 1280, screen_height: int = 800,
+                      brief: str = "") -> str:
+    """System prompt for planned screens: content and structure, no geometry.
+
+    The model says what the screen holds -- a title, and sections with a role
+    and the widgets in them -- and designer.layout.compiler builds the layout
+    (header, titled cards, bands, spacing, type scale) deterministically.
+    Geometry was the part of the old payload the model was worst at and the
+    longest part of its reply; leaving it out makes the reply shorter, the
+    JSON less likely to break, and the result composed every time.
+    """
+    registry = registry or default_registry()
+    try:
+        types = sorted(d.type for d in registry.definitions())
+    except Exception:
+        types = sorted(set(_AI_TYPE_ALIASES.values()))
+    budget = page_budget(screen_width, screen_height)
+    try:
+        from designer.layout.intake import kit_icons
+        icons = ", ".join(sorted(kit_icons()))
+    except Exception:
+        icons = ""
+    prompt = (
+        "You are an expert HMI designer for embedded touch panels built with the EmbeddedDisplay "
+        f"Studio widget set. The target screen is {screen_width}x{screen_height} px.\n\n"
+        "You decide WHAT the screen shows and how it is grouped; the Studio's layout compiler "
+        "decides WHERE. Never write x, y, width, height or any geometry, colours or font sizes: "
+        "the compiler draws a header with the title, one titled card per section, and lays out "
+        "each card from its widgets on the panel's grid.\n\n"
+        "Reply with ONE fenced ```json block and nothing after it:\n"
+        '{"name": "<short name>", "section": {"index": 1, "complete": true, "label": "", "next": ""}, '
+        '"pages": [{"id": "main", "name": "Main", "title": "<screen title, 2-5 words>", '
+        '"header": [<optional: up to 4 status lamps or navigate buttons for the header>], '
+        '"sections": [{"title": "<card title, 1-3 words>", "role": "hero", "widgets": ['
+        '{"type": "ShClusterGauge", "id": "<camelCaseId>", '
+        '"properties": {"caption": "<what it measures>", "minimumValue": 0, '
+        '"maximumValue": <full scale>, "majorStep": <scale step>, "redlineFrom": <limit>}, '
+        '"bindings": {"value": {"tag": "<area.signal>", "unit": "<unit>", "warning": "> <n>", '
+        '"critical": "> <n>"}}}]}, '
+        '{"title": "<card title>", "role": "controls", "widgets": ['
+        '{"type": "ShButton", "id": "<camelCaseId>", "properties": {"text": "<Verb>"}, '
+        '"actions": {"clicked": {"kind": "write", "tag": "do.<signal>", "value": true}}}]}, '
+        '<more sections: instruments, readings, trend, alarms, status ...>]}]}\n'
+        "The <...> are placeholders: fill every one from the brief, with real JSON numbers.\n\n"
+        "Section roles (use each at most once per page unless the brief needs two of a kind):\n"
+        "- hero: exactly one per page, holding ONE widget -- the value the brief is really about, "
+        "usually a big dial (ShClusterGauge) or a trend. It gets the largest card.\n"
+        "- instruments: 2-4 related dials or bars (e.g. \"Pressures\": suction and discharge).\n"
+        "- readings: 2-6 value tiles or readouts that share a topic.\n"
+        "- trend: one ShTrendChart. alarms: one ShAlarmTable (bind alarms to tag \"*\").\n"
+        "- status: lamps (ShStatDot with a \"label\" property, ShAnnunciator, ShTelltale).\n"
+        "- controls: buttons, toggles, sliders, selects that act on the process.\n"
+        "Size: a section or a widget may carry \"size\": \"compact\", \"normal\" or \"large\" "
+        "when the brief implies it (a compact status strip, a large hero, small secondary "
+        "dials); the compiler scales widgets down on its own when the screen is crowded.\n"
+        "Group by meaning, not by widget type; name every card for what it shows "
+        "(\"Discharge\", \"Motor\", \"Tank\"), never \"Section 1\" or \"Widgets\". "
+        f"A page has 3-6 sections and about {budget} widgets at most; when the brief asks for more, "
+        "add pages (one per system) and put a navigate ShButton for each in the main page's header.\n\n"
+        "Widgets by purpose, with the properties they take:\n" + _plan_catalogue(registry) + "\n"
+        "Other allowed types: " + ", ".join(types) + ".\n\n"
+        "Every widget states what it is: a short Title-case label (at most 18 characters) in the "
+        "property its type uses for it, and its unit. Ranges are in the tag's engineering units "
+        "(0..16 bar, 0..3000 rpm), never 0..1, with warning and critical thresholds where the "
+        "process has them. Buttons say what they do in one or two words (\"Start\", \"Stop\", "
+        "\"Reset\", \"E-Stop\").\n"
+        "Bindings: live values bind to PLC/telemetry tags, lowercase dotted names (ai.pot, "
+        "di.estop, do.relay1, mb.line_speed); a binding may carry \"unit\", \"warning\" and "
+        "\"critical\" (\"> 80\", \"< 10\"). Bind ShTrendChart.data to the tag it plots.\n"
+        "Actions, keyed by the widget's signal: ShButton clicked; ShToggle toggled; "
+        "ShSlider/ShNumInput valueChanged; ShSelect activated. Kinds: "
+        "{\"kind\": \"write\", \"tag\": \"do.x\", \"value\": true}, "
+        "{\"kind\": \"pulse\", \"tag\": \"do.x\", \"ms\": 250}, "
+        "{\"kind\": \"navigate\", \"page\": \"<page id>\"}. Every start/stop/reset button has one.\n"
+    )
+    if icons:
+        prompt += "Icons (ShTelltale, ShAutoReadout, ShIconTile) must be one of: " + icons + ".\n"
+    prompt += ("Ids are unique camelCase across all pages. Before the JSON block write at most one "
+               "sentence. Return the whole design in this one reply with section.complete=true.")
+    return prompt
+
+
+def _fold_stray_sections(pages_data: list) -> list:
+    """Pages, with any section that landed among them put back in its page.
+
+    One misplaced bracket in a long reply (bindings written beside a
+    section's widgets instead of inside them) closes the page early, and every
+    later section then parses as a page with no sections -- and was lost.
+    """
+    pages = []
+    for entry in pages_data:
+        if not isinstance(entry, dict):
+            continue
+        spilled = entry.get("__spill__")
+        if isinstance(spilled, list):
+            # A section whose opening brace became `],` landed in the page's
+            # own keys (see designer.layout.intake._pairs): put it back.
+            entry = {k: v for k, v in entry.items() if k != "__spill__"}
+            extra = [d for d in spilled if isinstance(d, dict) and ("role" in d or "widgets" in d)]
+            if extra:
+                entry["sections"] = list(entry.get("sections") or []) + extra
+        stray = "sections" not in entry and ("role" in entry or (
+            pages and "widgets" in entry and "id" not in entry))
+        if stray and pages:
+            pages[-1] = dict(pages[-1])
+            pages[-1]["sections"] = list(pages[-1].get("sections") or []) + [entry]
+            continue
+        pages.append(entry)
+    return pages
+
+
+def _merge_small_plan(pages_data: list, width: int, height: int) -> list:
+    """One page when the whole plan fits on one.
+
+    A model told it may add pages sometimes gives every section a page of
+    its own: seven screens of one card each, linked by buttons. When the
+    widgets fit the screen's budget they belong together, and the navigate
+    buttons between the merged pages go with them.
+    """
+    pages = _fold_stray_sections(pages_data)
+    if len(pages) < 2:
+        return pages
+
+    def count(page):
+        return sum(len(s.get("widgets") or []) for s in page.get("sections") or []
+                   if isinstance(s, dict))
+
+    if sum(count(p) for p in pages) > page_budget(width, height):
+        return pages
+    merged_ids = {str(p.get("id") or "") for p in pages[1:]}
+
+    def keeps(widget):
+        actions = widget.get("actions") if isinstance(widget, dict) else None
+        if not isinstance(actions, dict):
+            return True
+        for action in actions.values():
+            if isinstance(action, dict) and action.get("kind") == "navigate" \
+                    and str(action.get("page") or "") in merged_ids:
+                return False
+        return True
+
+    first = dict(pages[0])
+    sections = []
+    for page in pages:
+        for section in page.get("sections") or []:
+            if not isinstance(section, dict):
+                continue
+            section = dict(section)
+            section["widgets"] = [w for w in section.get("widgets") or [] if keeps(w)]
+            if section["widgets"]:
+                sections.append(section)
+    first["sections"] = sections
+    first["header"] = [w for p in pages for w in (p.get("header") or []) if keeps(w)][:4]
+    return [first]
+
+
 def _geometry_number(value, default):
     """A geometry value from model output as a number: 12, 12.5, "12",
     "12px". Anything else (null, "auto", NaN) takes the default -- layout
@@ -457,6 +674,12 @@ class AIDesignGenerator:
         # then decides.
         self.brief = ""
         self.renderer = None         # a NativeRenderer for the critic's pixel axes
+        # How a parsed design is laid out. "auto": a planned payload (pages
+        # with sections, see build_plan_prompt) is compiled by
+        # designer.layout.compiler and a geometry payload is polished as
+        # before; "compile" compiles both; "polish" polishes both.
+        self.layout_mode = "auto"
+        self.last_compile = []       # CompileReport per page of the last compose()
 
     def generate(self, ai_output: str, screen_width: int = 1280, screen_height: int = 800) -> Optional[DesignerProject]:
         """Generate a DesignerProject from AI output.
@@ -486,8 +709,11 @@ class AIDesignGenerator:
         """
         self.last_polish = None
         self.last_fit_notes = []
+        self.last_compile = []
         if project is None or not self.polish_enabled:
             return project
+        if self._should_compile(project):
+            return self._compile(project)
         try:
             from designer.layout.fit import compose_project
             from designer.layout.polish import polish
@@ -508,6 +734,43 @@ class AIDesignGenerator:
             self.last_polish = None
         return project
 
+    def _should_compile(self, project) -> bool:
+        if self.layout_mode == "compile":
+            return True
+        if self.layout_mode == "polish":
+            return False
+        from designer.layout.compiler import is_planned
+        return any(is_planned(page) for page in project.pages)
+
+    def _compile(self, project):
+        """Lay out every page with designer.layout.compiler; returns it."""
+        try:
+            from designer.layout.compiler import compile_page
+            from designer.layout.critic import critique
+            from designer.layout.polish import PolishReport
+            from designer.model.project import ensure_unique_ids
+            self.progress.progress.emit("Compiling the layout...")
+            # The first page is the one the run log reports on, as polish does.
+            before = critique(project, project.pages[0], self.registry) if project.pages else None
+            for page in project.pages:
+                report = compile_page(project, page, self.registry)
+                self.last_compile.append(report)
+                self.last_fit_notes += [n for n in report.notes if "dropped" in n or "moved" in n]
+            self.last_fit_notes += ensure_unique_ids(project)
+            if before is not None:
+                after = critique(project, project.pages[0], self.registry)
+                self.last_polish = PolishReport(
+                    before=before, after=after,
+                    archetype=f"compiled {self.last_compile[0].layout}".strip())
+        except Exception as exc:
+            logger.warning("Layout compile failed, falling back to polish: %s", exc)
+            self.layout_mode, mode = "polish", self.layout_mode
+            try:
+                return self.compose(project)
+            finally:
+                self.layout_mode = mode
+        return project
+
     def _parse_output(self, ai_output: str, screen_width: int = 1280,
                       screen_height: int = 800) -> Optional[DesignerProject]:
         """Everything generate() does before the design is composed."""
@@ -516,13 +779,20 @@ class AIDesignGenerator:
         # Strategy 1: JSON design payload -- a fenced ```json block first (that
         # is what the system prompt asks for), then any bare {"pages": …}.
         for candidate in self._json_candidates(ai_output):
+            # Lenient: one missing quote in a long payload used to cost the
+            # whole design (designer/layout/intake.py).
             try:
-                design = json.loads(candidate)
+                design = loads_lenient(candidate)
             except (json.JSONDecodeError, ValueError) as exc:
                 logger.debug("JSON parsing failed: %s", exc)
                 continue
             if isinstance(design, dict) and ("pages" in design or "widgets" in design):
-                return self._from_json_design(design, screen_width, screen_height)
+                project = self._from_json_design(design, screen_width, screen_height)
+                if candidate == self._unterminated_json(ai_output):
+                    # Closed by the lenient loader, not by the model: the
+                    # reply was cut off, and the run should ask for the rest.
+                    project._truncated = True
+                return project
 
         # Strategy 2: QML code blocks
         qml_block_match = QML_BLOCK_RE.search(ai_output)
@@ -566,12 +836,30 @@ class AIDesignGenerator:
         bare = JSON_DESIGN_RE.search(ai_output)
         if bare:
             candidates.append(bare.group())
+        # A reply cut off by max_tokens has no closing fence; the lenient
+        # loader can still close what was written.
+        opened = AIDesignGenerator._unterminated_json(ai_output)
+        if opened:
+            candidates.append(opened)
         return candidates
+
+    @staticmethod
+    def _unterminated_json(ai_output: str) -> str:
+        """The payload after a ```json fence that never closes, or ''."""
+        opened = re.search(r"```json\s*(\{[\s\S]*)$", ai_output)
+        if opened and "```" not in opened.group(1):
+            return opened.group(1).strip()
+        return ""
 
     def _from_json_design(self, design: dict, width: int, height: int) -> DesignerProject:
         """Convert a JSON design payload (pages, widgets) to DesignerProject."""
         widgets = []
         pages_data = design.get("pages", [])
+        if isinstance(pages_data, list) and any(isinstance(p, dict) and p.get("sections")
+                                                for p in pages_data):
+            project = self._from_plan(design, width, height)
+            self._read_section_meta(project, design)
+            return project
         if pages_data:
             for page_data in pages_data:
                 page_widgets = page_data.get("widgets", [])
@@ -580,6 +868,10 @@ class AIDesignGenerator:
             widgets = self._convert_widgets(design.get("widgets", []))
 
         project = self._build_project(widgets, design.get("name", "AI Design"), width, height)
+        self._read_section_meta(project, design)
+        return project
+
+    def _read_section_meta(self, project, design: dict) -> None:
         section = design.get("section") or {}
         if isinstance(section, dict):
             try:
@@ -592,6 +884,47 @@ class AIDesignGenerator:
             project._section_complete = bool(complete)
             project._section_label = str(section.get("label", "")).strip()
             project._next_section = str(section.get("next", section.get("nextSection", ""))).strip()
+
+    def _from_plan(self, design: dict, width: int, height: int) -> DesignerProject:
+        """A planned payload: real pages, each widget marked with its section.
+
+        The marks (compiler.SECTION_MARK) are what compose() compiles from, so
+        they survive a sectioned run's merge and a later "Tidy up".
+        """
+        from designer.layout.compiler import SECTION_MARK, sections_from_plan
+        from designer.model import DesignerScreen
+        pages, taken = [], set()
+        for index, page_data in enumerate(_merge_small_plan(design.get("pages") or [], width, height)):
+            if not isinstance(page_data, dict):
+                continue
+            title, sections, header = sections_from_plan(page_data, self._convert_widgets)
+            loose = self._convert_widgets([w for w in page_data.get("widgets") or []
+                                           if isinstance(w, dict)])
+            widgets = []
+            if title:
+                widgets.append(DesignerWidget(type="Text", id="screenTitle", geometry={},
+                                              properties={"text": title, SECTION_MARK: "|title"}))
+            for widget in header:
+                widget.properties[SECTION_MARK] = "|header"
+                widgets.append(widget)
+            for section in sections:
+                for widget in section.widgets:
+                    widget.properties[SECTION_MARK] = f"{section.title}|{section.role}"
+                    widgets.append(widget)
+            widgets.extend(loose)
+            page_id = str(page_data.get("id") or ("main" if index == 0 else f"page{index + 1}"))
+            page_id = re.sub(r"[^A-Za-z0-9_]", "_", page_id) or f"page{index + 1}"
+            while page_id in taken:
+                page_id += "_"
+            taken.add(page_id)
+            pages.append(DesignerPage(id=page_id, name=str(page_data.get("name") or title or page_id),
+                                      widgets=widgets))
+        if not pages:
+            pages = [DesignerPage(id="main", name="Main", widgets=[])]
+        project = DesignerProject(version=1, name=design.get("name", "AI Design"),
+                                  screen=DesignerScreen(width=width, height=height), pages=pages)
+        from designer.model.project import ensure_unique_ids
+        ensure_unique_ids(project)
         return project
 
     def _convert_widgets(self, widget_list: list) -> list:
@@ -604,8 +937,11 @@ class AIDesignGenerator:
             if not isinstance(wdata, dict):
                 continue
             widget_type = wdata.get("type", "Rectangle")
-            # Resolve aliases (e.g. "Button" -> "ShButton")
+            # Resolve aliases (e.g. "Button" -> "ShButton"), and a kit-style
+            # name the kit does not have ("ShLamp") through its bare name.
             aliased = _AI_TYPE_ALIASES.get(widget_type, widget_type)
+            if isinstance(widget_type, str) and not self.registry.get(aliased)                     and widget_type.startswith("Sh"):
+                aliased = _AI_TYPE_ALIASES.get(widget_type[2:], aliased)
             # Check if aliased type exists in registry; fall back to Rectangle
             if aliased not in (_AI_TYPE_ALIASES.get(v, v) for v in _AI_TYPE_ALIASES.values()):
                 if not self.registry.get(aliased):
@@ -624,8 +960,27 @@ class AIDesignGenerator:
             # one unknown key makes the generated QML fail to load on the
             # panel. Keep only what the registry declares for this type.
             definition = self.registry.get(aliased)
+            # Properties written beside "properties" rather than in it (a
+            # planned widget's shorthands, or a model that dropped the
+            # "properties": { wrapper): scalars only, the filter below decides.
+            for key, value in wdata.items():
+                if key in _WIDGET_KEYS or key in properties or isinstance(value, (dict, list)):
+                    continue
+                properties[key] = value
+            if definition is not None and "label" not in definition.properties:
+                # A lamp has no label of its own, but the words the model gave
+                # it are what the compiler writes beside it.
+                words = next((properties.get(k) for k in ("label", "text", "title")
+                              if isinstance(properties.get(k), str) and properties.get(k).strip()), None)
+                if words and aliased in ("ShStatDot",):
+                    properties["_lampLabel"] = words.strip()
             if definition is not None and definition.properties:
-                properties = {k: v for k, v in properties.items() if k in definition.properties}
+                # The model spells a property the way another widget does
+                # (minimumValue on an ShGauge, label on an ShValueTile); map
+                # it onto this type's own spelling before the filter drops it.
+                properties, _renamed = normalise_properties(definition, properties)
+                properties = {k: v for k, v in properties.items()
+                              if k in definition.properties or k == "_lampLabel"}
                 properties = _coerce_choices(definition, properties)
             # Bindings are what the prompt asks for ("value" -> plc tag); keep
             # every one that has a tag, in the model's own DesignerBinding type.

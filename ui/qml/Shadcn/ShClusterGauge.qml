@@ -78,7 +78,8 @@ Item {
             readonly property real angle: (root._startAngle + root.sweep * ((modelData - root.minimumValue) / root._span)) * Math.PI / 180
             x: width / 2 + root.width / 2 + 0.47 * root._d * Math.cos(angle) - width
             y: root.height / 2 + 0.47 * root._d * Math.sin(angle) - height / 2
-            text: Number(modelData).toFixed(0)
+            // As many decimals as the step needs (0.5 steps read "0.5", not "1").
+            text: Number(modelData).toFixed(root.majorStep >= 1 ? 0 : root.majorStep >= 0.1 ? 1 : 2)
             color: modelData >= root.redlineFrom ? Theme.autoRedline : Theme.autoLine
             font.family: Theme.fontFamily
             font.pixelSize: Math.max(7, Math.round(0.068 * root._d))

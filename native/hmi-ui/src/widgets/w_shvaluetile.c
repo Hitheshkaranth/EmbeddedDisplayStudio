@@ -45,7 +45,12 @@ static void layout(hmi_widget_t *w)
     lv_obj_set_pos(st->badge, (int)W - inset - badgeW, inset);
     lv_obj_center(st->badgeText);
 
-    lv_label_set_text(st->label, hmi_widget_str(w, "label", ""));
+    // The schema (and the Designer) call the caption "title"; the QML face
+    // calls it "label" and the QML generator renames it. Read both, or every
+    // tile on the panel drew without its caption.
+    const char *caption = hmi_widget_str(w, "title", "");
+    if (!caption[0]) caption = hmi_widget_str(w, "label", "");
+    lv_label_set_text(st->label, caption);
     lv_obj_set_width(st->label, (int)fmax(10, W - 2 * inset - badgeW));
     lv_obj_set_pos(st->label, inset, inset + (20 - lv_font_get_line_height(hmi_font(14, 500))) / 2);
 
@@ -99,7 +104,7 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
         lv_obj_update_layout(st->value);
         lv_obj_set_pos(st->unit, 16 + lv_obj_get_width(st->value) + 4, lv_obj_get_y(st->unit));
     }
-    else if (strcmp(prop, "label") == 0) { layout(w); lv_label_set_text(st->label, hmi_value_as_str(value, "")); }
+    else if (strcmp(prop, "label") == 0 || strcmp(prop, "title") == 0) { layout(w); lv_label_set_text(st->label, hmi_value_as_str(value, "")); }
     else if (strcmp(prop, "unit") == 0) { layout(w); lv_label_set_text(st->unit, hmi_value_as_str(value, "")); }
 }
 

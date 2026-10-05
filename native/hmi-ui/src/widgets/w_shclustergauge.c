@@ -100,12 +100,15 @@ static void layout(hmi_widget_t *w)
     // scale numbers at radius 0.47 d, centred on the angle
     int fs = hmi_px_min(0.068 * dim, 7);
     double step = fmax(0.0001, st->majorStep);
+    // As many decimals as the step needs: a 0..2.5 scale every 0.5 printed
+    // with none read "0 0 1 2 2".
+    int stepDp = step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
     int i = 0;
     for (double v = st->minimumValue; v <= st->maximumValue + 0.0001 && i < MAX_MAJORS; v += step, ++i) {
         lv_obj_t *l = st->scale[i];
         if (!l) l = st->scale[i] = hmi_make_label(st->face, fs, 500, line, "");
         char buf[16];
-        snprintf(buf, sizeof buf, "%.0f", v);
+        snprintf(buf, sizeof buf, "%.*f", stepDp, v);
         lv_label_set_text(l, buf);
         lv_obj_set_style_text_font(l, hmi_font(fs, 500), 0);
         lv_obj_set_style_text_color(l, v >= st->redlineFrom ? redline : line, 0);
