@@ -1,0 +1,39 @@
+# Publish an existing release's executable to GitHub Packages (NuGet).
+#
+# A tag build does this itself (ci.yml, "Publish to GitHub Packages"). This
+# workflow is for a release built before that step existed, or a publish that
+# needs repeating: it takes the binary already attached to the release, so
+# nothing is rebuilt and the package is byte-identical to the download.
+
+name: Publish package
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (e.g. v0.1.3)
+        required: true
+
+jobs:
+  publish:
+    name: NuGet package
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the release executable
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ inputs.tag }}" --pattern EmbeddedDisplayStudio.exe --dir dist
+
+      - name: Publish
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash packaging/publish_nuget.sh dist/EmbeddedDisplayStudio.exe "${{ inputs.tag }}"

@@ -172,9 +172,10 @@ jobs:
     # standard library, and for the smoke run to wait out its own deadline.
     timeout-minutes: 40
 
-    # Needed only by the release step below, which runs on tags.
+    # Needed only by the release steps below, which run on tags.
     permissions:
       contents: write
+      packages: write
 
     steps:
       - uses: actions/checkout@v4
@@ -265,6 +266,15 @@ jobs:
             gh release create "$tag" --title "EmbeddedDisplay Studio ${tag#v}" --generate-notes
           fi
           gh release upload "$tag" dist/EmbeddedDisplayStudio.exe --clobber
+
+      # The same proven binary under the repository's Packages, as a NuGet
+      # package. The release page stays the primary download.
+      - name: Publish to GitHub Packages
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash packaging/publish_nuget.sh dist/EmbeddedDisplayStudio.exe "${GITHUB_REF_NAME}"
 
   qt5-preview:
     name: Qt5 preview (PySide2)

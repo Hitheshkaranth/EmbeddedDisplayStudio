@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The packaged Studio as a NuGet package on GitHub Packages. The version is
+     filled in by packaging/publish_nuget.sh from the release tag. The
+     repository element is what links the package to this repository, which
+     GitHub requires before the workflow token may publish it. -->
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>EmbeddedDisplayStudio</id>
+    <version>$version$</version>
+    <title>EmbeddedDisplay Studio</title>
+    <authors>Hitheshkaranth</authors>
+    <description>A desktop studio for embedded Linux HMI panels: design or describe a screen, preview it with the panel's own renderer, and deploy it over SSH with rollback. The package holds the single-file Windows executable in tools/.</description>
+    <license type="expression">MIT</license>
+    <projectUrl>https://github.com/Hitheshkaranth/EmbeddedDisplayStudio</projectUrl>
+    <repository type="git" url="https://github.com/Hitheshkaranth/EmbeddedDisplayStudio" />
+    <releaseNotes>https://github.com/Hitheshkaranth/EmbeddedDisplayStudio/releases/tag/v$version$</releaseNotes>
+    <tags>hmi embedded-linux lvgl designer studio</tags>
+  </metadata>
+  <files>
+    <file src="$exe$" target="tools/EmbeddedDisplayStudio.exe" />
+  </files>
+</package>
