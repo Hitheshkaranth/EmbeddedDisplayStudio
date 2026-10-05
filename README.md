@@ -25,7 +25,7 @@ A desktop studio for embedded Linux HMI panels. Write a brief and a model builds
 
 <br />
 
-[**Quick start**](#quick-start) &nbsp;·&nbsp; [**The Studio**](#the-studio) &nbsp;·&nbsp; [**AI Design**](#ai-design) &nbsp;·&nbsp; [**Code**](#code) &nbsp;·&nbsp; [**Deploying**](#deploying) &nbsp;·&nbsp; [**The panel runtime**](#the-panel-runtime) &nbsp;·&nbsp; [**Qt apps**](#qt-applications) &nbsp;·&nbsp; [**Changelog**](CHANGELOG.md)
+[**Quick start**](#quick-start) &nbsp;·&nbsp; [**The Studio**](#the-studio) &nbsp;·&nbsp; [**AI Design**](#ai-design) &nbsp;·&nbsp; [**Simulate**](#simulate) &nbsp;·&nbsp; [**Code**](#code) &nbsp;·&nbsp; [**Deploying**](#deploying) &nbsp;·&nbsp; [**The panel runtime**](#the-panel-runtime) &nbsp;·&nbsp; [**Qt apps**](#qt-applications) &nbsp;·&nbsp; [**Changelog**](CHANGELOG.md)
 
 </div>
 
@@ -33,7 +33,7 @@ A desktop studio for embedded Linux HMI panels. Write a brief and a model builds
 
 <div align="center">
 
-<a href="https://youtu.be/h-ITQebSflg"><img src="docs/assets/video-tour.jpg" alt="Watch the two-minute tour of EmbeddedDisplay Studio 0.1.2 on YouTube: the Cockpit Demo board flying live on a panel" width="720" /></a>
+<a href="https://youtu.be/h-ITQebSflg"><img src="docs/assets/video-tour.jpg" alt="Watch the two-minute tour of EmbeddedDisplay Studio on YouTube: the Cockpit Demo board flying live on a panel" width="720" /></a>
 
 <sub>▶ <strong><a href="https://youtu.be/h-ITQebSflg">Watch the two-minute tour</a></strong> — describe it, draw it, test it and ship it to the glass.</sub>
 
@@ -43,9 +43,9 @@ A desktop studio for embedded Linux HMI panels. Write a brief and a model builds
 
 <div align="center">
 
-<img src="docs/assets/screens/designer.png" alt="The Designer with the cockpit demo open and the Studio connected to a 1024 x 768 panel: widget library and layers on the left, the canvas drawn by the panel's own renderer, and the inspectors on the right" width="920" />
+<img src="docs/assets/screens/design.png" alt="Studio 0.1.3 in Design mode: a pump station overview laid out by the AI layout compiler, the suction gauge selected, layers on the left, Size on screen and the gauge's properties on the right, and the AI composer under the canvas" width="920" />
 
-<sub><strong>The Designer</strong>, connected to a 10.1" panel — the canvas is 1024 × 768 because that is what the panel reported, and every widget on it is drawn by the panel's own renderer.</sub>
+<sub><strong>Design mode</strong> — a pump station overview the AI planned and the layout compiler laid out, drawn by the panel's own renderer. The suction gauge is selected: its layer on the left, <strong>Size on screen</strong> and its properties on the right, and the AI composer under the canvas.</sub>
 
 </div>
 
@@ -53,17 +53,21 @@ A desktop studio for embedded Linux HMI panels. Write a brief and a model builds
 
 <table>
 <tr>
-<td width="33%" valign="top">
-<a href="#ai-design"><img src="docs/assets/screens/ai-design-done.png" alt="AI Design: a twin composition of torque and oil pressure" /></a>
-<p><strong>Describe it</strong><br /><sub>A model builds the screen in sections, composed for the glass — split into pages when it will not fit.</sub></p>
+<td width="25%" valign="top">
+<a href="#ai-design"><img src="docs/assets/screens/ai-design.png" alt="AI Design: the brief, the finished turn with its runner-up layouts, and the compiled screen" /></a>
+<p><strong>Describe it</strong><br /><sub>The model plans the content; a compiler lays it out for the glass.</sub></p>
 </td>
-<td width="33%" valign="top">
-<a href="#code"><img src="docs/assets/screens/code-agent-done.png" alt="The Code workspace with the coding agent" /></a>
-<p><strong>Code it</strong><br /><sub>The design, the C that draws each widget, and a coding agent that edits the project.</sub></p>
+<td width="25%" valign="top">
+<a href="#simulate"><img src="docs/assets/screens/simulate.png" alt="Simulate: Tag Lab driving the design's tags beside the panel" /></a>
+<p><strong>Test it</strong><br /><sub>Drive every tag with a waveform before the I/O exists.</sub></p>
 </td>
-<td width="33%" valign="top">
-<a href="#deploying"><img src="docs/assets/screens/display-console.png" alt="The Display Console mirroring the panel" /></a>
-<p><strong>Ship it</strong><br /><sub>Validate, deploy atomically, watch the panel's own screen at a frame a second.</sub></p>
+<td width="25%" valign="top">
+<a href="#code"><img src="docs/assets/screens/code.png" alt="Code mode: the widgets, a gauge's design JSON beside its render, and the coding agent" /></a>
+<p><strong>Code it</strong><br /><sub>The design as JSON, the C behind each widget, and a coding agent.</sub></p>
+</td>
+<td width="25%" valign="top">
+<a href="#deploying"><img src="docs/assets/screens/deploy.png" alt="Deploy mode: release card, the four deploy steps mid-transfer, readiness, device and its health" /></a>
+<p><strong>Ship it</strong><br /><sub>Validate, package, transfer, activate — with rollback.</sub></p>
 </td>
 </tr>
 </table>
@@ -119,29 +123,44 @@ python deploy/provision_panel.py --host <panel-ip>
 
 **From a sentence to the glass**
 
-1. **AI Design** — pick a provider and model, describe the screen, <kbd>Ctrl</kbd>+<kbd>Enter</kbd>.
-2. **Designer** — the result is an ordinary project; bind each instrument to its tag.
-3. **Tag Lab** — drive those tags and watch the instruments move.
-4. **Connect** — the panel's real display size retargets the canvas.
+1. **Design → AI Design** — pick a provider and model, describe the screen, <kbd>Ctrl</kbd>+<kbd>Enter</kbd>. Or type the brief into the composer under the Designer's canvas.
+2. **Design → Designer** — the result is an ordinary project; check each instrument's tag on the **Data** tab.
+3. **Simulate** — drive those tags from Tag Lab.
+4. **The device chip** — enter the panel's address and **Connect**; the panel's real display size retargets the canvas.
 5. **Deploy** — the panel must draw the screen within 25 s, or it rolls itself back.
 
 ---
 
 ## The Studio
 
-One window, seven workspaces, under a header with the panel's address, **Connect** / **Disconnect**, **Open Bundle…**, **New App…**, the theme and the animations switch.
+One window, four modes. A single header row carries the project menu (**New app…**, **Open bundle…**), the mode switch, a view switch where a mode has more than one view, the **device chip**, and the motion and theme buttons. A status bar along the foot reads the link, the open app and the display.
 
-| Workspace | |
-|---|---|
-| **Designer** | Draw the screen on a canvas the size of the panel's glass, bind widgets to tags, Preview, Generate, Deploy |
-| **AI Design** | Describe the screen; a local or hosted model builds it onto the same canvas |
-| **Code** | Files, the design as the panel reads it, the C that draws each widget, and a coding agent |
-| **Display Console** | Target and key, readiness, **Deploy to Target**, **Mirror the panel**, rollback, restart, releases |
-| **Tag Lab** | Drive any tag the design declares with a waveform, before the I/O exists |
-| **Panel Logs** | The journal of `hmi-ui` and `hmi-hwd`, followed live |
-| **System Profile** | What the live release costs the board |
+| Mode | Views | |
+|---|---|---|
+| **Design** | **Designer** · **AI Design** | Draw the screen on a canvas the size of the panel's glass, or describe it and let a model build it there |
+| **Simulate** | Simulate | Tag Lab beside the panel, with its command log and the panel's journal in a drawer |
+| **Code** | Code | Files, an outline of every widget, the tag backend, the design as the panel reads it, the C behind each widget, and a coding agent |
+| **Deploy** | Deploy | The release, the four deploy steps, readiness, installed releases, the device and its health |
 
-**The Designer.** A searchable widget library with favorites, a layer tree that mirrors the page, and an inspector generated from the widget registry — paired X/Y and W/H cells, colour swatches, and a tag-binding editor with format, scale, unit and **warning / critical** thresholds. Resize from any of the eight handles, snap, align, z-order; **Tidy up** composes the page on a 12-column grid; **Design Chat** takes offline text commands. No bundle is needed to start: the first Preview or Deploy creates one under `Documents/EmbeddedDisplay Studio/projects/<name>/`.
+The mode remembers its last view, and follows when something else opens a view: **Open in Designer** from AI Design lands in Design.
+
+**The device chip.** The panel's address and port, **Connect** and **Disconnect** live in the chip's popover; the chip itself shows the address and goes green when the link is up.
+
+<div align="center">
+<img src="docs/assets/screens/device.png" alt="The device chip's popover open over Design mode: target IP and port, Connect, Disconnect and the link state" width="860" />
+</div>
+
+**The Designer.** One toolbar: a **File** menu, undo and redo, clipboard, grid, snap and **object snap** (to sibling and parent edges; <kbd>Ctrl</kbd> bypasses), align, **Tidy up**, z-order, **Screen idle**, zoom, then **Preview**, **Generate** and **Deploy**. On the left, **Layers** (a tree that mirrors the page), **Widgets** (a searchable library with favorites) and **Pages**. On the right, the selected widget in three tabs:
+
+* **Design** — **Size on screen** (*Compact*, *Normal*, *Large*; on a compiled page the layout recompiles around it), then position, size and every property the widget registry declares.
+* **Data** — the tag binding: format, multiplier, offset, unit, **warning / critical** thresholds, fixed decimals, an **expression** instead of a tag, rules that set another property from the reading, and the alarm's priority, latch, delay and deadband.
+* **Actions** — what a press, toggle or change does: write, pulse, toggle, increment, navigate, back, acknowledge, shelve; any list can ask **Cancel / OK** first.
+
+Resize from any of the eight handles. Align, match size and distribute act on selected free siblings only, never across parents. **Tidy up** runs the layout compiler again on a page it built, and composes any other page with the grid, each widget's own proportions and the style pass.
+
+**The AI composer.** A prompt under the canvas, scoped to the selection or the whole page. `add Value Tile`, `set …`, `bind …` and `remove …` run offline at once; anything else goes to AI Design with the current design as context, and the answer lands back on the canvas as one undo step.
+
+No bundle is needed to start: the first Preview, Deploy or AI result creates one under `Documents/EmbeddedDisplay Studio/projects/<name>/`.
 
 **The canvas follows the glass.** On **Connect** the Studio reads the panel's real geometry from its DRM connector and retargets the canvas and the bezel to it.
 
@@ -149,27 +168,29 @@ One window, seven workspaces, under a header with the panel's address, **Connect
 
 <table>
 <tr>
-<td width="50%"><img src="docs/assets/screens/tag-lab.png" alt="Tag Lab: the design's tags listed with their waveforms" /><p align="center"><sub><strong>Tag Lab</strong> — every tag the design binds, ready to drive with a constant, ramp, sine, square or noise; scenarios save and replay.</sub></p></td>
-<td width="50%"><img src="docs/assets/screens/panel-logs.png" alt="Panel Logs following the journal" /><p align="center"><sub><strong>Panel Logs</strong> — the panel's journal, live: here a UART the daemon was configured for is not answering.</sub></p></td>
-</tr>
-<tr>
-<td width="50%"><img src="docs/assets/screens/system-profile.png" alt="System Profile of the deployed release" /><p align="center"><sub><strong>System Profile</strong> — the active release, its footprint, the storage split and free RAM, read over SSH.</sub></p></td>
-<td width="50%"><img src="docs/assets/screens/light-theme.png" alt="The Studio in light mode" /><p align="center"><sub><strong>Light mode</strong> — the theme follows the operator; the design keeps its own colour mode for the panel.</sub></p></td>
+<td width="50%"><img src="docs/assets/screens/design-data.png" alt="The Data tab for the suction gauge: tag, format, multiplier, offset, unit, warning and critical thresholds, decimals, expression, rules and alarm options" /><p align="center"><sub><strong>Data</strong> — the gauge's tag, its thresholds, an optional expression and rules, and how its alarm behaves.</sub></p></td>
+<td width="50%"><img src="docs/assets/screens/light-theme.png" alt="Deploy mode in the light theme" /><p align="center"><sub><strong>Light mode</strong> — the theme follows the operator; the design keeps its own colour mode for the panel.</sub></p></td>
 </tr>
 </table>
+
+### Simulate
+
+Tag Lab lists every tag the open design binds. Drive each one with a constant, ramp, sine, square or noise waveform; scenarios save and replay. **Run** makes Tag Lab the Studio's tag source — what the Live Preview window shows — and it answers the preview's own commands, so a button pressed in the bezel changes a tag here. The drawer underneath holds the **Commands** log (subscriptions, writes, acks) and the **Panel log**, the journal of `hmi-ui` and `hmi-hwd` on a connected panel, followed live with a filter.
+
+<div align="center">
+<img src="docs/assets/screens/simulate.png" alt="Simulate mode: the pump station on the bezel, Tag Lab driving its tags with sine, ramp and square waveforms, and the command log" width="920" />
+</div>
 
 ---
 
 ## AI Design
 
-Describe the screen; the Studio streams the model's answer, turns it into Designer widgets, composes them for the panel's glass and puts them on the canvas. From there it previews and deploys exactly like a hand-drawn design.
+Describe the screen; the Studio streams the model's answer, reads it as a content plan, lays it out for the panel's glass and puts it on the canvas. From there it previews and deploys exactly like a hand-drawn design.
 
-<table>
-<tr>
-<td width="50%"><img src="docs/assets/screens/ai-design-working.png" alt="AI Design mid-run: the execution shell writing, the POST to the vLLM server and the model's JSON streaming in" /><p align="center"><sub><strong>At work</strong> — the brief and the turn's execution shell: the request, the streamed answer, tokens and time to first token.</sub></p></td>
-<td width="50%"><img src="docs/assets/screens/ai-design-done.png" alt="AI Design after the run: torque and oil pressure mirrored in a twin composition" /><p align="center"><sub><strong>Composed</strong> — two instruments of a kind become a mirrored <em>twin</em>; other compositions wait as thumbnails.</sub></p></td>
-</tr>
-</table>
+<div align="center">
+<img src="docs/assets/screens/ai-design.png" alt="AI Design after a turn: the brief, the finished execution shell with its chips, three runner-up layouts in the variant strip, and the compiled pump station on the panel canvas" width="920" />
+<br /><sub>A finished turn: the brief, the execution shell (<code>26 widgets</code>, <code>+26 −0 ~0</code>, <code>Applied · panel preview refreshed</code>), the runner-up layouts as thumbnails, and the compiled screen on the panel canvas.</sub>
+</div>
 
 | Provider | How | Needs |
 |---|---|---|
@@ -182,29 +203,30 @@ The status line tells a server that is not there (`unreachable`) from one that r
 
 ### How a brief becomes a screen
 
+A language model is worst at geometry, and geometry is the longest part of its reply. So the model is not asked for any: it says *what* the screen shows, and a deterministic compiler decides *where*.
+
 ```mermaid
 flowchart LR
-    B[Brief] --> P[Prompt from the<br/>widget registry<br/>+ page budget]
-    P --> S[Sections of<br/>≤ 8 widgets]
-    S --> D[Parse, make<br/>deployable]
-    D --> F{Fits the<br/>screen?}
-    F -- no --> PG[Split into<br/>linked pages]
-    F -- yes --> C
-    PG --> C[Compose:<br/>archetype · grid ·<br/>style · critic]
-    C --> A[Canvas + preview]
+    B[Brief] --> P[Plan prompt:<br/>title · header ·<br/>sections with roles]
+    P --> I[Intake:<br/>repair JSON,<br/>map onto the kit]
+    I --> C[Compiler:<br/>header · regions ·<br/>bands · density]
+    C --> V[Best layout +<br/>runner-ups]
+    V --> A[Canvas + preview]
 ```
 
-1. **A prompt from the palette** — built from the widget registry and the target screen, so the model only knows widgets the panel can draw. It carries a **per-page budget** for that screen and asks for gauge ranges in the tag's own units. A brief naming a different resolution from the panel's is reported.
-2. **Sections** — at most eight widgets per response, merged by id and continued automatically until complete; a response cut off at the output limit is salvaged.
-3. **Made deployable** — undeclared properties dropped, tags lowercased, actions on signals a widget cannot emit and links to pages never built removed, reused ids renamed.
-4. **Fit** — if the widgets' minimum footprints will not fit, the design becomes pages: the instruments, alerts and controls that matter most stay on an overview, the rest go to a page per engine or system, linked with a row of buttons along the foot. The limit is measured: layout composes cleanly up to about sixteen widgets at 1024 × 768.
-5. **Compose** — a human-designed archetype places the widgets (hero-centre, thirds, header-hero-rail, card-grid, split, and **twin** for paired instruments), the grid aligns them, each face gets its proportions, and a style pass repairs scales: a range too short for the widget's thresholds is widened, a 0..1 scale with a real readout becomes the real scale, paired instruments share one scale. A critic scores the page; one that still overlaps moves its least important widget on. After every section the whole page is composed again.
-6. **Apply** — one undo step on the canvas, the preview reloads; the last three turns ride along, so *"make the RPM gauge bigger"* edits rather than restarts.
+1. **A content plan, not coordinates** — the prompt is built from the widget registry and the target screen, so the model only names widgets the panel can draw, with their real property names. It returns a title, header lamps or navigation, and three to six sections, each with a role (`hero`, `instruments`, `readings`, `trend`, `alarms`, `status`, `controls`) and its widgets' labels, units, ranges, bindings and actions. It may ask for `"size": "compact" | "normal" | "large"` on a section or a widget.
+2. **Intake** — `designer/layout/intake.py` reads the reply the way it was meant: lenient JSON repairs missing quotes, early closers, truncation and comments; a duplicated key spills into a new object instead of overwriting a section; property synonyms, icons and invented widget types are mapped onto the kit. Undeclared properties are dropped, tags lowercased, actions on signals a widget cannot emit removed.
+3. **Compile** — `designer/layout/compiler.py` never reads model geometry. A header (title left, lamps and navigation right), then the body is *searched*, not templated: every row and column partition and hero placement is scored by a cost model — content fit, each card's minimum, hero prominence, empty cards and slivers. Inside a card, faces share a row height, tiles a grid, controls sit at the foot. Every card gets the minimum its content needs before the rest is shared by weight.
+4. **Density** — the same search runs with widgets at 100 % down to 60 % of their design size, and a crowded screen shrinks only when that lays it out clearly better. Size wishes multiply in; controls never go under 32 px.
+5. **Semantics** — Stop and Trip buttons become destructive, navigation outline; a bound gauge shows its live value; repeated names are folded (a hero's caption becomes its card's title).
+6. **Apply** — one undo step on the canvas, the preview reloads, and the runner-up layouts wait as thumbnails. The last three turns ride along, so *"make the flow gauge bigger"* edits rather than restarts. Every widget carries its section, so **Size on screen** and **Tidy up** recompile the same plan.
 
 <div align="center">
-<img src="docs/assets/ai/composition-before.png" alt="The model's own geometry: a gauge with a scribbled scale, a stretched alarm table, controls scattered" width="440" />&nbsp;<img src="docs/assets/ai/composition-after.png" alt="The same widgets composed" width="440" />
-<br /><sub>The same model output before and after composition, both drawn by the panel's renderer.</sub>
+<img src="docs/assets/ai/compiler-before-after.png" alt="The same model and the same briefs, before (model geometry, polished) and after (planned and compiled), all rendered by hmi-ui" width="900" />
+<br /><sub>Same model, same briefs: the old geometry pipeline on the left, plan and compile on the right — every one drawn by the panel's renderer. The design notes, measurements and roadmap are in <a href="docs/AI_LAYOUT_COMPILER.md">docs/AI_LAYOUT_COMPILER.md</a>.</sub>
 </div>
+
+The older path — the model writes geometry, archetypes and a critic polish it, oversized designs split into linked pages — is still there as the fallback (`ai/layoutEngine = polish`).
 
 <details>
 <summary><strong>The execution shell, presets and the self-driving cluster</strong></summary>
@@ -213,7 +235,7 @@ flowchart LR
 
 Every turn is a foldable **execution shell** — request, thinking, response, parsed design, canvas diff (`+added −removed ~changed`), usage (`in · out · tok/s · TTFT`) — with chips such as `Section 2 · Fuel`, `14 widgets`, `Applied · panel preview refreshed`. A reasoning model's thinking pass is off by default: it counts against the output budget, and a long one returns no design at all.
 
-**Design presets.** A brief that reads like an automotive cluster or an EV dashboard gets a hand-built exemplar and a style guide appended to the prompt (`python -m tools.hmi_deployer.design_presets --list`).
+**Design presets.** On the polish path, a brief that reads like an automotive cluster or an EV dashboard gets a hand-built exemplar and a style guide appended to the prompt (`python -m tools.hmi_deployer.design_presets --list`).
 
 **A cluster that drives itself.** `sim.car.*` values are a sixty-second drive cycle, so a page bound to them carries its own clock on the canvas, in the Live Preview window and on the panel. `designer/templates/automotive_cluster_demo.edsui` is the preset wired to it.
 
@@ -227,20 +249,23 @@ Every turn is a foldable **execution shell** — request, thinking, response, pa
 
 The project as code, with a coding agent beside it.
 
-<table>
-<tr>
-<td width="50%"><img src="docs/assets/screens/code-agent-working.png" alt="The Code workspace with the agent reading project.edsui and writing a file" /><p align="center"><sub><strong>At work</strong> — the agent reads the design, thinks, writes; every tool call in the transcript.</sub></p></td>
-<td width="50%"><img src="docs/assets/screens/code-agent-done.png" alt="The agent's reply: NOTES.md created, two binding mistakes flagged" /><p align="center"><sub><strong>Done</strong> — <code>NOTES.md</code> written, and two binding mistakes it noticed flagged for review.</sub></p></td>
-</tr>
-</table>
+<div align="center">
+<img src="docs/assets/screens/code.png" alt="Code mode: the Widgets list on the left, the selected gauge's design JSON beside hmi-ui's render of it, and the coding agent on the right" width="920" />
+</div>
 
-* **Files and Widgets** — the bundle's folder as a tree and a Widgets list with live thumbnails; any file opens in a tabbed editor (C, Python, QML, JSON, `.edsui`) with undo, redo and save.
-* **The design as the panel reads it** — pick a widget and its `.edsui` sits beside `hmi-ui`'s render; edit and **Apply** as one undo step. **Runtime C (hmi-ui)** shows `native/hmi-ui/src/widgets/w_<type>.c`, the file compiled into the runtime.
-* **The agent** — [opencode](https://opencode.ai) driven over its HTTP server in the project folder, on the model configured in opencode. Thinking, tools, file links and permission prompts show in the transcript; an edited file reloads in its tab. Install once with `npm i -g opencode-ai`. Notes in [docs/CODE_SECTION.md](docs/CODE_SECTION.md).
+* **Files, Widgets, Outline, Backend** — the bundle's folder as a tree; a Widgets list with live thumbnails; an **Outline** of every widget on every page with its tags and binding issues (filter to bound widgets, issues or one tag); and a **Backend** table with one row per tag — read/write access, the widgets that use it, its live value and status. **Generate backend…** writes a runnable UDP backend into `backend/`, with a stub per tag, `tags.json` and `tags.h`.
+* **The design as the panel reads it** — pick a widget and its `.edsui` sits beside `hmi-ui`'s render; edit and **Apply** as one undo step. **Runtime C (hmi-ui)** shows `native/hmi-ui/src/widgets/w_<type>.c`, the file compiled into the runtime. Any file opens in a tabbed editor (C, Python, QML, JSON, `.edsui`).
+* **The agent** — [opencode](https://opencode.ai) driven over its HTTP server in the project folder, on the model configured in opencode. It is told about the design — pages, the selected widget, its tags and issues — and offers quick actions; thinking, tools, file links and permission prompts show in the transcript, and an edited file reloads in its tab. Install once with `npm i -g opencode-ai`. Notes in [docs/CODE_SECTION.md](docs/CODE_SECTION.md).
 
 ---
 
 ## Deploying
+
+**Deploy mode** is one page: the **Release** card (**Deploy to Target**, **Live preview**, **Mirror the panel**, **Restart GUI**, **Rollback**), then the four steps of a deploy — **Validate**, **Package**, **Transfer**, **Activate** — each lit as the progress bar reaches it and marked failed with the reason when one goes wrong. Below: a **Readiness** checklist (bundle, target, display geometry, tags), the panel's **Installed releases**, the **Device** (user, key, export and import of the deploy key, the display it reported) and its **Health** — the active release, its footprint, the storage split and free RAM, read over SSH while a panel is connected — and the console.
+
+<div align="center">
+<img src="docs/assets/screens/deploy.png" alt="Deploy mode mid-deploy: Validate and Package done, Transfer running, readiness, device and device health" width="920" />
+</div>
 
 <div align="center">
 <img src="docs/assets/deploy-pipeline.svg" alt="From validating the manifest through packaging, upload, checksum, atomic swap and the readiness check, to either the boot default or an automatic rollback" width="760" />
@@ -271,7 +296,7 @@ A panel trusts one SSH key. A **deploy key bundle** (`.hmikey`) carries the key 
 
 <div align="center"><img src="docs/assets/key-sharing.svg" alt="Export key packs the private key and the panel address into a .hmikey; Import key installs it and fills the connection fields" width="860" /></div>
 
-**Export key…** tries each candidate key on its own against the panel and packs the one it accepts, with the panel's host key. **Import key…** installs it under `~/.ssh/hmi-deploy/` with owner-only permissions, writes the host key into `known_hosts`, fills the connection fields and verifies the link — naming the problem in plain words when there is one.
+**Export key…** tries each candidate key on its own against the panel and packs the one it accepts, with the panel's host key. **Import key…** installs it under `~/.ssh/hmi-deploy/` with owner-only permissions, writes the host key into `known_hosts`, fills the device chip's connection fields and verifies the link — naming the problem in plain words when there is one.
 
 ```bash
 python -m tools.hmi_deployer.deploy_key export --host 172.16.20.70 --out line3.hmikey
@@ -354,7 +379,7 @@ After that, **deploying a design never touches the runtime**: a deploy carries `
 
 ## Qt applications
 
-An existing PySide6 or PySide2 application deploys to the same Qt-free panel. **Open Bundle…** detects the entry point and the binding, proposes the manifest, and previews the real application in the bezel — clicks, drags and keys reach it — before anything is sent.
+An existing PySide6 or PySide2 application deploys to the same Qt-free panel. **Project → Open bundle…** detects the entry point and the binding, proposes the manifest, and previews the real application in the bezel — clicks, drags and keys reach it — before anything is sent.
 
 At deploy, the Studio asks the panel what the application needs and lacks, and installs it after one confirmation:
 
@@ -450,6 +475,8 @@ hmi-ui  --->  {"cmd":"subscribe","ttl":5}              every 2 s
 
 **Bindings, thresholds and alarms.** A binding carries a unit and optional `warning` / `critical` thresholds (`"> 650"`). The Designer collects them into the manifest's `alarms`; the runtime's alarm engine raises, clears and timestamps entries that any `ShAlarmTable` shows. Thresholds are absolute, so the dial must be in the same units — a gauge left on 0..100 never reaches 650.
 
+**For the operator** ([CONTRACT §13](docs/CONTRACT.md)). A binding can be an **expression** instead of a tag (`eng1.egt > eng2.egt ? "ENG 1" : "ENG 2"`, `round(fuel.l + fuel.r, 1)`), with fixed decimals and rules that set another property from the reading. A signal runs a list of **actions** — write, pulse, toggle, increment / decrement within limits, navigate, back, acknowledge, shelve — and any list can ask **Cancel / OK** first. **Alarms** have priorities 1–4, latch until acknowledged, wait out an on-delay, respect a deadband and can be shelved; the panel keeps a journal (`/var/lib/hmi/alarm-journal.jsonl`) that an alarm table can show in `history` mode. `hmi-hwd` keeps a SQLite **history** of the tags it lists, trend charts fill from it when a page opens, every value carries its quality, and `python -m tools.hmi_deployer.history_export` pulls a CSV over SSH. On the glass: a range-checked **numeric keypad**, an **on-screen keyboard**, a **No connection to controller** banner, and screen dim and off after inactivity (**Screen idle** in the Designer).
+
 <details>
 <summary><strong>What runs on the panel</strong></summary>
 
@@ -541,7 +568,7 @@ target/               the installer (hmi-install), units, tmpfiles
 deploy/               deploy_to_hmi.sh and the provisioning scripts
 packaging/            the PyInstaller spec for the packaged Studio
 yocto/meta-hmi/       the bitbake layer
-tests/                1467 tests in 97 modules
+tests/                over 1,700 tests
 ```
 
 ---
@@ -549,7 +576,7 @@ tests/                1467 tests in 97 modules
 ## Verification
 
 ```bash
-python tests/run_all.py            # 1467 tests in 97 modules
+python tests/run_all.py            # over 1,700 tests
 native/hmi-ui/build.sh --test      # the runtime's C tests
 ```
 
@@ -563,23 +590,23 @@ native/hmi-ui/build.sh --test      # the runtime's C tests
 | Panel runtime | protocol conformance and widget parity against the QML kit, through a real `hmi-ui` |
 | Bundles | one validator, three callers; the dependency scan and offline wheel install |
 | Qt on demand | the panel check, launcher and runtime installs, the PySide2 runtime assembled from `.deb` streams |
-| Designer | model, canvas, inspector, generator, Live Preview, repairs on open |
-| Layout | grid, archetypes, fit and pages on a real 35-widget AI design, scale repairs, the critic |
+| Designer | model, canvas, inspector tabs, size wishes, the AI composer, object snap, generator, Live Preview, repairs on open |
+| Layout | the plan intake and compiler (regions, bands, density, size wishes, recompiles), and the polish path: grid, archetypes, fit and pages, scale repairs, the critic |
 | AI Design | streaming for every provider, the key-aware probe, sections and merge, tag and action repairs |
 | Code | project files, editor tabs, the opencode client on a recorded stream, the agent panel |
-| Studio | connect/disconnect, deploy keys, mirror, the frozen entry points |
+| Studio | the four modes and their views, the device chip, the deploy steps and readiness, connect/disconnect, deploy keys, mirror, the frozen entry points |
 
 **The release gate.** Tagging builds `EmbeddedDisplayStudio.exe` on CI and then **runs it**: the binary previews a fixture whose imports were never visible to the build, grabs its bezel, and `tests/verify_smoke_capture.py` checks the fixture's colour is in the picture. Only a binary that passed is attached to a release.
 
 ---
 
-## What's new in 0.1.1
+## What's new in 0.1.3
 
 <table>
 <tr>
-<td width="33%" valign="top"><strong>Qt apps on a Qt-free panel</strong><br /><sub>The Studio installs the PySide2 or PySide6 runtime, the launcher and the app's packages at deploy, offline; the panel switches between <code>hmi-ui</code> and the Qt app per bundle.</sub></td>
-<td width="33%" valign="top"><strong>AI Design that fits the glass</strong><br /><sub>Designs too big for the screen become linked pages; a twin composition for paired instruments; gauge scales repaired; model output made deployable.</sub></td>
-<td width="33%" valign="top"><strong>The Code workspace</strong><br /><sub>A project editor with an opencode agent, the new look, Mirror the panel, <code>hmi-tagsim</code>, and a Live Preview that says why a design did not load.</sub></td>
+<td width="33%" valign="top"><strong>Studio 2</strong><br /><sub>Four modes — Design, Simulate, Code, Deploy — instead of seven tabs; the connection in a device chip; a status bar; an AI composer on the canvas; deploy steps you can watch.</sub></td>
+<td width="33%" valign="top"><strong>AI Design plans, a compiler lays out</strong><br /><sub>The model writes content, not coordinates; the compiler searches the layout, shrinks a crowded screen, and honours <em>Compact / Normal / Large</em> per widget.</sub></td>
+<td width="33%" valign="top"><strong>The panel, for an operator</strong><br /><sub>Expression bindings, action lists with confirm, alarm priorities, latching and shelving, tag history, keypad and keyboard, screen idle.</sub></td>
 </tr>
 </table>
 

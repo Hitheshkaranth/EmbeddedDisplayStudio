@@ -1,6 +1,66 @@
 # Changelog
 
-## Unreleased
+## 0.1.3
+
+**Studio 2: four modes instead of seven tabs**
+
+* One header row: the project menu (New app..., Open bundle...), a mode
+  switch -- **Design**, **Simulate**, **Code**, **Deploy** -- with a view
+  switch where a mode has more than one view (Design: Designer and AI
+  Design), and a **device chip** whose popover holds the panel address,
+  port, Connect and Disconnect. A status bar under the window reads the
+  link, the open app and the display.
+* **Design**: one toolbar with a File menu; Layers / Widgets / Pages on the
+  left; Design / Data / Actions on the right, with **Size on screen**
+  (Compact / Normal / Large) for the selected widget; an **AI composer**
+  over the canvas replaces Design Chat -- add / set / bind / remove still
+  run offline, anything else goes to AI Design with the current design as
+  context and lands back on the canvas.
+* **Simulate**: Tag Lab beside the panel, with a drawer for its command
+  log and the panel's journal (formerly Panel Logs).
+* **Deploy**: Display Console and System Profile in one view -- the release
+  card (Deploy, Live preview, Mirror, Restart GUI, Rollback), the four
+  deploy steps (Validate, Package, Transfer, Activate) moving with the
+  progress bar, a readiness checklist, installed releases, the device and
+  its health. Health is only measured while a panel is connected.
+* **Code**: restyled to match; Outline and Backend unchanged.
+
+**AI Design: the model plans, a compiler lays out**
+
+* The model no longer writes geometry. It returns a title, header items and
+  titled sections with roles; `designer/layout/compiler.py` lays them out
+  deterministically (header, region search with a cost model, per-kind
+  bands, theme tokens) and shrinks widgets below their design size when a
+  screen is crowded. Runner-up layouts wait in the variant strip.
+  `ai/layoutEngine=polish` restores the old path. See
+  [docs/AI_LAYOUT_COMPILER.md](docs/AI_LAYOUT_COMPILER.md).
+* `designer/layout/intake.py` repairs the JSON a model actually emits
+  (duplicate keys, trailing text) and maps property names, icons and
+  invented widget types onto the kit.
+* Per-widget size wishes -- from the plan or from **Size on screen** -- and
+  **Tidy up** on a compiled page compiles it again.
+* A finished turn is no longer shown as "Cancelled" when the panel
+  preview's nested event loop delivers the worker's finished signal.
+
+**Designer**
+
+* Object snap: dragging snaps to sibling and parent edges (toggle in the
+  canvas bar, Ctrl bypasses).
+* Align, match size and distribute act only on selected free siblings,
+  never across parents or inside a positioner.
+
+**Kit (hmi-ui and the QML kit alike)**
+
+* ShClusterGauge fits its caption between the scale numbers and keeps the
+  step's decimals; ShGearIndicator scales a row wider than its box;
+  ShAutoReadout gives a wide value the icon's slot before shrinking;
+  ShEngineBar holds its label to the bar; ShTrendChart draws its warning
+  band and axis labels; ShValueTile reads `title` on the panel.
+
+**CI**
+
+* The Qt SVG image plugin comes from `libqt6svg6` on Ubuntu 24.04, where
+  `qt6-svg-plugins` no longer exists.
 
 **The panel, for an operator** (CONTRACT section 13; everything is additive --
 designs and bundles that use none of it are unchanged)

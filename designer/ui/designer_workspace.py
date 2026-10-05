@@ -1137,6 +1137,15 @@ class DesignerWorkspace(QWidget):
             QPushButton#secondaryAction:hover {{ background: {hover}; border-color: {tint(primary, 0.55)}; }}
             QPushButton#secondaryAction:pressed {{ background: {tint(primary, 0.15)}; }}
             QPushButton#secondaryAction:disabled {{ color: {tint(fg, 0.35)}; border-color: {tint(fg, 0.08)}; }}
+            /* The Data tab's rule buttons: the app-wide button size swamps the inspector. */
+            QPushButton#extraAddRule, QPushButton#extraRemoveRule {{
+                background: transparent; color: {fg}; border: 1px solid {border};
+                border-radius: 7px; padding: 0 12px; font-size: 12px; font-weight: 500;
+                min-height: 28px; max-height: 30px; height: 30px;
+            }}
+            QPushButton#extraAddRule:hover, QPushButton#extraRemoveRule:hover {{
+                background: {hover}; border-color: {tint(primary, 0.55)}; }}
+            QTableWidget#extraRules {{ min-height: 84px; }}
 
             /* -- combos everywhere in the workspace --------------------------- */
             QWidget#designerWorkspace QComboBox::drop-down {{

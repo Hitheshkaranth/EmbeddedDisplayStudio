@@ -129,11 +129,13 @@ These were fixed in hmi-ui (C) and the QML kit alike:
 
 ## Roadmap: what would make it better still
 
-1. **Designer "Tidy up" through the compiler.** Hand-drawn pages are
-   currently polished. Offer "Compile layout", which uses `infer_sections`
+1. **Designer "Tidy up" through the compiler.** Done for pages the
+   compiler built (0.1.3); hand-drawn pages are still polished. Offer "Compile layout", which uses `infer_sections`
    and keeps `_section` marks, plus a section/role editor in the Layers
    panel so a designer can regroup cards and recompile.
-2. **Size constraints in the Properties panel.** Expose `_size`
+2. **Size constraints in the Properties panel.** Done in 0.1.3 as **Size
+   on screen** on the Design tab; a per-page density override is still to
+   come. Originally: expose `_size`
    (compact/normal/large) and a per-page density override, so a designer can
    pin a card's prominence without editing JSON.
 3. **Critic aligned with the compiler.** Add pixel checks for text past a
