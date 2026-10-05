@@ -52,6 +52,8 @@ class DesignerItem(QGraphicsRectItem):
         self._before = None
         self._press_pos = QPointF(widget.geometry["x"], widget.geometry["y"])
         self._press_size = self.rect().size()
+        self._smart_snapped = False
+        self._smart_snap_disabled = False
         self.setPos(widget.geometry["x"], widget.geometry["y"])
         self.setZValue(widget.z)
         self.setFlags(
@@ -280,6 +282,8 @@ class DesignerItem(QGraphicsRectItem):
         self._before = dict(self.widget_model.geometry)
         self._press_pos = self.pos()
         self._press_size = self.rect().size()
+        self._smart_snapped = False
+        self._smart_snap_disabled = False
         self._resize_handle = self._handle_at(event.pos())
         self._resizing = self._resize_handle is not None
         if self._resizing:
@@ -292,7 +296,20 @@ class DesignerItem(QGraphicsRectItem):
             self._drag_edges(event.pos())
             event.accept()
             return
+        # Ctrl is the standard temporary bypass for alignment magnets.  The
+        # final grid snap still follows the explicit Grid Snap toolbar toggle.
+        self._smart_snap_disabled = bool(event.modifiers() & Qt.ControlModifier)
         super().mouseMoveEvent(event)
+        self._smart_snap_disabled = False
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionChange and not self._resizing:
+            value, snapped = self._designer_scene.snap_item_position(
+                self, value, bypass=self._smart_snap_disabled)
+            # Keep the final drag state, not a historic hit: moving away from
+            # a guide should restore the ordinary grid-snap behavior.
+            self._smart_snapped = snapped
+        return super().itemChange(change, value)
 
     def _drag_edges(self, point):
         """Resize from whichever handle was grabbed. A left or top handle
@@ -337,10 +354,11 @@ class DesignerItem(QGraphicsRectItem):
         # snapped an off-grid widget to the grid, and one on a label that
         # happens to lie over a Card silently made it a child of that Card.
         if self.pos() == self._press_pos and self.rect().size() == self._press_size:
+            self._designer_scene.clear_snap_guides()
             self._before = None
             return
         step = self._designer_scene.grid_size if self._designer_scene.snap_enabled else 1
-        if not self.widget_model.locked and not self.positioned:
+        if not self.widget_model.locked and not self.positioned and not self._smart_snapped:
             self.setPos(round(self.pos().x() / step) * step, round(self.pos().y() / step) * step)
         after = {"x": self.widget_model.geometry["x"] if self.positioned else self.pos().x(),
                  "y": self.widget_model.geometry["y"] if self.positioned else self.pos().y(),
@@ -366,6 +384,7 @@ class DesignerItem(QGraphicsRectItem):
                 self.widget_model.id, target_id, local.x(), local.y())
         elif self._before != after:
             self._designer_scene.geometryEdited.emit(self.widget_model.id, self._before, after)
+        self._designer_scene.clear_snap_guides()
         self._before = None
 
 
@@ -384,6 +403,9 @@ class DesignerScene(QGraphicsScene):
         self.grid_size = 10
         self.grid_visible = True
         self.snap_enabled = True
+        self.object_snap_enabled = True
+        self.snap_threshold = 8.0
+        self._snap_guides = []
         self.project = None
         self.page = None
         self._bezel_logo = bezel_logo()
@@ -517,6 +539,66 @@ class DesignerScene(QGraphicsScene):
     def selected_models(self):
         return [item.widget_model for item in self.selectedItems() if isinstance(item, DesignerItem)]
 
+    def clear_snap_guides(self):
+        if self._snap_guides:
+            self._snap_guides = []
+            self.update()
+
+    def snap_item_position(self, item, proposed, bypass=False):
+        """Magnet one free item to its siblings or parent while it is moved.
+
+        Coordinates are relative to a parent. Multi-item drags need a
+        selection-bounds policy; leaving them unsnapped is safer than letting
+        independent magnets distort the group. Grid snapping still works.
+        """
+        if (bypass or not self.object_snap_enabled or item.positioned
+                or item.widget_model.locked or not self.project):
+            self.clear_snap_guides()
+            return QPointF(proposed), False
+        selected = [candidate for candidate in self.selectedItems()
+                    if isinstance(candidate, DesignerItem)]
+        if len(selected) != 1:
+            self.clear_snap_guides()
+            return QPointF(proposed), False
+        parent = item.parentItem()
+        siblings = (parent.childItems() if parent is not None
+                    else [candidate for candidate in self.items()
+                          if isinstance(candidate, DesignerItem) and candidate.parentItem() is None])
+        siblings = [candidate for candidate in siblings
+                    if isinstance(candidate, DesignerItem) and candidate is not item]
+        if parent is not None:
+            parent_width, parent_height = parent.rect().width(), parent.rect().height()
+        else:
+            parent_width, parent_height = self.project.screen.width, self.project.screen.height
+        x_targets, y_targets = [0.0, parent_width / 2, parent_width], [0.0, parent_height / 2, parent_height]
+        for sibling in siblings:
+            rect, position = sibling.rect(), sibling.pos()
+            x_targets.extend((position.x(), position.x() + rect.width() / 2, position.x() + rect.width()))
+            y_targets.extend((position.y(), position.y() + rect.height() / 2, position.y() + rect.height()))
+        rect = item.rect()
+        x_sources = (proposed.x(), proposed.x() + rect.width() / 2, proposed.x() + rect.width())
+        y_sources = (proposed.y(), proposed.y() + rect.height() / 2, proposed.y() + rect.height())
+
+        def nearest(sources, targets):
+            choices = [(abs(target - source), target - source, target)
+                       for source in sources for target in targets]
+            distance, delta, target = min(choices, key=lambda choice: (choice[0], choice[2]))
+            return (delta, target) if distance <= self.snap_threshold else (0.0, None)
+
+        dx, guide_x = nearest(x_sources, x_targets)
+        dy, guide_y = nearest(y_sources, y_targets)
+        def to_scene(x, y):
+            return parent.mapToScene(QPointF(x, y)) if parent is not None else QPointF(x, y)
+        guides = []
+        if guide_x is not None:
+            guides.append((to_scene(guide_x, 0), to_scene(guide_x, parent_height)))
+        if guide_y is not None:
+            guides.append((to_scene(0, guide_y), to_scene(parent_width, guide_y)))
+        if guides != self._snap_guides:
+            self._snap_guides = guides
+            self.update()
+        return QPointF(proposed.x() + dx, proposed.y() + dy), bool(guides)
+
     def set_theme(self, theme):
         self.theme = theme if theme in ("light", "dark") else "dark"
         self.update()
@@ -557,6 +639,12 @@ class DesignerScene(QGraphicsScene):
                             self.bezel_margin)
         painter.drawText(label_rect, Qt.AlignHCenter | Qt.AlignVCenter,
                          f"DESIGN TARGET  ·  {self.project.screen.width} × {self.project.screen.height} px")
+        if self._snap_guides:
+            painter.save()
+            painter.setPen(QPen(QColor("#ec4899"), 0, Qt.DashLine))
+            for start, end in self._snap_guides:
+                painter.drawLine(start, end)
+            painter.restore()
 
 
 class DesignerView(QGraphicsView):

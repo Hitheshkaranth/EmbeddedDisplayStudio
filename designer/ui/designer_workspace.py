@@ -23,6 +23,7 @@ from designer.canvas.designer_view import POSITIONERS, DesignerScene, DesignerVi
 from designer.canvas.qml_previews import QmlPreviewRenderer
 from designer.commands import CallbackCommand, NudgeCommand
 from designer.generators import QmlGenerationError, QmlGenerator
+from designer.layout.selection import arrange as arrange_selection
 from designer.model import DesignerAction, DesignerBinding, DesignerPage, DesignerProject, DesignerWidget
 from designer.model.project import ACTION_KINDS, drop_unrunnable_actions, ensure_unique_ids
 from designer.ui.action_extras import ActionExtras
@@ -771,6 +772,10 @@ class DesignerWorkspace(QWidget):
         canvas_bar.addSeparator()
         self.grid_action = action(canvas_bar, "Grid", self.toggle_grid, "grid-dots", checkable=True, compact=True); self.grid_action.setChecked(True)
         self.snap_action = action(canvas_bar, "Snap", self.toggle_snap, "magnet", checkable=True, compact=True); self.snap_action.setChecked(True)
+        self.object_snap_action = action(canvas_bar, "Object snap", self.toggle_object_snap,
+                                         "layout-align-center", checkable=True, compact=True)
+        self.object_snap_action.setChecked(True)
+        self.object_snap_action.setToolTip("Snap to sibling and parent edges; hold Ctrl while dragging to bypass")
         self.live_action = action(canvas_bar, "Live preview", self.toggle_live_previews, "eye", checkable=True, compact=True); self.live_action.setChecked(True)
         canvas_bar.addSeparator()
         # Ten align actions as separate buttons is more than any row can hold
@@ -1631,6 +1636,7 @@ class DesignerWorkspace(QWidget):
         # Loading a page clears the selection without emitting a selection
         # change, so the alignment buttons would stay enabled over an empty
         # canvas -- offering an edit that silently does nothing.
+        self.align_button.setEnabled(False)
         self._sync_text_alignment()
         if self.view.isVisible():
             self.view.fit_canvas()
@@ -1663,6 +1669,7 @@ class DesignerWorkspace(QWidget):
         self.properties.set_widget(model, positioned=bool(parent and parent.type in POSITIONERS))
         self.bindings.set_widget(model); self.actions.set_widget(model)
         self.selection_chip.setText(model.id if model else (f"{len(ids)} selected" if ids else "None"))
+        self.align_button.setEnabled(len(self._arrangeable_selection()) >= 2)
         self._sync_text_alignment()
         self.tree.blockSignals(True); self.tree.clearSelection()
         if ids:
@@ -1849,6 +1856,24 @@ class DesignerWorkspace(QWidget):
             item.setEnabled(bool(applicable))
             item.setChecked(bool(applicable) and value == current)
 
+    def _arrangeable_selection(self):
+        """Selected free siblings that can safely share an arrangement.
+
+        Coordinates are relative to the parent, and Qt Quick positioners own
+        their children's x/y.  Treating a mixed tree selection as one flat
+        canvas would silently write invalid geometry, so the arrange controls
+        intentionally stay scoped to free siblings.
+        """
+        models = self.scene.selected_models()
+        if len(models) < 2 or any(model.locked for model in models):
+            return []
+        parents = {self.parent_id_of(model) for model in models}
+        if len(parents) != 1:
+            return []
+        parent_id = next(iter(parents))
+        parent = self._find(parent_id) if parent_id else None
+        return [] if parent is not None and parent.type in POSITIONERS else models
+
     def align(self, mode):
         """Align, size-match or distribute the selection, undoably.
 
@@ -1857,34 +1882,10 @@ class DesignerWorkspace(QWidget):
         came *before* it and left the align standing -- the stack and the
         model drifting apart with no way back.
         """
-        models = self.scene.selected_models()
+        models = self._arrangeable_selection()
         if len(models) < 2: return
         before = [dict(model.geometry) for model in models]
-        g = [dict(model.geometry) for model in models]; anchor = g[0]
-        if mode == "left":
-            for item in g[1:]: item["x"] = anchor["x"]
-        elif mode == "right":
-            edge = anchor["x"] + anchor["width"]
-            for item in g[1:]: item["x"] = edge - item["width"]
-        elif mode == "top":
-            for item in g[1:]: item["y"] = anchor["y"]
-        elif mode == "bottom":
-            edge = anchor["y"] + anchor["height"]
-            for item in g[1:]: item["y"] = edge - item["height"]
-        elif mode == "hcenter":
-            center = anchor["x"] + anchor["width"] / 2
-            for item in g[1:]: item["x"] = center - item["width"] / 2
-        elif mode == "vcenter":
-            center = anchor["y"] + anchor["height"] / 2
-            for item in g[1:]: item["y"] = center - item["height"] / 2
-        elif mode == "same_width":
-            for item in g[1:]: item["width"] = anchor["width"]
-        elif mode == "same_height":
-            for item in g[1:]: item["height"] = anchor["height"]
-        elif mode.startswith("distribute_") and len(g) > 2:
-            axis = "x" if mode.endswith("h") else "y"; ordered = sorted(g, key=lambda item: item[axis])
-            span = ordered[-1][axis] - ordered[0][axis]
-            for index, item in enumerate(ordered[1:-1], 1): item[axis] = ordered[0][axis] + span * index / (len(ordered)-1)
+        g = arrange_selection(before, mode)
         if g == before:
             return
         after = [dict(item) for item in g]
@@ -1963,6 +1964,9 @@ class DesignerWorkspace(QWidget):
             self.scene.qml_previews.enabled = checked
         self.scene.update()
     def toggle_snap(self, checked): self.scene.snap_enabled = checked
+    def toggle_object_snap(self, checked):
+        self.scene.object_snap_enabled = checked
+        self.scene.clear_snap_guides()
     def view_fit(self): self.view.fit_canvas()
 
     def _update_manifest(self, entry):
