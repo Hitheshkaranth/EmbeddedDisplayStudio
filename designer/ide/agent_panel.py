@@ -511,13 +511,29 @@ class AgentPanel(QWidget):
             QPlainTextEdit {{ background: {c('card')}; color: {c('foreground')};
                 border: 1px solid {c('border')}; border-radius: 6px; padding: 4px 6px; }}
             QPlainTextEdit:focus {{ border-color: {c('primary')}; }}
-            QPushButton, QToolButton#agentNewChat, QComboBox {{
-                background: {c('card')}; color: {c('foreground')};
-                border: 1px solid {c('border')}; border-radius: 6px; padding: 3px 10px; }}
-            QPushButton:hover, QToolButton#agentNewChat:hover {{ background: {c('muted')}; }}
+            QPushButton, QToolButton#agentNewChat, QToolButton#agentQuick, QComboBox {{
+                background: {c('card')}; color: {c('foreground')}; font-size: 12px;
+                border: 1px solid {c('border')}; border-radius: 7px; padding: 0 10px;
+                min-height: 28px; max-height: 28px; }}
+            QPushButton:hover, QToolButton#agentNewChat:hover, QToolButton#agentQuick:hover {{
+                background: {c('muted')}; }}
             QPushButton:disabled {{ color: {c('mutedForeground')}; }}
-            QCheckBox {{ color: {c('mutedForeground')}; }}
+            QPushButton#agentSend {{ background: {c('primary')}; color: {c('primaryForeground')};
+                border: none; font-weight: 600; padding: 0 14px; }}
+            QPushButton#agentSend:hover {{ background: {c('primary')}; }}
+            QPushButton#agentSend:disabled {{ background: {c('muted')}; color: {c('mutedForeground')}; }}
+            QComboBox#agentModel {{ color: {c('mutedForeground')}; font-size: 11px;
+                font-family: "Cascadia Mono", Consolas, Menlo, monospace; }}
+            QPlainTextEdit#agentInput {{ font-size: 13px; border-radius: 10px; padding: 6px 8px; }}
+            /* The context switches read as chips: on is a filled pill. */
+            QCheckBox#agentContext {{ color: {c('mutedForeground')}; font-size: 11px; spacing: 0;
+                border: 1px solid {c('border')}; border-radius: 11px; padding: 2px 10px; }}
+            QCheckBox#agentContext:checked {{ color: {c('foreground')}; background: {c('muted')}; }}
+            QCheckBox#agentContext::indicator {{ width: 0px; height: 0px; }}
         """)
+        self.send_button.setIcon(icon("send", 14, c('primaryForeground')))
+        self.stop_button.setIcon(icon("player-stop", 14, c('foreground')))
+        self.new_chat_button.setIcon(icon("plus", 14, c('foreground')))
         self._state_changed(self._backend.state(), self._backend.detail())
 
     # ---------------------------------------------------------------- UI
@@ -531,7 +547,7 @@ class AgentPanel(QWidget):
         # The agent's face (ui/python/fx/avatar.py, Libraries.dev bot-avatars):
         # working while it runs, asleep when it stopped or failed.
         from ui.python.fx.avatar import BotAvatar
-        self.avatar = BotAvatar(shape="clover", size=42, state="default", seed=0.61)
+        self.avatar = BotAvatar(shape="clover", size=32, state="default", seed=0.61)
         self.avatar.fps = 30.0
         self.avatar.setToolTip("The coding agent")
         header.addWidget(self.avatar)
@@ -588,8 +604,12 @@ class AgentPanel(QWidget):
         self.context_check.setToolTip("Tell the agent which file is open and what is selected")
         self.design_check = QCheckBox("Include design")
         self.design_check.setChecked(True)
+        for chip in (self.context_check, self.design_check):
+            chip.setObjectName("agentContext")
+            chip.setCursor(Qt.PointingHandCursor)
         self.design_check.setToolTip("Tell the agent the design's pages, widgets, tags and binding issues")
         self.quick_button = QToolButton()
+        self.quick_button.setObjectName("agentQuick")
         self.quick_button.setText("Quick actions")
         self.quick_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.quick_button.setMenu(QMenu(self.quick_button))
@@ -616,6 +636,7 @@ class AgentPanel(QWidget):
         self.stop_button.setVisible(False)
         buttons.addWidget(self.stop_button)
         self.send_button = QPushButton("Send")
+        self.send_button.setObjectName("agentSend")
         self.send_button.setIcon(icon("send"))
         self.send_button.clicked.connect(lambda: self.send(self.input.toPlainText()))
         buttons.addWidget(self.send_button)

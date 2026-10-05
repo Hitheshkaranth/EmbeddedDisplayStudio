@@ -201,9 +201,41 @@ class CodeSection(QWidget):
             part.apply_theme(self._theme)
         border = color("border", self._theme)
         muted = color("mutedForeground", self._theme)
-        self.setStyleSheet(
-            f"QSplitter#codeSectionSplitter::handle {{ background: {border}; }}"
-            f"QLabel#codeSectionRoot {{ color: {muted}; padding: 0 8px; }}")
+        fg = color("foreground", self._theme)
+        surface = color("card", self._theme) if self._theme == "dark" else color("background", self._theme)
+        primary = color("primary", self._theme)
+        for item, name in getattr(self, "_bar_icons", {}).items():
+            item.setIcon(icon(name, 16, fg))
+        # The chrome reads at the Studio's 12 px; the editors keep the fonts
+        # they set themselves. The navigator's tabs sit inside workspaceTabs,
+        # whose rule (min-width 96px, primary fill) would clip and shout.
+        self.setStyleSheet(f"""
+            QSplitter#codeSectionSplitter::handle {{ background: {border}; }}
+            QToolBar#codeSectionToolbar {{ background: {surface}; border: none;
+                border-bottom: 1px solid {border}; padding: 0 10px; spacing: 2px; }}
+            QToolBar#codeSectionToolbar::separator {{ background: {border}; width: 1px; margin: 9px 6px; }}
+            QToolBar#codeSectionToolbar QToolButton {{ background: transparent; color: {fg};
+                border: 1px solid transparent; border-radius: 6px; padding: 0 8px; font-size: 12px;
+                min-height: 28px; max-height: 28px; }}
+            QToolBar#codeSectionToolbar QToolButton[compact="true"] {{ padding: 0; min-width: 28px; max-width: 28px; }}
+            QToolBar#codeSectionToolbar QToolButton:hover {{ background: rgba(127, 127, 127, 0.14); }}
+            QToolBar#codeSectionToolbar QToolButton:checked {{ background: rgba(127, 127, 127, 0.20); }}
+            QWidget#codeSectionSpacer {{ background: transparent; }}
+            QLabel#codeSectionRoot {{ color: {muted}; padding: 0 8px; font-size: 11px; background: transparent;
+                font-family: "Cascadia Mono", Consolas, Menlo, monospace; }}
+            QTabWidget#codeSectionNavigator::pane {{ border: none; border-top: 1px solid {border}; top: -1px; }}
+            QTabWidget#codeSectionNavigator > QTabBar::tab {{ min-width: 0px; background: transparent;
+                color: {muted}; border: none; border-radius: 6px; padding: 5px 10px;
+                margin: 6px 2px 6px 0; font-size: 12px; font-weight: 500; }}
+            QTabWidget#codeSectionNavigator > QTabBar::tab:first {{ margin-left: 8px; }}
+            QTabWidget#codeSectionNavigator > QTabBar::tab:selected {{ background: rgba(127, 127, 127, 0.20);
+                color: {fg}; }}
+            QTabWidget#codeSectionNavigator > QTabBar::tab:hover:!selected {{ color: {fg}; }}
+            QWidget#codeSection QLabel, QWidget#codeSection QCheckBox, QWidget#codeSection QPushButton,
+            QWidget#codeSection QComboBox, QWidget#codeSection QTreeView, QWidget#codeSection QTreeWidget,
+            QWidget#codeSection QListWidget {{ font-size: 12px; }}
+            QWidget#codeSection QPushButton:focus, QWidget#codeSection QToolButton:focus {{ outline: none; }}
+            QWidget#codeSection QCheckBox::indicator:checked {{ background: {primary}; border-radius: 4px; }}""")
 
     def confirm_close(self) -> bool:
         """Before the Studio closes: unsaved editors ask Save all / Discard /
@@ -239,21 +271,35 @@ class CodeSection(QWidget):
         bar.setMovable(False)
         bar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         bar.setIconSize(QSize(16, 16))
-        bar.setFixedHeight(36)
+        bar.setFixedHeight(40)
+        # Studio 2: the Designer's toolbar language -- one quiet row, 28 px
+        # icon tools with the words in the tooltip, labelled only where a
+        # label is the point (Open folder). Icons are re-tinted per theme.
+        self._bar_icons = {}
 
-        def action(text, slot, icon_name, tip, checkable=False):
+        def action(text, slot, icon_name, tip, checkable=False, compact=True):
             item = bar.addAction(icon(icon_name), text)
             item.setToolTip(tip)
             item.setCheckable(checkable)
             (item.toggled if checkable else item.triggered).connect(slot)
+            self._bar_icons[item] = icon_name
+            button = bar.widgetForAction(item)
+            if button is not None:
+                button.setCursor(Qt.PointingHandCursor)
+                if compact:
+                    button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+                    button.setProperty("compact", True)
+                    button.setFixedSize(28, 28)
             return item
 
-        action("Open folder...", self._choose_folder, "folder-open", "Show another folder in the Files pane")
+        action("Open folder...", self._choose_folder, "folder-open", "Show another folder in the Files pane",
+               compact=False)
         self._root_label = QLabel()
         self._root_label.setObjectName("codeSectionRoot")
         self._root_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         bar.addWidget(self._root_label)
         spacer = QWidget()
+        spacer.setObjectName("codeSectionSpacer")
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         bar.addWidget(spacer)
         # Tool buttons only: the keys themselves belong to EditorTabs.
@@ -268,6 +314,10 @@ class CodeSection(QWidget):
 
         self.left = QTabWidget()
         self.left.setObjectName("codeSectionNavigator")
+        self.left.setDocumentMode(True)
+        # Four short tabs that always fit their pane: no scroll arrows.
+        self.left.tabBar().setUsesScrollButtons(False)
+        self.left.tabBar().setExpanding(False)
         self.left.addTab(self.tree, "Files")
         self.left.addTab(self.picker, "Widgets")
         self.left.addTab(self.outline, "Outline")
