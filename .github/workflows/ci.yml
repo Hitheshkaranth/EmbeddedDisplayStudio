@@ -137,15 +137,21 @@ jobs:
       # The QtQuick modules are needed at run time by the conformance suite,
       # which loads the real shell and the Shadcn kit through the binary.
       - name: Install Qt 6 development packages
+        # Qt's SVG image plugin (ShIcon decodes SVG data URIs) ships inside
+        # libqt6svg6 on Ubuntu 24.04 and in its own qt6-svg-plugins package
+        # from later releases on; install the split package only where it
+        # exists, so the step works whichever image ubuntu-latest points at.
         run: |
           sudo apt-get update
+          svg_plugins=""
+          if apt-cache show qt6-svg-plugins >/dev/null 2>&1; then svg_plugins=qt6-svg-plugins; fi
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build g++ \
             qt6-base-dev qt6-declarative-dev qt6-declarative-dev-tools \
             qml6-module-qtquick qml6-module-qtquick-shapes \
             qml6-module-qtquick-controls qml6-module-qtquick-layouts \
             qml6-module-qtquick-window qml6-module-qtquick-templates \
-            qml6-module-qtqml-workerscript qt6-svg-plugins \
+            qml6-module-qtqml-workerscript libqt6svg6 $svg_plugins \
             libegl1 libgl1 libgl1-mesa-dev libxkbcommon-x11-0 libdbus-1-3
 
       - name: Build and run the C++ unit tests
