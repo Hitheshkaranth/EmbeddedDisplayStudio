@@ -144,6 +144,8 @@ class DesignerBinding:
     expr: str = ""
     rules: list = field(default_factory=list)     # [{"if": "> 80", "prop": ..., "value": ...}]
     alarm: dict = field(default_factory=dict)     # priority / latch / delay_ms / deadband / message
+    # What this binding should be simulated as (CONTRACT: the Studio's "Simulate as").
+    sim: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = {"tag": self.tag, "format": self.format, "multiplier": self.multiplier,
@@ -157,6 +159,8 @@ class DesignerBinding:
             data["rules"] = [dict(rule) for rule in self.rules]
         if self.alarm:
             data["alarm"] = dict(self.alarm)
+        if self.sim:
+            data["sim"] = self.sim
         return data
 
     @classmethod

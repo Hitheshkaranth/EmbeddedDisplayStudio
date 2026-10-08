@@ -584,7 +584,31 @@ class Signal:
         return round(self.lo + unit * (self.hi - self.lo), self.decimals)
 
 
-def signal_for(tag: str, widget_type: str, prop: str, props: dict, stations=None) -> Signal:
+#: What a binding is simulated as: (key, label). Rail roles drive the rail
+#: Signal (stations from the design's line); flight quantities drive a number
+#: Signal of that quantity on the widget's own scale.
+SIM_ROLES = [
+    ("rail_next", "next station"), ("rail_index", "current station"),
+    ("rail_speed", "speed"), ("rail_target", "target speed"),
+    ("rail_traction", "traction / brake"), ("rail_details", "station line"),
+    ("rail_doors", "doors"), ("rail_progress", "line progress"),
+    ("altitude", "altitude"), ("airspeed", "airspeed"), ("heading", "heading"),
+    ("vertical_speed", "vertical speed"), ("pitch", "pitch"), ("roll", "bank"),
+    ("fuel_left", "fuel left"), ("fuel_right", "fuel right"), ("n1", "N1"),
+    ("egt", "EGT"), ("mach", "Mach"), ("oat", "OAT"),
+]
+#: The rail roles: one of each rail_* key. A binding whose "sim" is one of
+#: these drives the rail Signal regardless of which widget is bound.
+RAIL_ROLES = ("rail_next", "rail_index", "rail_speed", "rail_target",
+              "rail_traction", "rail_details", "rail_doors", "rail_progress")
+#: The flight quantities a rail role is not one of: a "sim" equal to one of
+#: these maps onto that quantity on the widget's own scale.
+FLIGHT_ROLES = {key for key, _label in SIM_ROLES if key not in RAIL_ROLES}
+#: The rail roles: a "sim" equal to one of these drives the rail Signal.
+RAIL_ROLE_KEYS = set(RAIL_ROLES)
+
+
+def signal_for(tag: str, widget_type: str, prop: str, props: dict, stations=None, sim=None) -> Signal:
     """Decide what one bound tag reports and how far its needle swings.
 
     The widget's own scale wins, then the kit's default for its type, then
@@ -592,6 +616,18 @@ def signal_for(tag: str, widget_type: str, prop: str, props: dict, stations=None
     it is drawn on, whatever the design asked for.
     """
     lowered = tag.lower()
+    # A binding that says what it simulates as forces that role: a rail role
+    # drives the rail Signal (stations from the design's own line, whatever the
+    # widget is), a flight quantity drives a number Signal of that quantity on
+    # the widget's own scale.
+    if stations is not None and sim in RAIL_ROLE_KEYS:
+        return Signal(tag, "rail", sim, state_key=sim, stations=stations)
+    if sim in FLIGHT_ROLES:
+        quantity = sim
+        lo, hi = (QUANTITY_RANGE.get(quantity) or (0.0, 100.0))
+        width = hi - lo
+        decimals = 0 if width > 400 else (3 if width <= 2 else (1 if width <= 200 else 1))
+        return Signal(tag, "number", quantity, lo, hi, decimals)
     if stations is not None:
         key = rail_key(tag, widget_type, prop)
         if key:
@@ -675,11 +711,15 @@ def plan(project: dict) -> dict:
     for widget in widgets:
         props = widget.get("properties") or {}
         for prop, spec in (widget.get("bindings") or {}).items():
-            tag = spec.get("tag") if isinstance(spec, dict) else spec
+            if isinstance(spec, dict):
+                tag = spec.get("tag")
+                sim = spec.get("sim", "")
+            else:
+                tag, sim = spec, ""
             if not isinstance(tag, str) or not tag or tag == "*":
                 continue          # "*" is the alarm table, not a value
             if tag not in signals:
-                signals[tag] = signal_for(tag, widget.get("type", ""), prop, props, stations)
+                signals[tag] = signal_for(tag, widget.get("type", ""), prop, props, stations, sim)
     return signals
 
 
