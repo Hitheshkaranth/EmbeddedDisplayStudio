@@ -113,6 +113,81 @@ ERR_NO_HISTORY = "no_history"
 logger = logging.getLogger("hmi-hwd")
 
 # ---------------------------------------------------------------------------
+# Modbus enum + publish/raw helpers
+# ---------------------------------------------------------------------------
+
+# CLI flags the daemon accepts (documented by --help). --modbus-live,
+# introduced in Wave 5 B3, keeps Modbus live on a real PLC while --sim
+# simulation is still used for the non-Modbus backends.
+_MODBUS_FLAG_HELP = "--modbus-live   Keep Modbus live (real PLC), simulating " \
+                    "only the Modbus sim if --sim is given too"
+
+
+def cli_flags() -> str:
+    """Human-readable list of daemon CLI flags, one per line.
+
+    Side effects:
+        None.
+    """
+    return "\n".join([
+        "--config PATH",
+        "--sim",
+        "--strict",
+        "--selftest",
+        "--log-level LVL",
+        _MODBUS_FLAG_HELP,
+    ])
+
+
+def modbus_publish_value(tcfg: Dict[str, Any], value: Any) -> Any:
+    """Publish a logical value over Modbus, mapping an enum to its label.
+
+    A tag whose ``type`` is ``enum`` carries a list ``enum`` of labels. When
+    the stored value is a valid index (an int 0..len(enum)-1) the published
+    value is the label; anything else (out-of-range index, non-int) is
+    published unchanged so a raw number is not silently dropped.
+
+    Args:
+        tcfg: tag configuration (see _modbus_tags keys).
+        value: the current logical value of the tag.
+
+    Returns:
+        The label for a valid enum index, or ``value`` unchanged.
+    """
+    labels = tcfg.get("enum")
+    if labels and isinstance(value, int) and 0 <= value < len(labels):
+        return labels[value]
+    return value
+
+
+def modbus_raw_for_write(tcfg: Dict[str, Any], value: Any) -> Any:
+    """Resolve the raw integer for a Modbus write from a logical value.
+
+    For an ``enum`` tag the logical value is a label; the raw write value is
+    its index. A numeric value is passed through unchanged. An unknown label
+    raises ``ValueError`` so the caller can reject it (bad_value).
+
+    Args:
+        tcfg: tag configuration.
+        value: the value the requester asked to write (label or number).
+
+    Returns:
+        The index of a valid label, or ``value`` unchanged when numeric.
+
+    Raises:
+        ValueError: if the tag has an enum and ``value`` is not a known label.
+    """
+    labels = tcfg.get("enum")
+    if labels is not None:
+        if isinstance(value, int):
+            return value
+        if value in labels:
+            return labels.index(value)
+        raise ValueError(f"unknown enum label {value!r}")
+    return value
+
+
+# ---------------------------------------------------------------------------
 # sd_notify -- raw AF_UNIX, no libsystemd dependency
 # ---------------------------------------------------------------------------
 
@@ -1479,13 +1554,17 @@ class HwDaemon:
     serves commands over UDP.
     """
 
-    def __init__(self, cfg: dict, force_sim: bool = False, strict: bool = False) -> None:
+    def __init__(self, cfg: dict, force_sim: bool = False, strict: bool = False, modbus_live: bool = False) -> None:
         """Initialise the daemon from a parsed configuration.
 
         Args:
             cfg:       parsed hwd.json dict.
             force_sim: if True, use simulation backends regardless of hardware.
             strict:    if True, exit non-zero instead of falling back to sim.
+            modbus_live: if True, keep the Modbus backend live (real PLC)
+                      even with --sim (Wave 5 B3).
+            modbus_live: if True, keep the Modbus backend live (real PLC)
+                      even with --sim (Wave 5 B3).
 
         Side effects:
             Opens GPIO character devices, IIO sysfs files, and optionally the
@@ -1494,6 +1573,10 @@ class HwDaemon:
         self.cfg = cfg
         self.tags = TagStore()
         self.error_count: int = 0
+        # Modbus live on a real PLC even when --sim is given (Wave 5 B3).
+        self.modbus_live = modbus_live
+        # Modbus live on a real PLC even when --sim is given.
+        self.modbus_live = modbus_live
         # Monotonic sequence number for telemetry frames, wraps at 2^31.
         self._seq: int = 0
         # Wallclock at daemon start for sys.uptime calculation.
@@ -1551,7 +1634,7 @@ class HwDaemon:
         self._modbus_online_event: threading.Event = threading.Event()
         self._modbus_stop: threading.Event = threading.Event()
         self._modbus_thread: Optional[threading.Thread] = None
-        self._init_modbus(cfg.get("modbus"), force_sim)
+        self._init_modbus(cfg.get("modbus"), force_sim, modbus_live)
 
         # -- System tags --
         self.tags.register("sys.uptime", 0.0)
@@ -1742,7 +1825,7 @@ class HwDaemon:
             logger.warning("UART port %s unavailable (%s); feature disabled", port, exc)
             return None
 
-    def _init_modbus(self, modbus_cfg: Optional[dict], force_sim: bool) -> None:
+    def _init_modbus(self, modbus_cfg: Optional[dict], force_sim: bool, modbus_live: bool = False) -> None:
         """Initialise the Modbus TCP backend.
 
         Creates the Modbus client (real or simulated), registers mb.* tags,
@@ -1751,6 +1834,8 @@ class HwDaemon:
         Args:
             modbus_cfg: the "modbus" section of hwd.json, or None.
             force_sim:  if True, use ModbusSim regardless of host reachability.
+            modbus_live: if True, force the real client regardless of --sim,
+                      so the panel "Test against PLC" honours the host in the map.
 
         Side effects:
             Creates ModbusTcpClient or ModbusSim, registers mb.* tags in
@@ -1766,8 +1851,12 @@ class HwDaemon:
 
         mcfg = modbus_cfg
 
-        # Create the client (sim or real).
-        if force_sim:
+        # -- Modbus backend --
+        # --modbus-live wins over --sim: the panel's "Test against PLC" honours
+        # the PLC host in the map. All the *other* backends (GPIO/ADC/UART)
+        # still honour --sim.
+        modbus_serve_sim = force_sim and not modbus_live
+        if modbus_serve_sim:
             logger.warning("Simulation mode (--sim): Modbus operations are simulated")
             client = _modbus_mod.ModbusSim()
             self._modbus_sim = client
@@ -1788,7 +1877,7 @@ class HwDaemon:
         for tag_name, tcfg in mcfg.get("tags", {}).items():
             kind = tcfg.get("kind", "holding")
             writable = tcfg.get("writable", False)
-            # Initial value: 0/false.
+            # Initial value: 0/false. An enum's initial index is 0 (first label).
             initial = 0 if kind in ("holding", "input") else False
             self.tags.register(tag_name, initial, writable=writable)
             self._modbus_tags[tag_name] = {
@@ -1800,6 +1889,8 @@ class HwDaemon:
                 "word_order": tcfg.get("word_order", "big"),
                 "writable": writable,
             }
+            if "enum" in tcfg:
+                self._modbus_tags[tag_name]["enum"] = tcfg["enum"]
             # Track safe_state for writable coils/registers.
             if "safe_state" in tcfg and (kind == "coil" or kind == "holding"):
                 self._modbus_safe_states[tag_name] = int(tcfg["safe_state"])
@@ -1891,7 +1982,12 @@ class HwDaemon:
                 else:
                     raw_data = readers[kind](tcfg["address"], register_count(type_name))
                     raw_val = decode_value(raw_data, type_name, tcfg["word_order"]) if raw_data else 0
-                    self.tags.set(tag_name, scale_read(raw_val, type_name, tcfg["scale"], tcfg["offset"]))
+                    value = scale_read(raw_val, type_name, tcfg["scale"], tcfg["offset"])
+                    # An enum tag stores its index and publishes its label so
+                    # the panel can show "A"/"B"/"C" instead of 0/1/2.
+                    if "enum" in tcfg:
+                        value = modbus_publish_value(tcfg, value)
+                    self.tags.set(tag_name, value)
             except _modbus_mod.ModbusError:
                 # Device-level error: set to None (CONTRACT 2.4).
                 self.tags.set(tag_name, None)
@@ -1961,7 +2057,10 @@ class HwDaemon:
                 client.write_single_coil(address, value)
                 self.tags.set(tag, bool(value))
             elif kind == "holding":
-                raw = scale_write(value, type_name, tcfg["scale"], tcfg["offset"])
+                # An enum tag resolves the label to its raw index here. A label
+                # outside the enum is rejected (bad_value) rather than written.
+                write_value = modbus_raw_for_write(tcfg, value)
+                raw = scale_write(write_value, type_name, tcfg["scale"], tcfg["offset"])
                 client.write_single_register(address, raw)
                 self.tags.set(tag, scale_read(raw, type_name, tcfg["scale"], tcfg["offset"]))
         except Exception:
@@ -2144,12 +2243,14 @@ class HwDaemon:
                 _rl_log.warning("poll", "Error in poll/publish cycle")
             await asyncio.sleep(self._poll_s)
 
-    async def run(self, selftest: bool = False) -> int:
+    async def run(self, selftest: bool = False, modbus_live: bool = False) -> int:
         """Main entry point: bind the command socket, start the publisher.
 
         Args:
             selftest: if True, poll once, print one telemetry frame to stdout,
                       shut down cleanly, and return 0.
+            modbus_live: if True, keep the Modbus backend live (real PLC) even
+                      when --sim simulation is requested for the other backends.
 
         Returns:
             Exit code (0 on success, non-zero on error).
@@ -2273,6 +2374,12 @@ def main() -> None:
         help="Init, poll once, print one JSON telemetry frame to stdout, exit 0",
     )
     parser.add_argument(
+        "--modbus-live",
+        dest="modbus_live",
+        action="store_true",
+        help="Keep Modbus live on a real PLC (Wave 5 B3)",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -2290,13 +2397,14 @@ def main() -> None:
 
     force_sim = args.sim
     strict = args.strict
+    modbus_live = args.modbus_live
     if force_sim and strict:
         logger.error("--sim and --strict are mutually exclusive")
         sys.exit(1)
 
-    daemon = HwDaemon(cfg, force_sim=force_sim, strict=strict)
+    daemon = HwDaemon(cfg, force_sim=force_sim, strict=strict, modbus_live=modbus_live)
 
-    exit_code = asyncio.run(daemon.run(selftest=args.selftest))
+    exit_code = asyncio.run(daemon.run(selftest=args.selftest, modbus_live=modbus_live))
     sys.exit(exit_code)
 
 

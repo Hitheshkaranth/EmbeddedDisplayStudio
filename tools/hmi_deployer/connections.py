@@ -203,7 +203,8 @@ def _read_lenient(path: str) -> dict:
         return {}
     try:
         from designer.layout.intake import loads_lenient
-        data = loads_lenient(open(path, encoding="utf-8").read())
+        with open(path, encoding="utf-8") as fh:
+            data = loads_lenient(fh.read())
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
@@ -242,8 +243,9 @@ def write_opencode_config(conns: list[Connection], path: str | None = None):
     # Back up the file before the merge, so a bad edit is reversible.
     if os.path.isfile(path):
         try:
-            open(_backup_path(path), "w", encoding="utf-8").write(
-                open(path, encoding="utf-8").read())
+            with open(_backup_path(path), "w", encoding="utf-8") as backup:
+                with open(path, encoding="utf-8") as source:
+                    backup.write(source.read())
         except OSError:
             pass
 
