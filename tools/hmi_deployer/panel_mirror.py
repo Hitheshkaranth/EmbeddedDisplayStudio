@@ -33,6 +33,24 @@ logger = logging.getLogger(__name__)
 #: One frame a second: enough to read a moving panel, cheap enough to leave on.
 DEFAULT_INTERVAL_MS = 1000
 
+#: The frame rates the console can mirror a panel at. Faster costs the panel a
+#: snapshot and the host an scp each tick; these three stay within what a slow
+#: link can sustain over ssh without lagging behind the moving glass.
+MIRROR_RATES = (1, 2, 4)
+
+
+def interval_for_fps(rps: int) -> int:
+    """How long to wait between mirrors at *rps* frames per second.
+
+    A mirror is a round trip over ssh, so the interval is the budget for that
+    trip plus a frame: a whole 1000/rps ms, rounded down. Anything above the
+    fastest offered rate just waits out the fastest one.
+    """
+    if rps <= 0:
+        return DEFAULT_INTERVAL_MS
+    fastest = 1000 // MIRROR_RATES[-1]
+    return max(fastest, min(DEFAULT_INTERVAL_MS, 1000 // rps))
+
 #: Where the runtime writes what it is showing (native/hmi-ui/src/main.c).
 SCREEN_PATH = "/run/hmi/screen.png"
 

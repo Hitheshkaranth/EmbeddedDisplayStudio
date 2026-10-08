@@ -1018,7 +1018,7 @@ def compile_page(project, page, registry, sections=None, title: str = "",
     from . import cab
     if width > height and cab.applies(sections, header_widgets):
         cab.compile_cab(project, page, registry, sections, title, header_widgets, report,
-                        width, height)
+                        width, height, project.brand.get("accent") if project.brand else None)
         return report
     sections = _consolidate(_ordered(sections), report.notes, section_limit(width, height))
     _hero_caption(sections, report.notes)
@@ -1558,8 +1558,9 @@ def _header(project, registry, title, header_widgets, tokens, width):
         right -= tokens.gap
     title_w = max(80, right - x - tokens.gap)
     if title:
+        accent = (project.brand or {}).get("accent")
         heading = _text(project, "screenTitle", (x, y, title_w, tokens.header), title,
-                        tokens.title_font, _theme(project, "foreground"), bold=True)
+                        tokens.title_font, accent or _theme(project, "foreground"), bold=True)
         heading.properties[SECTION_MARK] = "|title"
         chrome.append(heading)
     chrome += placed_left + placed_right
