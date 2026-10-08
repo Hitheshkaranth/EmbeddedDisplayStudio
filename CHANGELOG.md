@@ -2,6 +2,70 @@
 
 ## Unreleased
 
+**hmi-hwd in C** (`native/hmi-hwd`, CONTRACT §14)
+
+* The panel's hardware daemon is now a C program with no Python underneath.
+  It speaks the same §2 wire protocol (set, pulse, uart_tx, subscribe,
+  list, ping, history), so the panel runtime, the Studio and tagsim do not
+  change. `hmi-hwd-launch` starts `/usr/bin/hmi-hwd-native` when it is
+  there. `HMI_HWD_PYTHON_ONLY=1` falls back to `hmi_hwd.py`, and
+  `HMI_HWD_ARGS` now reaches both.
+* Sources, one backend per `hwd.json` section:
+  * GPIO (character device v2, then v1), ADC (IIO), UART and raw serial
+    ports (a lost port is reopened within a second of replugging);
+  * Modbus TCP and RTU, where `enum` gives a register named states and
+    `--modbus-live` polls a real PLC under `--sim`;
+  * CAN over SocketCAN with DBC-style signals, periodic transmit and
+    `can_tx`; a virtual CAN interface is real even under `--sim`;
+  * USB HID (keyboards, scanners) and USB device hot-plug with
+    `usb_export`;
+  * I2C/SPI sensors with built-in decoders;
+  * the SQLite historian.
+* Panels answer `{"cmd":"discover"}` on UDP 47800 with a hello, and
+  `--selftest` prints one frame without taking the command port, so it
+  runs beside a live daemon.
+* `daemon/plc_sim.py` is a stdlib Modbus TCP slave that serves a
+  `hwd.json`'s registers for bench tests. A CI job builds the daemon, runs
+  its ctest suite and exercises CAN on vcan.
+* `deploy/provision_panel.py` ships the aarch64 build. `--timesync` sets
+  up the panel's clock.
+
+**Connections, the Code agent and Modbus**
+
+* **Manage connections**: one list of model endpoints (vLLM, OpenAI,
+  Ollama, Anthropic, Google, any OpenAI-compatible) shared by AI Design's
+  provider picker and the Code agent. A connection can be tested,
+  fetches its models, and is marked "Use for Design" or "Use for Agent".
+  The agent's pick is written into opencode's config.
+* The Code agent shows how long a reply has run ("done in 5m 14s"), and
+  reads under `daemon/` without asking.
+* **Generate Modbus map** (Backend tab, or `designer/ide/modbus_map.py
+  --write` from a project folder) gives every bound value a register:
+  * numbers become float32;
+  * names become enum registers over the line's stations, in route order;
+  * flags become discrete inputs, and written values become coils or
+    holding registers.
+
+  It rebinds the design to the `mb.` tags and writes `hwd.json`. **Test
+  against PLC** runs the daemon over that map against `plc_sim.py`. The
+  Python daemon learned `enum` and `--modbus-live` too.
+
+**Designer, simulation and the device**
+
+* An image dropped from Explorer lands on the canvas. A project carries a
+  brand (logo, accent), which the cab layout and the plan prompt use.
+* A binding can name what tagsim plays on it (`sim`). tagsim reloads when
+  the project file changes, and Tag Lab can simulate the open design.
+* The panel mirror runs at a chosen rate.
+* **Find panels** lists every panel on the network; the device chip
+  turns red when the link drops and recovers by itself; **Sync clock**
+  sets the panel's clock and RTC from the PC.
+* AI Design:
+  * Plan requests carry a JSON schema.
+  * A reply that loses most of the design is retried once, with a note.
+  * Planned readings show one coherent moment of the bench journey.
+  * Deploy readiness warns about readings left with no tag.
+
 **AI Design builds cab displays**
 
 * A brief about a train (metro, rail, tram, cab...) gets a cab-display guide
