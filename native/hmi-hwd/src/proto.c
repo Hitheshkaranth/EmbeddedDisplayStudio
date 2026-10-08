@@ -1,7 +1,11 @@
 /*
  * proto.c -- CONTRACT 2 parsing, acks and frames (proto.h).
- * OWNER: A1. STUB written with the skeleton: every function compiles
- * and fails safe; the owner replaces the bodies (not the signatures).
+ * OWNER: A1. The parse rules follow daemon/hmi_hwd.py CommandProtocol:
+ * size check, strict UTF-8, strict JSON (no trailing data, no raw control
+ * characters in strings, no NaN/Infinity), object check, then the command.
+ * Where a command carries both a tag and a bad value, kind and tag are filled
+ * before the value is checked, so the daemon can answer unknown_tag /
+ * not_writable first as the Python does.
  */
 #include "proto.h"
 #include "hwd.h"
@@ -12,50 +16,220 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Best-effort id recovery from malformed JSON (CONTRACT 2.3): scan for the
- * first "id":"..." (up to 64 chars) the way the Python regex does. */
+/* Python's SUBSCRIBE_TTL_MAX_S. */
+#define SUBSCRIBE_TTL_MAX_S 60.0
+/* Python's _extract_id_best_effort looks at the first 512 bytes only. */
+#define OVERSIZE_ID_SCAN 512
+
+static bool is_ws(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; }
+
+/* Length of a UTF-8 sequence starting at p (bytes), 0 when invalid. */
+static size_t utf8_seq(const unsigned char *p, size_t left)
+{
+    unsigned char c = p[0];
+    if (c < 0x80) return 1;
+    size_t n;
+    unsigned int cp;
+    if (c >= 0xC2 && c <= 0xDF) { n = 2; cp = c & 0x1F; }
+    else if (c >= 0xE0 && c <= 0xEF) { n = 3; cp = c & 0x0F; }
+    else if (c >= 0xF0 && c <= 0xF4) { n = 4; cp = c & 0x07; }
+    else return 0;
+    if (left < n) return 0;
+    for (size_t i = 1; i < n; i++) {
+        if ((p[i] & 0xC0) != 0x80) return 0;
+        cp = (cp << 6) | (p[i] & 0x3F);
+    }
+    if (n == 3 && (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF))) return 0;
+    if (n == 4 && (cp < 0x10000 || cp > 0x10FFFF)) return 0;
+    return n;
+}
+
+/* Strict UTF-8 (Python's bytes.decode("utf-8")). */
+static bool utf8_valid(const char *data, size_t len)
+{
+    const unsigned char *p = (const unsigned char *)data;
+    size_t i = 0;
+    while (i < len) {
+        size_t n = utf8_seq(p + i, len - i);
+        if (!n) return false;
+        i += n;
+    }
+    return true;
+}
+
+/* Code points in a valid UTF-8 string. */
+static size_t utf8_chars(const char *s)
+{
+    size_t n = 0;
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++)
+        if ((*p & 0xC0) != 0x80) n++;
+    return n;
+}
+
+/* Python's json.loads(strict=True) refuses raw control characters inside
+ * strings; cJSON accepts them. Also refuses a NUL anywhere. */
+static bool json_lexically_ok(const char *data, size_t len)
+{
+    bool in_str = false, esc = false;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)data[i];
+        if (c == 0) return false;
+        if (!in_str) {
+            if (c == '"') in_str = true;
+            continue;
+        }
+        if (esc) { esc = false; continue; }
+        if (c == '\\') esc = true;
+        else if (c == '"') in_str = false;
+        else if (c < 0x20) return false;
+    }
+    return true;
+}
+
+/* Best-effort id recovery from malformed JSON (CONTRACT 2.3), the Python
+ * regex  "id"\s*:\s*"([^"]{1,64})"  -- first match anywhere in the text. */
 static void recover_id(hwd_cmd *cmd, const char *data, size_t len)
 {
-    /* Work on a NUL-terminated buffer; len is bounded by HWD_MAX_DGRAM. */
-    char buf[HWD_MAX_DGRAM + 1];
-    size_t n = len < sizeof buf - 1 ? len : sizeof buf - 1;
-    memcpy(buf, data, n);
-    buf[n] = '\0';
-
-    const char *p = buf;
-    while (*p) {
-        if ((unsigned char)p[0] == '"' && p[1] == 'i' && p[2] == 'd' && p[3] == '"') {
-            const char *q = p + 4;
-            while (*q && *q != ':') q++;
-            if (*q == ':') {
-                q++;
-                while (*q && (*q == ' ' || *q == '\t')) q++;
-                if (*q == '"') {
-                    q++;
-                    char out[HWD_MAX_ID + 1];
-                    size_t i = 0;
-                    while (*q && *q != '"' && i < HWD_MAX_ID) out[i++] = *q++;
-                    out[i] = '\0';
-                    if (i) {
-                        strncpy(cmd->id, out, HWD_MAX_ID);
-                        cmd->id[HWD_MAX_ID] = '\0';
-                        cmd->has_id = true;
-                    }
-                    return;
-                }
-            }
+    for (size_t i = 0; i + 4 <= len; i++) {
+        if (memcmp(data + i, "\"id\"", 4) != 0) continue;
+        size_t j = i + 4;
+        while (j < len && is_ws(data[j])) j++;
+        if (j >= len || data[j] != ':') continue;
+        j++;
+        while (j < len && is_ws(data[j])) j++;
+        if (j >= len || data[j] != '"') continue;
+        j++;
+        size_t start = j, chars = 0;
+        bool ok = false;
+        while (j < len && chars <= HWD_MAX_ID) {
+            if (data[j] == '"') { ok = chars >= 1; break; }
+            /* count code points (Python counts characters, not bytes) */
+            if (((unsigned char)data[j] & 0xC0) != 0x80) chars++;
+            j++;
         }
-        p++;
+        if (!ok || chars > HWD_MAX_ID) continue;
+        size_t n = j - start;
+        if (n > HWD_MAX_ID) continue;           /* multibyte id too long for the buffer */
+        if (memchr(data + start, '\0', n)) continue;
+        memcpy(cmd->id, data + start, n);
+        cmd->id[n] = '\0';
+        cmd->has_id = true;
+        return;
     }
 }
 
-static void parse_id(cJSON *root, hwd_cmd *cmd)
+/* id: a non-empty string of at most 64 characters, else none. */
+static void parse_id(const cJSON *root, hwd_cmd *cmd)
 {
-    cJSON *jid = cJSON_GetObjectItemCaseSensitive(root, "id");
-    if (cJSON_IsString(jid) && jid->valuestring && jid->valuestring[0]) {
-        strncpy(cmd->id, jid->valuestring, HWD_MAX_ID);
-        cmd->id[HWD_MAX_ID] = '\0';
-        cmd->has_id = true;
+    const cJSON *jid = cJSON_GetObjectItemCaseSensitive(root, "id");
+    if (!cJSON_IsString(jid) || !jid->valuestring || !jid->valuestring[0]) return;
+    size_t bytes = strlen(jid->valuestring);
+    if (utf8_chars(jid->valuestring) > HWD_MAX_ID || bytes > HWD_MAX_ID) return;
+    memcpy(cmd->id, jid->valuestring, bytes + 1);
+    cmd->has_id = true;
+}
+
+/* A finite JSON number that is not a bool (cJSON keeps bools apart). */
+static bool get_number(const cJSON *root, const char *key, double *out)
+{
+    const cJSON *j = cJSON_GetObjectItemCaseSensitive(root, key);
+    if (!cJSON_IsNumber(j) || !isfinite(j->valuedouble)) return false;
+    *out = j->valuedouble;
+    return true;
+}
+
+/* tag: copied only when it is a string that fits; otherwise left "" (which
+ * no registered tag matches -- never a truncated name that might). */
+static void parse_tag(const cJSON *root, hwd_cmd *cmd)
+{
+    const cJSON *jt = cJSON_GetObjectItemCaseSensitive(root, "tag");
+    if (!cJSON_IsString(jt) || !jt->valuestring) return;
+    size_t n = strlen(jt->valuestring);
+    if (n > HWD_MAX_TAG) return;
+    memcpy(cmd->tag, jt->valuestring, n + 1);
+}
+
+static const struct { const char *name; hwd_cmd_kind kind; } CMDS[] = {
+    {"set", HWD_CMD_SET}, {"pulse", HWD_CMD_PULSE}, {"uart_tx", HWD_CMD_UART_TX},
+    {"subscribe", HWD_CMD_SUBSCRIBE}, {"unsubscribe", HWD_CMD_UNSUBSCRIBE},
+    {"list", HWD_CMD_LIST}, {"ping", HWD_CMD_PING}, {"history", HWD_CMD_HISTORY},
+    {"discover", HWD_CMD_DISCOVER},
+};
+
+static hwd_err parse_body(const cJSON *root, hwd_cmd *cmd)
+{
+    switch (cmd->kind) {
+    case HWD_CMD_SET: {
+        parse_tag(root, cmd);
+        const cJSON *jv = cJSON_GetObjectItemCaseSensitive(root, "value");
+        if (cJSON_IsBool(jv)) {
+            cmd->value = hwd_bool(cJSON_IsTrue(jv));
+        } else if (cJSON_IsNumber(jv)) {
+            double d = jv->valuedouble;
+            if (!isfinite(d)) return HWD_ERR_BAD_VALUE;
+            if (d == floor(d) && fabs(d) < 9.007199254740992e15)
+                cmd->value = hwd_int((int64_t)d);
+            else
+                cmd->value = hwd_float(d);
+        } else if (cJSON_IsString(jv) && jv->valuestring) {
+            cmd->value = hwd_str(jv->valuestring);
+        } else {
+            return HWD_ERR_BAD_VALUE;
+        }
+        return HWD_OK;
+    }
+    case HWD_CMD_PULSE: {
+        parse_tag(root, cmd);
+        double ms;
+        if (!get_number(root, "ms", &ms) || ms < HWD_PULSE_MIN_MS || ms > HWD_PULSE_MAX_MS)
+            return HWD_ERR_BAD_VALUE;
+        cmd->ms = (int)ms;
+        if (cmd->ms < HWD_PULSE_MIN_MS) cmd->ms = HWD_PULSE_MIN_MS;
+        return HWD_OK;
+    }
+    case HWD_CMD_UART_TX: {
+        const cJSON *jd = cJSON_GetObjectItemCaseSensitive(root, "data");
+        if (!cJSON_IsString(jd) || !jd->valuestring) return HWD_ERR_BAD_VALUE;
+        cmd->data = strdup(jd->valuestring);
+        return cmd->data ? HWD_OK : HWD_ERR_HW_ERROR;
+    }
+    case HWD_CMD_SUBSCRIBE: {
+        double ttl;
+        if (get_number(root, "ttl", &ttl) && ttl > 0.0)
+            cmd->ttl = ttl < SUBSCRIBE_TTL_MAX_S ? ttl : SUBSCRIBE_TTL_MAX_S;
+        return HWD_OK;
+    }
+    case HWD_CMD_HISTORY: {
+        parse_tag(root, cmd);
+        cmd->seconds = 3600;
+        cmd->points = 200;
+        const cJSON *js = cJSON_GetObjectItemCaseSensitive(root, "seconds");
+        const cJSON *jp = cJSON_GetObjectItemCaseSensitive(root, "points");
+        hwd_err err = HWD_OK;
+        if (js) {
+            if (!cJSON_IsNumber(js) || !isfinite(js->valuedouble) ||
+                js->valuedouble < 1 || js->valuedouble > 604800)
+                err = HWD_ERR_BAD_VALUE;
+            else
+                cmd->seconds = js->valuedouble;
+        }
+        if (jp) {
+            if (!cJSON_IsNumber(jp) || !isfinite(jp->valuedouble) ||
+                jp->valuedouble < 1 || jp->valuedouble > 200)
+                err = HWD_ERR_BAD_VALUE;
+            else
+                cmd->points = jp->valuedouble;
+        }
+        return err;
+    }
+    case HWD_CMD_UNSUBSCRIBE:
+    case HWD_CMD_LIST:
+    case HWD_CMD_PING:
+    case HWD_CMD_DISCOVER:
+        return HWD_OK;
+    case HWD_CMD_NONE:
+    default:
+        return HWD_ERR_UNKNOWN_CMD;
     }
 }
 
@@ -63,155 +237,53 @@ hwd_err hwd_proto_parse(const char *data, size_t len, hwd_cmd *cmd)
 {
     if (!cmd) return HWD_ERR_BAD_JSON;
     memset(cmd, 0, sizeof *cmd);
+    cmd->value = hwd_null();
+    if (!data) return HWD_ERR_BAD_JSON;
 
-    /* oversized datagrams: counted + dropped; recover the id best-effort. */
+    /* Oversized: dropped and counted; id best-effort from the head. */
     if (len > HWD_MAX_DGRAM) {
-        recover_id(cmd, data, len);
+        recover_id(cmd, data, len < OVERSIZE_ID_SCAN ? len : OVERSIZE_ID_SCAN);
         return HWD_ERR_TOO_LARGE;
     }
+    /* Non-UTF-8: dropped silently (no id recovery, as the Python). */
+    if (!utf8_valid(data, len)) return HWD_ERR_BAD_JSON;
 
-    if (len == 0) return HWD_ERR_BAD_JSON;
-
-    cJSON *root = cJSON_ParseWithLength(data, len);
+    cJSON *root = NULL;
+    if (len > 0 && json_lexically_ok(data, len)) {
+        char *buf = malloc(len + 1);
+        if (!buf) return HWD_ERR_BAD_JSON;
+        memcpy(buf, data, len);
+        buf[len] = '\0';
+        root = cJSON_ParseWithOpts(buf, NULL, true);   /* nothing may follow */
+        free(buf);
+    }
     if (!root) {
         recover_id(cmd, data, len);
         return HWD_ERR_BAD_JSON;
     }
-
-    hwd_err err = HWD_ERR_BAD_JSON;
-    cJSON *jcmd = cJSON_GetObjectItemCaseSensitive(root, "cmd");
-
-    if (!cJSON_IsString(jcmd) || !jcmd->valuestring || !*jcmd->valuestring) {
-        /* No usable cmd: not_an_object is impossible (we parsed an object),
-         * so a missing/non-string cmd is unknown_cmd. */
-        err = HWD_ERR_UNKNOWN_CMD;
-    } else {
-        const char *kind = jcmd->valuestring;
-        if      (strcmp(kind, "set") == 0)     cmd->kind = HWD_CMD_SET;
-        else if (strcmp(kind, "pulse") == 0)   cmd->kind = HWD_CMD_PULSE;
-        else if (strcmp(kind, "uart_tx") == 0) cmd->kind = HWD_CMD_UART_TX;
-        else if (strcmp(kind, "subscribe") == 0) cmd->kind = HWD_CMD_SUBSCRIBE;
-        else if (strcmp(kind, "unsubscribe") == 0) cmd->kind = HWD_CMD_UNSUBSCRIBE;
-        else if (strcmp(kind, "list") == 0)    cmd->kind = HWD_CMD_LIST;
-        else if (strcmp(kind, "ping") == 0)    cmd->kind = HWD_CMD_PING;
-        else if (strcmp(kind, "history") == 0) cmd->kind = HWD_CMD_HISTORY;
-        else if (strcmp(kind, "discover") == 0) cmd->kind = HWD_CMD_DISCOVER;
-        else                                   err = HWD_ERR_UNKNOWN_CMD;
-    }
-
-    if (err != HWD_OK) {
-        if (!cmd->has_id) parse_id(root, cmd);
+    if (!cJSON_IsObject(root)) {
         cJSON_Delete(root);
-        return err;
+        recover_id(cmd, data, len);
+        return HWD_ERR_NOT_AN_OBJECT;
     }
 
-    /* The frame is a JSON object here (it parsed); a non-object input can only
-     * reach us via the oversized path, which already returned not_an_object. */
-    (void)root;
-
-    /* Optional opaque id (string, <= 64 chars). */
     parse_id(root, cmd);
 
-    switch (cmd->kind) {
-    case HWD_CMD_SET: {
-        cJSON *jt = cJSON_GetObjectItemCaseSensitive(root, "tag");
-        if (!cJSON_IsString(jt) || !jt->valuestring) {
-            cJSON_Delete(root);
-            return HWD_ERR_BAD_VALUE;
-        }
-        strncpy(cmd->tag, jt->valuestring, HWD_MAX_TAG);
-        cmd->tag[HWD_MAX_TAG] = '\0';
-        cJSON *jv = cJSON_GetObjectItemCaseSensitive(root, "value");
-        if (cJSON_IsBool(jv)) {
-            cmd->value = hwd_bool(cJSON_IsTrue(jv));
-        } else if (cJSON_IsNumber(jv)) {
-            double d = jv->valuedouble;
-            if (!isfinite(d)) {
-                cJSON_Delete(root);
-                return HWD_ERR_BAD_VALUE;
-            }
-            int64_t as_int = (int64_t)d;
-            if ((double)as_int == d && fabs(d) < 9.007199254740992e15)
-                cmd->value = hwd_int(as_int);
-            else
-                cmd->value = hwd_float(d);
-        } else if (cJSON_IsString(jv)) {
-            cmd->value = hwd_str(jv->valuestring);
-        } else {
-            cJSON_Delete(root);
-            return HWD_ERR_BAD_VALUE;
-        }
-        cJSON_Delete(root);
-        return HWD_OK;
-    }
-    case HWD_CMD_PULSE: {
-        cJSON *jt = cJSON_GetObjectItemCaseSensitive(root, "tag");
-        if (!cJSON_IsString(jt) || !jt->valuestring) {
-            cJSON_Delete(root);
-            return HWD_ERR_BAD_VALUE;
-        }
-        strncpy(cmd->tag, jt->valuestring, HWD_MAX_TAG);
-        cmd->tag[HWD_MAX_TAG] = '\0';
-        cJSON *jms = cJSON_GetObjectItemCaseSensitive(root, "ms");
-        if (!cJSON_IsNumber(jms) || cJSON_IsBool(jms) || !isfinite(jms->valuedouble)) {
-            cJSON_Delete(root);
-            return HWD_ERR_BAD_VALUE;
-        }
-        double ms = jms->valuedouble;
-        if (ms < HWD_PULSE_MIN_MS || ms > HWD_PULSE_MAX_MS) {
-            cJSON_Delete(root);
-            return HWD_ERR_BAD_VALUE;
-        }
-        cmd->ms = (int)ms;
-        cJSON_Delete(root);
-        return HWD_OK;
-    }
-    case HWD_CMD_UART_TX: {
-        cJSON *jd = cJSON_GetObjectItemCaseSensitive(root, "data");
-        if (!cJSON_IsString(jd) || !jd->valuestring) {
-            cJSON_Delete(root);
-            return HWD_ERR_BAD_VALUE;
-        }
-        cmd->data = strdup(jd->valuestring);
-        cJSON_Delete(root);
-        return HWD_OK;
-    }
-    case HWD_CMD_SUBSCRIBE: {
-        cJSON *jtl = cJSON_GetObjectItemCaseSensitive(root, "ttl");
-        if (cJSON_IsNumber(jtl) && !cJSON_IsBool(jtl) && isfinite(jtl->valuedouble) && jtl->valuedouble > 0.0) {
-            cmd->ttl = jtl->valuedouble;
-        }
-        cJSON_Delete(root);
-        return HWD_OK;
-    }
-    case HWD_CMD_UNSUBSCRIBE:
-    case HWD_CMD_LIST:
-    case HWD_CMD_PING:
-        cJSON_Delete(root);
-        return HWD_OK;
-    case HWD_CMD_HISTORY: {
-        cJSON *jt = cJSON_GetObjectItemCaseSensitive(root, "tag");
-        if (cJSON_IsString(jt) && jt->valuestring) {
-            strncpy(cmd->tag, jt->valuestring, HWD_MAX_TAG);
-            cmd->tag[HWD_MAX_TAG] = '\0';
-        }
-        cJSON *js = cJSON_GetObjectItemCaseSensitive(root, "seconds");
-        if (cJSON_IsNumber(js) && !cJSON_IsBool(js) && isfinite(js->valuedouble))
-            cmd->seconds = js->valuedouble;
-        cJSON *jp = cJSON_GetObjectItemCaseSensitive(root, "points");
-        if (cJSON_IsNumber(jp) && !cJSON_IsBool(jp) && isfinite(jp->valuedouble))
-            cmd->points = jp->valuedouble;
-        cJSON_Delete(root);
-        return HWD_OK;
-    }
-    case HWD_CMD_DISCOVER:
-        cJSON_Delete(root);
-        return HWD_OK;
-    case HWD_CMD_NONE:
-    default:
+    const cJSON *jcmd = cJSON_GetObjectItemCaseSensitive(root, "cmd");
+    if (!cJSON_IsString(jcmd) || !jcmd->valuestring) {
         cJSON_Delete(root);
         return HWD_ERR_UNKNOWN_CMD;
     }
+    for (size_t i = 0; i < sizeof CMDS / sizeof CMDS[0]; i++)
+        if (strcmp(jcmd->valuestring, CMDS[i].name) == 0) cmd->kind = CMDS[i].kind;
+    if (cmd->kind == HWD_CMD_NONE) {
+        cJSON_Delete(root);
+        return HWD_ERR_UNKNOWN_CMD;
+    }
+
+    hwd_err err = parse_body(root, cmd);
+    cJSON_Delete(root);
+    return err;
 }
 
 void hwd_cmd_free(hwd_cmd *cmd)
@@ -240,6 +312,11 @@ char *hwd_proto_ack(const char *id, hwd_err err)
     return out;
 }
 
+static int cmp_names(const void *a, const void *b)
+{
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
 char *hwd_proto_list_ack(const char *id, hwd_tagstore *store)
 {
     cJSON *root = cJSON_CreateObject();
@@ -251,14 +328,7 @@ char *hwd_proto_list_ack(const char *id, hwd_tagstore *store)
 
     const char *names[HWD_MAX_TAGS];
     size_t n = hwd_tagstore_names(store, names, HWD_MAX_TAGS);
-    /* sort names ascending (list ack sorts on its own). */
-    for (size_t i = 0; i < n; i++)
-        for (size_t j = i + 1; j < n; j++)
-            if (strcmp(names[i], names[j]) > 0) {
-                const char *tmp = names[i];
-                names[i] = names[j];
-                names[j] = tmp;
-            }
+    qsort(names, n, sizeof names[0], cmp_names);   /* the list ack is sorted */
     cJSON *arr = cJSON_CreateArray();
     for (size_t i = 0; i < n; i++)
         cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
