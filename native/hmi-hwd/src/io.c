@@ -230,10 +230,8 @@ static void *v_create(const hwd_config *cfg, hwd_tagstore *store, const hwd_back
         if (!*t->chip) snprintf(t->chip, sizeof t->chip, "/dev/gpiochip0");
         json_str(gpio, "consumer", t->consumer, sizeof t->consumer);
 
-        if (!t->opts.sim) {
-            register_outputs(t, store, json_find(gpio, "outputs"), false);
-            register_inputs(t, store, json_find(gpio, "inputs"));
-        }
+        register_outputs(t, store, json_find(gpio, "outputs"), t->opts.sim);
+        register_inputs(t, store, json_find(gpio, "inputs"));
     }
 
     /* ADC section (optional). */
