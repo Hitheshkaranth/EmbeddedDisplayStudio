@@ -31,16 +31,6 @@ A desktop studio for embedded Linux HMI panels. Write a brief and a model builds
 
 <br />
 
-<div align="center">
-
-<a href="https://youtu.be/h-ITQebSflg"><img src="docs/assets/video-tour.jpg" alt="Watch the two-minute tour of EmbeddedDisplay Studio on YouTube: the Cockpit Demo board flying live on a panel" width="720" /></a>
-
-<sub>▶ <strong><a href="https://youtu.be/h-ITQebSflg">Watch the two-minute tour</a></strong> — describe it, draw it, test it and ship it to the glass.</sub>
-
-</div>
-
-<br />
-
 ## From a sentence to a running cab display
 
 One brief, end to end, on a real panel: a **Namma Metro Purple Line** driver cab display for train P-412, westbound from Hosahalli through Vijayanagar to Mysuru Road. Ornith 1.5 on our own GPU server plans it, the Studio lays it out, a person finishes it in the Designer, the Ornith agent in the IDE wires it to a Modbus PLC, and it is deployed to a Toradex Verdin panel.
