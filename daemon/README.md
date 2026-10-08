@@ -4,6 +4,22 @@ Layer 1 of the BYOA HMI system for Toradex Verdin i.MX8M Plus.
 
 The Hardware Abstraction Daemon (`hmi_hwd.py`) is the **sole process permitted to interact with physical hardware interfaces** (GPIO, IIO ADC, and UART). It runs as a systemd service (`hmi-hwd.service`) on the target root filesystem, isolates all driver and kernel interaction from user interface code, and exposes a decoupled UDP/JSON wire interface over local loopback (`127.0.0.1`).
 
+> **The panel runs the C build.** `native/hmi-hwd` is the same daemon in C:
+> same `hwd.json`, same wire protocol, same flags (`--config`, `--sim`,
+> `--strict`, `--selftest`, `--modbus-live`, `--log-level`). It adds the
+> sections in [CONTRACT §14](../docs/CONTRACT.md): raw `serial` ports,
+> `modbus_rtu`, `can` (SocketCAN), `hid`, `usb` and `i2c`/`spi` sensors.
+> It also adds panel discovery on UDP 47800. `hmi-hwd-launch` starts
+> `/usr/bin/hmi-hwd-native` when it is present; set
+> `HMI_HWD_PYTHON_ONLY=1` in `/etc/default/hmi-hwd` to run this Python
+> reference instead. `hmi_hwd.py` stays the reference for the sections
+> both builds share and for off-target runs.
+>
+> To build and test on x86, run `native/hmi-hwd/build.sh --test` (it needs
+> cmake, ninja and libsqlite3-dev). The aarch64 build is
+> `native/hmi-hwd/arm64/build.sh`, and `deploy/provision_panel.py` ships
+> its output.
+
 ---
 
 ## 1. Architecture and Wire Interface

@@ -89,7 +89,7 @@ a coding agent that wires your PLC, and one-click deploys to a 1.4 MB C + LVGL r
 
 | | Layer | Owns |
 |:-:|---|---|
-| **1** | `hmi-hwd` — hardware daemon | GPIO, ADC, UART, Modbus, safe states |
+| **1** | `hmi-hwd` — hardware daemon (C) | GPIO, ADC, serial, Modbus TCP/RTU, CAN, USB/HID, I2C/SPI sensors, history, safe states |
 | **2** | `hmi-ui` — panel runtime (C + LVGL, DRM/KMS) | the design file, bindings, alarms, pixels |
 | **3** | deployment | atomic install, health check, rollback |
 
@@ -148,9 +148,9 @@ Then: **Design → AI Design**, describe the screen → **Simulate** → connect
 
 <table>
 <tr>
-<td width="33%" valign="top"><strong>AI Design builds cab displays</strong><br /><sub>A train brief becomes a driver's cab screen — line, speed, route, next station, consist and systems — with every live value bound.</sub></td>
-<td width="33%" valign="top"><strong>Rail and custom widgets</strong><br /><sub>Speed arc, traction bar, station line, train consist and status card, in QML and C; save any group as your own widget.</sub></td>
-<td width="33%" valign="top"><strong>A train on the bench</strong><br /><sub><code>tagsim</code> runs a cab display as one journey; the agent learns the Modbus layer; the mirror rides out a deploy.</sub></td>
+<td width="33%" valign="top"><strong>A hardware daemon in C</strong><br /><sub><code>hmi-hwd</code> drops Python: GPIO, ADC, serial, Modbus TCP/RTU, CAN, USB and HID devices, I2C/SPI sensors and the historian, same wire protocol.</sub></td>
+<td width="33%" valign="top"><strong>Connections and a Modbus map</strong><br /><sub>One list of model endpoints for AI Design and the agent; a design's tags become PLC registers in one click, tested against a simulated PLC.</sub></td>
+<td width="33%" valign="top"><strong>Find, watch, simulate</strong><br /><sub>Find panels on the network, a link that recovers by itself, clock sync, drop-in images and brand, and Tag Lab simulating the open design.</sub></td>
 </tr>
 </table>
 
