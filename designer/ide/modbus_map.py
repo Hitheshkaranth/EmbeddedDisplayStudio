@@ -248,7 +248,8 @@ def write_hwd(bundle_dir, mapping, template="daemon/hwd.json"):
         }
         with open(dest, "w", encoding="utf-8") as fh:
             json.dump(dest_data, fh, indent=2)
-    data = json.load(open(dest, encoding="utf-8"))
+    with open(dest, encoding="utf-8") as fh:
+        data = json.load(fh)
     data["modbus"] = mapping["modbus"]
     with open(dest, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2, ensure_ascii=False)
