@@ -757,12 +757,16 @@ def frame(signals: dict, t: float, seq: int, duration: float = 240.0,
 
 def serve(signals: dict, port: int, hz: float, host: str = "127.0.0.1",
           seconds: float = 0.0, duration: float = 240.0, alarms: list = None,
-          start: float = 0.0) -> int:
+          start: float = 0.0, watch=None) -> int:
     """Answer subscribers and fly the panel until stopped.
 
     The runtime subscribes with a ttl and re-subscribes every 2 s; a
     subscriber that stops asking stops being sent to, so a restarted
     hmi-ui never leaves this shouting at a closed socket.
+
+    When ``watch`` is given, it is checked every 2 s and, the first time it
+    reports a redeployed design, the plan it now holds is served in its place
+    -- no restart.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -775,6 +779,7 @@ def serve(signals: dict, port: int, hz: float, host: str = "127.0.0.1",
     started = time.monotonic()
     interval = 1.0 / hz
     seq, next_send = 0, started
+    check_at = now + 2.0
 
     try:
         while True:
@@ -783,6 +788,10 @@ def serve(signals: dict, port: int, hz: float, host: str = "127.0.0.1",
                 return 0
 
             while True:                       # drain whatever has arrived
+                if watch is not None and now >= check_at:
+                    check_at = now + 2.0
+                    if watch.changed():
+                        signals = watch.signals()
                 try:
                     data, addr = sock.recvfrom(8192)
                 except (BlockingIOError, OSError):
@@ -828,6 +837,48 @@ def serve(signals: dict, port: int, hz: float, host: str = "127.0.0.1",
         return 0
     finally:
         sock.close()
+
+
+class ProjectWatch:
+    """Read a deployed design's plan, and notice when it is redeployed.
+
+    A freshly deployed Studio design changes the file's mtime; without a
+    restart tagsim should fly the new one, so this watches that: ``signals()``
+    is the current plan, and ``changed()`` re-reads it (and returns True once)
+    the first time it is called after the file's mtime moves.
+    """
+
+    def __init__(self, path: str):
+        self._path = path
+        try:
+            self._mtime = os.path.getmtime(path)
+        except OSError:
+            self._mtime = 0.0
+        self._signals = self._read()
+
+    def _read(self):
+        try:
+            with open(self._path, encoding="utf-8") as handle:
+                return plan(json.load(handle))
+        except (OSError, ValueError):
+            return self._signals
+
+    def signals(self):
+        """The plan the design describes right now."""
+        return self._signals
+
+    def changed(self) -> bool:
+        """True once, when the file's mtime has moved since last checked."""
+        try:
+            mtime = os.path.getmtime(self._path)
+        except OSError:
+            return False
+        if mtime != self._mtime:
+            self._mtime = mtime
+            self._signals = self._read()
+            logger.info("design changed: %d tags", len(self._signals))
+            return True
+        return False
 
 
 def main(argv=None) -> int:
@@ -893,7 +944,8 @@ def main(argv=None) -> int:
         return 0
 
     return serve(signals, args.port, args.hz, args.host, args.seconds,
-                 args.duration, load_alarms(args.project), args.start)
+                 args.duration, load_alarms(args.project), args.start,
+                 watch=ProjectWatch(args.project))
 
 
 if __name__ == "__main__":
