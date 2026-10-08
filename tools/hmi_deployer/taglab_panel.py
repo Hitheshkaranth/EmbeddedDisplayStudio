@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QCheckBox,
     QPushButton,
     QSizePolicy,
     QTableWidget,
@@ -501,18 +502,26 @@ class TagLabPanel(QWidget):
         toolbar.addWidget(page_title, 1)
         toolbar.addWidget(self._lbl_status, 1)
         layout.addLayout(toolbar)
-        # Five actions in one row put a ~730 px floor under the page; three
+# Five actions in one row put a ~730 px floor under the page; three
         # columns keep it under the bound and every label whole.
         actions = QGridLayout()
         actions.setHorizontalSpacing(6)
         actions.setVerticalSpacing(6)
         for position, button in enumerate((self._btn_send, self._btn_stop, self._btn_add,
-                                           self._btn_save, self._btn_load)):
+                                            self._btn_save, self._btn_load)):
             button.setFixedHeight(30)
             actions.addWidget(button, position // 3, position % 3)
         for column in range(3):
             actions.setColumnStretch(column, 1)
         layout.addLayout(actions)
+
+        # "Simulate the design" replaces the hand-made waveforms with what the
+        # bound tags actually read at each instant of the simulated flight.
+        self._chk_design = QCheckBox("Simulate the design")
+        self._chk_design.setToolTip("Drive Tag Lab from the design's plan, not the waveforms.")
+        self._chk_design.setAccessibleName("Simulate the design")
+        self._chk_design.setEnabled(False)
+        layout.addWidget(self._chk_design)
 
         # ── Tag table ─────────────────────────────────────────────────────
         self._table = QTableWidget(0, _NUM_COLS)

@@ -779,7 +779,7 @@ def serve(signals: dict, port: int, hz: float, host: str = "127.0.0.1",
     started = time.monotonic()
     interval = 1.0 / hz
     seq, next_send = 0, started
-    check_at = now + 2.0
+    check_at = started + 2.0
 
     try:
         while True:
