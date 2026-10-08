@@ -96,6 +96,13 @@ def _hardware_rule() -> str:
                  f"project. Check the copy with python \"{os.path.join(folder, 'hmi_hwd.py')}\" --config "
                  "hwd.json --sim --selftest (it prints one telemetry frame); on Windows never redirect to "
                  "/dev/null.")
+    generator = os.path.abspath(os.path.join(os.path.dirname(__file__), "modbus_map.py"))
+    if os.path.isfile(generator):
+        rule += (f" To wire a design to a Modbus PLC, first run python \"{generator}\" --project "
+                 "project.edsui --host <PLC address> --write: it gives every bound value a register of "
+                 "the right kind and type (station names as enum registers), rebinds the design and "
+                 "writes hwd.json. Then review that map against what the user asked and change only what "
+                 "needs changing.")
     return rule
 
 

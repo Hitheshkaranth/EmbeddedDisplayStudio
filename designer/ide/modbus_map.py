@@ -21,10 +21,16 @@ import json
 import os
 import re
 import shutil
+import sys
 
-from designer.ide.agent_context import RULES
+if __package__ in (None, ""):
+    # Run as a script from a project folder (the Code agent does): put the
+    # repository this file lives in on the path for the imports below.
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from designer.palette.widget_registry import default_registry
+from designer.ide.agent_context import RULES  # noqa: E402,F401
+
+from designer.palette.widget_registry import default_registry  # noqa: E402
 
 # The registry tells whether a property is a finite selector (doors "open"/
 # "closed", a status "ok"/"warn" ...): such a value is read as a discrete
@@ -46,8 +52,8 @@ _STATION_RE = re.compile(r"^\s*[A-Z]")
 # holding register; a value only read is a discrete or input register.
 #   written  -> coil (bool) / holding (number)
 #   lamps, toggles, consist doors, state/doors -> discrete
-#   station name -> input uint16 with the stations as its enum
-#   other numbers -> input float32
+#   station name -> input uint16 with the stations, in route order, as its enum
+#   other numbers -> input float32 (int16 for a whole-number index)
 #   other text   -> input uint16
 
 
@@ -86,10 +92,17 @@ def generate_map(project, host: str, port: int = 502, unit_id: int = 1):
     # Per-kind address counters, starting at 0, as CONTRACT 2.5 requires.
     used: dict[bool, set] = {True: set(), False: set()}
 
-    for _widget, prop, binding, tag in bounds:
+    # A tag bound by several widgets is one register: the first binding that
+    # says what the value is (a number, a name, a flag) decides it.
+    seen: dict[str, tuple] = {}
+    for widget, prop, binding, tag in bounds:
+        found = _classify(widget, prop, binding, tag, stations, project)
+        if tag not in seen or (seen[tag] == ("input", "uint16", None) and found != seen[tag]):
+            seen[tag] = found
+
+    for tag, (kind, type_name, enum) in seen.items():
         new_name = f"mb.{tag}"
         rebind[tag] = new_name
-        kind, type_name, enum = _classify(_widget, prop, binding, tag, stations, project)
         span2 = type_name in ("int32", "uint32", "float32")
         address, _ = _assign(used, kind, span2)  # 32-bit types take two
         tags[new_name] = {
@@ -121,24 +134,34 @@ def _classify(widget, prop, binding, tag, stations, project):
     bound to it) is written: a coil when the value is a bool, a holding
     register (number) otherwise. A read-only value is discrete (a lamp, a
     toggle, a consist door, a state/doors readout) or an input register: a
-    station's name is an input uint16 whose enum is the line's stations, a
-    number is an input float32, anything else is an input uint16.
+    station's name is an input uint16 whose enum is the line's stations (in
+    route order), a number is an input float32 (int16 for a whole-number
+    index; a text like "1.1 km" counts as a number), anything else is an
+    input uint16. A widget's value is its own, else the registry's default.
     """
     # A tag a control or an action writes: a write/pulse action on it, or the
     # control's own state bound (bindable prop). Written values are coil (bool)
     # or holding (number).
     if _is_written(tag, project):
-        return "coil" if _widget_bool(widget, prop) else "holding", "uint16", None
+        if _widget_bool(widget, prop):
+            return "coil", "bool", None
+        value = _widget_value(widget, prop)
+        return "holding", "float32" if isinstance(value, float) else "uint16", None
 
-    # Read-only: discrete for the on/off-ish readouts (doors, state), an
-    # input register for a number or a text. A finite selector (doors "open"/
-    # "closed", a status "ok"/"warn", a lit/toggle) is a discrete bit.
-    if _looks_like_station(tag, stations):
+    # Read-only: a station's name is an enum over the line's stations, a
+    # finite selector (doors "open"/"closed", a lit/toggle) is a discrete bit,
+    # a number is an input float32 (int16 for a whole-number index).
+    value = _widget_value(widget, prop)
+    if _looks_like_station(tag, prop, value, stations):
         return "input", "uint16", stations
     if _is_selector(widget, prop):
         return "discrete", "bool", None
-    if _widget_number(widget, prop):
+    if _is_number(value):
+        if isinstance(value, int) and not re.search(r"pct|percent|speed|temp|volt|current_a|power", tag, re.I):
+            return "input", "int16", None
         return "input", "float32", None
+    if isinstance(value, str) and re.match(r"^\s*-?\d+(\.\d+)?\s*[A-Za-z%/]*\s*$", value):
+        return "input", "float32", None                       # "1.1 km": a number with its unit
     return "input", "uint16", None
 
 
@@ -159,17 +182,35 @@ def _widget_bool(widget, prop):
     return isinstance(value, bool)
 
 
-def _widget_number(widget, prop):
-    """The widget's value for `prop` is a number (a speed, voltage, index)."""
+def _widget_value(widget, prop):
+    """The value `prop` shows: the widget's own, else the registry's default
+    (a bound property is often stored without one)."""
     value = (getattr(widget, "properties", {}) or {}).get(prop)
+    if value is None:
+        definition = _REGISTRY.get(getattr(widget, "type", ""))
+        value = (getattr(definition, "defaults", {}) or {}).get(prop) if definition else None
+    return value
+
+
+def _is_number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _looks_like_station(tag, stations):
-    """True when the tag is a station name (reads like a station line)."""
-    if not stations:
+def _widget_number(widget, prop):
+    """The widget's value for `prop` is a number (a speed, voltage, index)."""
+    return _is_number(_widget_value(widget, prop))
+
+
+def _looks_like_station(tag, prop, value, stations):
+    """True when the value is one station's name: a text readout whose tag
+    says station (next_station, current_station) or whose text is one of the
+    line's stations. An index (a number) or a list (the line's details) is
+    not a name."""
+    if not stations or not isinstance(value, str) or "," in value:
         return False
-    return bool(re.search(r"station", tag, re.I)) or bool(re.search(r"current", tag, re.I))
+    if value.strip() in stations:
+        return True
+    return bool(re.search(r"station", tag, re.I)) and not re.search(r"index|details|count|list", tag, re.I)
 
 
 def _is_written(tag, project):
@@ -185,16 +226,17 @@ def _is_written(tag, project):
 
 
 def _collect_stations(project):
-    """The union of every stations list on a station line, as a set."""
-    stations = set()
+    """Every station on the design's station lines, in the order the train
+    runs them (the first line's order, then any names only a later line has)."""
+    stations: list[str] = []
     for page in getattr(project, "pages", []) or []:
         for widget in page.walk():
             value = getattr(widget, "properties", {}).get("stations")
             if isinstance(value, str):
                 for part in value.split(","):
                     part = part.strip()
-                    if part:
-                        stations.add(part)
+                    if part and part not in stations:
+                        stations.append(part)
     return stations
 
 
@@ -334,8 +376,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate a Modbus map for a project.")
     parser.add_argument("--project", required=True, help="path to project.edsui")
     parser.add_argument("--host", required=True, help="PLC Modbus TCP host")
+    parser.add_argument("--port", type=int, default=502)
+    parser.add_argument("--unit-id", type=int, default=1)
+    parser.add_argument("--write", action="store_true",
+                        help="rebind the design to the mb.* tags, save it, and write hwd.json beside it")
     args = parser.parse_args()
     from designer.model.project import DesignerProject
     project = DesignerProject.load(args.project)
-    mapping = generate_map(project, host=args.host)
+    mapping = generate_map(project, host=args.host, port=args.port, unit_id=args.unit_id)
+    if args.write:
+        count = apply_map(project, mapping)
+        project.save(args.project)
+        path = write_hwd(os.path.dirname(os.path.abspath(args.project)), mapping)
+        print(f"rebound {count} bindings; wrote {path}")
     print(json.dumps(mapping, indent=2))
