@@ -23,12 +23,15 @@ from .arrange import ArrangeReport, arrange
 from .archetypes import Archetype, Slot, apply_archetype, archetype_for, archetypes, role_for
 from .constraints import WidgetRule, fit_size, rule_for
 from .critic import Critique, Issue, critique
+from .families import family_for, names, register, unregister
 from .grid import Grid, grid_for
 from .polish import PolishReport, polish
+from .samples import SAMPLE_T, coherent_samples
 from .style import apply_style
 
 __all__ = [
     "ArrangeReport", "arrange", "Archetype", "Slot", "apply_archetype", "archetype_for",
     "archetypes", "role_for", "WidgetRule", "fit_size", "rule_for", "Critique", "Issue",
-    "critique", "Grid", "grid_for", "PolishReport", "polish", "apply_style",
+    "critique", "family_for", "names", "register", "unregister", "Grid", "grid_for",
+    "PolishReport", "polish", "SAMPLE_T", "coherent_samples", "apply_style",
 ]

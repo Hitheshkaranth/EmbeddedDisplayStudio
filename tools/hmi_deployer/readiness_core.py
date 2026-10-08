@@ -9,7 +9,74 @@ class ReadinessItem:
     action: str
 
 
-def audit_readiness(bundle_valid, manifest, connected, detected_resolution):
+# A widget is a reading when its type shows a value the process reports: a
+# face (a dial, a gauge), a tile (a readout, a data field), a bar, or a chart.
+# A Text label is a caption, not a reading; a container and a button show
+# neither a value nor a tag, so neither is a reading.
+READING_KINDS = ("face", "tile", "bar", "chart")
+
+
+def _is_reading(widget) -> bool:
+    """True when the widget type is a reading: a face, tile, bar or chart.
+
+    A label (Text), a container, and a control are not readings.
+    """
+    kind = widget_kind(widget)
+    return kind in READING_KINDS
+
+
+def widget_kind(widget) -> str:
+    """One of face, tile, bar, chart, label, container, control."""
+    wtype = getattr(widget, "type", "")
+    if wtype == "Text":
+        return "label"
+    if wtype in ("ShRectangle", "ShContainer", "Frame", "ShPanel", "ShCard", "Rectangle",
+                 "Column", "Row", "ShStack", "ShStackedLayout", "ShBorder"):
+        return "container"
+    if wtype in ("ShButton", "ShToggle", "ShCheckbox", "ShSelect", "ShSlider",
+                 "ShInput", "ShNumInput", "ShTabs", "ShMenuItem", "ShMenuItemGroup"):
+        return "control"
+    if "arc" in wtype.lower() or "gauge" in wtype.lower() or "dial" in wtype.lower() \
+            or "tape" in wtype.lower() or "segment" in wtype.lower() \
+            or "progress" in wtype.lower() or "analog" in wtype.lower():
+        return "face"
+    if "bar" in wtype.lower() or "traction" in wtype.lower() or "enginebar" in wtype.lower():
+        return "bar"
+    if "chart" in wtype.lower():
+        return "chart"
+    if any(name in wtype for name in ("tile", "readout", "display", "indicator", "field",
+                                        "numdisplay", "alert", "icontile", "statuscard",
+                                        "consist", "stationline", "trainconsist", "speedarc",
+                                        "gear", "show", "tripinfo", "autopos", "autolevel")):
+        return "tile"
+    return "tile"
+
+
+def static_readings(project) -> list:
+    """Every reading that shows a value with no tag: a static on live glass.
+
+    A reading that has neither a binding nor an expression shows a value the
+    model wrote by hand; the panel overwrites it with a real reading, so a
+    reading the deployer has not bound to a tag is a reading that is not live
+    -- the readiness check warns that it has no tag. A bound reading, or one
+    whose value is an expression, is not counted.
+    """
+    if project is None:
+        return []
+    statics = []
+    for widget in project.all_widgets():
+        if not _is_reading(widget):
+            continue
+        if widget.bindings:
+            continue
+        props = widget.properties
+        if props.get("expr") or props.get("expression"):
+            continue
+        statics.append(widget.id)
+    return statics
+
+
+def audit_readiness(bundle_valid, manifest, connected, detected_resolution, project=None):
     """Audit readiness and return exactly four ReadinessItem rows.
 
     Parameters
@@ -100,7 +167,15 @@ def audit_readiness(bundle_valid, manifest, connected, detected_resolution):
     # --- Tags ---
     if manifest is not None:
         tags_required = manifest.get("tags_required")
-        if tags_required:
+        statics = static_readings(project) if project is not None else []
+        if statics:
+            tags_item = ReadinessItem(
+                name="Tags",
+                severity="warning",
+                detail="{} readings have no tag.".format(len(statics)),
+                action="Bind these readings to a tag so the panel shows the live value.",
+            )
+        elif tags_required:
             tags_item = ReadinessItem(
                 name="Tags",
                 severity="ready",

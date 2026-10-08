@@ -534,5 +534,27 @@ def compile_cab(project, page, registry, sections, title, header_widgets, report
     page.widgets[:] = lay.out
     report.layout = "cab display"
     report.sections = [("Drive", "hero", (12, 76, 336, 680)), ("Route", "readings", (360, 76, 320, 680)),
-                       ("Train", "status", (692, 76, 320, 680))]
+                        ("Train", "status", (692, 76, 320, 680))]
     return report
+
+
+#: The name this family is registered under in designer.layout.families.
+FAMILY_NAME = "cab display"
+
+
+def _applies(sections, header, width, height) -> bool:
+    """True when the page is a cab display: two or more Rail widgets.
+
+    A cab is recognised by its content, not its size, so the width and height
+    the family search gives are ignored here -- only the widget types matter.
+    """
+    return applies(sections, header)
+
+
+#: Register this family when the module is imported, so the compiler's search
+#: (family_for) lays a cab display out the standard way.
+try:
+    from . import families as _families
+    _families.register(FAMILY_NAME, _applies, compile_cab)
+except Exception:  # pragma: no cover - import guard for early callers
+    pass

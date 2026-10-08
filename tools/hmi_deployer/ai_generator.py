@@ -18,6 +18,78 @@ from designer.layout.intake import loads_lenient, normalise_properties
 
 logger = logging.getLogger(__name__)
 
+PLAN_SCHEMA = {
+    "type": "object",
+    "required": ["pages"],
+    "additionalProperties": True,
+    "properties": {
+        "pages": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["name", "widgets"],
+                "additionalProperties": True,
+                "properties": {
+                    "name": {"type": "string"},
+                    "widgets": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["type"],
+                            "additionalProperties": True,
+                            "properties": {
+                                "type": {"type": "string"},
+                                "id": {"type": "string"},
+                                "properties": {
+                                    "type": "object",
+                                    "additionalProperties": True,
+                                },
+                                "bindings": {
+                                    "type": "object",
+                                    "additionalProperties": True,
+                                },
+                                "geometry": {
+                                    "type": "object",
+                                    "additionalProperties": True,
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
+
+
+def plan_shortfall(project, previous=None):
+    """Why a reply is not enough to rebuild this design yet.
+
+    A reply is fine when it is a planned design whose widgets cover every bound
+    property, or when it is a prose reply we can still parse. It is *short* when
+    its widgets drop the tags a previous planned design named, or when its reply
+    holds no widgets at all for a planned design.
+    """
+    if project is not None:
+        widgets = list(project.walk())
+        if project.required_tags():
+            covered = {w.tag for w in widgets if w.tag is not None}
+            covered |= {w.tag for w in widgets for _, w in w.bindings().items()}
+            required = project.required_tags()
+            bound = {t for t, info in required.items() if info.kind in ("text", "number")}
+            dropped = bound - covered
+            if dropped and not widgets:
+                return "the reply held no widgets, but we need widgets to rebuild the screen"
+            if widgets and dropped:
+                previous_required = previous.required_tags() if previous is not None else None
+                if previous_required is not None:
+                    missing = {t for t, info in previous_required.items() if info.kind in ("text", "number")}
+                    if missing and len(missing) > 0.4 * len(required):
+                        return "the reply dropped {}/{} tags we had".format(len(missing), len(required))
+        return ""
+    return ""
+
+
 # Regex to extract QML code blocks from markdown or plain text.
 QML_BLOCK_RE = re.compile(r"```(?:qml|QML)?\s*\n(.*?)```", re.DOTALL)
 # Regex to extract JSON design payloads.
@@ -882,6 +954,16 @@ class AIDesignGenerator:
                 report = compile_page(project, page, self.registry)
                 self.last_compile.append(report)
                 self.last_fit_notes += [n for n in report.notes if "dropped" in n or "moved" in n]
+            # A planned design's readings come from the bench simulator at one
+            # instant, so every sample agrees with the others.
+            try:
+                from designer.layout.samples import coherent_samples
+                n = coherent_samples(project)
+                if n:
+                    self.last_fit_notes.append(
+                        f"coherent samples: {n} reading(s) put on the bench's moment")
+            except Exception:
+                pass
             self.last_fit_notes += ensure_unique_ids(project)
             if before is not None:
                 after = critique(project, project.pages[0], self.registry)
