@@ -3,7 +3,9 @@
  * tag values, the tag-name rule, clocks, logging and the simulation hooks.
  * Written with the skeleton; workers use it and do not change it.
  */
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include "hwd.h"
 #include "backend.h"
 
