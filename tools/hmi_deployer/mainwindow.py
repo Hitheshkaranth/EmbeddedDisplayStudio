@@ -415,6 +415,8 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         _on_link_watch_down/_on_link_watch_up). One QTimer, reused on every
         connect, drives check_now() at the watch's interval.
         """
+        if not hasattr(self, "link_watch") or not hasattr(self, "inp_host"):
+            return
         host = self.inp_host.text().strip()
         if not host:
             return
@@ -431,6 +433,8 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
     def _stop_link_watch(self):
         """Stop watching the link on disconnect; leave the timer so a later
         connect can reuse it."""
+        if not hasattr(self, "link_watch"):
+            return
         self.link_watch.stop()
         timer = getattr(self, "_link_watch_timer", None)
         if timer is not None:
