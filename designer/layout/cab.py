@@ -536,7 +536,7 @@ def compile_cab(project, page, registry, sections, title, header_widgets, report
     page.widgets[:] = lay.out
     report.layout = "cab display"
     report.sections = [("Drive", "hero", (12, 76, 336, 680)), ("Route", "readings", (360, 76, 320, 680)),
-                        ("Train", "status", (692, 76, 320, 680))]
+                       ("Train", "status", (692, 76, 320, 680))]
     return report
 
 
@@ -545,12 +545,13 @@ FAMILY_NAME = "cab display"
 
 
 def _applies(sections, header, width, height) -> bool:
-    """True when the page is a cab display: two or more Rail widgets.
+    """True when the page is a cab display on a landscape screen.
 
-    A cab is recognised by its content, not its size, so the width and height
-    the family search gives are ignored here -- only the widget types matter.
+    A cab is recognised by its Rail widgets (see `applies`); it is laid out
+    across a wide screen, so a portrait page falls through to the card search
+    as it always has.
     """
-    return applies(sections, header)
+    return width > height and applies(sections, header)
 
 
 #: Register this family when the module is imported, so the compiler's search

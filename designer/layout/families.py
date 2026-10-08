@@ -15,6 +15,15 @@ from __future__ import annotations
 _FAMILIES: dict = {}
 
 
+def _builtin() -> None:
+    """Load the families the Studio ships, which register on import.
+
+    Imported here rather than at the top: cab.py imports this module to
+    register itself, so the search loads it on first use instead.
+    """
+    from . import cab  # noqa: F401
+
+
 def register(name: str, applies, compile) -> None:
     """Register one layout family.
 
@@ -33,6 +42,7 @@ def unregister(name: str) -> None:
 
 def names() -> list:
     """Every registered family's name, in registration order."""
+    _builtin()
     return list(_FAMILIES)
 
 
@@ -44,7 +54,8 @@ def family_for(sections, header, width, height):
     a wide screen) may not fit another. A page no family fits gets None, and
     the caller falls back to its own default layout.
     """
-    for name, (applies, compile) in _FAMILIES.items():
+    _builtin()
+    for name, (applies, compile) in list(_FAMILIES.items()):
         try:
             if applies(sections, header, width, height):
                 return name, compile

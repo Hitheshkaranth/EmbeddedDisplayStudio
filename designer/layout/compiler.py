@@ -1022,7 +1022,7 @@ def compile_page(project, page, registry, sections=None, title: str = "",
     from . import families
     family = families.family_for(sections, header_widgets, width, height)
     if family is not None:
-        family_name, family_compile = family
+        _name, family_compile = family
         # The family reads the project's brand accent itself (cab.compile_cab
         # takes project.brand["accent"] when no override is passed).
         family_compile(project, page, registry, sections, title, header_widgets, report, width, height)

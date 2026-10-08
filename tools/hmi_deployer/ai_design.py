@@ -180,6 +180,12 @@ def structured_output(provider: str, schema: Optional[dict]) -> dict:
     return {}
 
 
+#: Request fields a server may not know: the reasoning-off template flag and
+#: every provider's structured-output keyword. A 400 on a request carrying any
+#: of them gets one retry without them (ODConnector._stream_events).
+_OPTIONAL_REQUEST_FIELDS = ("chat_template_kwargs", "guided_json", "response_format", "format")
+
+
 # A placeholder only: AIDesignTab sets ai_generator.build_system_prompt(),
 # which asks for a Studio design (.edsui JSON) for the panel's LVGL runtime,
 # before every run. This used to ask for QML, which nothing here renders.
@@ -968,16 +974,15 @@ class ODConnector:
             yield {"type": "error", "message": f"Unsupported BYOK provider: {prov}"}
             return
 
+        if self.byok.requiresApiKey and not self.byok.apiKey:
+            yield {"type": "error", "message": f"{BYOK_PRESETS[prov]['label']} needs an API key."}
+            return
+
         url, headers, payload = self.byok_request(brief, model)
 
         yield {"type": "start", "model": model or self.byok.model, "provider": prov,
                "url": redact_url(url), "mode": "byok"}
         yield {"type": "status", "label": "connecting"}
-        # The keys the request had before the schema was folded in: a server
-        # that rejects a field answers 400, and the retry strips the fields
-        # not in that base set (as it already strips chat_template_kwargs), so
-        # the same guarded reply loop covers every field added on top.
-        self._byok_base_keys = set(payload)
         first = True
         for event in self._stream_events(url, payload, headers, parser):
             if first and event["type"] in ("delta", "thinking"):
@@ -1010,18 +1015,13 @@ class ODConnector:
             except urllib.error.HTTPError as exc:
                 # A server that rejects a field (the chat template kwargs, or
                 # the structured-output schema) answers 400; the request is
-                # worth one retry with that field stripped. A field is "added"
-                # when it is not one of the base keys the request had before
-                # the schema was folded in, so the retry keeps the base body
-                # and only drops what byok_request put on top.
-                if exc.code != 400:
+                # worth one retry in its plainest form, without any of the
+                # optional fields byok_request may have put on top.
+                optional = [k for k in payload if k in _OPTIONAL_REQUEST_FIELDS]
+                if exc.code != 400 or not optional:
                     raise
-                base = getattr(self, "_byok_base_keys", None)
-                added = [k for k in payload if base is None or k not in base]
-                if not added:
-                    raise
-                logger.info("retrying without rejected field(s): %s", ", ".join(sorted(added)))
-                plain = {k: v for k, v in payload.items() if k not in added}
+                logger.info("retrying without %s", ", ".join(optional))
+                plain = {k: v for k, v in payload.items() if k not in optional}
                 resp = _post(plain)
         except urllib.error.HTTPError as exc:
             body = ""
