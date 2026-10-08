@@ -237,10 +237,8 @@ static void *v_create(const hwd_config *cfg, hwd_tagstore *store, const hwd_back
     /* ADC section (optional). */
     const cJSON *adc = cfg->adc;
     if (adc) {
-        if (t->opts.sim) {
-            register_ads(t, store, json_find(adc, "channels"));
-            t->adc_sim = true;
-        }
+        register_ads(t, store, json_find(adc, "channels"));
+        t->adc_sim = t->opts.sim;
     }
 
     /* UART section (optional). */
