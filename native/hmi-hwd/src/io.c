@@ -28,7 +28,7 @@
  * UART. Opened non-blocking and raw at the configured format; poll() drains
  * whatever arrived and counts complete lines into `uart.rx` (the last line,
  * stripped, goes to `uart.last`; both always registered as the Python does).
- * A lost port is reopened every second. In --sim the UART is disabled
+ * A lost port is retried every 0.5 s. In --sim the UART is disabled
  * (uart_tx -> hw_error), as in the Python.
  *
  * Sim: outputs read back what was written, inputs read inactive (false), ADC
@@ -50,6 +50,9 @@
 #include <unistd.h>
 
 #include <linux/gpio.h>
+
+/* A lost UART is retried this often (back within 1 s of replug). */
+#define RETRY_S 0.5
 
 /* --- small cJSON helpers (backends read their own sections) ------------- */
 
@@ -575,7 +578,7 @@ static void uart_poll(iod_t *t)
     if (t->uart_fd < 0) {
         double m = hwd_mono();
         if (m < t->uart_next_try) return;
-        t->uart_next_try = m + 1.0;
+        t->uart_next_try = m + RETRY_S;
         if (uart_open(t) < 0) return;
         HWD_INFO("UART %s reopened", t->uart_port);
     }
@@ -601,7 +604,7 @@ static void uart_poll(iod_t *t)
         t->errors++;
         HWD_WARN("UART %s lost; reopening", t->uart_port);
         uart_close(t);
-        t->uart_next_try = hwd_mono() + 1.0;
+        t->uart_next_try = hwd_mono() + RETRY_S;
         return;
     }
 }
@@ -746,7 +749,7 @@ static void *v_create(const hwd_config *cfg, hwd_tagstore *store, const hwd_back
             snprintf(msg, sizeof msg, "UART port %s: %s", t->uart_port, strerror(errno));
             if (opts->strict) return fail_create(t, err, errlen, msg);
             HWD_WARN("%s; retrying", msg);
-            t->uart_next_try = hwd_mono() + 1.0;
+            t->uart_next_try = hwd_mono() + RETRY_S;
         }
     }
     hwd_tagstore_register(store, "uart.rx", hwd_int(0), false);

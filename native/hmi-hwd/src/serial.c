@@ -18,7 +18,8 @@
  * `max_line` (default 256) bytes is cut there and published as a line, as
  * pyserial's read_until(size=...) does. A read error, EOF or POLLHUP means
  * unplugged: close, present false, rx keeps its value with quality "stale";
- * the port is retried every second and present goes true when it opens.
+ * the port is retried every 0.5 s (back within 1 s of replug) and present
+ * goes true when it opens.
  *
  * Sim (--sim): a port whose `path` opens is served for real (the acceptance
  * tests run the daemon with --sim against a pty); any other port is
@@ -43,6 +44,8 @@
 
 #define MAX_PORT_NAME 64
 #define MAX_EOL 8
+/* A missing port is retried this often, so it is back within 1 s of replug. */
+#define RETRY_S 0.5
 
 /* A single serial port. */
 typedef struct {
@@ -462,8 +465,8 @@ static void *v_create(const hwd_config *cfg, hwd_tagstore *store, const hwd_back
                 destroy_op(t);
                 return NULL;
             }
-            HWD_WARN("serial port %s not present (%s); retrying every second", P->name, what);
-            P->next_try = hwd_mono() + 1.0;
+            HWD_WARN("serial port %s not present (%s); retrying", P->name, what);
+            P->next_try = hwd_mono() + RETRY_S;
         }
         if (P->fd >= 0) HWD_INFO("serial port %s open on %s", P->name, P->dev);
 
@@ -516,7 +519,7 @@ static void unplugged(ser_t *t, port *P, const char *why)
     P->present = false;
     t->errors++;
     hwd_tagstore_set_quality(t->store, P->t_rx, "stale");
-    P->next_try = hwd_mono() + 1.0;
+    P->next_try = hwd_mono() + RETRY_S;
 }
 
 static void poll_real(ser_t *t, port *P)
@@ -524,7 +527,7 @@ static void poll_real(ser_t *t, port *P)
     if (P->fd < 0) {
         double m = hwd_mono();
         if (m < P->next_try) return;
-        P->next_try = m + 1.0;
+        P->next_try = m + RETRY_S;
         if (!port_open(P)) return;
         P->present = true;
         hwd_tagstore_set_quality(t->store, P->t_rx, NULL);
