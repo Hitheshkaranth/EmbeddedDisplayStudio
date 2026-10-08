@@ -121,9 +121,26 @@ fi
 log "INFO" "using interpreter: ${PYTHON}"
 log "INFO" "config: ${HWD_CONFIG}"
 
-# HMI_HWD_ARGS is intentionally unquoted so multiple space-separated arguments
-# expand into separate words.
-_extra="${HMI_HWD_ARGS:-}"
+# The native binary is the board's own, Qt-free daemon (shipped to
+# $HMI_ROOT/usr/bin by deploy/provision_panel.py). Preferring it matches
+# hmi-gui-launch preferring the native loader; the Python fallback below is
+# kept for a Python-only board or one the native build was not installed to.
+_NATIVE="${HMI_ROOT}/usr/bin/hmi-hwd-native"
+
+# HMI_HWD_PYTHON_ONLY=1: run hmi_hwd.py under the resolved interpreter instead
+# of the native binary, for a debug run of the pure Python daemon.
+_USE_NATIVE=1
+if [ "${HMI_HWD_PYTHON_ONLY:-}" != "" ]; then
+    _USE_NATIVE=0
+fi
+
+if [ "$_USE_NATIVE" = 1 ] && [ -x "$_NATIVE" ]; then
+    log "INFO" "starting native daemon: ${_NATIVE}"
+    # shellcheck disable=SC2086
+    exec "$_NATIVE" --config "$HWD_CONFIG" "$@"
+elif [ "$_USE_NATIVE" = 1 ] && [ ! -x "$_NATIVE" ]; then
+    log "INFO" "no native daemon at ${_NATIVE}; using the Python daemon"
+fi
 
 # shellcheck disable=SC2086
 exec "$PYTHON" "$HWD" --config "$HWD_CONFIG" $_extra "$@"

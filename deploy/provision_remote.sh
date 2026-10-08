@@ -56,6 +56,9 @@
 #                        hwd.json is a Dahlia carrier default. Starting
 #                        it against an unverified pin map can assert real
 #                        outputs on real hardware.
+#   HMI_TIMESYNC      -- "1" enables systemd-timesyncd (a lightweight NTP
+#                        client) when the image has the unit, so the panel's
+#                        clock follows the host without a full time daemon.
 #
 # =====================================================================
 
@@ -65,6 +68,7 @@ STAGE_FILES="./files"
 
 HMI_FORCE_CONFIG="${HMI_FORCE_CONFIG:-0}"
 HMI_ENABLE_HWD="${HMI_ENABLE_HWD:-0}"
+HMI_TIMESYNC="${HMI_TIMESYNC:-0}"
 
 step() {
     _tag="$1"; shift
@@ -315,6 +319,21 @@ if [ "$HMI_ENABLE_HWD" = "1" ]; then
     fi
 else
     step "enable-hwd" "ok" "skipped -- verify hwd.json against this carrier first"
+fi
+
+if [ "$HMI_TIMESYNC" = "1" ]; then
+    if command -v systemctl >/dev/null 2>&1 && systemctl --version >/dev/null 2>&1; then
+        if systemctl enable --now systemd-timesyncd >/dev/null 2>&1; then
+            step "timesync" "ok" "systemd-timesyncd enabled and started"
+        else
+            step "timesync" "fail" "could not enable systemd-timesyncd"
+        fi
+    else
+        # An image without systemd has nothing to drive the clock; skip rather
+        # than fail. hmi-hwd.service (when enabled above) still sets the clock
+        # at deploy time, and the RTC is written by clock_sync_command.
+        step "timesync" "ok" "skipped -- image has no systemd timesyncd"
+    fi
 fi
 
 # ---- Verify ----------------------------------------------------------

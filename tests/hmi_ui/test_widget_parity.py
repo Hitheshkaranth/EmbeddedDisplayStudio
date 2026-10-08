@@ -45,7 +45,15 @@ def _qc_dir():
 
 
 OUT_DIR = os.environ.get("HMI_UI_QC_DIR") or _qc_dir()
-BIN = os.environ.get("HMI_UI_BIN", os.path.join(ROOT, "native", "hmi-ui", "out", "hmi-ui"))
+# The native panel binary, built by native/hmi-ui. Only searched for here, when
+# HMI_UI_BIN is unset: Windows emits win64/hmi-ui.exe, Linux a flat out/hmi-ui,
+# both directly under native/hmi-ui/out.
+if "HMI_UI_BIN" in os.environ:
+    BIN = os.environ["HMI_UI_BIN"]
+elif os.name == "nt":
+    BIN = os.path.join(ROOT, "native", "hmi-ui", "out", "win64", "hmi-ui.exe")
+else:
+    BIN = os.path.join(ROOT, "native", "hmi-ui", "out", "hmi-ui")
 BACKGROUND = "#101318"
 
 # Every Designer type (kit_schema.json); stubs report as skips.
