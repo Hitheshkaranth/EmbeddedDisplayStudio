@@ -1,0 +1,128 @@
+[
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hwd_cjson.dir/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-ui/third_party/cjson/cJSON.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-ui/third_party/cjson/cJSON.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-ui/third_party/cjson/cJSON.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hwd_cjson.dir/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-ui/third_party/cjson/cJSON.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hwd-core.dir/src/util.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/util.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/util.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hwd-core.dir/src/util.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hwd-core.dir/src/tagstore.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/tagstore.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/tagstore.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hwd-core.dir/src/tagstore.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hwd-core.dir/src/config.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/config.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/config.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hwd-core.dir/src/config.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hwd-core.dir/src/proto.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/proto.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/proto.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hwd-core.dir/src/proto.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hwd-core.dir/src/subs.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/subs.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/subs.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hwd-core.dir/src/subs.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hwd-core.dir/src/daemon.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/daemon.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/daemon.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hwd-core.dir/src/daemon.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hwd-core.dir/src/io.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/io.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/io.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hwd-core.dir/src/io.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hwd-core.dir/src/serial.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/serial.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/serial.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hwd-core.dir/src/serial.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hwd-core.dir/src/modbus.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/modbus.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/modbus.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hwd-core.dir/src/modbus.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hwd-core.dir/src/can.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/can.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/can.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hwd-core.dir/src/can.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hwd-core.dir/src/hid.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/hid.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/hid.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hwd-core.dir/src/hid.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hwd-core.dir/src/usb.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/usb.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/usb.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hwd-core.dir/src/usb.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hwd-core.dir/src/sensors.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/sensors.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/sensors.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hwd-core.dir/src/sensors.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hwd-core.dir/src/history.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/history.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/history.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hwd-core.dir/src/history.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/hmi-hwd.dir/src/main.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/main.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src/main.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/hmi-hwd.dir/src/main.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/test_core.dir/tests/test_core.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/tests/test_core.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/tests/test_core.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/test_core.dir/tests/test_core.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/test_modbus.dir/tests/test_modbus.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/tests/test_modbus.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/tests/test_modbus.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/test_modbus.dir/tests/test_modbus.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/test_can.dir/tests/test_can.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/tests/test_can.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/tests/test_can.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/test_can.dir/tests/test_can.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/test_io.dir/tests/test_io.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/tests/test_io.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/tests/test_io.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/test_io.dir/tests/test_io.c.o"
+},
+{
+  "directory": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/src -I/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/../hmi-ui/third_party/cjson -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o CMakeFiles/test_periph.dir/tests/test_periph.c.o -c /mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/tests/test_periph.c",
+  "file": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/tests/test_periph.c",
+  "output": "/mnt/c/Users/hithe/Documents/MIL-HMI-PROJ/swarm/w5-a4-periph/native/hmi-hwd/.build/CMakeFiles/test_periph.dir/tests/test_periph.c.o"
+}
+]
