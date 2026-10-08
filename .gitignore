@@ -52,3 +52,6 @@ downloads/
 
 # --- Native loader build output (native/hmi-gui/build.sh copies the binary here)
 native/hmi-gui/out/
+
+# hmi-hwd build output (native/hmi-hwd/build.sh)
+native/hmi-hwd/out/
