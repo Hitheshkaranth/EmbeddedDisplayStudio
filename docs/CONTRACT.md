@@ -808,3 +808,145 @@ front of the tag's ring (never more than it holds), and the chart redraws.
   directory in `/sys/class/backlight/` (`HMI_BACKLIGHT_DIR` overrides), its
   `brightness` written as that share of `max_brightness`. No backlight: the
   overlay alone.
+
+---
+
+## 14. hmi-hwd in C, and the panel's peripherals (NORMATIVE, wave 5)
+
+`native/hmi-hwd/` is the C port of `daemon/hmi_hwd.py`: same wire protocol
+(section 2 and 13.4), same `hwd.json`, same CLI (`--config --sim --strict
+--selftest --log-level`) plus `--modbus-live`. `daemon/hmi_hwd.py` stays the
+reference; the acceptance tests run against either (`HMI_HWD_CMD`).
+
+Additions, all in the C daemon (the Python daemon ignores sections it does
+not know):
+
+* **Test hook.** `HWD_SIM_FAIL="ai.pot,serial.scan.rx"` (environment) makes
+  those tags' simulated reads fail: published `null` with quality `bad`.
+* **Discovery.** UDP `0.0.0.0:47800` (`daemon.discovery`, default true;
+  `daemon.discovery_port`). A datagram `{"cmd":"discover"}` is answered,
+  unicast, with `{"t":"hello","host":H,"model":M,"hwd":"0.2.0","cmd_port":N,"tags":K}`
+  (`model` from `/proc/device-tree/model`, "" when absent).
+* **Stale.** A tag whose value has not been refreshed for 5 poll periods (or
+  a CAN signal past its `timeout_ms`) is `"stale"` in `q`.
+* **Extra commands** (acked like section 2.3):
+  `{"cmd":"serial_tx","port":P,"data":S}`, `{"cmd":"can_tx","id":"0x123","data":"0102AABB","extended":false}`,
+  `{"cmd":"usb_export","what":"history"|"logs"}` (ack carries `"file"`).
+
+### 14.1 Serial ports (USB and native) -- `"serial"`
+
+```jsonc
+"serial": {"ports": {
+  "scan": {"match": {"vid": "0403", "pid": "6001", "serial": "A10K1"},   // or "path": "/dev/ttyUSB0"
+           "baudrate": 9600, "bytesize": 8, "parity": "N", "stopbits": 1,
+           "eol": "\r\n", "max_line": 256}}}
+```
+
+Port names `[a-z0-9_]+`. `match` finds the device under
+`/sys/bus/usb-serial/devices` / `/sys/class/tty/*/device` (vid, pid,
+optional serial; `HWD_SYSFS_ROOT` overrides `/sys` for tests); `path` may be
+any tty (`/dev/ttymxc1`, `/dev/serial/by-id/...`, a pty in tests). Tags:
+`serial.<name>.present` (bool), `serial.<name>.rx` (string, the last
+complete line without `eol`, null before the first), `serial.<name>.rx_count`
+(int). Unplugged: present false, rx keeps its value, quality `stale`; the
+port is re-opened within 1 s of coming back. `serial_tx` writes `data` as is.
+Sim: present true; every 2 s a line `SIM <n>` is received.
+
+### 14.2 Modbus RTU -- `"modbus_rtu"`
+
+```jsonc
+"modbus_rtu": {"path": "/dev/ttyUSB1", "baudrate": 19200, "parity": "E", "stopbits": 1,
+               "unit_id": 1, "poll_interval_ms": 200, "timeout_s": 0.5, "reconnect_s": 2.0,
+               "tags": {"mb.rtu.temp": {"unit": 3, "kind": "input", "address": 0, "type": "int16", "scale": 0.1}}}
+```
+
+`path` or `match` as in 14.1. Tags take the Modbus TCP keys (section 2.5) and
+`unit` (default `unit_id`). `sys.modbus_rtu_online`. Frames are CRC-16/MODBUS;
+a request waits `timeout_s` for the reply, and 3.5 character times separate
+frames. Both Modbus links honour **`enum`** (holding/input integer tags): an
+array of strings; the published value is `enum[raw]` when in range, else the
+number; writing one of those strings writes its index.
+
+### 14.3 CAN -- `"can"`
+
+```jsonc
+"can": {"interface": "can0",
+        "signals": {
+          "can.motor.rpm":    {"id": "0x123", "extended": false, "start_bit": 0, "length": 16,
+                               "byte_order": "little", "signed": false, "scale": 0.25,
+                               "offset": 0, "timeout_ms": 1000},
+          "can.motor.enable": {"id": "0x200", "start_bit": 0, "length": 1, "writable": true,
+                               "period_ms": 100}}}
+```
+
+SocketCAN (`PF_CAN`, raw). Bit numbering as in DBC files: `little`
+(Intel) counts `start_bit` from the LSB of byte 0; `big` (Motorola) gives the
+MSB's position in the DBC sawtooth numbering. A received frame updates every
+signal with its id; a signal not seen for `timeout_ms` goes `stale`.
+Writable signals share a transmit frame per id (8 bytes, unset bits 0):
+writing a signal updates its bits and sends the frame, and repeats it every
+`period_ms` when given. `can_tx` sends a raw frame. `sys.can_online` = the
+interface is up. Sim: received signals ramp across their range; writes are
+echoed back as received values.
+
+### 14.4 HID input (barcode scanners) -- `"hid"`
+
+```jsonc
+"hid": {"devices": {"scanner": {"match": {"vid": "0c2e", "pid": "0b61", "name": "Barcode"},
+                                "path": "/dev/input/event3", "grab": true, "eol": "enter"}}}
+```
+
+evdev (`/dev/input/event*`, matched by `/sys/class/input/event*/device`
+id/vendor, id/product or name substring; `path` may be any file or FIFO of
+`struct input_event` in tests). Key presses are decoded with a US layout
+(shift handled) into text; `eol` (`enter` or `tab`) ends a scan. `grab`
+takes the device exclusively (`EVIOCGRAB`) so its keys never reach hmi-ui.
+Tags: `hid.<name>.present`, `hid.<name>.text` (last scan), `hid.<name>.count`.
+Hotplug as in 14.1. Sim: a scan `SIM-000n` every 5 s.
+
+### 14.5 USB storage and devices -- `"usb"`
+
+```jsonc
+"usb": {"storage": {"mount_root": "/media", "auto_mount": false, "export_dir": "hmi-export"},
+        "devices": true}
+```
+
+Storage: the first mount point of a `/dev/sd*` block device under
+`mount_root` (from `/proc/mounts`; `HWD_PROC_MOUNTS` overrides the path for
+tests). With `auto_mount` the daemon mounts an unmounted `/dev/sd?1`
+(vfat, exfat or ext4) at `<mount_root>/usb0` and unmounts it on removal.
+Tags: `usb.storage.present`, `usb.storage.path` (string or null),
+`usb.storage.free_mb`. `usb_export` copies the history database
+(`what: history`) or the daemon's own log ring (`logs`, last 1000 lines) to
+`<path>/<export_dir>/<what>-<UTC stamp>.<db|txt>` and answers `"file"`;
+`hw_error` when no storage. `devices`: `usb.devices` (int) = USB devices
+attached (`/sys/bus/usb/devices/*` with an `idVendor`). Sim: storage present
+at a temporary directory; `usb.devices` 2.
+
+### 14.6 I2C and SPI sensors -- `"i2c"`, `"spi"`
+
+```jsonc
+"i2c": {"sensors": {
+  "i2c.cab.temp":   {"bus": 1, "address": "0x48", "device": "tmp102"},
+  "i2c.cab.rh":     {"bus": 1, "address": "0x44", "device": "sht3x", "measure": "humidity"},
+  "i2c.io.inputs":  {"bus": 1, "address": "0x20", "register": "0x09", "type": "uint8", "period_ms": 100},
+  "i2c.io.outputs": {"bus": 1, "address": "0x20", "register": "0x0A", "type": "uint8", "writable": true}}},
+"spi": {"sensors": {
+  "spi.adc.ch0": {"bus": 1, "cs": 0, "mode": 0, "speed_hz": 1000000, "tx": "01 80 00",
+                  "rx_offset": 1, "length": 2, "byte_order": "big", "mask": "0x03FF",
+                  "type": "uint16", "scale": 0.00322, "period_ms": 100}}}
+```
+
+I2C through `/dev/i2c-<bus>` (`I2C_RDWR`), SPI through
+`/dev/spidev<bus>.<cs>` (`SPI_IOC_MESSAGE`). Generic reads: `register`
+(1 byte, optional), `type` uint8/int8/uint16/int16/uint32/int32/float32,
+`byte_order`, optional `mask` and `shift` (right shift after masking), then
+`scale` (default 1) and `offset` (default 0); `period_ms` default 1000,
+100..3600000. Presets (`device`): `tmp102`, `lm75` (temperature °C),
+`sht3x` (`measure` temperature °C or humidity %RH, single-shot high
+repeatability), `ina219` (`measure` bus_voltage V or current A with
+`shunt_ohm`, default 0.1), `ads1115` (`channel` 0..3, single-ended, volts,
+±4.096 V range). A writable generic I2C tag writes its register.
+Reads run in the backend's thread; a failed transaction is `null`/`bad`.
+Sim: presets give plausible values (22-26 °C, 40-50 %RH, 23.8-24.2 V,
+0.4-0.6 A, ramping), generic tags ramp across their type's range.
