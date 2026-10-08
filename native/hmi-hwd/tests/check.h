@@ -15,6 +15,9 @@ static int check_failures;
 #define CHECK_NEAR(a, b, eps) do { double _a = (a), _b = (b); \
     if (!(fabs(_a - _b) <= (eps))) { check_failures++; \
     fprintf(stderr, "%s:%d: %.6f != %.6f\n", __FILE__, __LINE__, _a, _b); } } while (0)
-#define CHECK_DONE() do { if (check_failures) fprintf(stderr, "%d check(s) failed\n", check_failures); \
-    else fprintf(stderr, "all checks passed\n"); return check_failures ? 1 : 0; } while (0)
+#define CHECK_DONE() do { \
+        if (check_failures) fprintf(stderr, "%d check(s) failed\n", check_failures); \
+        else fprintf(stderr, "all checks passed\n"); \
+        return check_failures ? 1 : 0; \
+    } while (0)
 #endif

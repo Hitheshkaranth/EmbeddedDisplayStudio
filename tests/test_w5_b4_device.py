@@ -121,6 +121,21 @@ class NativeDaemonShips(unittest.TestCase):
             out = subprocess.run(["sh", launcher, "--sim"], env=env, capture_output=True, text=True, timeout=10)
             self.assertNotIn("native", out.stdout)
 
+    @unittest.skipUnless(os.name == "posix", "runs the launcher with sh")
+    def test_without_the_native_daemon_python_runs_with_the_extra_args(self):
+        launcher = os.path.join(ROOT, "target", "bin", "hmi-hwd-launch")
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "usr", "lib", "hmi"))
+            os.makedirs(os.path.join(root, "etc", "hmi"))
+            with open(os.path.join(root, "usr", "lib", "hmi", "hmi_hwd.py"), "w") as fh:
+                fh.write("import sys\nprint('python', ' '.join(sys.argv[1:]))\n")
+            env = dict(os.environ, HMI_ROOT=root, HMI_PYTHON=sys.executable,
+                       HMI_HWD_ARGS="--log-level DEBUG")
+            out = subprocess.run(["sh", launcher, "--sim"], env=env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertIn("python", out.stdout)
+            self.assertIn("--log-level DEBUG --sim", out.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

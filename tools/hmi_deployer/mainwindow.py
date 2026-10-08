@@ -395,6 +395,10 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self.btn_test.style().unpolish(self.btn_test)
         self.btn_test.style().polish(self.btn_test)
         self._link_state = state
+        if state == "connected":
+            self._start_link_watch()
+        elif state == "idle":
+            self._stop_link_watch()
         if hasattr(self, "btn_disconnect"):
             self.btn_disconnect.setEnabled(state in ("connecting", "connected"))
             self.btn_disconnect.setText("Cancel" if state == "connecting" else "Disconnect")
@@ -403,6 +407,42 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         # they are done.
         if hasattr(self, "btn_device"):
             QTimer.singleShot(0, self._sync_link_chrome)
+
+    def _start_link_watch(self):
+        """Begin watching the panel's link once it is connected.
+
+        The watch probes SSH; on a change it tells the chip (see
+        _on_link_watch_down/_on_link_watch_up). One QTimer, reused on every
+        connect, drives check_now() at the watch's interval.
+        """
+        host = self.inp_host.text().strip()
+        if not host:
+            return
+        if getattr(self, "_link_watch_timer", None) is None:
+            from PySide6.QtCore import QTimer
+            timer = QTimer(self)
+            timer.timeout.connect(self.link_watch.check_now)
+            self._link_watch_timer = timer
+        self.link_watch.start(host, self.ssh_port())
+        self._link_watch_timer.setInterval(self.link_watch.interval_ms)
+        self._link_watch_timer.start()
+        self.link_watch.check_now()
+
+    def _stop_link_watch(self):
+        """Stop watching the link on disconnect; leave the timer so a later
+        connect can reuse it."""
+        self.link_watch.stop()
+        timer = getattr(self, "_link_watch_timer", None)
+        if timer is not None:
+            timer.stop()
+
+    def _refresh_link_chrome(self):
+        """Recolour the chip and status bar for the current link state.
+
+        Shares _sync_link_chrome's colouring but is also used for the transient
+        "linkdown" state the watch sets, which is not a real _link_state value.
+        """
+        self._sync_link_chrome(down=(getattr(self, "_link_state", "idle") == "linkdown"))
 
     def _offer_to_forget_host_key(self) -> None:
         """A known_hosts entry from another board at this address blocks the
@@ -560,6 +600,7 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
             return
         self._stop_all_senders()
         self.device_panel.set_led_state(0)
+        self._stop_link_watch()
         if hasattr(self, "lbl_connection"):
             self.lbl_connection.setText("●  DISCONNECTED")
             self.lbl_connection.setProperty("state", "")
@@ -917,6 +958,12 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         popover.addWidget(self.inp_port, 1, 1)
         buttons = QHBoxLayout()
         buttons.setSpacing(6)
+        self.btn_find_panels = QPushButton("Find panels…")
+        self.btn_find_panels.setObjectName("findPanelsButton")
+        self.btn_find_panels.setProperty("variant", "outline")
+        self.btn_find_panels.setFixedHeight(28)
+        self.btn_find_panels.clicked.connect(self._find_panels)
+        buttons.addWidget(self.btn_find_panels)
         buttons.addWidget(self.btn_test)
         buttons.addWidget(self.btn_disconnect)
         popover.addLayout(buttons, 2, 0, 1, 2)
@@ -924,6 +971,15 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self.inp_host.setMinimumWidth(200)
         self.inp_host.textChanged.connect(lambda _text: self._sync_link_chrome())
         self.inp_host.returnPressed.connect(self.btn_test.click)
+
+        # The link is watched separately from Test Connection: a probe answers
+        # only while it runs, so a panel dropped between checks would otherwise
+        # look "Connected" until the next connect. LinkWatch fires linkDown when
+        # the panel goes away (the chip goes red) and linkUp when it returns.
+        from .link_watch import LinkWatch
+        self.link_watch = LinkWatch(interval_ms=6000)
+        self.link_watch.linkDown.connect(self._on_link_watch_down)
+        self.link_watch.linkUp.connect(self._on_link_watch_up)
 
         from ui.python.fx.liquid import LiquidTabBar
         self.mode_nav = LiquidTabBar()
@@ -1173,6 +1229,19 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self.btn_mirror.setEnabled(False)
         self.btn_mirror.setFixedHeight(30)
 
+        self.mirror_combo = QComboBox()
+        self.mirror_combo.setToolTip(
+            "How often the console redraws the panel's glass. Slower costs less "
+            "of the link and the target; faster follows the moving values more "
+            "closely."
+        )
+        for _rate in (1, 2, 4):
+            self.mirror_combo.addItem("%d fps" % _rate, _rate)
+        self.mirror_combo.setProperty("variant", "secondary")
+        self.mirror_combo.setEnabled(False)
+        self.mirror_combo.setFixedHeight(30)
+        self.btn_mirror.toggled.connect(self._sync_mirror_rate)
+
         self.btn_restart = QPushButton("Restart GUI")
         self.btn_restart.setProperty("variant", "outline")
         self.btn_restart.setProperty("deploymentAction", True)
@@ -1193,7 +1262,8 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         release_actions.addWidget(self.btn_deploy, 0, 0, 1, 2)
         release_actions.addWidget(self.btn_live_preview, 0, 2)
         release_actions.addWidget(self.btn_mirror, 1, 0)
-        release_actions.addWidget(self.btn_restart, 1, 1)
+        release_actions.addWidget(self.mirror_combo, 1, 1)
+        release_actions.addWidget(self.btn_restart, 1, 2)
         release_actions.addWidget(self.btn_rollback, 1, 2)
         for column in range(3):
             release_actions.setColumnStretch(column, 1)
@@ -1703,25 +1773,78 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self._device_popover.show()
         self.inp_host.setFocus()
 
-    def _sync_link_chrome(self) -> None:
+    def _find_panels(self):
+        """Scan the local network and fill the target field from a panel's
+        hello. Chooses the first responder when several answer.
+
+        A panel answers the discovery datagram with its host name, model and
+        the daemon version it runs; the address it replies from is its real
+        location, so the operator can connect straight away. When nothing
+        answers (the common case on a quiet shop floor) the field is left
+        untouched and the reason is logged.
+        """
+        from .discovery import discover
+        self.log("Finding panels...")
+        try:
+            panels = discover(timeout=1.5)
+        except Exception as error:
+            self.log(f"Find panels could not run: {error}")
+            return
+        if not panels:
+            self.log("No panels answered the discovery query.")
+            return
+        chosen = panels[0]
+        self.inp_host.setText(chosen.get("ip", ""))
+        host = chosen.get("host", "")
+        model = chosen.get("model", "")
+        hwd = chosen.get("hwd", "")
+        what = ", ".join(part for part in (host, model, hwd) if part)
+        self.log(f"Found panel: {what or chosen['ip']}. Login below, then Test Connection.")
+
+    def _on_link_watch_down(self):
+        """The link the chip was showing as up has dropped: say so on the chip
+        and the status bar, without changing what the Connect button does."""
+        if getattr(self, "_link_state", "idle") in ("connecting", "connected"):
+            self._was_connected = getattr(self, "_link_state", "idle") == "connected"
+            self._link_state = "linkdown"
+            self._sync_link_chrome()
+
+    def _on_link_watch_up(self):
+        """The link came back after a drop; the next Test Connection re-establishes
+        it cleanly, so clear the "down" marker the drop set."""
+        if getattr(self, "_link_state", "idle") == "linkdown":
+            self._link_state = "connected" if getattr(self, "_was_connected", False) else "idle"
+            self._sync_link_chrome()
+
+    def _sync_link_chrome(self, down: bool = False) -> None:
         """The device chip and the status bar follow the link, the target and
-        the open application."""
+        the open application.
+
+        Args:
+            down: when true, the chip is marked "Link down" even though the
+                connect button still believes it is up -- the watcher found the
+                panel gone while Test Connection had it as connected.
+        """
         if not hasattr(self, "btn_device") or not hasattr(self, "lbl_status_link"):
             return
         state = getattr(self, "_link_state", "idle")
+        if down:
+            state = "linkdown"
         host = self.inp_host.text().strip() or "No target"
         words = {"connected": "Connected", "connecting": "Connecting",
-                 "fault": "Connection fault"}.get(state, "Not connected")
+                 "fault": "Connection fault",
+                 "linkdown": "Link down"}.get(state, "Not connected")
+        marker = "●" if state != "linkdown" else "○"
         resolution = ""
         if hasattr(self, "device_panel"):
             try:
                 resolution = self.device_panel.resolution_text()
             except Exception:
                 resolution = ""
-        self.btn_device.setText(f"●  {host}")
+        self.btn_device.setText(f"{marker}  {host}")
         self.btn_device.setToolTip(f"{words} · {host}" + (f" · {resolution}" if resolution else "")
-                                   + "\nClick to connect or change the target")
-        self.lbl_status_link.setText(f"●  {words} · {host}")
+                                    + "\nClick to connect or change the target")
+        self.lbl_status_link.setText(f"{marker}  {words} · {host}")
         bundle = getattr(self, "bundle_dir", "") or ""
         app_name = os.path.basename(bundle.rstrip("/\\")) if bundle else ""
         self.lbl_status_app.setText(app_name or "No application open")
@@ -2377,9 +2500,16 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
             QMessageBox.information(self, "Mirror the panel",
                                     "Connect to a panel first.")
             return
-        self.log(f"Mirroring {host}: one frame a second from the panel.")
+rate = int(self.mirror_combo.currentData() or 1)
+        interval_ms = 1000 // max(rate, 1)
+        self.log(f"Mirroring {host} at {rate} fps from the panel.")
         mirror.start(host, self.inp_user.text().strip(),
-                     self.ssh_port(), self.inp_key.text().strip())
+                      self.ssh_port(), self.inp_key.text().strip(),
+                      interval_ms=interval_ms)
+
+    def _sync_mirror_rate(self, on: bool):
+        """Enable the rate only while the mirror is on, so it is not ignored."""
+        self.mirror_combo.setEnabled(on)
 
     def _on_mirror_stopped(self):
         if self.btn_mirror.isChecked():

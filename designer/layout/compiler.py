@@ -1023,6 +1023,8 @@ def compile_page(project, page, registry, sections=None, title: str = "",
     family = families.family_for(sections, header_widgets, width, height)
     if family is not None:
         family_name, family_compile = family
+        # The family reads the project's brand accent itself (cab.compile_cab
+        # takes project.brand["accent"] when no override is passed).
         family_compile(project, page, registry, sections, title, header_widgets, report, width, height)
         return report
     sections = _consolidate(_ordered(sections), report.notes, section_limit(width, height))
@@ -1563,8 +1565,9 @@ def _header(project, registry, title, header_widgets, tokens, width):
         right -= tokens.gap
     title_w = max(80, right - x - tokens.gap)
     if title:
+        accent = getattr(getattr(project, "brand", None) or {}, "get")("accent")
         heading = _text(project, "screenTitle", (x, y, title_w, tokens.header), title,
-                        tokens.title_font, _theme(project, "foreground"), bold=True)
+                        tokens.title_font, accent or _theme(project, "foreground"), bold=True)
         heading.properties[SECTION_MARK] = "|title"
         chrome.append(heading)
     chrome += placed_left + placed_right

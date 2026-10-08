@@ -821,6 +821,7 @@ reference; the acceptance tests run against either (`HMI_HWD_CMD`).
 Additions, all in the C daemon (the Python daemon ignores sections it does
 not know):
 
+* **Self-test beside a live daemon.** `--selftest` takes no command port, so it runs on a panel while the daemon is up.
 * **Test hook.** `HWD_SIM_FAIL="ai.pot,serial.scan.rx"` (environment) makes
   those tags' simulated reads fail: published `null` with quality `bad`.
 * **Discovery.** UDP `0.0.0.0:47800` (`daemon.discovery`, default true;
@@ -887,7 +888,9 @@ Writable signals share a transmit frame per id (8 bytes, unset bits 0):
 writing a signal updates its bits and sends the frame, and repeats it every
 `period_ms` when given. `can_tx` sends a raw frame. `sys.can_online` = the
 interface is up. Sim: received signals ramp across their range; writes are
-echoed back as received values.
+echoed back as received values. A virtual interface (one with no
+`/sys/class/net/<if>/device`, e.g. `vcan0`) touches no hardware and is used
+for real even under `--sim`.
 
 ### 14.4 HID input (barcode scanners) -- `"hid"`
 

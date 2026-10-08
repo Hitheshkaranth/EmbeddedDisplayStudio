@@ -498,6 +498,33 @@ def build_ssh_cmd(host: str, user: str, port: int, key_path: str, cmd: str) -> L
     args.extend([f"{user}@{host}", cmd])
     return args
 
+
+def clock_sync_command(epoch: float) -> str:
+    """
+    A remote command that sets the panel's clock to the host's, and reports it.
+
+    Args:
+        epoch: the host's current time, seconds since the Unix epoch (may be a
+            float; the wall clock is set to whole seconds).
+
+    Returns:
+        A shell command that sets the system clock from ``epoch`` in UTC,
+        writes it to the RTC so it survives a reboot, and prints the panel's
+        new time so the caller can report what the panel answered.
+
+    The panel is a headless board with no local calendar; its clock drifts and,
+    after a power loss, falls back to the RTC. Setting it from the host, which
+    has a real clock, is what lets its logs and release timestamps line up with
+    the Studio's -- a journal entry stamped "2011" is useless for finding a
+    fault. The answer the panel prints is what the "Sync clock" button reports,
+    so the operator sees the time the panel now believes.
+    """
+    whole = int(epoch)
+    return (
+        f"date -u -s @{whole} >/dev/null && "
+        "(hwclock -w 2>/dev/null || true) && date -u +%s"
+    )
+
 def build_upload_cmd(host: str, user: str, port: int, key_path: str, dest: str) -> List[str]:
     """
     Builds an ssh command that writes its stdin to `dest` on the target.

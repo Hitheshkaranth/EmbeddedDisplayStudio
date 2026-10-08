@@ -144,6 +144,8 @@ class DesignerBinding:
     expr: str = ""
     rules: list = field(default_factory=list)     # [{"if": "> 80", "prop": ..., "value": ...}]
     alarm: dict = field(default_factory=dict)     # priority / latch / delay_ms / deadband / message
+    # What this binding should be simulated as (CONTRACT: the Studio's "Simulate as").
+    sim: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = {"tag": self.tag, "format": self.format, "multiplier": self.multiplier,
@@ -157,6 +159,8 @@ class DesignerBinding:
             data["rules"] = [dict(rule) for rule in self.rules]
         if self.alarm:
             data["alarm"] = dict(self.alarm)
+        if self.sim:
+            data["sim"] = self.sim
         return data
 
     @classmethod
@@ -394,6 +398,9 @@ class DesignerProject:
     name: str = ""
     screen: DesignerScreen = field(default_factory=DesignerScreen)
     pages: list[DesignerPage] = field(default_factory=lambda: [DesignerPage()])
+    # The studio's brand: logos copied into the bundle and the accent a
+    # generator can carry across. Empty {} means "no brand set".
+    brand: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DesignerProject":
@@ -408,14 +415,29 @@ class DesignerProject:
             "light" if str(raw_screen.get("theme", "dark")) == "light" else "dark",
             dict(raw_screen.get("idle") or {}) if isinstance(raw_screen.get("idle"), dict) else {},
         )
+        raw_brand = data.get("brand")
+        brand = {"logos": list(raw_brand.get("logos") or []),
+                 "accent": str(raw_brand.get("accent") or "")} if isinstance(raw_brand, dict) else {}
         pages = [DesignerPage.from_dict(page) for page in data.get("pages", [])]
         return cls(1, str(data.get("name", "")).strip(), screen,
-                   pages or [DesignerPage()])
+                   pages or [DesignerPage()], brand)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"version": self.version, "name": self.name,
+        data = {"version": self.version, "name": self.name,
                 "screen": self.screen.to_dict(),
                 "pages": [p.to_dict() for p in self.pages]}
+        # A brand the design never set saves as before, so an old design on
+        # disk is unchanged; an empty brand would only ever be "logos": [] with
+        # no accent, so a design that has no brand writes nothing.
+        if self.brand:
+            data["brand"] = {"logos": list(self.brand.get("logos") or []),
+                             "accent": str(self.brand.get("accent") or "")}
+        return data
+        # Only write "brand" when it is set, so an old design saves byte-for-byte
+        # as it did before brand existed on disk.
+        if self.brand:
+            data["brand"] = dict(self.brand)
+        return data
 
     @classmethod
     def load(cls, path: str) -> "DesignerProject":

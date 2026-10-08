@@ -165,6 +165,41 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: python3 -m unittest discover -s tests/native -t . -v
 
+  hmi-hwd:
+    name: Hardware daemon (C)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      # The C daemon's own build and C unit tests: cmake, ninja, and sqlite3's
+      # headers (daemon/historian links against it).
+      - name: Build and run the C daemon unit tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build gcc pkg-config libsqlite3-dev
+          native/hmi-hwd/build.sh --test
+
+      # vcan0 is how the daemon's CAN traffic is exercised on a CI host that has
+      # no bus: a virtual CAN interface the daemon attaches to as if it were a
+      # real one. The modprobe/link setup can fail in a restricted runner; a
+      # missing bus then leaves the CAN cases skipped rather than failing the
+      # whole run, which is the honest result.
+      - name: Create vcan0
+        run: |
+          sudo modprobe vcan || true
+          sudo ip link add vcan0 type vcan || true
+          sudo ip link set up vcan0 || true
+
+      - name: Run the daemon protocol, native daemon and historian tests
+        env:
+          HMI_HWD_CMD: native/hmi-hwd/out/hmi-hwd
+          QT_QPA_PLATFORM: offscreen
+        run: python3 -m unittest tests.test_daemon_protocol tests.test_hwd_native tests.test_w4_historian
+
   package:
     name: Windows executable
     runs-on: windows-latest
