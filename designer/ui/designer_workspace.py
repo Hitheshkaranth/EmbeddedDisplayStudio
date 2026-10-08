@@ -967,6 +967,7 @@ class DesignerWorkspace(QWidget):
 
         # -- centre: the canvas, with the AI composer floating over it ---------
         self.scene = DesignerScene(self.registry); self.view = DesignerView(self.scene); self.view.setObjectName("designerCanvas")
+        self.scene.workspace = self
         # The scene's renderer is designer.preview.NativeRenderer (the panel's
         # own hmi-ui, headless) when designer.preview.find_hmi_ui() finds a
         # binary, else this Qt/QML fallback; `preview_renderer_name` says which
@@ -2710,6 +2711,48 @@ class DesignerWorkspace(QWidget):
             if root and os.path.isfile(os.path.join(root, path)):
                 return os.path.join(root, path)
         return ""
+
+    def drop_image_file(self, path, x, y):
+        """Copy a dropped image file into the bundle and place an Image on it.
+
+        Only picture files the panel can decode land: png, jpg, jpeg, bmp, gif,
+        webp and svg, else None. The file is copied into <bundle>/assets as a
+        PNG, named from the file in the same way import_prompt_images names
+        one (lowercase, spaces -> _), capped at 240x120, and an Image with
+        PreserveAspectFit is placed at (x, y) as one undo step.
+        """
+        stem = os.path.basename(path)
+        if not (stem.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".svg"))):
+            return None
+        resolved = self._resolve_prompt_image(path)
+        if not resolved:
+            return None
+        if not self.ensure_bundle():
+            return None
+        assets = os.path.join(self.bundle_dir, "assets"); os.makedirs(assets, exist_ok=True)
+        stem = re.sub(r"\.(?:png|jpe?g|bmp|gif|webp|svg)$", "", os.path.basename(resolved).lower(),
+                      flags=re.I)
+        name = re.sub(r"[^a-z0-9._-]+", "-", stem) + ".png"
+        destination = os.path.join(assets, name)
+        if not _trim_transparent_margins(resolved, destination):
+            if resolved.lower().endswith(".png"):
+                shutil.copy2(resolved, destination)
+            else:
+                from PySide6.QtGui import QImage
+                if not QImage(resolved).save(destination, "PNG"):
+                    return None
+        definition = self.registry.get("Image")
+        model = DesignerWidget("Image", self.project.unique_id("image"),
+            {"x": max(0, int(x)), "y": max(0, int(y)),
+             "width": min(definition.default_width, 240),
+             "height": min(definition.default_height, 120)},
+            copy.deepcopy(definition.defaults))
+        model.properties["source"] = os.path.relpath(destination, self.bundle_dir).replace(os.sep, "/")
+        siblings = self.siblings_of("")
+        def redo(): siblings.append(model) if model not in siblings else None; self._load_page(select=[model.id])
+        def undo(): siblings.remove(model) if model in siblings else None; self._load_page()
+        self.undo_stack.push(CallbackCommand("Add image", redo, undo))
+        return model
 
     def import_prompt_images(self, prompt: str):
         """Copy the image files a request names into the project's assets.

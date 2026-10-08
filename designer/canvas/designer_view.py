@@ -674,11 +674,69 @@ class DesignerView(QGraphicsView):
     def dragEnterEvent(self, event):
         if event.mimeData().hasFormat(MIME_TYPE):
             event.acceptProposedAction()
+        elif self._image_mime(event):
+            event.acceptProposedAction()
         else:
             super().dragEnterEvent(event)
 
     def dragMoveEvent(self, event):
-        event.acceptProposedAction() if event.mimeData().hasFormat(MIME_TYPE) else super().dragMoveEvent(event)
+        if event.mimeData().hasFormat(MIME_TYPE) or self._image_mime(event):
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        if not event.mimeData().hasFormat(MIME_TYPE):
+            if not self._handle_image_drop(event):
+                super().dropEvent(event)
+        widget_type = bytes(event.mimeData().data(MIME_TYPE)).decode("utf-8")
+        point = self.mapToScene(event.position().toPoint())
+        scene = self.scene()
+        point.setX(max(0, min(point.x(), scene.project.screen.width)))
+        point.setY(max(0, min(point.y(), scene.project.screen.height)))
+        container = scene.container_at(point)
+        if container is not None:
+            local = container.mapFromScene(point)
+            scene.widgetDropped.emit(widget_type, local.x(), local.y(), container.widget_model.id)
+        else:
+            scene.widgetDropped.emit(widget_type, point.x(), point.y(), "")
+        event.acceptProposedAction()
+
+    @staticmethod
+    def _image_mime(event) -> bool:
+        """True when the drag carries a local image file: accept it, else drop."""
+        urls = event.mimeData().urls()
+        if not urls:
+            return False
+        for url in urls:
+            path = url.toLocalFile()
+            if path and not url.isLocalFile():
+                continue
+            stem = path.lower()
+            if stem.endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".svg")):
+                return True
+        return False
+
+    def _handle_image_drop(self, event) -> bool:
+        """A dropped image file: copy it into the bundle, place an Image.
+
+        The drop lands at the view's scene position. A path that is not a real
+        image, or one that cannot be resolved, is left for the ordinary drop.
+        """
+        path = next((u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()), "")
+        if not path:
+            return False
+        point = self.mapToScene(event.position().toPoint())
+        scene = self.scene()
+        point = QPointF(max(0, min(point.x(), scene.project.screen.width)),
+                        max(0, min(point.y(), scene.project.screen.height)))
+        workspace = getattr(scene, "workspace", None)
+        if workspace is None:
+            return False
+        if workspace.drop_image_file(path, point.x(), point.y()) is not None:
+            event.acceptProposedAction()
+            return True
+        return False
 
     def dropEvent(self, event):
         if not event.mimeData().hasFormat(MIME_TYPE):
