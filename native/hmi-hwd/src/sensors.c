@@ -57,19 +57,17 @@ static uint32_t read_raw(const uint8_t *buf, sens_type t, bool big_endian)
     switch (t) {
     case SENS_U8:
         return buf[0];
-    case SENS_I8: {
-        int8_t x = (const int8_t *)buf[0];
-        return (uint32_t)(int32_t)x;
-    }
+    case SENS_I8:
+        return (uint32_t)(int32_t)(int8_t)buf[0];
     case SENS_U16: {
         uint16_t x = big_endian ? ((uint16_t)buf[0] << 8 | buf[1])
                                 : ((uint16_t)buf[1] << 8 | buf[0]);
         return x;
     }
     case SENS_I16: {
-        uint16_t x = big_endian ? ((uint16_t)buf[0] << 8 | buf[1])
+        uint16_t u = big_endian ? ((uint16_t)buf[0] << 8 | buf[1])
                                 : ((uint16_t)buf[1] << 8 | buf[0]);
-        return (uint32_t)(int16_t)x;
+        return (uint32_t)(int16_t)u;
     }
     case SENS_U32: {
         uint32_t x = big_endian
@@ -88,14 +86,14 @@ static uint32_t read_raw(const uint8_t *buf, sens_type t, bool big_endian)
         return (uint32_t)(int32_t)x;
     }
     case SENS_F32: {
-        uint32_t x = big_endian
+        uint32_t bits = big_endian
             ? ((uint32_t)buf[0] << 24 | (uint32_t)buf[1] << 16 |
                (uint32_t)buf[2] << 8 | buf[3])
             : ((uint32_t)buf[3] << 24 | (uint32_t)buf[2] << 16 |
                (uint32_t)buf[1] << 8 | buf[0]);
         float f;
-        memcpy(&f, &x, sizeof f);
-        return (uint32_t)f;
+        memcpy(&f, &bits, sizeof f);
+        return (double)f;
     }
     }
     return 0;
@@ -108,13 +106,6 @@ double sens_decode(const uint8_t *buf, sens_type t, bool big_endian, uint32_t ma
     uint32_t raw = read_raw(buf, t, big_endian);
     if (mask) raw &= mask;
     raw >>= shift;
-    /* float raws are returned raw for the caller's scale/offset path. */
-    if (t == SENS_F32) {
-        uint32_t bits = raw;
-        float f;
-        memcpy(&f, &bits, sizeof f);
-        return f * scale + offset;
-    }
     return (double)raw * scale + offset;
 }
 
