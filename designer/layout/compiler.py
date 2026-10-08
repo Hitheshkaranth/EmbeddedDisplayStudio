@@ -1017,8 +1017,9 @@ def compile_page(project, page, registry, sections=None, title: str = "",
     # A train's cab display has one layout drivers know (designer/layout/cab.py).
     from . import cab
     if width > height and cab.applies(sections, header_widgets):
+        accent = getattr(getattr(project, "brand", None) or {}, "get")("accent")
         cab.compile_cab(project, page, registry, sections, title, header_widgets, report,
-                        width, height, project.brand.get("accent") if project.brand else None)
+                        width, height, accent)
         return report
     sections = _consolidate(_ordered(sections), report.notes, section_limit(width, height))
     _hero_caption(sections, report.notes)
@@ -1558,7 +1559,7 @@ def _header(project, registry, title, header_widgets, tokens, width):
         right -= tokens.gap
     title_w = max(80, right - x - tokens.gap)
     if title:
-        accent = (project.brand or {}).get("accent")
+        accent = getattr(getattr(project, "brand", None) or {}, "get")("accent")
         heading = _text(project, "screenTitle", (x, y, title_w, tokens.header), title,
                         tokens.title_font, accent or _theme(project, "foreground"), bold=True)
         heading.properties[SECTION_MARK] = "|title"

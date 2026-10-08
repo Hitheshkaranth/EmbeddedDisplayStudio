@@ -815,6 +815,9 @@ class AIDesignGenerator:
         # rules) silently does nothing.
         self.registry = registry or default_registry()
         self.progress = GeneratorProgress()
+        # The studio's brand (logos, accent) the generator carries across to
+        # what it produces, over the kit's own colours.
+        self.brand = {}
         # Every parsed section goes through designer.layout.polish before it is
         # returned, so what reaches the canvas is composed, not a draft.
         # False (tests, a caller that polishes itself) returns it raw.
@@ -847,10 +850,7 @@ class AIDesignGenerator:
         """
         project = self._parse_output(ai_output, screen_width, screen_height)
         if self.brand:
-            try:
-                project.brand = dict(self.brand)
-            except Exception:
-                pass
+            project.brand = dict(self.brand)
         self.last_polish = None
         if project is None or not self.polish_enabled:
             return project
