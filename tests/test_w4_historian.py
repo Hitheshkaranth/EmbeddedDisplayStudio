@@ -12,6 +12,10 @@ import time
 import unittest
 from pathlib import Path
 
+# The daemon under test: daemon/hmi_hwd.py, or the C port (HMI_HWD_CMD).
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import hwd_cmd  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "daemon"))
@@ -192,7 +196,10 @@ class DaemonHistory(unittest.TestCase):
             + ("orig = hwd.IioSim.read\nhwd.IioSim.read = lambda s, t: None if t == 'ai.pot' else orig(s, t)\n"
                if fail_pot else "")
             + "hwd.main()\n", encoding="utf-8")
-        self.proc = subprocess.Popen([sys.executable, runner, "--config", path, "--sim"], cwd=str(REPO_ROOT))
+        argv, env = [sys.executable, runner, "--config", path, "--sim"], None
+        if hwd_cmd.native():
+            argv, env = hwd_cmd.command(path, fail=["ai.pot"] if fail_pot else [])
+        self.proc = subprocess.Popen(argv, cwd=str(REPO_ROOT), env=env)
         self.addCleanup(self._stop)
         self.cmd = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.cmd.settimeout(1.0)

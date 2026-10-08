@@ -8,7 +8,8 @@
  *    non-blocking (the release is scheduled on the loop, not slept);
  *  - every poll_interval_ms: io poll -> store, sys.uptime/sys.errors,
  *    history observe/tick, one frame to the static sink and each subscriber;
- *  - "stale" quality for a tag whose value is older than 5 poll periods;
+ *  - quality ("bad", "stale") is set by the backend that owns a tag (it
+ *    knows when its device went quiet); the core only publishes it;
  *  - per-sender rate limit (rate_limited), oversized datagrams counted and
  *    dropped (too_large nack when an id is recoverable);
  *  - discovery socket (0.0.0.0:discovery_port) answering

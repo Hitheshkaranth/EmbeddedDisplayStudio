@@ -13,6 +13,10 @@ import tempfile
 import time
 import unittest
 
+# The daemon under test: daemon/hmi_hwd.py, or the C port (HMI_HWD_CMD).
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import hwd_cmd  # noqa: E402
+
 class TestDaemonProtocol(unittest.TestCase):
     """
     Tests for CONTRACT 2 (Wire protocol).
@@ -63,9 +67,12 @@ class TestDaemonProtocol(unittest.TestCase):
                 "hwd.main()\n"
             )
         cmd = [sys.executable, mock_script_path, "--config", self.config_path, "--sim"]
-        
+        env = None
+        if hwd_cmd.native():
+            cmd, env = hwd_cmd.command(self.config_path, fail=["ai.pot"])
+
         # Start daemon
-        self.daemon_proc = subprocess.Popen(cmd)
+        self.daemon_proc = subprocess.Popen(cmd, env=env)
         
         # Sockets
         self.cmd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

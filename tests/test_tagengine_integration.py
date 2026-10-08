@@ -14,6 +14,10 @@ import threading
 import time
 import unittest
 
+# The daemon under test: daemon/hmi_hwd.py, or the C port (HMI_HWD_CMD).
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import hwd_cmd  # noqa: E402
+
 # Must be set BEFORE PySide6 imports
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
@@ -71,7 +75,10 @@ class TestTagEngineIntegration(unittest.TestCase):
             "--config", self.config_path,
             "--sim"
         ]
-        self.daemon_proc = subprocess.Popen(cmd)
+        env = None
+        if hwd_cmd.native():
+            cmd, env = hwd_cmd.command(self.config_path)
+        self.daemon_proc = subprocess.Popen(cmd, env=env)
         
         self.qml_engine = QQmlApplicationEngine()
         self.tag_engine = TagEngine(
