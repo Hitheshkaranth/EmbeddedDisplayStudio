@@ -901,6 +901,9 @@ static int link_write(mb_link *L, const mb_tag *t, double raw)
         regs[0] = raw != 0 ? 0xFF00 : 0x0000;
     } else {
         nregs = mb_encode(t->type, raw, regs, t->little);
+        /* 1 or 2 registers, never more: also what lets the optimiser see
+         * regs[] is never read past its end. */
+        if (nregs < 1 || nregs > 2) return -1;
         fc = nregs == 1 ? 6 : 16;
     }
     uint8_t req[300], resp[300];
