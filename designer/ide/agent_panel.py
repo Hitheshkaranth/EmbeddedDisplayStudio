@@ -457,7 +457,6 @@ class AgentPanel(QWidget):
         # Connections the Code agent shares with AI Design (connections.py);
         # created lazily so importing the panel does not touch QSettings.
         self._connections = None
-        self._connections = None
         # Elapsed: when busy, the moment the backend went busy (the clock
         # reading now, so a panel first shown mid-reply is right); while busy
         # it is live, and after idle "done in Xm Ys" is kept until the next
@@ -842,15 +841,30 @@ class AgentPanel(QWidget):
         """Open the "Manage connections" dialog from the model menu. Saved
         connections refresh the provider list; on close the panel refreshes its
         agent model list from the store's default."""
-        from tools.hmi_deployer.connections import (
-            ConnectionStore, ConnectionsDialog)
+        from tools.hmi_deployer.connections import ConnectionsDialog, opencode_model_label
         store = self._connections_store()
+        before = [vars(c) for c in store.list()], store.default_for("agent")
         dialog = ConnectionsDialog(store, self)
         dialog.exec()
-        store = self._connections_store()
         default = store.default_for("agent")
-        models = [ModelRef(default.model, default.kind)] if default else []
+        if ([vars(c) for c in store.list()], default) != before and self._directory and not self._busy:
+            # opencode reads its providers at start: restart it on the new config.
+            self._backend.stop()
+            self._backend.start(self._directory)
+        models = list(self._backend.models())
+        picked = ModelRef.parse(opencode_model_label(default)) if default else None
+        if picked is not None:
+            if picked.label not in [m.label for m in models]:
+                models.append(picked)
+            QSettings("MIL-HMI", "Deployer").setValue(SETTINGS_MODEL_KEY, picked.label)
         self._fill_models(models)
+
+    def _connections_store(self):
+        """The shared ConnectionStore (created on first use)."""
+        if self._connections is None:
+            from tools.hmi_deployer.connections import ConnectionStore
+            self._connections = ConnectionStore()
+        return self._connections
 
     def _on_event(self, event: dict) -> None:
         kind = event.get("type")

@@ -65,6 +65,12 @@ except ImportError:  # pragma: no cover - the Studio always ships ui/
 logger = logging.getLogger(__name__)
 
 
+# Provider-combo data for a saved connection ("conn:<name>") and for the
+# "Manage connections…" entry, which opens the editor instead of switching.
+_CONN_PREFIX = "conn:"
+_MANAGE_KEY = "__manage__"
+
+
 def _rgba(hex_color: str, alpha: float) -> str:
     """``#rrggbb`` token + alpha -> ``rgba(r,g,b,a)`` for QSS tints."""
     c = QColor(hex_color)
@@ -2039,6 +2045,10 @@ class AIDesignTab(QWidget):
     def _load_defaults(self):
         self.auto_apply.setChecked(self.settings.value("ai/autoApply", True, type=bool))
         saved = self.settings.value("ai/provider", "", type=str)
+        if not saved:
+            # No pick yet: the connection set "Use for Design" in Manage connections.
+            default = self._connections_store().default_for("design")
+            saved = _CONN_PREFIX + default.name if default is not None else ""
         index = self.provider_combo.findData(saved) if saved else -1
         if index >= 0:
             self.provider_combo.setCurrentIndex(index)
@@ -2056,7 +2066,37 @@ class AIDesignTab(QWidget):
         self.provider_combo.clear()
         for preset in self.connector.get_provider_presets():
             self.provider_combo.addItem(preset["label"], preset["key"])
+        # The user's saved connections (shared with the Code agent), then the
+        # entry that edits them.
+        conns = self._connections_store().list()
+        if conns:
+            self.provider_combo.insertSeparator(self.provider_combo.count())
+        for conn in conns:
+            self.provider_combo.addItem(conn.name, _CONN_PREFIX + conn.name)
+        self.provider_combo.insertSeparator(self.provider_combo.count())
+        self.provider_combo.addItem("Manage connections…", _MANAGE_KEY)
         self.provider_combo.blockSignals(False)
+        self._provider_index = max(0, self.provider_combo.currentIndex())
+
+    def _connections_store(self):
+        """The ConnectionStore AI Design shares with the Code agent."""
+        if getattr(self, "_connections", None) is None:
+            from tools.hmi_deployer.connections import ConnectionStore
+            self._connections = ConnectionStore()
+        return self._connections
+
+    def open_connections(self):
+        """Manage connections…: edit the saved list, then offer it here."""
+        from tools.hmi_deployer.connections import ConnectionsDialog
+        current = self._current_provider_key()
+        dialog = ConnectionsDialog(self._connections_store(), self)
+        dialog.exec()
+        self._populate_providers()
+        index = self.provider_combo.findData(current)
+        if index < 0:
+            index = 0
+        self.provider_combo.setCurrentIndex(index)
+        self._on_provider_changed(index)
 
     def _current_provider_key(self) -> str:
         return self.provider_combo.currentData() or ""
@@ -2064,14 +2104,32 @@ class AIDesignTab(QWidget):
     def _on_provider_changed(self, index: int):
         """Switch provider: rebuild the BYOK config from preset + saved overrides."""
         key = self.provider_combo.itemData(index)
+        if key == _MANAGE_KEY:
+            # Not a provider: put the combo back and open the editor.
+            self.provider_combo.blockSignals(True)
+            self.provider_combo.setCurrentIndex(getattr(self, "_provider_index", 0))
+            self.provider_combo.blockSignals(False)
+            QTimer.singleShot(0, self.open_connections)
+            return
         if not self.connector or not key:
             return
-        preset = dict(BYOK_PRESETS.get(key, {}))
-        preset["provider"] = key
-        preset["baseUrl"] = self.settings.value(f"ai/baseUrl/{key}", preset.get("baseUrl", ""), type=str)
-        preset["apiKey"] = self.settings.value(f"ai/apiKey/{key}", "", type=str)
+        self._provider_index = index
+        conn = self._connections_store().get(key[len(_CONN_PREFIX):]) if key.startswith(_CONN_PREFIX) else None
+        if conn is not None:
+            kind = conn.kind if conn.kind in BYOK_PRESETS else "openai"
+            preset = dict(BYOK_PRESETS[kind], baseUrl=conn.base_url, apiKey=conn.api_key,
+                          models=[conn.model] if conn.model else [], requiresApiKey=bool(conn.api_key))
+            preset["provider"] = kind
+            preset.setdefault("thinking", conn.thinking)
+        else:
+            preset = dict(BYOK_PRESETS.get(key, {}))
+            preset["provider"] = key
+        if conn is None:
+            # A connection's endpoint lives in the store (and is edited there).
+            preset["baseUrl"] = self.settings.value(f"ai/baseUrl/{key}", preset.get("baseUrl", ""), type=str)
+            preset["apiKey"] = self.settings.value(f"ai/apiKey/{key}", "", type=str)
         preset["model"] = self.settings.value(f"ai/model/{key}", (preset.get("models") or [""])[0], type=str)
-        preset["thinking"] = self.settings.value(f"ai/thinking/{key}", False, type=bool)
+        preset["thinking"] = self.settings.value(f"ai/thinking/{key}", bool(preset.get("thinking")), type=bool)
         self.connector.mode = "byok"
         self.connector.byok = ProviderConfig.from_dict(preset)
         self.settings.setValue("ai/provider", key)
@@ -2126,8 +2184,15 @@ class AIDesignTab(QWidget):
         key = self._current_provider_key()
         self.connector.byok.baseUrl = self.base_url.text().strip()
         self.connector.byok.apiKey = self.api_key.text().strip()
-        self.settings.setValue(f"ai/baseUrl/{key}", self.connector.byok.baseUrl)
-        self.settings.setValue(f"ai/apiKey/{key}", self.connector.byok.apiKey)
+        if key.startswith(_CONN_PREFIX):
+            store = self._connections_store()
+            conn = store.get(key[len(_CONN_PREFIX):])
+            if conn is not None:
+                conn.base_url, conn.api_key = self.connector.byok.baseUrl, self.connector.byok.apiKey
+                store.update(conn)
+        else:
+            self.settings.setValue(f"ai/baseUrl/{key}", self.connector.byok.baseUrl)
+            self.settings.setValue(f"ai/apiKey/{key}", self.connector.byok.apiKey)
         self.probe_connection()
 
     # ------------------------------------------------------------------

@@ -30,8 +30,8 @@ from datetime import datetime
 
 from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QListWidget, QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout,
 )
 
 # The opencode "provider" block key for a connection: namespaced "studio-" so
@@ -156,6 +156,12 @@ class ConnectionStore:
 def _opencode_key(conn: Connection) -> str:
     """The provider block key: 'studio-' + the connection name."""
     return _PREFIX + conn.name
+
+
+def opencode_model_label(conn: Connection) -> str:
+    """The 'provider/model' the Code agent asks opencode for to use `conn`
+    ('' when the connection names no model)."""
+    return f"{_opencode_key(conn)}/{conn.model}" if conn.model else ""
 
 
 def opencode_provider_entry(conn: Connection):
@@ -306,7 +312,7 @@ def fetch_models(conn: Connection, timeout: float = 5.0) -> list[str]:
 # The dialog
 # ---------------------------------------------------------------------------
 
-class ConnectionsDialog(QWidget):
+class ConnectionsDialog(QDialog):
     """The "Manage connections" editor: the list, the fields for one, and the
     actions (Test / Save / Remove / Use for AI Design / Use for the Code
     agent).
@@ -326,6 +332,7 @@ class ConnectionsDialog(QWidget):
     def __init__(self, store: ConnectionStore, parent=None):
         super().__init__(parent)
         self.setObjectName("connectionsDialog")
+        self.setWindowTitle("Connections")
         self._store = store
         self.resize(640, 480)
 
@@ -403,6 +410,10 @@ class ConnectionsDialog(QWidget):
             role_row.addWidget(button)
             self.role_buttons[role] = button
         role_row.addStretch(1)
+        close_button = QPushButton("Close")
+        close_button.setCursor(Qt.PointingHandCursor)
+        close_button.clicked.connect(self.accept)
+        role_row.addWidget(close_button)
         layout.addLayout(role_row)
 
         self._refresh_list()
@@ -479,7 +490,15 @@ class ConnectionsDialog(QWidget):
         self._refresh_list()
         self.list_widget.setCurrentRow(self.list_widget.count() - 1)
         self._load_into_fields(self.list_widget.currentRow())
+        default = self._store.default_for("agent")
+        if default is not None and default.name == conn.name:
+            # The Code agent's pick changed under it: keep its config current.
+            try:
+                write_opencode_config(self._store.list())
+            except OSError:
+                pass
         self.changed.emit(self._store)
+        self.saved.emit()
 
     def _remove(self) -> None:
         row = self.list_widget.currentRow()
@@ -513,5 +532,5 @@ class ConnectionsDialog(QWidget):
         self.test_label.setText(f"Used for {role}.")
 
 
-__all__ = ["Connection", "ConnectionStore", "fetch_models",
+__all__ = ["Connection", "ConnectionStore", "fetch_models", "opencode_model_label",
            "opencode_provider_entry", "write_opencode_config", "ConnectionsDialog"]
