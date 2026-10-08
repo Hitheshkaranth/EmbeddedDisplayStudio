@@ -45,8 +45,8 @@ from PySide6.QtWidgets import (
 
 from tools.hmi_deployer.ai_design import BYOK_PRESETS, ProviderConfig
 from tools.hmi_deployer.ai_generator import (
-    brief_resolution, build_plan_prompt, build_system_prompt, diff_projects,
-    drop_dangling_navigation, merge_project_section, summarize_widgets,
+    PLAN_SCHEMA, brief_resolution, build_plan_prompt, build_system_prompt, diff_projects,
+    drop_dangling_navigation, merge_project_section, plan_shortfall, summarize_widgets,
 )
 
 try:
@@ -1430,6 +1430,12 @@ class AIDesignTab(QWidget):
         self._section_run = 0
         self._section_project = None
         self._queued_section_request = None
+        # One automatic "send the whole plan" retry per brief (see
+        # _conclude_turn): the request waiting for the worker to exit, whether
+        # this brief has had its retry, and the design a reply must keep.
+        self._queued_retry = None
+        self._shortfall_retried = False
+        self._plan_previous = None
         self._root_brief = ""
         self._resolution_noted = False
         # The panel's own renderer, for the variant thumbnails: None until
@@ -2317,6 +2323,7 @@ class AIDesignTab(QWidget):
     def stop_generation(self):
         if self.connector and self.streaming:
             self._queued_section_request = None
+            self._queued_retry = None
             self.connector.cancel()
             self.send_btn.setEnabled(False)
             self.send_btn.setToolTip("Stopping\u2026")
@@ -2330,6 +2337,12 @@ class AIDesignTab(QWidget):
         self._section_run = 1
         self._section_project = None
         self._queued_section_request = None
+        self._queued_retry = None
+        self._shortfall_retried = False
+        # A follow-up in the same conversation refines the design the last
+        # reply made: a reply that loses most of its tags lost part of it.
+        history = getattr(self.connector, "conversation", None) if self.connector else None
+        self._plan_previous = self.last_project if history else None
         planned = self.settings.value("ai/layoutEngine", "compile", type=str) != "polish"
         request = f"{brief}\n\n{self.PLAN_REQUEST if planned else self.SECTION_REQUEST}"
         self._start_generation(request, brief)
@@ -2369,6 +2382,12 @@ class AIDesignTab(QWidget):
             else:
                 self.connector.system_prompt = build_plan_prompt(registry, width, height,
                                                                  brief=self._root_brief)
+            # A plan request carries the plan's JSON schema, so a server that
+            # guides decoding (vLLM, OpenAI, Ollama) cannot answer with broken
+            # JSON; ai/structuredOutput=false sends the plain request.
+            structured = (engine != "polish"
+                          and self.settings.value("ai/structuredOutput", True, type=bool))
+            self.connector.response_schema = PLAN_SCHEMA if structured else None
             asked = brief_resolution(self._root_brief)
             if asked and asked != (width, height) and not self._resolution_noted:
                 # The brief's size is not the glass; saying so once beats a
@@ -2545,6 +2564,23 @@ class AIDesignTab(QWidget):
                         chips.append(("Applied to canvas", "ok"))
                         chips.append(("Panel preview not refreshed", "warn"))
                     self._offer_variants(turn, project)
+                shortfall = ""
+                planned_run = self.settings.value("ai/layoutEngine", "compile", type=str) != "polish"
+                if planned_run and not (sectioned and (was_truncated or not section_complete)):
+                    shortfall = plan_shortfall(project, previous=self._plan_previous)
+                if shortfall and not self._shortfall_retried:
+                    # Once per brief, never a loop: the same brief again with a
+                    # one-line note of what was missing.
+                    self._shortfall_retried = True
+                    self._queued_retry = (
+                        f"{self._root_brief}\n\nYour previous reply was incomplete: {shortfall}. "
+                        f"Reply with the whole plan.\n\n{self.PLAN_REQUEST}",
+                        "Retry · the whole plan")
+                    chips.append((f"Incomplete: {shortfall} · asking once more", "warn"))
+                    self.statusMessage.emit(f"AI Design: {shortfall}; asking the model once more "
+                                            "for the whole plan.")
+                elif shortfall:
+                    chips.append((f"Incomplete: {shortfall}", "warn"))
                 if sectioned and (was_truncated or not section_complete):
                     if self._queue_next_section(section_next, truncated=was_truncated):
                         chips.append(("Applied · continuing automatically", "warn"))
@@ -2631,9 +2667,16 @@ class AIDesignTab(QWidget):
             if turn.shell.running and not getattr(turn, "_concluding", False):
                 self._conclude_turn(turn, stopped=True)
         queued, self._queued_section_request = self._queued_section_request, None
+        retry, self._queued_retry = self._queued_retry, None
         if queued:
             self._section_run += 1
             request, display = queued
+            self._start_generation(request, display)
+        elif retry:
+            # The retry replaces the short reply; it is not a section to merge.
+            self._section_run = 1
+            self._section_project = None
+            request, display = retry
             self._start_generation(request, display)
 
     # ------------------------------------------------------------------
@@ -2644,6 +2687,8 @@ class AIDesignTab(QWidget):
         if self.streaming:
             return
         self._queued_section_request = None
+        self._queued_retry = None
+        self._plan_previous = None
         self._section_run = 0
         self._section_project = None
         self._root_brief = ""
