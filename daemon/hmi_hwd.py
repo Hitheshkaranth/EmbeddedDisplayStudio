@@ -1575,8 +1575,6 @@ class HwDaemon:
         self.error_count: int = 0
         # Modbus live on a real PLC even when --sim is given (Wave 5 B3).
         self.modbus_live = modbus_live
-        # Modbus live on a real PLC even when --sim is given.
-        self.modbus_live = modbus_live
         # Monotonic sequence number for telemetry frames, wraps at 2^31.
         self._seq: int = 0
         # Wallclock at daemon start for sys.uptime calculation.
