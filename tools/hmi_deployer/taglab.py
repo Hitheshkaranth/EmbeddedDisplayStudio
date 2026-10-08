@@ -561,6 +561,18 @@ def _coerce_bool_value(value: Any) -> bool:
     return bool(value)
 
 
+def design_simulation_frame(project_dict: dict, t: float) -> dict:
+    """The frame the design would show at time t, driven by tagsim.
+
+    Tag Lab normally injects hand-made waveforms. With "Simulate the design"
+    on, it injects the design itself: plan the project as tagsim would read it
+    on the panel, and read what every bound tag is at t seconds into the
+    flight. Returns {tag: value}.
+    """
+    from daemon import tagsim
+    return dict(tagsim.values_at(tagsim.plan(project_dict), t, 240.0))
+
+
 class CommandSink:
     """
     Listens on the daemon's command port and answers CONTRACT 2.2 commands.

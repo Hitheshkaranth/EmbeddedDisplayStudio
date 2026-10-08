@@ -2732,7 +2732,7 @@ class DesignerWorkspace(QWidget):
         assets = os.path.join(self.bundle_dir, "assets"); os.makedirs(assets, exist_ok=True)
         stem = re.sub(r"\.(?:png|jpe?g|bmp|gif|webp|svg)$", "", os.path.basename(resolved).lower(),
                       flags=re.I)
-        name = re.sub(r"[^a-z0-9._-]+", "-", stem) + ".png"
+        name = re.sub(r"[^a-z0-9._]+", "_", stem) + ".png"
         destination = os.path.join(assets, name)
         if not _trim_transparent_margins(resolved, destination):
             if resolved.lower().endswith(".png"):
@@ -2790,6 +2790,20 @@ class DesignerWorkspace(QWidget):
             return asset
 
         return self._PROMPT_IMAGE_RE.sub(replace, prompt), imported
+
+    def set_brand(self, logos=None, accent=None):
+        """Import the brand's logos into the bundle and remember the accent.
+
+        Each logo is copied like a dropped image (into <bundle>/assets as a
+        PNG) and stored by its bundle-relative path. The accent is the one
+        colour a generator carries to the AI prompt and the cab layout reads.
+        """
+        imported = []
+        for logo in (logos or []):
+            if self.drop_image_file(logo, 0, 0) is not None:
+                model = self.current_page.widgets[-1]
+                imported.append(model.properties["source"])
+        self.project.brand = {"logos": imported, "accent": accent or ""}
 
     def _ensure_project_location(self):
         """Assets are copied beside the project, so it needs a home on disk first."""
