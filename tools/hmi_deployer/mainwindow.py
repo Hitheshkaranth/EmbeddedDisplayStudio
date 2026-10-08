@@ -1985,6 +1985,7 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
             manifest=getattr(self, "current_manifest", None),
             connected=connected,
             detected_resolution=self.detected_resolution,
+            project=getattr(getattr(self, "designer_workspace", None), "project", None),
         )
         severity_colors = {
             "ready": "#22c55e",

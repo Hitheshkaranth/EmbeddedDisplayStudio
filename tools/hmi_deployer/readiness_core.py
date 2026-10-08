@@ -9,65 +9,42 @@ class ReadinessItem:
     action: str
 
 
-# A widget is a reading when its type shows a value the process reports: a
-# face (a dial, a gauge), a tile (a readout, a data field), a bar, or a chart.
-# A Text label is a caption, not a reading; a container and a button show
-# neither a value nor a tag, so neither is a reading.
-READING_KINDS = ("face", "tile", "bar", "chart")
+#: The layout compiler's kinds (designer.layout.compiler.kind_of) that show a
+#: value the process reports: a face (dial, gauge), a tile or strip (readout,
+#: bar), a chart. A Text label is a caption, a lamp a state, a control an
+#: input -- none of them a reading.
+READING_KINDS = ("face", "tile", "strip", "chart")
+#: Registry categories that are a box for other things (a card, a picture), so
+#: the compiler's catch-all "tile" is not a reading there.
+_BOX_CATEGORIES = ("Basic", "Containers", "Navigation")
 
 
-def _is_reading(widget) -> bool:
-    """True when the widget type is a reading: a face, tile, bar or chart.
-
-    A label (Text), a container, and a control are not readings.
-    """
-    kind = widget_kind(widget)
-    return kind in READING_KINDS
-
-
-def widget_kind(widget) -> str:
-    """One of face, tile, bar, chart, label, container, control."""
-    wtype = getattr(widget, "type", "")
-    if wtype == "Text":
-        return "label"
-    if wtype in ("ShRectangle", "ShContainer", "Frame", "ShPanel", "ShCard", "Rectangle",
-                 "Column", "Row", "ShStack", "ShStackedLayout", "ShBorder"):
-        return "container"
-    if wtype in ("ShButton", "ShToggle", "ShCheckbox", "ShSelect", "ShSlider",
-                 "ShInput", "ShNumInput", "ShTabs", "ShMenuItem", "ShMenuItemGroup"):
-        return "control"
-    if "arc" in wtype.lower() or "gauge" in wtype.lower() or "dial" in wtype.lower() \
-            or "tape" in wtype.lower() or "segment" in wtype.lower() \
-            or "progress" in wtype.lower() or "analog" in wtype.lower():
-        return "face"
-    if "bar" in wtype.lower() or "traction" in wtype.lower() or "enginebar" in wtype.lower():
-        return "bar"
-    if "chart" in wtype.lower():
-        return "chart"
-    if any(name in wtype for name in ("tile", "readout", "display", "indicator", "field",
-                                        "numdisplay", "alert", "icontile", "statuscard",
-                                        "consist", "stationline", "trainconsist", "speedarc",
-                                        "gear", "show", "tripinfo", "autopos", "autolevel")):
-        return "tile"
-    return "tile"
+def _is_reading(widget, registry) -> bool:
+    """True when the widget's registry kind is a face, tile, bar or chart."""
+    from designer.layout.compiler import CHROME_MARK, kind_of
+    if widget.children or widget.properties.get(CHROME_MARK):
+        return False
+    definition = registry.get(widget.type)
+    if definition is None or definition.category in _BOX_CATEGORIES:
+        return False
+    return kind_of(registry, widget) in READING_KINDS
 
 
 def static_readings(project) -> list:
     """Every reading that shows a value with no tag: a static on live glass.
 
-    A reading that has neither a binding nor an expression shows a value the
-    model wrote by hand; the panel overwrites it with a real reading, so a
-    reading the deployer has not bound to a tag is a reading that is not live
-    -- the readiness check warns that it has no tag. A bound reading, or one
-    whose value is an expression, is not counted.
+    A reading with neither a binding nor an expression shows the sample it
+    was drawn with for ever: on the panel it is a number that never moves,
+    which reads as a live value that is wrong. Returns their ids, in design
+    order; a Text label, a lamp, a control or a container is never one.
     """
     if project is None:
         return []
+    from designer.palette.widget_registry import default_registry
+    registry = default_registry()
     statics = []
     for widget in project.all_widgets():
-        if not _is_reading(widget):
-            continue
-        if widget.bindings:
+        if widget.bindings or not _is_reading(widget, registry):
             continue
         props = widget.properties
         if props.get("expr") or props.get("expression"):
@@ -89,6 +66,9 @@ def audit_readiness(bundle_valid, manifest, connected, detected_resolution, proj
         Whether the target display is currently connected.
     detected_resolution : tuple[int, int] | None
         The detected screen resolution as (width, height), or None.
+    project : DesignerProject | None
+        The open design. When given, readings with no tag (static_readings)
+        make the Tags row a warning.
 
     Returns
     -------
@@ -172,8 +152,9 @@ def audit_readiness(bundle_valid, manifest, connected, detected_resolution, proj
             tags_item = ReadinessItem(
                 name="Tags",
                 severity="warning",
-                detail="{} readings have no tag.".format(len(statics)),
-                action="Bind these readings to a tag so the panel shows the live value.",
+                detail=("1 reading has no tag." if len(statics) == 1
+                        else "{} readings have no tag.".format(len(statics))),
+                action="Bind them in the Designer, or they show their sample for ever.",
             )
         elif tags_required:
             tags_item = ReadinessItem(
