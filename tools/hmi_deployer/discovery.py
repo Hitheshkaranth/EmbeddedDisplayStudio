@@ -76,10 +76,14 @@ def discover(timeout=1.5, port=DISCOVERY_PORT, targets=None):
     query = json.dumps(DISCOVERY_QUERY).encode()
 
     received = {}
-
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        sock.bind(("", port))
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    try:
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("", 0))
+        except OSError:
+            pass
         sock.settimeout(timeout)
         for target in targets:
             try:
@@ -92,7 +96,7 @@ def discover(timeout=1.5, port=DISCOVERY_PORT, targets=None):
             try:
                 data, addr = sock.recvfrom(4096)
             except OSError:
-                # A closed socket raises rather than blocking forever.
+                # A timeout ends the listening loop; the hellos seen so far stand.
                 break
             try:
                 reply = json.loads(data)
@@ -101,6 +105,10 @@ def discover(timeout=1.5, port=DISCOVERY_PORT, targets=None):
             if reply.get("t") != "hello":
                 continue
             sender_ip = addr[0]
-            received.setdefault(sender_ip, reply)
+            hit = dict(reply)
+            hit["ip"] = sender_ip
+            received.setdefault(sender_ip, hit)
+    finally:
+        sock.close()
 
     return list(received.values())
