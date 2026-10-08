@@ -335,7 +335,8 @@ def compile_cab(project, page, registry, sections, title, header_widgets, report
     """Lay `page` out as a cab display; replaces page.widgets in place."""
     from .compiler import SECTION_MARK
     lay = _Layout(project, width, height)
-    accent = accent_override or accent_for(title)
+    brand = getattr(project, "brand", None) or {}
+    accent = accent_override or brand.get("accent") or accent_for(title)
     everything = [w for s in sections for w in s.widgets]
     header = list(header_widgets or [])
     used = set()
