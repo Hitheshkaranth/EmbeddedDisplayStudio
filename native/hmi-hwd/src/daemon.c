@@ -9,6 +9,9 @@
  * Backends that block run their own threads (backend.h); they inherit the
  * blocked signal mask, so signals always land in the loop.
  */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE     /* ppoll; CMakeLists defines it too */
+#endif
 #include "daemon.h"
 #include "backend.h"
 #include "history.h"
