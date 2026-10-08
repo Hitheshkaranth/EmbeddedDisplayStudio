@@ -887,7 +887,9 @@ Writable signals share a transmit frame per id (8 bytes, unset bits 0):
 writing a signal updates its bits and sends the frame, and repeats it every
 `period_ms` when given. `can_tx` sends a raw frame. `sys.can_online` = the
 interface is up. Sim: received signals ramp across their range; writes are
-echoed back as received values.
+echoed back as received values. A virtual interface (one with no
+`/sys/class/net/<if>/device`, e.g. `vcan0`) touches no hardware and is used
+for real even under `--sim`.
 
 ### 14.4 HID input (barcode scanners) -- `"hid"`
 
