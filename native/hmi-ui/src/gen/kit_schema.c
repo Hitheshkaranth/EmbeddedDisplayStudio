@@ -399,6 +399,21 @@ static const hmi_prop_schema_t props_ShSlider[] = {
     {NULL, HMI_KIND_STR, NULL, false}
 };
 static const char *const signals_ShSlider[] = {"valueChanged", NULL};
+static const hmi_prop_schema_t props_ShSpeedArc[] = {
+    {"value", HMI_KIND_FLOAT, "55.0", true},
+    {"maximumValue", HMI_KIND_FLOAT, "100.0", false},
+    {"target", HMI_KIND_FLOAT, "60.0", true},
+    {"showTarget", HMI_KIND_BOOL, "true", false},
+    {"unit", HMI_KIND_STR, "KM/H", false},
+    {"targetLabel", HMI_KIND_STR, "TARGET", false},
+    {"decimals", HMI_KIND_INT, "0", false},
+    {"outerColor", HMI_KIND_COLOR, "#22d3ee", false},
+    {"innerColor", HMI_KIND_COLOR, "#a855f7", false},
+    {"opacity", HMI_KIND_FLOAT, "1.0", false},
+    {"visible", HMI_KIND_BOOL, "true", false},
+    {NULL, HMI_KIND_STR, NULL, false}
+};
+static const char *const signals_ShSpeedArc[] = { NULL};
 static const hmi_prop_schema_t props_ShStatDot[] = {
     {"state", HMI_KIND_STR, "idle", true},
     {"size", HMI_KIND_INT, "12", false},
@@ -407,6 +422,27 @@ static const hmi_prop_schema_t props_ShStatDot[] = {
     {NULL, HMI_KIND_STR, NULL, false}
 };
 static const char *const signals_ShStatDot[] = { NULL};
+static const hmi_prop_schema_t props_ShStationLine[] = {
+    {"stations", HMI_KIND_STR, "Attiguppe,Vijayanagar,Hosahalli,Magadi Road,KSR Bengaluru", false},
+    {"details", HMI_KIND_STR, "COMPLETED,P-412,NEXT · 1.1 km,UPCOMING · 2.3 km,Majestic", true},
+    {"current", HMI_KIND_INT, "1", true},
+    {"accent", HMI_KIND_COLOR, "#a855f7", false},
+    {"opacity", HMI_KIND_FLOAT, "1.0", false},
+    {"visible", HMI_KIND_BOOL, "true", false},
+    {NULL, HMI_KIND_STR, NULL, false}
+};
+static const char *const signals_ShStationLine[] = { NULL};
+static const hmi_prop_schema_t props_ShStatusCard[] = {
+    {"icon", HMI_KIND_STR, "snowflake", false},
+    {"title", HMI_KIND_STR, "HVAC:", false},
+    {"status", HMI_KIND_STR, "ACTIVE (21°C)", true},
+    {"state", HMI_KIND_STR, "ok", true},
+    {"iconColor", HMI_KIND_COLOR, "#38bdf8", false},
+    {"opacity", HMI_KIND_FLOAT, "1.0", false},
+    {"visible", HMI_KIND_BOOL, "true", false},
+    {NULL, HMI_KIND_STR, NULL, false}
+};
+static const char *const signals_ShStatusCard[] = { NULL};
 static const hmi_prop_schema_t props_ShTabs[] = {
     {"tabs", HMI_KIND_STR, "Overview, Details", false},
     {"currentIndex", HMI_KIND_INT, "0", false},
@@ -451,6 +487,30 @@ static const hmi_prop_schema_t props_ShToggle[] = {
     {NULL, HMI_KIND_STR, NULL, false}
 };
 static const char *const signals_ShToggle[] = {"toggled", NULL};
+static const hmi_prop_schema_t props_ShTractionBar[] = {
+    {"value", HMI_KIND_FLOAT, "30.0", true},
+    {"title", HMI_KIND_STR, "T/B", false},
+    {"powerLabel", HMI_KIND_STR, "POWER", false},
+    {"brakeLabel", HMI_KIND_STR, "BRAKING", false},
+    {"propulsionText", HMI_KIND_STR, "Propulsion", false},
+    {"brakingText", HMI_KIND_STR, "Braking", false},
+    {"opacity", HMI_KIND_FLOAT, "1.0", false},
+    {"visible", HMI_KIND_BOOL, "true", false},
+    {NULL, HMI_KIND_STR, NULL, false}
+};
+static const char *const signals_ShTractionBar[] = { NULL};
+static const hmi_prop_schema_t props_ShTrainConsist[] = {
+    {"cars", HMI_KIND_STR, "MC1,M1,T1,T2,M2,MC2", false},
+    {"doorsLeft", HMI_KIND_STR, "closed", true},
+    {"doorsRight", HMI_KIND_STR, "disabled", true},
+    {"leftLabel", HMI_KIND_STR, "DOORS L: CLOSED (SECURED)", true},
+    {"rightLabel", HMI_KIND_STR, "DOORS R: DISABLED", true},
+    {"accent", HMI_KIND_COLOR, "#a855f7", false},
+    {"opacity", HMI_KIND_FLOAT, "1.0", false},
+    {"visible", HMI_KIND_BOOL, "true", false},
+    {NULL, HMI_KIND_STR, NULL, false}
+};
+static const char *const signals_ShTrainConsist[] = { NULL};
 static const hmi_prop_schema_t props_ShTrendChart[] = {
     {"minValue", HMI_KIND_FLOAT, "0.0", false},
     {"maxValue", HMI_KIND_FLOAT, "100.0", false},
@@ -572,11 +632,16 @@ const hmi_type_schema_t hmi_kit_types[] = {
     {"ShSegmentBar", "Automotive", 320, 36, false, "", props_ShSegmentBar, 9, signals_ShSegmentBar, 0},
     {"ShSelect", "Industrial", 200, 56, false, "currentIndex", props_ShSelect, 7, signals_ShSelect, 1},
     {"ShSlider", "Industrial", 250, 64, false, "value", props_ShSlider, 15, signals_ShSlider, 1},
+    {"ShSpeedArc", "Rail", 420, 420, false, "", props_ShSpeedArc, 11, signals_ShSpeedArc, 0},
     {"ShStatDot", "Industrial", 36, 36, false, "", props_ShStatDot, 4, signals_ShStatDot, 0},
+    {"ShStationLine", "Rail", 520, 680, false, "", props_ShStationLine, 6, signals_ShStationLine, 0},
+    {"ShStatusCard", "Rail", 240, 180, false, "", props_ShStatusCard, 7, signals_ShStatusCard, 0},
     {"ShTabs", "Navigation", 360, 240, true, "", props_ShTabs, 4, signals_ShTabs, 0},
     {"ShTape", "Avionics", 80, 260, false, "", props_ShTape, 10, signals_ShTape, 0},
     {"ShTelltale", "Automotive", 48, 48, false, "", props_ShTelltale, 7, signals_ShTelltale, 0},
     {"ShToggle", "Industrial", 160, 40, false, "checked", props_ShToggle, 7, signals_ShToggle, 1},
+    {"ShTractionBar", "Rail", 140, 640, false, "", props_ShTractionBar, 8, signals_ShTractionBar, 0},
+    {"ShTrainConsist", "Rail", 300, 880, false, "", props_ShTrainConsist, 8, signals_ShTrainConsist, 0},
     {"ShTrendChart", "Industrial", 300, 180, false, "", props_ShTrendChart, 12, signals_ShTrendChart, 0},
     {"ShTripInfo", "Automotive", 200, 110, false, "", props_ShTripInfo, 9, signals_ShTripInfo, 0},
     {"ShTurnCoordinator", "Avionics", 180, 110, false, "", props_ShTurnCoordinator, 6, signals_ShTurnCoordinator, 0},
@@ -585,7 +650,7 @@ const hmi_type_schema_t hmi_kit_types[] = {
     {"ShVehicleStatus", "Automotive", 150, 190, false, "", props_ShVehicleStatus, 10, signals_ShVehicleStatus, 0},
     {"Text", "Basic", 140, 32, false, "", props_Text, 9, signals_Text, 0},
 };
-const size_t hmi_kit_type_count = 46;
+const size_t hmi_kit_type_count = 51;
 
 const hmi_theme_colour_t hmi_theme_colours[] = {
     {"background", "#ffffff", "#09090b"},

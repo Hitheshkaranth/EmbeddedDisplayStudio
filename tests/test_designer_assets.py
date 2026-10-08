@@ -152,5 +152,80 @@ class DesignerContextMenuTests(unittest.TestCase):
         self.assertEqual(texts, ["Paste", "Select All"])
 
 
+class PromptImagesTests(unittest.TestCase):
+    """A canvas request that names an image file: the file goes into assets."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_a_named_logo_is_copied_in_trimmed_and_the_request_names_the_asset(self):
+        with tempfile.TemporaryDirectory() as root:
+            bundle = os.path.join(root, "bundle")
+            os.makedirs(bundle)
+            # A 40x20 mark padded onto a transparent 100x100 canvas, as logo
+            # exports usually are.
+            padded = QImage(100, 100, QImage.Format_ARGB32)
+            padded.fill(0)
+            painter = QPainter(padded)
+            painter.fillRect(QRectF(30, 40, 40, 20), 0xFF1D4ED8)
+            painter.end()
+            picture = os.path.join(root, "Acme Logo.png")
+            padded.save(picture, "PNG")
+
+            workspace = DesignerWorkspace()
+            self.addCleanup(workspace.close)
+            workspace.set_bundle(bundle)
+            prompt, imported = workspace.import_prompt_images(
+                f'Add the logo "{picture}" at the right end of the header')
+
+            self.assertEqual(imported, ["assets/acme-logo.png"])
+            self.assertEqual(prompt, 'Add the logo assets/acme-logo.png at the right end of the header')
+            copied = QImage(os.path.join(bundle, "assets", "acme-logo.png"))
+            self.assertEqual((copied.width(), copied.height()), (40, 20))
+
+    def test_a_file_named_from_downloads_is_found_without_a_full_path(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as root:
+            home = os.path.join(root, "home")
+            os.makedirs(os.path.join(home, "Downloads"))
+            _write_png(os.path.join(home, "Downloads", "Brand.png"))
+            bundle = os.path.join(root, "bundle")
+            os.makedirs(bundle)
+            workspace = DesignerWorkspace()
+            self.addCleanup(workspace.close)
+            workspace.set_bundle(bundle)
+            with mock.patch.dict(os.environ, {"USERPROFILE": home, "HOME": home}):
+                prompt, imported = workspace.import_prompt_images(
+                    "Add our logo from Downloads/Brand.png to the header; keep assets/old.png")
+            self.assertEqual(imported, ["assets/brand.png"])
+            self.assertEqual(prompt, "Add our logo from assets/brand.png to the header; keep assets/old.png")
+
+    def test_a_webp_logo_arrives_as_a_png_the_panel_can_draw(self):
+        with tempfile.TemporaryDirectory() as root:
+            bundle = os.path.join(root, "bundle")
+            os.makedirs(bundle)
+            picture = QImage(60, 30, QImage.Format_RGB32)
+            picture.fill(0xFF2E7D32)
+            source = os.path.join(root, "Namma_metro.svg.webp")
+            self.assertTrue(picture.save(source, "WEBP"))
+            workspace = DesignerWorkspace()
+            self.addCleanup(workspace.close)
+            workspace.set_bundle(bundle)
+            prompt, imported = workspace.import_prompt_images(f"Add {source} to the header")
+            self.assertEqual(imported, ["assets/namma_metro.png"])
+            copied = QImage(os.path.join(bundle, "assets", "namma_metro.png"))
+            self.assertEqual((copied.width(), copied.height()), (60, 30))
+            with open(os.path.join(bundle, "assets", "namma_metro.png"), "rb") as fh:
+                self.assertEqual(fh.read(4), b"\x89PNG")
+
+    def test_a_path_that_is_not_a_file_is_left_alone(self):
+        workspace = DesignerWorkspace()
+        self.addCleanup(workspace.close)
+        prompt, imported = workspace.import_prompt_images(r"use C:\nowhere\missing.png please")
+        self.assertEqual(imported, [])
+        self.assertEqual(prompt, r"use C:\nowhere\missing.png please")
+
+
 if __name__ == "__main__":
     unittest.main()

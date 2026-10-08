@@ -145,5 +145,73 @@ class DeployViewTests(ShellTests.__base__):
         self.assertTrue(window._profile_page.isAncestorOf(window.btn_refresh_profile))
 
 
+class CanvasRequestTests(ShellTests.__base__):
+    """A change asked for over the canvas, answered by a design that lost most
+    of the page: Ornith once returned 10 of 45 widgets for "add the logo"."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.window = MainWindow()
+        self.addCleanup(lambda: (self.window._stop_all_senders(), self.window.close(),
+                                 self.window.deleteLater(), self.app.processEvents()))
+
+    @staticmethod
+    def _page(tags):
+        from designer.model import DesignerBinding, DesignerProject, DesignerWidget
+        project = DesignerProject(name="line")
+        for i, tag in enumerate(tags):
+            widget = DesignerWidget(type="ShValueTile", id=f"tile{i}",
+                                    geometry={"x": 0, "y": 40 * i, "width": 100, "height": 40})
+            widget.bindings["value"] = DesignerBinding(tag=tag)
+            project.pages[0].widgets.append(widget)
+        return project
+
+    def _answer(self, project):
+        window, tab = self.window, self.window._ai_tab
+        window._ai_before = object()
+        window._canvas_tags_before = set(window.designer_workspace.project.required_tags())
+        tab.last_project = project
+        tab.auto_apply.setChecked(True)
+        window.designer_workspace.load_project(project)
+        window._watch_canvas_ai()
+
+    def test_a_reply_that_drops_most_of_the_page_is_put_back(self):
+        workspace = self.window.designer_workspace
+        workspace.load_project(self._page([f"line.v{i}" for i in range(10)]))
+        self._answer(self._page(["line.v0", "line.v1"]))
+        self.assertEqual(len(workspace.project.required_tags()), 10)
+        self.assertIn("put back", workspace.chat_reply.text())
+
+    def test_an_imported_logo_named_without_its_extension_still_shows(self):
+        # Ornith was handed "assets/datasol_logo.png" and wrote "assets/datasol_logo".
+        import tempfile
+        from designer.model import DesignerWidget
+        workspace = self.window.designer_workspace
+        with tempfile.TemporaryDirectory() as bundle:
+            os.makedirs(os.path.join(bundle, "assets"))
+            open(os.path.join(bundle, "assets", "datasol_logo.png"), "wb").close()
+            workspace.bundle_dir = bundle
+            workspace.load_project(self._page(["line.v0"]))
+            reply = self._page(["line.v0"])
+            reply.pages[0].widgets.append(DesignerWidget(
+                type="Image", id="logo", geometry={"x": 0, "y": 0, "width": 120, "height": 40},
+                properties={"source": "assets/datasol_logo"}))
+            self.window._canvas_imported = ["assets/datasol_logo.png"]
+            self._answer(reply)
+            logo = next(w for w in workspace.project.all_widgets() if w.id == "logo")
+            self.assertEqual(logo.properties["source"], "assets/datasol_logo.png")
+            workspace.bundle_dir = ""
+
+    def test_a_reply_that_keeps_the_page_is_applied(self):
+        workspace = self.window.designer_workspace
+        workspace.load_project(self._page([f"line.v{i}" for i in range(10)]))
+        self._answer(self._page([f"line.v{i}" for i in range(11)]))
+        self.assertEqual(len(workspace.project.required_tags()), 11)
+        self.assertIn("applied", workspace.chat_reply.text())
+
+
 if __name__ == "__main__":
     unittest.main()

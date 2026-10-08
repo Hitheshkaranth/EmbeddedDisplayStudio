@@ -49,7 +49,8 @@ BIN = os.environ.get("HMI_UI_BIN", os.path.join(ROOT, "native", "hmi-ui", "out",
 BACKGROUND = "#101318"
 
 # Every Designer type (kit_schema.json); stubs report as skips.
-WAVE = ["Column", "Grid", "Image", "Item", "Rectangle", "Row", "ShAlarmTable", "ShAlert", "ShAnalogDisplay", "ShAnnunciator", "ShAttitude", "ShAutoLevel", "ShAutoReadout", "ShButton", "ShCard", "ShCheckbox", "ShClusterGauge", "ShCompass", "ShDataField", "ShDriveMode", "ShEngineBar", "ShEngineGauge", "ShFlightDirector", "ShFuelQuantity", "ShGauge", "ShGearIndicator", "ShIconTile", "ShInput", "ShNumDisplay", "ShNumInput", "ShProgress", "ShSegmentBar", "ShSelect", "ShSlider", "ShStatDot", "ShTabs", "ShTape", "ShTelltale", "ShToggle", "ShTrendChart", "ShTripInfo", "ShTurnCoordinator", "ShVSI", "ShValueTile", "ShVehicleStatus", "Text"]
+WAVE = ["Column", "Grid", "Image", "Item", "Rectangle", "Row", "ShAlarmTable", "ShAlert", "ShAnalogDisplay", "ShAnnunciator", "ShAttitude", "ShAutoLevel", "ShAutoReadout", "ShButton", "ShCard", "ShCheckbox", "ShClusterGauge", "ShCompass", "ShDataField", "ShDriveMode", "ShEngineBar", "ShEngineGauge", "ShFlightDirector", "ShFuelQuantity", "ShGauge", "ShGearIndicator", "ShIconTile", "ShInput", "ShNumDisplay", "ShNumInput", "ShProgress", "ShSegmentBar", "ShSelect", "ShSlider", "ShStatDot", "ShTabs", "ShTape", "ShTelltale", "ShToggle", "ShTrendChart", "ShTripInfo", "ShTurnCoordinator", "ShVSI", "ShValueTile", "ShVehicleStatus", "Text",
+        "ShSpeedArc", "ShTractionBar", "ShStationLine", "ShTrainConsist", "ShStatusCard"]
 
 
 # Widgets that are almost entirely small text: glyph rasterisation alone

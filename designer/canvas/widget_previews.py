@@ -1258,6 +1258,9 @@ _PAINTERS = {
 # Automotive painters live in their own module; see automotive_previews.py.
 from designer.canvas import automotive_previews  # noqa: E402
 _PAINTERS.update(automotive_previews.PAINTERS)
+# Rail painters: designer/canvas/rail_previews.py, one module per type.
+from designer.canvas import rail_previews  # noqa: E402
+_PAINTERS.update(rail_previews.PAINTERS)
 
 
 def painter_for(widget_type):

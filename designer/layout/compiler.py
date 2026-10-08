@@ -96,6 +96,8 @@ CHROME_MARK = "_compiledChrome"
 SECTION_MARK = "_section"
 # Where a lamp's own label goes when the compiler draws it beside the lamp.
 LAMP_LABEL_MARK = "_lampLabel"
+# A header logo the plan asked to put at the left end, before the title.
+SIDE_MARK = "_side"
 
 
 def is_planned(page) -> bool:
@@ -168,6 +170,19 @@ def tokens_for(width: int, height: int, density: float = 1.0) -> Tokens:
 
 # -- classification ---------------------------------------------------------
 
+def _shows_a_word(widget) -> bool:
+    """A value tile reading a name ("Indiranagar"), not a number: in a grid
+    cell sized for "4.2" it is clipped, so it takes a row of its own."""
+    value = widget.properties.get("value")
+    if widget.type != "ShValueTile" or not isinstance(value, str) or len(value.strip()) < 7:
+        return False
+    try:
+        float(value)
+    except ValueError:
+        return True
+    return False
+
+
 def kind_of(registry, widget) -> str:
     """face, tile, chart, table, control, lamp or text."""
     widget_type = widget.type
@@ -184,6 +199,8 @@ def kind_of(registry, widget) -> str:
     definition = registry.get(widget_type) if registry is not None else None
     if widget_type in TILE_TYPES:
         if definition is not None and definition.default_width >= STRIP_ASPECT * definition.default_height:
+            return STRIP
+        if _shows_a_word(widget):
             return STRIP
         return TILE
     if definition is not None and definition.action_signals:
@@ -1468,11 +1485,35 @@ def _text(project, base, rect, text, size, colour, bold=False, align="Text.Align
                  "wrapMode": "Text.NoWrap"})
 
 
+def _place_logo(project, widget, x, y, w, h, out):
+    """A header logo at (x, y, w, h); in a dark header, on a light plate.
+
+    Most logos are drawn for paper and their dark lettering vanishes on a
+    dark header, so the image sits inset on a white rounded plate.
+    """
+    widget.geometry.update({"x": int(x), "y": int(y), "width": int(w), "height": int(h)})
+    if getattr(project.screen, "theme", "dark") != "light":
+        inset = 6
+        out.append(_new(project, "Rectangle", f"{widget.id}Plate", dict(widget.geometry),
+                        {"color": "#ffffff", "borderWidth": 0, "radius": 8}))
+        widget.geometry.update({"x": int(x) + inset, "y": int(y) + inset,
+                                "width": int(w) - 2 * inset, "height": int(h) - 2 * inset})
+    out.append(widget)
+
+
 def _header(project, registry, title, header_widgets, tokens, width):
     chrome = []
     x, y = tokens.margin, tokens.margin
     inner_w = width - 2 * tokens.margin
     right = x + inner_w
+    # Logos that asked for the left end go before the title, left to right.
+    placed_left = []
+    for widget in [w for w in header_widgets if w.properties.get(SIDE_MARK) == "left"]:
+        design_w, design_h = _design(registry, widget)
+        h = min(design_h, tokens.header - 8)
+        _place_logo(project, widget, x, y + (tokens.header - h) / 2, design_w, h, placed_left)
+        x += design_w + tokens.gap
+    header_widgets = [w for w in header_widgets if w.properties.get(SIDE_MARK) != "left"]
     # Header widgets, right to left at their design width.
     placed_right = []
     for widget in reversed(header_widgets):
@@ -1501,6 +1542,10 @@ def _header(project, registry, title, header_widgets, tokens, width):
             h = min(tokens.control_h if kind == CONTROL else design_h, tokens.header - 8)
             w = design_w if kind != CONTROL else max(design_w, 120)
             right -= w
+            if widget.type == "Image":
+                _place_logo(project, widget, right, y + (tokens.header - h) / 2, w, h, placed_right)
+                right -= tokens.gap
+                continue
             widget.geometry.update({"x": int(right), "y": int(y + (tokens.header - h) / 2),
                                     "width": int(w), "height": int(h)})
         placed_right.append(widget)
@@ -1511,7 +1556,7 @@ def _header(project, registry, title, header_widgets, tokens, width):
                         tokens.title_font, _theme(project, "foreground"), bold=True)
         heading.properties[SECTION_MARK] = "|title"
         chrome.append(heading)
-    chrome += placed_right
+    chrome += placed_left + placed_right
     # A hairline under the header separates the chrome from the instruments.
     chrome.append(_new(project, "Rectangle", "headerRule",
                        {"x": x, "y": y + tokens.header + tokens.gap // 2 - 1, "width": inner_w,
@@ -1835,5 +1880,20 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
         if not heading and role != "hero":
             heading = ROLE_TITLES.get(role, "")
         sections.append(Section(heading, role, widgets))
-    header = convert([w for w in page_data.get("header") or [] if isinstance(w, dict)])
+    raw_header = [w for w in page_data.get("header") or [] if isinstance(w, dict)]
+    # A logo may ask for the left end ("side": "left", beside or inside its
+    # properties); the converter drops keys the kit does not declare, so the
+    # wish is read here and carried as a mark.
+    sides = {}
+    for item in raw_header:
+        props = item.get("properties") if isinstance(item.get("properties"), dict) else {}
+        wish = " ".join(str(d.get(k) or "") for d in (item, props) for k in ("side", "align", "position"))
+        if "left" in wish.lower():
+            sides[str(item.get("id") or "")] = "left"
+    # A logo with no picture is an empty white plate on the glass: leave it out.
+    header = [w for w in convert(raw_header)
+              if not (w.type == "Image" and not str(w.properties.get("source") or "").strip())]
+    for widget in header:
+        if widget.type == "Image" and sides.get(widget.id) == "left":
+            widget.properties[SIDE_MARK] = "left"
     return title, sections, header

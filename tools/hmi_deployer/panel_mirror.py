@@ -106,10 +106,13 @@ class _MirrorWorker(QThread):
 class PanelMirror(QObject):
     """Polls a connected panel for what it is showing.
 
-    Emits `frame` with each picture and `failed` with the first reason it
-    could not get one; a failure stops the mirror rather than filling the log
-    once a second.
+    Emits `frame` with each picture. A miss is retried on the next tick: the
+    runtime restarts for a few seconds after every deploy, which is exactly
+    when people turn the mirror on. MAX_MISSES in a row stop it and emit
+    `failed` with the reason once, rather than filling the log once a second.
     """
+
+    MAX_MISSES = 5
 
     frame = Signal(QImage)
     failed = Signal(str)
@@ -123,6 +126,7 @@ class PanelMirror(QObject):
         self._timer.timeout.connect(self._tick)
         self._worker = None
         self._conn = None
+        self._misses = 0
 
     def is_running(self) -> bool:
         return self._timer.isActive()
@@ -132,6 +136,7 @@ class PanelMirror(QObject):
             self.failed.emit("no panel to mirror: connect first")
             return
         self._conn = (host, user or "root", int(port or 22), key_path or "")
+        self._misses = 0
         self._timer.setInterval(int(interval_ms))
         self._timer.start()
         self.started.emit()
@@ -150,11 +155,19 @@ class PanelMirror(QObject):
             return
         self._drop_worker()
         self._worker = _MirrorWorker(*self._conn, parent=self)
-        self._worker.frame.connect(self.frame)
+        self._worker.frame.connect(self._on_frame)
         self._worker.failed.connect(self._on_failed)
         self._worker.start()
 
+    def _on_frame(self, image):
+        self._misses = 0
+        self.frame.emit(image)
+
     def _on_failed(self, message):
+        self._misses += 1
+        if self._misses < self.MAX_MISSES:
+            logger.debug("panel mirror missed a frame (%d): %s", self._misses, message)
+            return
         logger.info("panel mirror stopped: %s", message)
         self._timer.stop()
         self.failed.emit(message)

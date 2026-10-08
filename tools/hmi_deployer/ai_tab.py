@@ -1340,14 +1340,15 @@ class PreviewView(QGraphicsView):
 
     def attach(self, scene):
         self.setScene(scene)
-        scene.sceneRectChanged.connect(lambda _r: self.refit())
+        # A method, not a lambda, so the connection dies with this view.
+        scene.sceneRectChanged.connect(self.refit)
         self.refit()
         # The first fit can happen before this view has a viewport. Repeat it
         # on the next event turn so a newly opened AI tab frames the whole
         # physical panel instead of inheriting a tiny pre-layout transform.
         QTimer.singleShot(0, self.refit)
 
-    def refit(self):
+    def refit(self, *_args):
         scene = self.scene()
         if scene is not None and not scene.sceneRect().isEmpty():
             self.fitInView(scene.sceneRect().adjusted(-8, -8, 8, 8), Qt.KeepAspectRatio)
@@ -1716,6 +1717,9 @@ class AIDesignTab(QWidget):
         col.addWidget(self.preview_placeholder, 1)
         self.preview_view.setVisible(False)
         return pane
+
+    def _on_scene_changed(self, *_args):
+        self._refresh_preview_meta()
 
     def _refresh_preview_meta(self):
         project = getattr(self.workspace, "project", None)
@@ -2193,8 +2197,11 @@ class AIDesignTab(QWidget):
         scene = getattr(workspace, "scene", None)
         if scene is not None:
             self.preview_view.attach(scene)
-            scene.sceneRectChanged.connect(lambda _r: self._refresh_preview_meta())
-            scene.changed.connect(lambda _regions: self._refresh_preview_meta())
+            # Bound methods, not lambdas: the scene belongs to the Designer and
+            # outlives this tab, and only a method connection is dropped when
+            # the tab is deleted.
+            scene.sceneRectChanged.connect(self._on_scene_changed)
+            scene.changed.connect(self._on_scene_changed)
             self.preview_placeholder.setVisible(False)
             self.preview_view.setVisible(True)
         self._refresh_preview_meta()

@@ -329,6 +329,7 @@ SYNONYM_GROUPS = (
     ("options", "items", "choices", "modes", "gears"),
     ("currentIndex", "selectedIndex", "index"),
     ("description", "message", "body", "detail"),
+    ("source", "src", "image", "imageSource", "url", "path", "file", "logo"),
 )
 _GROUP_OF = {}
 for _group in SYNONYM_GROUPS:

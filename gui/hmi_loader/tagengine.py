@@ -66,6 +66,12 @@ SUBSCRIBE_INTERVAL_MS = 2000
 # Time-to-live we request for our subscription, in seconds (CONTRACT 2.2).
 SUBSCRIBE_TTL_S = 5
 
+# How long a blocking request (list, unsubscribe) waits for its ack, and how
+# often it re-sends inside that window. UDP may drop either datagram, and both
+# commands are idempotent, so a lost one costs a resend rather than the answer.
+REQUEST_TIMEOUT_MS = 2000
+REQUEST_RESEND_MS = 400
+
 
 class TagEngine(QObject):
     """
@@ -789,22 +795,8 @@ class TagEngine(QObject):
             A ``QVariantList`` of tag-name strings, or an empty list if the
             link is offline or the daemon does not respond within 2 s.
         """
-        loop = QEventLoop()
-        result: list = []
-
-        def _handler(cid_: str, ok: bool, err: str, tags_list: list) -> None:
-            if ok:
-                result.extend(tags_list)
-            loop.quit()
-
-        cid = self._next_id()
-        self._pending_acks[cid] = _handler
-        self._send_command({"cmd": "list", "id": cid})
-
-        QTimer.singleShot(2000, loop.quit)
-        loop.exec()
-
-        self._pending_acks.pop(cid, None)
+        ack = self._request({"cmd": "list"})
+        result = list(ack[2]) if ack is not None and ack[0] else []
         self.listReceived.emit(result)
         return result
 
@@ -818,21 +810,44 @@ class TagEngine(QObject):
         A screen that no longer needs telemetry (e.g. about-to-close) should
         call this so the daemon's subscriber table does not leak addresses.
         """
+        ack = self._request({"cmd": "unsubscribe"})
+        if ack is not None and ack[0]:
+            self.unsubscribed.emit()
+
+    def _request(self, cmd: dict) -> Optional[tuple]:
+        """
+        Sends an idempotent command and blocks (briefly) on a local event loop
+        until its ack arrives, re-sending under the same id while waiting.
+
+        Args:
+            cmd: command object per CONTRACT 2.2, without an id.
+
+        Returns:
+            ``(ok, err, tags)`` from the ack, or None if none arrived within
+            REQUEST_TIMEOUT_MS.
+        """
         loop = QEventLoop()
+        reply: list = []
 
         def _handler(cid_: str, ok: bool, err: str, tags_list: list) -> None:
-            if ok:
-                self.unsubscribed.emit()
+            reply.append((ok, err, tags_list))
             loop.quit()
 
         cid = self._next_id()
+        message = dict(cmd, id=cid)
         self._pending_acks[cid] = _handler
-        self._send_command({"cmd": "unsubscribe", "id": cid})
+        self._send_command(message)
 
-        QTimer.singleShot(2000, loop.quit)
+        resend = QTimer()
+        resend.setInterval(REQUEST_RESEND_MS)
+        resend.timeout.connect(lambda: self._send_command(message))
+        resend.start()
+        QTimer.singleShot(REQUEST_TIMEOUT_MS, loop.quit)
         loop.exec()
+        resend.stop()
 
         self._pending_acks.pop(cid, None)
+        return reply[0] if reply else None
 
     def _to_wire_name(self, name: str) -> str:
         """

@@ -138,6 +138,29 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(sorted(tagsim.plan(project)),
                          ["eng1.egt", "nav.pitch", "nav.roll"])
 
+    def test_a_metro_cab_reads_like_a_running_train(self):
+        project = _project([
+            _widget("ShSpeedArc", "s", {"value": {"tag": "mb.train.speed"},
+                                        "target": {"tag": "mb.train.target_speed"}},
+                    {"maximumValue": 100.0}),
+            _widget("ShStationLine", "l", {"current": {"tag": "mb.train.station_index"}}),
+            _widget("ShTrainConsist", "c", {"doorsLeft": {"tag": "mb.train.doors_left"},
+                                            "doorsRight": {"tag": "mb.train.doors_right"}}),
+            _widget("ShStatusCard", "h", {"status": {"tag": "mb.train.hvac_status"}}),
+            _widget("ShStatusCard", "p", {"state": {"tag": "mb.train.pea_state"}}),
+            _widget("ShProgress", "g", {"value": {"tag": "mb.train.segment_progress"}}),
+        ])
+        signals = tagsim.plan(project)
+        for t, _state in _samples():
+            values = tagsim.values_at(signals, t, DURATION)
+            self.assertTrue(0 <= values["mb.train.speed"] <= 100)
+            self.assertTrue(0 <= values["mb.train.station_index"] <= 3)
+            self.assertTrue(0 <= values["mb.train.segment_progress"] <= 1)
+            self.assertIs(values["mb.train.doors_left"], True)          # closed
+            self.assertEqual(values["mb.train.doors_right"], "disabled")
+            self.assertEqual(values["mb.train.hvac_status"], "ACTIVE (21°C)")
+            self.assertEqual(values["mb.train.pea_state"], "ok")
+
     def test_the_alarm_table_wildcard_is_not_a_value(self):
         project = _project([_widget("ShAlarmTable", "t", {"alarms": {"tag": "*"}})])
         self.assertEqual(tagsim.plan(project), {})

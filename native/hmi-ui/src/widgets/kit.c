@@ -48,6 +48,11 @@ extern const hmi_widget_ops_t hmi_widget_shturncoordinator;
 extern const hmi_widget_ops_t hmi_widget_shvsi;
 extern const hmi_widget_ops_t hmi_widget_shvaluetile;
 extern const hmi_widget_ops_t hmi_widget_shvehiclestatus;
+extern const hmi_widget_ops_t hmi_widget_shspeedarc;
+extern const hmi_widget_ops_t hmi_widget_shtractionbar;
+extern const hmi_widget_ops_t hmi_widget_shstationline;
+extern const hmi_widget_ops_t hmi_widget_shtrainconsist;
+extern const hmi_widget_ops_t hmi_widget_shstatuscard;
 extern const hmi_widget_ops_t hmi_widget_text;
 extern const hmi_widget_ops_t hmi_widget_probe;
 
@@ -98,6 +103,11 @@ void hmi_kit_register_all(void)
     hmi_registry_register(&hmi_widget_shvsi);
     hmi_registry_register(&hmi_widget_shvaluetile);
     hmi_registry_register(&hmi_widget_shvehiclestatus);
+    hmi_registry_register(&hmi_widget_shspeedarc);
+    hmi_registry_register(&hmi_widget_shtractionbar);
+    hmi_registry_register(&hmi_widget_shstationline);
+    hmi_registry_register(&hmi_widget_shtrainconsist);
+    hmi_registry_register(&hmi_widget_shstatuscard);
     hmi_registry_register(&hmi_widget_text);
     hmi_registry_register(&hmi_widget_probe);
 }

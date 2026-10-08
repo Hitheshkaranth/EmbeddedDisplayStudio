@@ -513,7 +513,9 @@ def build_plan_prompt(registry: Optional[WidgetRegistry] = None,
         "Reply with ONE fenced ```json block and nothing after it:\n"
         '{"name": "<short name>", "section": {"index": 1, "complete": true, "label": "", "next": ""}, '
         '"pages": [{"id": "main", "name": "Main", "title": "<screen title, 2-5 words>", '
-        '"header": [<optional: up to 4 status lamps or navigate buttons for the header>], '
+        '"header": [<optional: up to 4 status lamps or navigate buttons for the header, and '
+        'a logo for each image file the brief names (two at most): {"type": "Image", "id": '
+        '"<camelCaseId>", "side": "left" or "right", "properties": {"source": "assets/<file>"}}>], '
         '"sections": [{"title": "<card title, 1-3 words>", "role": "hero", "widgets": ['
         '{"type": "ShClusterGauge", "id": "<camelCaseId>", '
         '"properties": {"caption": "<what it measures>", "minimumValue": 0, '
@@ -547,6 +549,12 @@ def build_plan_prompt(registry: Optional[WidgetRegistry] = None,
         "(0..16 bar, 0..3000 rpm), never 0..1, with warning and critical thresholds where the "
         "process has them. Buttons say what they do in one or two words (\"Start\", \"Stop\", "
         "\"Reset\", \"E-Stop\").\n"
+        "Every reading also carries a realistic sample \"value\" in its properties: what the "
+        "screen shows in the designer and before live data arrives, a plausible running value "
+        "inside its range (a pump at 72 % load, a train at 64 km/h), never 0 and never the "
+        "maximum. A reading that is a name gets the name itself (\"value\": \"Indiranagar\"); a "
+        "status lamp that is healthy gets \"state\": \"ok\". Add a logo only for an image file "
+        "the brief names.\n"
         "Bindings: live values bind to PLC/telemetry tags, lowercase dotted names (ai.pot, "
         "di.estop, do.relay1, mb.line_speed); a binding may carry \"unit\", \"warning\" and "
         "\"critical\" (\"> 80\", \"< 10\"). Bind ShTrendChart.data to the tag it plots.\n"
@@ -592,6 +600,73 @@ def _fold_stray_sections(pages_data: list) -> list:
     return pages
 
 
+_RANGE_KEYS = (("minimum", "maximum"), ("minimumValue", "maximumValue"), ("minValue", "maxValue"))
+
+
+def _plausible_samples(widgets, registry) -> None:
+    """A dial with no sample reading of its own shows one inside its range.
+
+    The kit's defaults (a cluster gauge at 4.2 on a 0..100 km/h dial) read
+    as a broken screen in the designer and in every preview until live data
+    arrives; a reading two thirds up its own scale reads as a running one.
+    """
+    for widget in widgets:
+        definition = registry.get(widget.type) if registry is not None else None
+        if definition is not None and "value" in definition.properties:
+            keys = next(((lo, hi) for lo, hi in _RANGE_KEYS
+                         if lo in definition.properties and hi in definition.properties), None)
+            if keys:
+                try:
+                    lo = float(widget.properties.get(keys[0], definition.defaults.get(keys[0])))
+                    hi = float(widget.properties.get(keys[1], definition.defaults.get(keys[1])))
+                    value = widget.properties.get("value")
+                    stale = value is None or value == definition.defaults.get("value") \
+                        or not lo <= float(value) <= hi
+                except (TypeError, ValueError):
+                    lo = hi = 0.0
+                    stale = False
+                if stale and hi > lo:
+                    sample = lo + 0.62 * (hi - lo)
+                    widget.properties["value"] = round(sample) if hi - lo >= 20 else round(sample, 1)
+        _plausible_samples(widget.children, registry)
+
+
+def _names_on_text_tiles(widgets, registry) -> None:
+    """A reading whose value is a name ("Indiranagar") on a numeric readout
+    draws as 0; a value tile shows text, so the reading moves onto one with
+    its label, unit and binding."""
+    for widget in widgets:
+        definition = registry.get(widget.type) if registry is not None else None
+        value = widget.properties.get("value")
+        if definition is not None and isinstance(definition.defaults.get("value"), (int, float)) \
+                and isinstance(value, str) and value.strip():
+            try:
+                float(value)
+            except ValueError:
+                label = next((widget.properties.get(k) for k in ("label", "title", "caption")
+                              if widget.properties.get(k)), "")
+                kept = {k: v for k, v in widget.properties.items() if k.startswith("_")}
+                widget.type = "ShValueTile"
+                widget.properties = {**kept, "title": label or "Value", "value": value.strip(),
+                                     "unit": widget.properties.get("unit", ""), "state": "ok"}
+        _names_on_text_tiles(widget.children, registry)
+
+
+def _named_logos_only(header, brief: str) -> list:
+    """Header images whose file the request names; an invented logo has no
+    file behind it and draws as an empty plate."""
+    words = (brief or "").lower()
+    if not words:
+        return header
+    kept = []
+    for widget in header:
+        source = str(widget.properties.get("source") or "").replace("\\", "/")
+        if widget.type == "Image" and source.rsplit("/", 1)[-1].lower() not in words:
+            continue
+        kept.append(widget)
+    return kept
+
+
 def _merge_small_plan(pages_data: list, width: int, height: int) -> list:
     """One page when the whole plan fits on one.
 
@@ -633,7 +708,12 @@ def _merge_small_plan(pages_data: list, width: int, height: int) -> list:
             if section["widgets"]:
                 sections.append(section)
     first["sections"] = sections
-    first["header"] = [w for p in pages for w in (p.get("header") or []) if keeps(w)][:4]
+    header = [w for p in pages for w in (p.get("header") or []) if keeps(w)]
+    # Up to four lamps or buttons, and logos beside them that do not count
+    # against them: a fourth lamp must not push the customer's logo out.
+    # Two logos at most: the operator's and the integrator's.
+    logos = [w for w in header if isinstance(w, dict) and str(w.get("type", "")).endswith("Image")]
+    first["header"] = [w for w in header if w not in logos][:4] + logos[:2]
     return [first]
 
 
@@ -898,6 +978,10 @@ class AIDesignGenerator:
             if not isinstance(page_data, dict):
                 continue
             title, sections, header = sections_from_plan(page_data, self._convert_widgets)
+            header = _named_logos_only(header, self.brief)
+            for section in sections:
+                _names_on_text_tiles(section.widgets, self.registry)
+                _plausible_samples(section.widgets, self.registry)
             loose = self._convert_widgets([w for w in page_data.get("widgets") or []
                                            if isinstance(w, dict)])
             widgets = []

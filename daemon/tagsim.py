@@ -288,7 +288,9 @@ TYPE_RANGES = {
     "ShSegmentBar":    {"value": (0.0, 100.0)},
     "ShAutoLevel":     {"value": (0.0, 100.0)},
     "ShAnalogDisplay": {"value": (0.0, 100.0)},
-    "ShProgress":      {"value": (0.0, 100.0)},
+    # ShProgress is a fraction (ShProgress.qml, w_shprogress.c clamp 0..1):
+    # 0..100 pinned every bound bar full on the bench.
+    "ShProgress":      {"value": (0.0, 1.0)},
     "ShSlider":        {"value": (0.0, 100.0)},
     # No min/max in the kit: these carry their meaning in the instrument.
     "ShVSI":           {"value": (-2000.0, 2000.0)},
@@ -298,6 +300,10 @@ TYPE_RANGES = {
     "ShCompass":       {"value": (0.0, 360.0)},
     "ShTurnCoordinator": {"turnRate": (-6.0, 6.0), "slip": (-1.0, 1.0),
                           "value": (-6.0, 6.0)},
+    # Rail: a metro running between stops, never off its dials.
+    "ShSpeedArc":      {"value": (0.0, 80.0), "target": (40.0, 70.0)},
+    "ShTractionBar":   {"value": (-60.0, 60.0)},
+    "ShStationLine":   {"current": (0.0, 3.0)},
 }
 
 #: Widget types whose bound value is a lamp, not a number.
@@ -378,6 +384,9 @@ class Signal:
             # No state key means a lamp that reports trouble: nothing is
             # going wrong on this flight, so it stays dark.
             return bool(state[self.state_key]) if self.state_key else False
+        if self.kind == "word":
+            # A status worded for people ("ACTIVE (21°C)"): steady, healthy.
+            return self.state_key
         raw = float(state[self.quantity])
         if self.kind == "colour":
             span = (self.hi - self.lo) or 1.0
@@ -401,6 +410,23 @@ def signal_for(tag: str, widget_type: str, prop: str, props: dict) -> Signal:
     it is drawn on, whatever the design asked for.
     """
     lowered = tag.lower()
+    if widget_type == "ShStatusCard":
+        # A status card states its system's condition in words; a number in
+        # its place reads as a fault. Healthy and steady, like the lamps.
+        if prop == "state":
+            return Signal(tag, "word", state_key="ok")
+        leaf = _leaf(tag)
+        word = ("ACTIVE (21°C)" if "hvac" in leaf or "climate" in leaf
+                else "AUTO-PLAY ON" if leaf.startswith("pa") or "announce" in leaf
+                else "NORMAL" if "pea" in leaf or "alarm" in leaf or "emergency" in leaf
+                else "OK")
+        return Signal(tag, "word", state_key=word)
+    if widget_type == "ShTrainConsist":
+        # Doors closed and secured while the train runs; the side away from
+        # the platform stays disabled, as the cab's own caption says.
+        if "right" in _leaf(tag) or prop == "doorsRight":
+            return Signal(tag, "word", state_key="disabled")
+        return Signal(tag, "bool", state_key="engaged_true")
     if widget_type in BOOLEAN_TYPES:
         if "gear" in lowered:
             return Signal(tag, "bool", state_key="gear_down")

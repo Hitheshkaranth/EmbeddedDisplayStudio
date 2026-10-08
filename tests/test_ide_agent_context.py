@@ -94,6 +94,20 @@ class BriefTests(unittest.TestCase):
         self.assertNotIn("more tags", full)
 
 
+class HardwareRuleTests(unittest.TestCase):
+    """"Connect it to our PLC over Modbus" must work without the person
+    spelling out hwd.json, register kinds or the daemon's self test."""
+
+    def test_the_rules_teach_the_modbus_map(self):
+        for needle in ("hwd.json", "modbus.tags", "\"address\"", "float32", "mb."):
+            self.assertIn(needle, RULES)
+
+    def test_the_checkout_daemon_is_offered_as_template_and_check(self):
+        daemon = Path(__file__).resolve().parent.parent / "daemon"
+        self.assertIn(str(daemon / "hwd.json"), RULES)
+        self.assertIn(f"\"{daemon / 'hmi_hwd.py'}\" --config hwd.json --sim --selftest", RULES)
+
+
 class QuickActionTests(unittest.TestCase):
     def setUp(self):
         self.index = DesignIndex.build(make_project(), default_registry(), DECLARED_TAGS)

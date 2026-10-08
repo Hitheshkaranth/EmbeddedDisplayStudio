@@ -406,6 +406,32 @@ class AITabWiringExtraTests(unittest.TestCase):
         tab._offer_variants(turn, project)
         self.assertFalse(turn.variant_strip.isVisible())
 
+    def test_a_deleted_tab_stops_listening_to_the_designer_scene(self):
+        """The scene is the Designer's and outlives the tab; a change to it
+        after the tab is gone must not reach the tab's deleted labels."""
+        from types import SimpleNamespace
+        import shiboken6
+        from PySide6.QtCore import QRectF
+        from PySide6.QtWidgets import QGraphicsScene
+        from tools.hmi_deployer.ai_tab import AIDesignTab
+        scene = QGraphicsScene()
+        self.addCleanup(scene.deleteLater)
+        project = DesignerProject.load(str(FIXTURES / "ai-baseline.edsui"))
+        tab = AIDesignTab()
+        tab.set_workspace(SimpleNamespace(scene=scene, project=project))
+        self.assertIn("×", tab.preview_meta.text())
+        self.app.processEvents()        # the tab lived at least one event turn
+        shiboken6.delete(tab)
+
+        raised = []
+        previous = sys.excepthook
+        sys.excepthook = lambda *info: raised.append(info[1])
+        self.addCleanup(setattr, sys, "excepthook", previous)
+        scene.setSceneRect(QRectF(0, 0, 640, 480))
+        scene.addRect(0, 0, 10, 10)
+        self.app.processEvents()
+        self.assertEqual(raised, [])
+
 
 if __name__ == "__main__":
     unittest.main()

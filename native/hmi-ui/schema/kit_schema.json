@@ -1703,6 +1703,68 @@
    "choices": {},
    "assets": []
   },
+  "ShSpeedArc": {
+   "qml": "ShSpeedArc",
+   "category": "Rail",
+   "display_name": "Speed Arc",
+   "default_width": 420,
+   "default_height": 420,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "value": {
+     "kind": "float",
+     "default": 55.0
+    },
+    "maximumValue": {
+     "kind": "float",
+     "default": 100.0
+    },
+    "target": {
+     "kind": "float",
+     "default": 60.0
+    },
+    "showTarget": {
+     "kind": "bool",
+     "default": true
+    },
+    "unit": {
+     "kind": "str",
+     "default": "KM/H"
+    },
+    "targetLabel": {
+     "kind": "str",
+     "default": "TARGET"
+    },
+    "decimals": {
+     "kind": "int",
+     "default": 0
+    },
+    "outerColor": {
+     "kind": "color",
+     "default": "#22d3ee"
+    },
+    "innerColor": {
+     "kind": "color",
+     "default": "#a855f7"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value",
+    "target"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
   "ShStatDot": {
    "qml": "ShStatDot",
    "category": "Industrial",
@@ -1739,6 +1801,101 @@
      "ok",
      "warn",
      "fault"
+    ]
+   },
+   "assets": []
+  },
+  "ShStationLine": {
+   "qml": "ShStationLine",
+   "category": "Rail",
+   "display_name": "Station Line",
+   "default_width": 520,
+   "default_height": 680,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "stations": {
+     "kind": "str",
+     "default": "Attiguppe,Vijayanagar,Hosahalli,Magadi Road,KSR Bengaluru"
+    },
+    "details": {
+     "kind": "str",
+     "default": "COMPLETED,P-412,NEXT \u00b7 1.1 km,UPCOMING \u00b7 2.3 km,Majestic"
+    },
+    "current": {
+     "kind": "int",
+     "default": 1
+    },
+    "accent": {
+     "kind": "color",
+     "default": "#a855f7"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "current",
+    "details"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShStatusCard": {
+   "qml": "ShStatusCard",
+   "category": "Rail",
+   "display_name": "Status Card",
+   "default_width": 240,
+   "default_height": 180,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "icon": {
+     "kind": "str",
+     "default": "snowflake"
+    },
+    "title": {
+     "kind": "str",
+     "default": "HVAC:"
+    },
+    "status": {
+     "kind": "str",
+     "default": "ACTIVE (21\u00b0C)"
+    },
+    "state": {
+     "kind": "str",
+     "default": "ok"
+    },
+    "iconColor": {
+     "kind": "color",
+     "default": "#38bdf8"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "status",
+    "state"
+   ],
+   "signals": [],
+   "choices": {
+    "state": [
+     "ok",
+     "warn",
+     "fault",
+     "idle"
     ]
    },
    "assets": []
@@ -1936,6 +2093,118 @@
     "toggled"
    ],
    "choices": {},
+   "assets": []
+  },
+  "ShTractionBar": {
+   "qml": "ShTractionBar",
+   "category": "Rail",
+   "display_name": "Traction / Brake",
+   "default_width": 140,
+   "default_height": 640,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "value": {
+     "kind": "float",
+     "default": 30.0
+    },
+    "title": {
+     "kind": "str",
+     "default": "T/B"
+    },
+    "powerLabel": {
+     "kind": "str",
+     "default": "POWER"
+    },
+    "brakeLabel": {
+     "kind": "str",
+     "default": "BRAKING"
+    },
+    "propulsionText": {
+     "kind": "str",
+     "default": "Propulsion"
+    },
+    "brakingText": {
+     "kind": "str",
+     "default": "Braking"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
+  "ShTrainConsist": {
+   "qml": "ShTrainConsist",
+   "category": "Rail",
+   "display_name": "Train Consist",
+   "default_width": 300,
+   "default_height": 880,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "cars": {
+     "kind": "str",
+     "default": "MC1,M1,T1,T2,M2,MC2"
+    },
+    "doorsLeft": {
+     "kind": "str",
+     "default": "closed"
+    },
+    "doorsRight": {
+     "kind": "str",
+     "default": "disabled"
+    },
+    "leftLabel": {
+     "kind": "str",
+     "default": "DOORS L: CLOSED (SECURED)"
+    },
+    "rightLabel": {
+     "kind": "str",
+     "default": "DOORS R: DISABLED"
+    },
+    "accent": {
+     "kind": "color",
+     "default": "#a855f7"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "doorsLeft",
+    "doorsRight",
+    "leftLabel",
+    "rightLabel"
+   ],
+   "signals": [],
+   "choices": {
+    "doorsLeft": [
+     "closed",
+     "open",
+     "disabled"
+    ],
+    "doorsRight": [
+     "closed",
+     "open",
+     "disabled"
+    ]
+   },
    "assets": []
   },
   "ShTrendChart": {
@@ -2437,12 +2706,19 @@
   "sim.car.trip_mi",
   "sim.car.turn_left",
   "sim.car.turn_right",
+  "sim.fd_active",
+  "sim.fd_mode",
   "sim.fd_pitch",
   "sim.fd_roll",
+  "sim.flaps_lit",
   "sim.fuel2_left",
   "sim.fuel2_right",
   "sim.fuel_left",
+  "sim.fuel_pct",
   "sim.fuel_right",
+  "sim.gear_down",
+  "sim.gear_lit",
+  "sim.ground_distance",
   "sim.ground_speed",
   "sim.heading",
   "sim.heading_bug",
@@ -2451,6 +2727,7 @@
   "sim.n1_eng1",
   "sim.n1_eng2",
   "sim.oat",
+  "sim.oat_alt",
   "sim.oil_press_eng1",
   "sim.oil_press_eng2",
   "sim.oil_temp_eng1",
@@ -2458,6 +2735,9 @@
   "sim.pitch",
   "sim.roll",
   "sim.slip",
+  "sim.sls_lit",
+  "sim.toga_lit",
+  "sim.true_air_speed",
   "sim.turn_rate",
   "sim.vsi",
   "sim.wind_speed"

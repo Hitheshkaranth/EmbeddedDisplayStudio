@@ -50,3 +50,8 @@ ShTripInfo 1.0 ShTripInfo.qml
 ShSegmentBar 1.0 ShSegmentBar.qml
 ShIconTile 1.0 ShIconTile.qml
 ShVehicleStatus 1.0 ShVehicleStatus.qml
+ShSpeedArc 1.0 ShSpeedArc.qml
+ShTractionBar 1.0 ShTractionBar.qml
+ShStationLine 1.0 ShStationLine.qml
+ShTrainConsist 1.0 ShTrainConsist.qml
+ShStatusCard 1.0 ShStatusCard.qml

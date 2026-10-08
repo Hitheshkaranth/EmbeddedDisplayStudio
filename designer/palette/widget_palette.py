@@ -13,9 +13,14 @@ class WidgetPalette(QTreeWidget):
     resultsChanged = Signal(int)
     widgetActivated = Signal(str)
 
-    def __init__(self, registry, parent=None):
+    def __init__(self, registry, parent=None, library=None):
         super().__init__(parent)
         self.registry = registry
+        # Custom widgets (designer/palette/custom_widgets.py): a "Custom"
+        # section after the kit, rebuilt whenever the library changes.
+        self.library = library
+        self._custom_category = None
+        self._theme = "dark"
         self.setHeaderHidden(True)
         self.setDragEnabled(True)
         self.setRootIsDecorated(False)
@@ -64,8 +69,73 @@ class WidgetPalette(QTreeWidget):
                 category_item.addChild(item)
             category_item.setExpanded(True)
 
+        if self.library is not None:
+            self._build_custom()
+            self.library.changed.connect(self.refresh_custom)
         self.apply_theme("dark")
         self._filter()
+
+    # -- custom widgets ---------------------------------------------------------
+    def _build_custom(self):
+        from designer.palette.custom_widgets import CATEGORY
+        category_item = QTreeWidgetItem([CATEGORY])
+        category_item.setFlags(category_item.flags() & ~Qt.ItemIsDragEnabled & ~Qt.ItemIsSelectable)
+        category_item.setSizeHint(0, QSize(0, 26))
+        heading_font = category_item.font(0)
+        heading_font.setWeight(QFont.DemiBold)
+        heading_font.setPointSizeF(7.5)
+        heading_font.setLetterSpacing(QFont.AbsoluteSpacing, 1.0)
+        category_item.setFont(0, heading_font)
+        category_item.setData(0, Qt.UserRole + 1, CATEGORY)
+        self.addTopLevelItem(category_item)
+        self._custom_category = category_item
+        self._fill_custom()
+
+    def _fill_custom(self):
+        category_item = self._custom_category
+        category_item.takeChildren()
+        for custom in self.library.items():
+            item = QTreeWidgetItem([custom.name])
+            item.setData(0, Qt.UserRole, custom.type)
+            item.setSizeHint(0, QSize(0, 40))
+            item.setToolTip(0, f"{custom.name}  ·  custom widget\n{custom.width} × {custom.height} px, "
+                               f"{len(custom.widgets)} parts\nDrag or double-click to add. "
+                               "Right-click to delete.")
+            category_item.addChild(item)
+        category_item.setExpanded(True)
+
+    def refresh_custom(self):
+        """The library changed: list it again, with fresh thumbnails."""
+        if self._custom_category is None:
+            return
+        self._fill_custom()
+        self.apply_theme(self._theme)
+        self._filter()
+
+    def _custom(self, widget_type):
+        from designer.palette.custom_widgets import is_custom
+        if self.library is None or not is_custom(widget_type):
+            return None
+        return self.library.get(widget_type)
+
+    def _paint_custom(self, painter, custom):
+        """A custom widget's thumbnail: each part drawn by its kit painter."""
+        scale = min(1.0, 96 / max(1, custom.width), 68 / max(1, custom.height))
+        painter.translate((104 - custom.width * scale) / 2, (76 - custom.height * scale) / 2)
+        painter.scale(scale, scale)
+        for data in custom.widgets:
+            geometry = data.get("geometry") or {}
+            preview = widget_previews.painter_for(data.get("type", ""))
+            definition = self.registry.get(data.get("type", ""))
+            if not preview or not definition:
+                continue
+            props = dict(definition.defaults)
+            props.update(data.get("properties") or {})
+            painter.save()
+            painter.translate(float(geometry.get("x", 0)), float(geometry.get("y", 0)))
+            preview(painter, QRectF(0, 0, float(geometry.get("width", definition.default_width)),
+                                    float(geometry.get("height", definition.default_height))), props, None)
+            painter.restore()
 
     def _activate_item(self, item, _column=0):
         widget_type = item.data(0, Qt.UserRole) if item else None
@@ -104,15 +174,23 @@ class WidgetPalette(QTreeWidget):
                 item = category_item.child(row)
                 widget_type = item.data(0, Qt.UserRole)
                 definition = self.registry.get(widget_type)
-                haystack = f"{definition.display_name} {widget_type} {category}".casefold()
+                custom = None if definition else self._custom(widget_type)
+                name = definition.display_name if definition else (custom.name if custom else widget_type)
+                haystack = f"{name} {widget_type} {category}".casefold()
                 visible = all(word in haystack for word in self._query.split()) and (
                     not self._favorites_only or widget_type in self._favorites
                 )
                 item.setHidden(not visible)
-                item.setText(0, definition.display_name + ("  ★" if widget_type in self._favorites else ""))
+                item.setText(0, name + ("  ★" if widget_type in self._favorites else ""))
                 count += int(visible)
             category_item.setText(0, f"{category.upper()}  ·  {count}")
-            category_item.setHidden(count == 0)
+            # The Custom section stays when empty, to say how to fill it.
+            empty_custom = category_item is self._custom_category and not self._query \
+                and not self._favorites_only
+            category_item.setHidden(count == 0 and not empty_custom)
+            if empty_custom and count == 0:
+                category_item.setToolTip(0, "Select widgets on the canvas and choose "
+                                            "Save as custom widget to add your own here.")
             if self._query:
                 category_item.setExpanded(True)
             total += count
@@ -133,6 +211,12 @@ class WidgetPalette(QTreeWidget):
         widget_type = item.data(0, Qt.UserRole) if item else None
         if not widget_type:
             return
+        if self._custom(widget_type) is not None:
+            menu = QMenu(self)
+            delete = menu.addAction("Delete custom widget")
+            if menu.exec(self.viewport().mapToGlobal(point)) == delete:
+                self.library.delete(widget_type)
+            return
         menu = QMenu(self)
         label = "Remove from favorites" if widget_type in self._favorites else "Add to favorites"
         action = menu.addAction(label)
@@ -140,6 +224,7 @@ class WidgetPalette(QTreeWidget):
             self.toggle_favorite(widget_type)
 
     def apply_theme(self, theme):
+        self._theme = theme
         previous = widget_previews.theme_mode()
         widget_previews.set_theme_mode(theme)
         try:
@@ -159,8 +244,11 @@ class WidgetPalette(QTreeWidget):
                     painter.setBrush(QColor(color("background", theme)))
                     painter.drawRoundedRect(QRectF(0.5, 0.5, 103, 75), 8, 8)
                     painter.save()
-                    preview = widget_previews.painter_for(definition.type)
-                    if preview:
+                    custom = None if definition else self._custom(item.data(0, Qt.UserRole))
+                    preview = widget_previews.painter_for(definition.type) if definition else None
+                    if custom is not None:
+                        self._paint_custom(painter, custom)
+                    elif preview:
                         scale = min(1.0, 96 / definition.default_width, 68 / definition.default_height)
                         painter.translate(
                             (104 - definition.default_width * scale) / 2,

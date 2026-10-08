@@ -252,6 +252,40 @@ def default_registry() -> WidgetRegistry:
         {"frontLeft": float, "frontRight": float, "rearLeft": float, "rearRight": float, "unit": str, "warnBelow": float, "decimals": int, "label": str, **common},
         {"frontLeft": 2.6, "frontRight": 2.5, "rearLeft": 1.6, "rearRight": 2.2, "unit": 'bar', "warnBelow": 1.8, "decimals": 1, "label": 'TPMS', **common_defaults},
         ('frontLeft', 'frontRight', 'rearLeft', 'rearRight'))
+    # -- Rail (metro cab and control-room faces) ---------------------------
+    add("ShSpeedArc", "Speed Arc", "Rail", "ShSpeedArc", 420, 420,
+        {"value": float, "maximumValue": float, "target": float, "showTarget": bool, "unit": str,
+         "targetLabel": str, "decimals": int, "outerColor": str, "innerColor": str, **common},
+        {"value": 55.0, "maximumValue": 100.0, "target": 60.0, "showTarget": True, "unit": 'KM/H',
+         "targetLabel": 'TARGET', "decimals": 0, "outerColor": '#22d3ee', "innerColor": '#a855f7',
+         **common_defaults},
+        ('value', 'target'), False, {}, ('outerColor', 'innerColor'))
+    add("ShTractionBar", "Traction / Brake", "Rail", "ShTractionBar", 140, 640,
+        {"value": float, "title": str, "powerLabel": str, "brakeLabel": str,
+         "propulsionText": str, "brakingText": str, **common},
+        {"value": 30.0, "title": 'T/B', "powerLabel": 'POWER', "brakeLabel": 'BRAKING',
+         "propulsionText": 'Propulsion', "brakingText": 'Braking', **common_defaults},
+        ('value',))
+    add("ShStationLine", "Station Line", "Rail", "ShStationLine", 520, 680,
+        {"stations": str, "details": str, "current": int, "accent": str, **common},
+        {"stations": 'Attiguppe,Vijayanagar,Hosahalli,Magadi Road,KSR Bengaluru',
+         "details": 'COMPLETED,P-412,NEXT · 1.1 km,UPCOMING · 2.3 km,Majestic',
+         "current": 1, "accent": '#a855f7', **common_defaults},
+        ('current', 'details'), False, {}, ('accent',))
+    add("ShTrainConsist", "Train Consist", "Rail", "ShTrainConsist", 300, 880,
+        {"cars": str, "doorsLeft": str, "doorsRight": str, "leftLabel": str, "rightLabel": str,
+         "accent": str, **common},
+        {"cars": 'MC1,M1,T1,T2,M2,MC2', "doorsLeft": 'closed', "doorsRight": 'disabled',
+         "leftLabel": 'DOORS L: CLOSED (SECURED)', "rightLabel": 'DOORS R: DISABLED',
+         "accent": '#a855f7', **common_defaults},
+        ('doorsLeft', 'doorsRight', 'leftLabel', 'rightLabel'), False,
+        {"doorsLeft": ('closed', 'open', 'disabled'), "doorsRight": ('closed', 'open', 'disabled')},
+        ('accent',))
+    add("ShStatusCard", "Status Card", "Rail", "ShStatusCard", 240, 180,
+        {"icon": str, "title": str, "status": str, "state": str, "iconColor": str, **common},
+        {"icon": 'snowflake', "title": 'HVAC:', "status": 'ACTIVE (21°C)', "state": 'ok',
+         "iconColor": '#38bdf8', **common_defaults},
+        ('status', 'state'), False, {"state": ('ok', 'warn', 'fault', 'idle')}, ('iconColor',))
     # -- Industrial controls -------------------------------------------------
     add("ShSlider", "Slider", "Industrial", "ShSlider", 250, 64,
         {"value": float, "minValue": float, "maxValue": float, "step": float,

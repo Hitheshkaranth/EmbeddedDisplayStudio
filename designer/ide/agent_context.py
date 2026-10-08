@@ -60,9 +60,44 @@ a menu in the agent panel. Exactly, in this order:
 from __future__ import annotations
 
 import json
+import os
+import sys
 from dataclasses import dataclass
 
 from designer.ide.design_index import DesignIndex
+
+
+def _daemon_dir() -> str:
+    """Where the hardware daemon's sources are: beside a packaged Studio, or
+    in the checkout. Empty when neither has them."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for root in (getattr(sys, "_MEIPASS", ""), os.path.dirname(os.path.dirname(here))):
+        folder = os.path.join(root, "daemon") if root else ""
+        if folder and os.path.isfile(os.path.join(folder, "hmi_hwd.py")):
+            return folder
+    return ""
+
+
+def _hardware_rule() -> str:
+    """How a design reaches real I/O, so "connect it to the PLC" needs no
+    file paths or register maps in the request."""
+    rule = ("- Hardware: on the panel the hmi-hwd daemon reads hwd.json (sections daemon, gpio, adc, "
+            "uart, modbus) and serves tags to the design. A Modbus TCP value is "
+            "modbus.tags[\"mb.<area>.<signal>\"] = {\"kind\": \"coil\"|\"discrete\"|\"holding\"|\"input\", "
+            "\"address\": <0-based>, \"type\": \"bool\"|\"int16\"|\"uint16\"|\"int32\"|\"uint32\"|\"float32\", "
+            "optional \"scale\", \"offset\", \"writable\"}; modbus also holds host, port, unit_id. A widget "
+            "reads it by binding to that mb. tag. Every Modbus tag name starts with mb.: to wire an "
+            "existing design, name each of its tags mb.<old tag> in hwd.json and rebind the widgets in "
+            "project.edsui to the new names.")
+    folder = _daemon_dir()
+    if folder:
+        rule += (f" The template is {os.path.join(folder, 'hwd.json')}: copy it to hwd.json in the project "
+                 "folder and edit only that copy -- never edit the template or anything else outside the "
+                 f"project. Check the copy with python \"{os.path.join(folder, 'hmi_hwd.py')}\" --config "
+                 "hwd.json --sim --selftest (it prints one telemetry frame); on Windows never redirect to "
+                 "/dev/null.")
+    return rule
+
 
 RULES = (
     "- project.edsui is JSON the panel runs directly: keep it valid, keep every widget id unique "
@@ -73,7 +108,8 @@ RULES = (
     "- A binding is {\"tag\", \"format\", \"multiplier\", \"offset\", \"unit\", \"warning\", \"critical\"}; "
     "thresholds are strings like \">4000\" or \"<10\".\n"
     "- An action is {\"kind\": \"write\"|\"pulse\"|\"navigate\", \"tag\", \"value\", \"ms\", \"page\"}; only "
-    "writable tags may be written or pulsed."
+    "writable tags may be written or pulsed.\n"
+    + _hardware_rule()
 )
 
 DEFAULT_MAX_CHARS = 6000

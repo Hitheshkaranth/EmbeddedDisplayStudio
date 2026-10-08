@@ -10,6 +10,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 
@@ -203,6 +204,51 @@ Item {
 
         # Verify the signal fired
         self.assertTrue(signal_fired["fired"], "unsubscribed signal did not fire")
+
+
+class TestRequestsSurviveALostDatagram(unittest.TestCase):
+    """
+    list and unsubscribe block on an ack that travels over UDP, which may drop
+    the command or the reply. Both are idempotent, so the engine re-sends
+    inside its window instead of reporting an empty answer.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QGuiApplication.instance() or QGuiApplication(sys.argv)
+
+    def test_a_dropped_list_is_sent_again(self):
+        daemon = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        daemon.bind(("127.0.0.1", 0))
+        daemon.settimeout(3.0)
+        self.addCleanup(daemon.close)
+        seen = []
+
+        def _answer_only_the_second_list():
+            try:
+                while True:
+                    data, addr = daemon.recvfrom(8192)
+                    msg = json.loads(data)
+                    if msg.get("cmd") != "list":
+                        continue
+                    seen.append(msg["id"])
+                    if len(seen) == 2:
+                        reply = {"t": "ack", "id": msg["id"], "ok": True, "tags": ["di.estop"]}
+                        daemon.sendto(json.dumps(reply).encode("utf-8"), addr)
+                        return
+            except OSError:
+                return
+
+        worker = threading.Thread(target=_answer_only_the_second_list, daemon=True)
+        worker.start()
+        engine = TagEngine(expected_tags=[], rx_port=0, allow_any_port=True,
+                           daemon_port=daemon.getsockname()[1])
+        self.addCleanup(engine.deleteLater)
+
+        self.assertEqual(engine.list_tags(), ["di.estop"])
+        worker.join(timeout=3.0)
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(seen[0], seen[1], "a resend keeps the correlation id")
 
 
 if __name__ == "__main__":

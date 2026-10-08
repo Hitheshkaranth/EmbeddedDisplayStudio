@@ -111,6 +111,12 @@ class SynonymTest(unittest.TestCase):
         props, _notes = intake.normalise_properties(self.registry.get("ShValueTile"), {"label": "Current"})
         self.assertEqual(props["title"], "Current")
 
+    def test_an_image_path_spelled_src_lands_in_source(self):
+        # Ornith wrote {"type": "ShImage", "properties": {"src": ...}} for a
+        # header logo; without this the image came out with no picture.
+        props, _notes = intake.normalise_properties(self.registry.get("Image"), {"src": "assets/logo.png"})
+        self.assertEqual(props["source"], "assets/logo.png")
+
     def test_explicit_key_is_not_overwritten(self):
         props, _notes = intake.normalise_properties(
             self.registry.get("ShValueTile"), {"title": "Kept", "label": "Dropped"})
@@ -200,6 +206,109 @@ class CompilerTest(unittest.TestCase):
         first = json.dumps(page.to_dict(), sort_keys=True)
         compiler.compile_page(project, page, self.registry)
         self.assertEqual(json.dumps(page.to_dict(), sort_keys=True), first)
+
+    def _with_logo(self):
+        design = copy.deepcopy(PLAN)
+        # Spelled the way Ornith spelled it when asked for a header logo.
+        design["pages"][0]["header"].append(
+            {"type": "ShImage", "id": "customerLogo", "properties": {"src": "assets/acme.png"}})
+        return self._compiled(design)
+
+    def test_a_header_logo_keeps_its_picture_and_sits_on_a_plate_at_the_right_end(self):
+        project = self._with_logo()
+        page = project.pages[0]
+        logo = next(w for w in page.widgets if w.id == "customerLogo")
+        plate = next(w for w in page.widgets if w.id == "customerLogoPlate")
+        self.assertEqual(logo.type, "Image")
+        self.assertEqual(logo.properties["source"], "assets/acme.png")
+        self.assertEqual(plate.properties["color"], "#ffffff")
+        g, p = logo.geometry, plate.geometry
+        self.assertTrue(p["x"] < g["x"] and g["x"] + g["width"] < p["x"] + p["width"])
+        self.assertTrue(p["y"] < g["y"] and g["y"] + g["height"] < p["y"] + p["height"])
+        # Drawn first, so under the picture.
+        self.assertLess(page.widgets.index(plate), page.widgets.index(logo))
+        header = [w for w in page.widgets if float(w.geometry["y"]) < 90 and w.type != "Rectangle"]
+        self.assertEqual(max(header, key=lambda w: float(w.geometry["x"])).id, "customerLogo")
+
+    def test_a_header_logo_recompiles_without_a_second_plate(self):
+        project = self._with_logo()
+        page = project.pages[0]
+        compiler.compile_page(project, page, self.registry)
+        self.assertEqual([w.id for w in page.widgets if w.id.startswith("customerLogoPlate")],
+                         ["customerLogoPlate"])
+
+    def test_two_logos_one_at_each_end_of_the_header(self):
+        design = copy.deepcopy(PLAN)
+        design["pages"][0]["header"] += [
+            {"type": "Image", "id": "operatorLogo", "side": "left",
+             "properties": {"source": "assets/operator.png"}},
+            {"type": "Image", "id": "vendorLogo", "properties": {"source": "assets/vendor.png",
+                                                                "side": "right"}}]
+        project = self._compiled(design)
+        page = project.pages[0]
+        widgets = {w.id: w for w in page.widgets}
+        operator, vendor, title = widgets["operatorLogo"], widgets["vendorLogo"], widgets["screenTitle"]
+        self.assertEqual(operator.properties["source"], "assets/operator.png")
+        self.assertLess(float(operator.geometry["x"]) + float(operator.geometry["width"]),
+                        float(title.geometry["x"]))
+        header = [w for w in page.widgets if float(w.geometry["y"]) < 90 and w.type != "Rectangle"]
+        self.assertEqual(max(header, key=lambda w: float(w.geometry["x"])).id, "vendorLogo")
+        self.assertIn("operatorLogoPlate", widgets)
+        # The wish survives a recompile.
+        compiler.compile_page(project, page, self.registry)
+        self.assertLess(float(widgets["operatorLogo"].geometry["x"]),
+                        float(next(w for w in page.widgets if w.id == "screenTitle").geometry["x"]))
+
+    def test_a_logo_the_request_never_named_is_left_out(self):
+        design = copy.deepcopy(PLAN)
+        design["pages"][0]["header"].append(
+            {"type": "Image", "id": "metroLogo", "properties": {"source": "assets/metro_logo.png"}})
+        self.generator.brief = "a pump station overview"
+        page = self._compiled(design).pages[0]
+        self.assertFalse([w for w in page.widgets if w.id.startswith("metroLogo")])
+        self.generator.brief = "add assets/metro_logo.png at the left end"
+        page = self._compiled(design).pages[0]
+        self.assertTrue([w for w in page.widgets if w.id == "metroLogo"])
+
+    def test_a_dial_without_a_sample_shows_a_running_reading(self):
+        design = copy.deepcopy(PLAN)
+        hero = design["pages"][0]["sections"][0]["widgets"][0]
+        hero["properties"] = {"caption": "Speed", "minimumValue": 0, "maximumValue": 90}
+        page = self._compiled(design).pages[0]
+        gauge = next(w for w, _x, _y in _walk(page.widgets) if w.id == "flowRate")
+        self.assertEqual(gauge.properties["value"], 56)          # two thirds up 0..90
+        suction = next(w for w, _x, _y in _walk(page.widgets) if w.id == "suction")
+        self.assertTrue(0 < float(suction.properties["value"]) < 10)
+
+    def test_a_name_on_a_numeric_readout_moves_onto_a_text_tile(self):
+        # Ornith's next station: ShAutoReadout {"value": "Indiranagar"}, drawn as 0.
+        design = copy.deepcopy(PLAN)
+        design["pages"][0]["sections"][2]["widgets"].append(
+            {"type": "ShAutoReadout", "id": "nextStation",
+             "properties": {"label": "Next Station", "value": "Indiranagar", "icon": "arrow-forward-up"},
+             "bindings": {"value": {"tag": "tr.next_station"}}})
+        page = self._compiled(design).pages[0]
+        tile = next(w for w, _x, _y in _walk(page.widgets) if w.id == "nextStation")
+        self.assertEqual(tile.type, "ShValueTile")
+        self.assertEqual((tile.properties["title"], tile.properties["value"]), ("Next Station", "Indiranagar"))
+        self.assertEqual(tile.bindings["value"].tag, "tr.next_station")
+        # A word needs room: the tile takes its card's width, not a grid cell.
+        self.assertEqual(compiler.kind_of(self.registry, tile), compiler.STRIP)
+        card = next(c for c in page.widgets if any(ch.id == "nextStation" for ch in c.children))
+        self.assertGreater(float(tile.geometry["width"]), float(card.geometry["width"]) * 0.7)
+
+    def test_a_logo_with_no_picture_is_left_out(self):
+        design = copy.deepcopy(PLAN)
+        design["pages"][0]["header"].append({"type": "Image", "id": "logo", "properties": {}})
+        page = self._compiled(design).pages[0]
+        self.assertFalse([w for w in page.widgets if w.id.startswith("logo")])
+
+    def test_a_light_theme_logo_needs_no_plate(self):
+        project = self._with_logo()
+        project.screen.theme = "light"
+        page = project.pages[0]
+        compiler.compile_page(project, page, self.registry)
+        self.assertFalse([w for w in page.widgets if w.id.startswith("customerLogoPlate")])
 
     def test_geometry_reply_still_polishes_in_auto_mode(self):
         design = {"pages": [{"id": "main", "widgets": [

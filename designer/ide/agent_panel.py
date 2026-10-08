@@ -57,13 +57,14 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 from typing import Callable
 
 from PySide6.QtCore import QSettings, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QTextDocument
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QMenu, QPlainTextEdit, QPushButton,
-    QScrollArea, QToolButton, QVBoxLayout, QWidget,
+    QScrollArea, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
 from designer.ide.agent_backend import ERROR, READY, STARTING, STOPPED
@@ -96,6 +97,43 @@ _RENDER_MS = 50
 _OUTPUT_CHARS = 4000
 _STATUS_MARKS = {"pending": "...", "running": "...", "completed": "✓", "error": "✗"}
 
+# The transcript is a narrow column. A word wraps; a path, an identifier or a
+# command line does not, and one of them used to widen the whole transcript
+# past the panel and crop every line on the right. Runs this long get break
+# opportunities (zero-width spaces) after their separators.
+_LONG_RUN = re.compile(r"\S{24,}")
+_ZWSP = "​"
+_SEPARATOR = re.compile(r"([/\\_.,:;=&?-])")
+_UNBROKEN = re.compile("([^​]{24})(?=[^​])")
+
+
+def _soft_breaks(text: str) -> str:
+    """*text* with break opportunities inside long unbroken runs."""
+    def split(match):
+        run = _SEPARATOR.sub(lambda m: m.group(1) + _ZWSP, match.group(0))
+        # A run with no separator at all still breaks every 24 characters.
+        return _UNBROKEN.sub(lambda m: m.group(1) + _ZWSP, run)
+    return _LONG_RUN.sub(split, text or "")
+
+
+def _markdown_html(text: str) -> str:
+    """Markdown as rich text that fits the column: code blocks wrap and long
+    runs in the text (never in tags or link targets) can break."""
+    document = QTextDocument()
+    document.setMarkdown(text or "")
+    rich = document.toHtml().replace("white-space:pre;", "white-space:pre-wrap;")
+    rich = rich.replace("white-space: pre;", "white-space: pre-wrap;")
+    return re.sub(r">([^<]+)<", lambda m: ">" + _soft_breaks(m.group(1)) + "<", rich)
+
+
+def _short_title(title: str) -> str:
+    """A tool title that is a long path, as its last two parts."""
+    if (len(title) > 32 and " " not in title.strip()
+            and ("/" in title or "\\" in title)):
+        parts = [part for part in re.split(r"[/\\]", title) if part]
+        return "…/" + "/".join(parts[-2:]) if len(parts) > 2 else title
+    return title
+
 
 def _label(text: str = "", fmt=Qt.PlainText, name: str = "") -> QLabel:
     label = QLabel(text)
@@ -104,6 +142,9 @@ def _label(text: str = "", fmt=Qt.PlainText, name: str = "") -> QLabel:
     label.setTextInteractionFlags(Qt.TextBrowserInteraction if fmt != Qt.PlainText
                                   else Qt.TextSelectableByMouse)
     label.setOpenExternalLinks(False)
+    # The column decides the width; the text wraps to it (see _soft_breaks).
+    label.setMinimumWidth(1)
+    label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
     if name:
         label.setObjectName(name)
     return label
@@ -134,11 +175,12 @@ class _TextBlock(_Block):
     def __init__(self, kind: str, text: str, parent=None):
         super().__init__(parent, kind)
         # What the user typed is shown as typed: '*' and '<' are not markup.
-        self._label = _label(text, Qt.PlainText, f"agentText_{kind}")
+        self._text = text
+        self._label = _label(_soft_breaks(text), Qt.PlainText, f"agentText_{kind}")
         self._column.addWidget(self._label)
 
     def plain_text(self) -> str:
-        return self._label.text()
+        return self._text
 
 
 class _StreamBlock(_Block):
@@ -149,7 +191,9 @@ class _StreamBlock(_Block):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._text = ""
-        self._body = _label("", Qt.MarkdownText, f"agentBody_{self.kind}")
+        # Markdown, rendered to rich text here so code blocks and long paths
+        # wrap to the column (_markdown_html).
+        self._body = _label("", Qt.RichText, f"agentBody_{self.kind}")
         self._body.linkActivated.connect(self._open_link)
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -166,7 +210,7 @@ class _StreamBlock(_Block):
         self._render()
 
     def _render(self) -> None:
-        self._body.setText(self._text)
+        self._body.setText(_markdown_html(self._text))
 
     def plain_text(self) -> str:
         return self._text
@@ -243,6 +287,10 @@ class _ToolBlock(_Block):
         self._header.setToolButtonStyle(Qt.ToolButtonTextOnly)
         self._header.setCheckable(True)
         self._header.setCursor(Qt.PointingHandCursor)
+        # One line, elided to the column (resizeEvent); the tooltip has it all.
+        self._header.setMinimumWidth(1)
+        self._header.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self._header_text = ""
         self._link = _label("", Qt.RichText, "agentToolLink")
         self._link.linkActivated.connect(open_file)
         self._link.setVisible(False)
@@ -257,7 +305,9 @@ class _ToolBlock(_Block):
     def apply_event(self, event: dict) -> None:
         self._event = dict(event)
         tool, title, status = self._tool(), self._title(), self._status()
-        self._header.setText(f"{_STATUS_MARKS.get(status, '')} {tool}  {title}".strip())
+        self._header_text = f"{_STATUS_MARKS.get(status, '')} {tool}  {_short_title(title)}".strip()
+        self._header.setToolTip(f"{tool}  {title}")
+        self._elide_header()
         source = event.get("input") or {}
         path = source.get("filePath") or source.get("path") or "" if isinstance(source, dict) else ""
         if path:
@@ -266,7 +316,7 @@ class _ToolBlock(_Block):
             self._link.setToolTip(path)
         self._link.setVisible(bool(path))
         error = event.get("error") or ""
-        self._error.setText(error)
+        self._error.setText(_soft_breaks(error))
         self._error.setVisible(status == "error" and bool(error))
         try:
             shown_input = json.dumps(source, indent=2, ensure_ascii=False)
@@ -274,7 +324,18 @@ class _ToolBlock(_Block):
             shown_input = str(source)
         output = (event.get("output") or "")[:_OUTPUT_CHARS]
         # Plain text: tool output is whatever a command printed, never markup.
-        self._detail.setText(f"Input:\n{shown_input}" + (f"\n\nOutput:\n{output}" if output else ""))
+        self._detail.setText(_soft_breaks(f"Input:\n{shown_input}" + (f"\n\nOutput:\n{output}" if output else "")))
+
+    def _elide_header(self) -> None:
+        room = self._header.width() - 16
+        shown = self._header_text
+        if room > 0:
+            shown = self._header.fontMetrics().elidedText(shown, Qt.ElideMiddle, room)
+        self._header.setText(shown)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._elide_header()
 
     def _tool(self) -> str:
         return self._event.get("tool") or "tool"

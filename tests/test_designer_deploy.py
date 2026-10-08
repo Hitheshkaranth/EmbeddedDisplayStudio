@@ -150,6 +150,14 @@ class DesignerDeployTests(unittest.TestCase):
             self.assertTrue(other.ensure_bundle())
             self.assertEqual(os.path.basename(other.bundle_dir), "ai-design-partial-2")
 
+    def test_an_ai_design_keeps_the_name_the_person_gave(self):
+        from designer.model import DesignerProject
+        workspace = DesignerWorkspace()
+        self.addCleanup(workspace.close)
+        workspace.project.name = "purple-line-ops"         # typed into New design
+        workspace.load_project(DesignerProject(name="Namma Metro Purple Line"))
+        self.assertEqual(workspace.project.name, "purple-line-ops")
+
     def test_studio_handler_loads_then_starts_existing_deploy_pipeline(self):
         calls = []
 

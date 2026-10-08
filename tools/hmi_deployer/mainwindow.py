@@ -1556,16 +1556,22 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         if tab.streaming:
             workspace.show_composer_reply("The AI is still working on the previous request.", busy=True)
             return
+        # A file the request names ("add C:\...\logo.png to the header") goes
+        # into the project's assets first: the AI and the panel only know it there.
+        prompt, imported = workspace.import_prompt_images(prompt)
+        self._canvas_imported = imported
         request = (f"{prompt}\n\n{workspace.ai_context()}\n\n"
                    "Change the current design as asked, keep everything else as it is, "
                    "and return the whole updated design.")
         self._ai_before = tab.last_project
+        self._canvas_tags_before = set(workspace.project.required_tags())
         tab.brief_input.setPlainText(request)
         tab._on_send()
         if not tab.streaming:
             workspace.show_composer_reply("The AI could not start: check the provider and model in AI Design.")
             return
-        workspace.show_composer_reply("Asking the AI… the result lands on this canvas.", busy=True)
+        copied = f"Copied {', '.join(imported)} into the project. " if imported else ""
+        workspace.show_composer_reply(f"{copied}Asking the AI… the result lands on this canvas.", busy=True)
         self._ai_watch.start()
 
     def _watch_canvas_ai(self) -> None:
@@ -1577,9 +1583,47 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         if tab.last_project is getattr(self, "_ai_before", None):
             workspace.show_composer_reply("The AI returned no design. Open AI Design to see its reply.")
         elif tab.auto_apply.isChecked():
+            # A change request said "keep everything else". A reply that drops
+            # most of what the page showed is a model failing at that, not a
+            # change anyone asked for: put the page back rather than lose it.
+            before = getattr(self, "_canvas_tags_before", set())
+            lost = before - set(workspace.project.required_tags())
+            if before and len(lost) > 0.4 * len(before) and workspace.undo_stack.canUndo():
+                workspace.undo_stack.undo()
+                workspace.show_composer_reply(
+                    f"The AI's reply left out {len(lost)} of the {len(before)} tags this page shows, "
+                    "so the page was put back. Ask again, or open AI Design to see the reply.")
+                return
+            self._repoint_imported_images(workspace)
             workspace.show_composer_reply("Done: applied to the canvas. Ctrl+Z undoes it.")
         else:
             workspace.show_composer_reply("Ready in AI Design: press Apply to canvas there.")
+
+    def _repoint_imported_images(self, workspace) -> None:
+        """An image the request brought in, named loosely by the reply.
+
+        The AI was told "assets/acme.png" and wrote "assets/acme" or
+        "acme.png"; an Image whose source matches an imported asset by name
+        but is not a file is pointed at the asset, so it shows a picture
+        rather than an empty placeholder.
+        """
+        imported = getattr(self, "_canvas_imported", None) or []
+        if not imported or not workspace.bundle_dir:
+            return
+        by_stem = {os.path.splitext(os.path.basename(a))[0].lower(): a for a in imported}
+        changed = False
+        for widget in workspace.project.all_widgets():
+            source = str(widget.properties.get("source") or "")
+            if widget.type != "Image" or not source:
+                continue
+            if os.path.isfile(os.path.join(workspace.bundle_dir, source)):
+                continue
+            asset = by_stem.get(os.path.splitext(os.path.basename(source))[0].lower())
+            if asset:
+                widget.properties["source"] = asset
+                changed = True
+        if changed:
+            workspace._load_page()
 
     # The Studio's modes and the views (workspace tabs, by title) in each.
     MODES = (

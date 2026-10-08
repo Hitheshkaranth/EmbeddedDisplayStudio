@@ -106,6 +106,36 @@ def _icon_file(name: str, size: int, color_hex: str) -> str:
     return path.replace("\\", "/")
 
 
+def _trim_transparent_margins(source: str, destination: str) -> bool:
+    """Write *source* to *destination* cropped to its non-transparent pixels.
+
+    Returns False, writing nothing, when there is nothing to trim (no alpha
+    channel, fully transparent, or already tight) so the caller copies the
+    file as it is.
+    """
+    from PySide6.QtGui import QImage
+    image = QImage(source)
+    if image.isNull() or not image.hasAlphaChannel():
+        return False
+    alpha = image.convertToFormat(QImage.Format_Alpha8)
+    width, height, stride = alpha.width(), alpha.height(), alpha.bytesPerLine()
+    data = bytes(alpha.constBits())[:stride * height]
+    top = bottom = None
+    left, right = width, -1
+    for y in range(height):
+        row = data[y * stride:y * stride + width]
+        rest = row.lstrip(b"\0")
+        if not rest:
+            continue
+        top = y if top is None else top
+        bottom = y
+        left = min(left, width - len(rest))
+        right = max(right, len(row.rstrip(b"\0")) - 1)
+    if top is None or (left, top, right, bottom) == (0, 0, width - 1, height - 1):
+        return False
+    return image.copy(left, top, right - left + 1, bottom - top + 1).save(destination)
+
+
 def _field_label(text: str) -> QLabel:
     """The muted left-hand caption of an inspector row."""
     label = QLabel(text)
@@ -745,6 +775,9 @@ class DesignerWorkspace(QWidget):
         action(primary, "Copy", self.copy, "copy", "Ctrl+C", compact=True)
         action(primary, "Paste", self.paste, "clipboard", "Ctrl+V", compact=True)
         action(primary, "Duplicate", self.duplicate, "layout-grid", "Ctrl+D", compact=True)
+        self.save_custom_action = action(primary, "Save as custom widget", self.save_selection_as_custom,
+                                         "components", compact=True)
+        self.save_custom_action.setToolTip("Save the selected widgets as a custom widget in the palette")
         # Keep deletion explicit. A global Delete QAction shortcut can repeat
         # while focus moves through the object tree, removing each newly
         # selected row in turn. The toolbar button and context menu remain.
@@ -867,7 +900,9 @@ class DesignerWorkspace(QWidget):
         self.side_tabs.setDocumentMode(True)
         self._compact_tabs(self.side_tabs)
         sidebar_layout.addWidget(self.side_tabs)
-        self.palette = WidgetPalette(self.registry); self.palette.setObjectName("designerPalette")
+        from designer.palette.custom_widgets import CustomWidgetLibrary
+        self.custom_library = CustomWidgetLibrary(parent=self)
+        self.palette = WidgetPalette(self.registry, library=self.custom_library); self.palette.setObjectName("designerPalette")
         library = QWidget(); library.setObjectName("panelBody"); library_layout = QVBoxLayout(library)
         library_layout.setContentsMargins(0, 0, 0, 0); library_layout.setSpacing(0)
         search_row = QWidget(); search_row.setObjectName("panelBody")
@@ -1379,7 +1414,11 @@ class DesignerWorkspace(QWidget):
                 parts.append(f"{self._display_name(widget)} ({widget.type}" + (f", {tag}" if tag else "") + ")")
             lines.append(f"- {section.title or section.role} [{section.role}]: " + "; ".join(parts))
         if header:
-            lines.append("Header: " + "; ".join(self._display_name(w) for w in header))
+            # A logo keeps its picture only while the request names its file.
+            def named(w):
+                source = w.properties.get("source") if w.type == "Image" else ""
+                return f"{self._display_name(w)} (Image, {source})" if source else self._display_name(w)
+            lines.append("Header: " + "; ".join(named(w) for w in header))
         selected = self.scene.selected_models()
         if selected:
             lines.append("Selected: " + ", ".join(f"{self._display_name(m)} ({m.type}, id {m.id})" for m in selected))
@@ -1411,7 +1450,10 @@ class DesignerWorkspace(QWidget):
         except ValueError as exc:
             # Only when something will answer: a bare workspace (tests, a
             # build without the AI view) keeps the old "use add, ..." reply.
-            if str(exc) == "use add, remove, set, or bind" and self.receivers(SIGNAL("aiRequested(QString)")) > 0:
+            # "Add the customer's logo to the header" starts like the add
+            # command but names no widget: that is a sentence for the AI too.
+            not_a_command = str(exc) == "use add, remove, set, or bind" or str(exc).startswith("unknown widget")
+            if not_a_command and self.receivers(SIGNAL("aiRequested(QString)")) > 0:
                 self.chat_input.clear()
                 self.chat_history.appendPlainText("Sent to the AI.")
                 self.aiRequested.emit(command)
@@ -1750,8 +1792,9 @@ class DesignerWorkspace(QWidget):
         self._drop_unrunnable_actions(project)
         # AI titles ("AI Design (partial)") are not manifest names; coerce
         # them here so Preview/Deploy never trip over the contract later.
-        project.name = deployable_name(
-            project.name, previous.name or self._bundle_project_name())
+        # A name the person gave (New design, or an earlier apply) stays: the
+        # model's title only names a design that has none yet.
+        project.name = previous.name or deployable_name(project.name, self._bundle_project_name())
         project.screen.width = previous.screen.width
         project.screen.height = previous.screen.height
         project.screen.theme = previous.screen.theme
@@ -1759,6 +1802,64 @@ class DesignerWorkspace(QWidget):
             self.project = value; self.current_page_index = 0; self._load_page()
         self.undo_stack.push(CallbackCommand(label, lambda: apply(project), lambda: apply(previous)))
         self.message.emit(f"{label}: {sum(1 for _ in project.all_widgets())} widgets on canvas")
+        # The AI Design view draws this same scene, so build up whenever the
+        # Studio is on screen, not only when the Designer view is in front.
+        if self.window().isVisible():
+            self.reveal_page()
+
+    REVEAL_STEP_MS = 70
+
+    def reveal_page(self, skip=0):
+        """Bring the page's widgets onto the canvas one by one, in reading order.
+
+        Only the drawing changes: the model, the undo step and the selection
+        are as they were. A generated design that appears all at once reads as
+        a screenshot; built up card by card it reads as a design. `skip`
+        widgets (in that order) are already shown: a reload of the same page
+        mid build-up carries on from there.
+        """
+        from designer.canvas.designer_view import DesignerItem
+        self._finish_reveal()
+
+        def ordered(items):
+            for item in sorted(items, key=lambda i: (round(i.pos().y() / 8), i.pos().x())):
+                yield item
+                yield from ordered([c for c in item.childItems() if isinstance(c, DesignerItem)])
+
+        tops = [i for i in self.scene.items() if isinstance(i, DesignerItem) and i.parentItem() is None]
+        items = list(ordered(tops))
+        for index, item in enumerate(items):
+            item.setOpacity(1.0 if index < skip else 0.0)
+        self._reveal_queue = items[skip:]
+        self._revealed = skip
+        self._reveal_ids = self._page_ids()
+        self._reveal_timer = QTimer(self)
+        self._reveal_timer.timeout.connect(self._reveal_next)
+        self._reveal_timer.start(self.REVEAL_STEP_MS)
+
+    def _page_ids(self):
+        return {widget.id for widget in self.current_page.walk()}
+
+    def _reveal_next(self):
+        queue = getattr(self, "_reveal_queue", [])
+        while queue:
+            item = queue.pop(0)
+            if shiboken6.isValid(item):
+                item.setOpacity(1.0)
+                self._revealed = getattr(self, "_revealed", 0) + 1
+                return
+        self._finish_reveal()
+
+    def _finish_reveal(self):
+        timer = getattr(self, "_reveal_timer", None)
+        if timer is not None:
+            timer.stop()
+            timer.deleteLater()
+        self._reveal_timer = None
+        for item in getattr(self, "_reveal_queue", []):
+            if shiboken6.isValid(item):
+                item.setOpacity(1.0)
+        self._reveal_queue = []
 
     def _drop_unrunnable_actions(self, project):
         """Remove actions that can never run, saying so in the console.
@@ -1800,7 +1901,45 @@ class DesignerWorkspace(QWidget):
             return parent.children
         return self.current_page.widgets
 
+    def save_selection_as_custom(self, _checked=False, name=None):
+        """Save the selected widgets as a custom widget: one palette entry that
+        inserts the whole group, on any page of any project."""
+        models = self.scene.selected_models()
+        # A child selected with its container is already inside it.
+        models = [m for m in models if not any(m is not o and m in list(o.walk()) for o in models)]
+        if not models:
+            self.message.emit("Select the widgets to save as a custom widget first")
+            return None
+        if name is None:
+            suggested = self._display_name(models[0]) if len(models) == 1 else ""
+            name, accepted = QInputDialog.getText(self, "Save as custom widget",
+                                                  "Name in the palette:", QLineEdit.Normal, suggested)
+            if not accepted:
+                return None
+        name = str(name).strip()
+        if not name:
+            return None
+        custom = self.custom_library.save(name, models)
+        self.message.emit(f"Saved custom widget \"{custom.name}\" ({len(custom.widgets)} parts) "
+                          "to the palette's Custom section")
+        return custom
+
+    def add_custom_widget(self, widget_type, x=20, y=20, parent_id=""):
+        """Insert a copy of a custom widget, as one undoable step."""
+        model = self.custom_library.instantiate(widget_type, self.project, x, y)
+        if model is None:
+            self.message.emit("That custom widget is no longer in the library")
+            return
+        custom = self.custom_library.get(widget_type)
+        siblings = self.siblings_of(parent_id)
+        def redo(): siblings.append(model) if model not in siblings else None; self._load_page(select=[model.id])
+        def undo(): siblings.remove(model) if model in siblings else None; self._load_page()
+        self.undo_stack.push(CallbackCommand(f"Add {custom.name}", redo, undo))
+
     def add_widget(self, widget_type, x=20, y=20, parent_id=""):
+        from designer.palette.custom_widgets import is_custom
+        if is_custom(widget_type):
+            return self.add_custom_widget(widget_type, x, y, parent_id)
         definition = self.registry.get(widget_type)
         if not definition: return
         model = DesignerWidget(widget_type, self.project.unique_id(widget_type[2:].lower() if widget_type.startswith("Sh") else widget_type.lower()),
@@ -1945,6 +2084,19 @@ class DesignerWorkspace(QWidget):
             self.bindings.set_tags(self.bindings.tags + [value.tag]); self.actions.set_tags(self.bindings.tags)
 
     def _load_page(self, select=None):
+        # The items a running build-up holds are about to be replaced. The
+        # same page coming back (Preview reopens the file it just saved)
+        # carries on building; any other page (an undo) shows at once.
+        resume = None
+        if getattr(self, "_reveal_queue", None):
+            resume = (self._reveal_ids, self._revealed)
+            self._reveal_queue = []
+            self._finish_reveal()
+        self._load_page_now(select)
+        if resume is not None and self._page_ids() == resume[0]:
+            self.reveal_page(skip=resume[1])
+
+    def _load_page_now(self, select=None):
         self.current_page_index = min(self.current_page_index, len(self.project.pages)-1)
         self.pages.blockSignals(True); self.pages.clear(); self.pages.addItems([p.name for p in self.project.pages]); self.pages.setCurrentIndex(self.current_page_index); self.pages.blockSignals(False)
         self.actions.set_pages(self.project.pages)
@@ -2541,6 +2693,61 @@ class DesignerWorkspace(QWidget):
         if os.path.abspath(source_path) != os.path.abspath(destination): shutil.copy2(source_path, destination)
         return os.path.relpath(destination, self.bundle_dir).replace(os.sep, "/")
 
+    _PROMPT_IMAGE_RE = re.compile(
+        r'"([^"]+\.(?:png|jpe?g|bmp|gif|webp|svg))"'
+        r"|'([^']+\.(?:png|jpe?g|bmp|gif|webp|svg))'"
+        r"|((?:[A-Za-z]:[\\/]|/)[^\s\"']+?\.(?:png|jpe?g|bmp|gif|webp|svg))(?![\w.])"
+        r"|(?<![\w\\/.])(~?[\w.-]*(?:[\\/][\w.-]+)*\.(?:png|jpe?g|bmp|gif|webp|svg))(?![\w.])", re.I)
+
+    def _resolve_prompt_image(self, path: str) -> str:
+        """An image a person named: absolute, or relative to the project or
+        to their home, Downloads, Desktop or Pictures folder. "" if none."""
+        path = os.path.expanduser(path)
+        if os.path.isabs(path):
+            return path if os.path.isfile(path) else ""
+        home = os.path.expanduser("~")
+        for root in (self.bundle_dir, home, *(os.path.join(home, d) for d in ("Downloads", "Desktop", "Pictures"))):
+            if root and os.path.isfile(os.path.join(root, path)):
+                return os.path.join(root, path)
+        return ""
+
+    def import_prompt_images(self, prompt: str):
+        """Copy the image files a request names into the project's assets.
+
+        "Add C:\\Downloads\\Acme.png to the header" is how a person asks for a
+        logo; the AI and the panel can only use it as "assets/acme.png". Each
+        existing file is copied in (transparent margins trimmed, so a logo
+        padded onto a square canvas is not drawn at a fraction of its box) and
+        the request names the asset instead. Returns (prompt, [asset paths]).
+        """
+        imported = []
+
+        def replace(match):
+            named = next(group for group in match.groups() if group)
+            if named.replace("\\", "/").startswith("assets/"):
+                return match.group(0)            # already the project's own
+            path = self._resolve_prompt_image(named)
+            if not path or not self.ensure_bundle():
+                return match.group(0)
+            assets = os.path.join(self.bundle_dir, "assets"); os.makedirs(assets, exist_ok=True)
+            # The panel's runtime decodes PNG only: every other format is
+            # converted on the way in ("Logo.svg.webp" -> "logo.png").
+            stem = re.sub(r"(\.(?:png|jpe?g|bmp|gif|webp|svg))+$", "", os.path.basename(path).lower())
+            name = re.sub(r"[^a-z0-9._-]+", "-", stem) + ".png"
+            destination = os.path.join(assets, name)
+            if not _trim_transparent_margins(path, destination):
+                if path.lower().endswith(".png"):
+                    shutil.copy2(path, destination)
+                else:
+                    from PySide6.QtGui import QImage
+                    if not QImage(path).save(destination, "PNG"):
+                        return match.group(0)
+            asset = os.path.relpath(destination, self.bundle_dir).replace(os.sep, "/")
+            imported.append(asset)
+            return asset
+
+        return self._PROMPT_IMAGE_RE.sub(replace, prompt), imported
+
     def _ensure_project_location(self):
         """Assets are copied beside the project, so it needs a home on disk first."""
         return self.ensure_bundle()
@@ -2591,6 +2798,7 @@ class DesignerWorkspace(QWidget):
             menu.addAction("Cut", self.cut)
             menu.addAction("Copy", self.copy)
             menu.addAction("Duplicate", self.duplicate)
+            menu.addAction("Save as custom widget...", self.save_selection_as_custom)
             menu.addSeparator()
             for name, label in clearable:
                 menu.addAction(f"Clear {label}",

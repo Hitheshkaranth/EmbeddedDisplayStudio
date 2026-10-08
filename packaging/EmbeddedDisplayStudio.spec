@@ -113,6 +113,11 @@ datas = [
      os.path.join("native", "hmi-gui", "target")),
     (os.path.join(REPO_ROOT, "target", "bin", "hmi-install"),
      os.path.join("target", "bin")),
+    # The hardware daemon's template config and sources: the Code agent
+    # starts a project's hwd.json from them and checks it with --selftest
+    # (designer/ide/agent_context.py, _daemon_dir).
+    *[(os.path.join(REPO_ROOT, "daemon", name), "daemon")
+      for name in ("hmi_hwd.py", "modbus.py", "historian.py", "hwd.json")],
     # pip's vendored CA bundle (pip/_vendor/certifi/cacert.pem): without it
     # the preview's installer cannot reach PyPI over HTTPS.
     *collect_data_files("pip"),

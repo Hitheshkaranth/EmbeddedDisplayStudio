@@ -29,7 +29,10 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     lv_obj_set_style_radius(indicator, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(indicator, hmi_colour("primary"), 0);
     lv_obj_set_style_bg_opa(indicator, LV_OPA_COVER, 0);
-    lv_obj_set_size(indicator, 0, lv_obj_get_height(track));
+    // Sized in percent of the track: the track has no size yet here (the
+    // runtime places it after create), so pixel sizes taken now read 0 and
+    // a design's value never showed.
+    lv_obj_set_size(indicator, lv_pct(0), lv_pct(100));
 
     shprogress_state_t *st = lv_malloc_zeroed(sizeof *st);
     st->track = track;
@@ -47,15 +50,13 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
     if (strcmp(prop, "value") == 0) {
         double v = hmi_value_as_num(value, 0);
         v = v < 0 ? 0 : (v > 1 ? 1 : v);
-        int track_w = (int)lv_obj_get_width(st->track);
-        int new_w = (int)(track_w * v);
-        lv_obj_set_size(st->indicator, new_w, lv_obj_get_height(st->indicator));
+        lv_obj_set_width(st->indicator, lv_pct((int32_t)(v * 100.0 + 0.5)));
     } else if (strcmp(prop, "indeterminate") == 0) {
         bool indet = hmi_value_as_bool(value, false);
         (void)indet;
         // Indeterminate mode would need animation; for now just use value=1
         if (indet) {
-            lv_obj_set_size(st->indicator, lv_obj_get_width(st->track), lv_obj_get_height(st->indicator));
+            lv_obj_set_width(st->indicator, lv_pct(100));
         }
     }
 }

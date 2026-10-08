@@ -271,6 +271,30 @@ class AgentPanelQcTests(unittest.TestCase):
             self.assertTrue(label.textFormat() == Qt.PlainText or "<b>bold</b>" not in label.text(),
                             "tool output is shown as text, never rendered as HTML")
 
+    def test_long_paths_and_code_wrap_to_a_narrow_panel(self):
+        # The transcript used to grow to its widest unbreakable line -- an
+        # absolute path in a tool title, a code block -- and crop everything
+        # on the right of a narrow panel.
+        deep = "Users/someone/Documents/projects/metro/footage/projects/metro-line1/project.edsui"
+        reply = ("Done. Changes made:\n\n1. `assets/datasol.png` copied from "
+                 "`C:/Users/someone/Downloads/DATASOL_Logo.png` and cropped.\n\n"
+                 "```\npython -c \"from PIL import Image; im = Image.open('C:/Users/someone/"
+                 "Downloads/DATASOL_Logo.png'); print(im.size)\"\n```\n")
+        _backend, panel = self._panel({"go": [
+            {"type": "tool", "id": "t1", "tool": "edit", "status": "completed", "title": deep,
+             "input": {"filePath": "/" + deep}, "output": "", "error": ""},
+            {"type": "text", "id": "x", "delta": reply}]})
+        panel.resize(300, 700)
+        panel.send("go")
+        QTest.qWait(300)
+        scroll = panel._transcript_scroll
+        self.assertLessEqual(scroll.widget().width(), scroll.viewport().width())
+        from PySide6.QtWidgets import QToolButton
+        header = next(b for b in panel.findChildren(QToolButton) if b.objectName() == "agentToolHeader")
+        self.assertIn("project.edsui", header.toolTip())
+        self.assertLessEqual(header.fontMetrics().horizontalAdvance(header.text()), header.width())
+        self.assertIn("datasol.png", panel.transcript_text())
+
     def test_user_text_is_plain(self):
         from PySide6.QtWidgets import QLabel
         self.panel.send("a *b* <i>c</i>")
