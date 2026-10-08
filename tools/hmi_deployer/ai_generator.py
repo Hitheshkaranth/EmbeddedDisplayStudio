@@ -521,9 +521,34 @@ def _plan_catalogue(registry) -> str:
     return "\n".join(lines)
 
 
+def _plan_brand(brand: Optional[dict]) -> str:
+    """What the brand contributes to the prompt: its logos and accent.
+
+    The logos the designer dropped and the accent it set are the only
+    personalisation the generator carries, so the model is told to use
+    exactly those: the logos as header Image widgets, the accent as the one
+    brand colour every other colour falls back to.
+    """
+    if not brand:
+        return ""
+    logos = brand.get("logos") or []
+    accent = (brand.get("accent") or "").strip()
+    lines = []
+    if logos:
+        lines.append("Brand: use these logos as header Image widgets (at most two), "
+                     "each placed left or right: " + ", ".join(logos) + ".")
+    if accent:
+        lines.append("Brand: its accent is " + accent + ". The title, the header "
+                     "separators and the primary button use it; every other element "
+                     "stays neutral.")
+    if not lines:
+        return ""
+    return "You are building this screen to a brand.\n" + " ".join(lines) + "\n\n"
+
+
 def build_plan_prompt(registry: Optional[WidgetRegistry] = None,
                       screen_width: int = 1280, screen_height: int = 800,
-                      brief: str = "") -> str:
+                      brief: str = "", brand: Optional[dict] = None) -> str:
     """System prompt for planned screens: content and structure, no geometry.
 
     The model says what the screen holds -- a title, and sections with a role
@@ -583,8 +608,9 @@ def build_plan_prompt(registry: Optional[WidgetRegistry] = None,
         "(\"Discharge\", \"Motor\", \"Tank\"), never \"Section 1\" or \"Widgets\". "
         f"A page has 3-6 sections and about {budget} widgets at most; when the brief asks for more, "
         "add pages (one per system) and put a navigate ShButton for each in the main page's header.\n\n"
-        + (RAIL_PLAN_GUIDE if is_rail_brief(brief) else "") +
-        "Widgets by purpose, with the properties they take:\n" + _plan_catalogue(registry) + "\n"
++ (RAIL_PLAN_GUIDE if is_rail_brief(brief) else "") +
+         "Widgets by purpose, with the properties they take:\n" + _plan_catalogue(registry) + "\n"
+         + _plan_brand(brand) +
         "Other allowed types: " + ", ".join(types) + ".\n\n"
         "Every widget states what it is: a short Title-case label (at most 18 characters) in the "
         "property its type uses for it, and its unit. Ranges are in the tag's engineering units "
@@ -789,6 +815,9 @@ class AIDesignGenerator:
         # rules) silently does nothing.
         self.registry = registry or default_registry()
         self.progress = GeneratorProgress()
+        # The studio's brand (logos, accent) the generator carries across to
+        # what it produces, over the kit's own colours.
+        self.brand = {}
         # Every parsed section goes through designer.layout.polish before it is
         # returned, so what reaches the canvas is composed, not a draft.
         # False (tests, a caller that polishes itself) returns it raw.
@@ -820,6 +849,8 @@ class AIDesignGenerator:
         before it is returned, and the PolishReport is kept in `last_polish`.
         """
         project = self._parse_output(ai_output, screen_width, screen_height)
+        if self.brand:
+            project.brand = dict(self.brand)
         self.last_polish = None
         if project is None or not self.polish_enabled:
             return project

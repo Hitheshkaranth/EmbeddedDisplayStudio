@@ -1229,6 +1229,19 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         self.btn_mirror.setEnabled(False)
         self.btn_mirror.setFixedHeight(30)
 
+        self.mirror_combo = QComboBox()
+        self.mirror_combo.setToolTip(
+            "How often the console redraws the panel's glass. Slower costs less "
+            "of the link and the target; faster follows the moving values more "
+            "closely."
+        )
+        for _rate in (1, 2, 4):
+            self.mirror_combo.addItem("%d fps" % _rate, _rate)
+        self.mirror_combo.setProperty("variant", "secondary")
+        self.mirror_combo.setEnabled(False)
+        self.mirror_combo.setFixedHeight(30)
+        self.btn_mirror.toggled.connect(self._sync_mirror_rate)
+
         self.btn_restart = QPushButton("Restart GUI")
         self.btn_restart.setProperty("variant", "outline")
         self.btn_restart.setProperty("deploymentAction", True)
@@ -1249,7 +1262,8 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         release_actions.addWidget(self.btn_deploy, 0, 0, 1, 2)
         release_actions.addWidget(self.btn_live_preview, 0, 2)
         release_actions.addWidget(self.btn_mirror, 1, 0)
-        release_actions.addWidget(self.btn_restart, 1, 1)
+        release_actions.addWidget(self.mirror_combo, 1, 1)
+        release_actions.addWidget(self.btn_restart, 1, 2)
         release_actions.addWidget(self.btn_rollback, 1, 2)
         for column in range(3):
             release_actions.setColumnStretch(column, 1)
@@ -2486,9 +2500,16 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
             QMessageBox.information(self, "Mirror the panel",
                                     "Connect to a panel first.")
             return
-        self.log(f"Mirroring {host}: one frame a second from the panel.")
+rate = int(self.mirror_combo.currentData() or 1)
+        interval_ms = 1000 // max(rate, 1)
+        self.log(f"Mirroring {host} at {rate} fps from the panel.")
         mirror.start(host, self.inp_user.text().strip(),
-                     self.ssh_port(), self.inp_key.text().strip())
+                      self.ssh_port(), self.inp_key.text().strip(),
+                      interval_ms=interval_ms)
+
+    def _sync_mirror_rate(self, on: bool):
+        """Enable the rate only while the mirror is on, so it is not ignored."""
+        self.mirror_combo.setEnabled(on)
 
     def _on_mirror_stopped(self):
         if self.btn_mirror.isChecked():
