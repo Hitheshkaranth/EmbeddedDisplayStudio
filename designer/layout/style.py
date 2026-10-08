@@ -133,12 +133,6 @@ def theme_colour(project, token: str) -> str:
     light, dark, _numbers, _values = _tokens()
     mode = "light" if getattr(getattr(project, "screen", None), "theme", "dark") == "light" else "dark"
     table = light if mode == "light" else dark
-    # A brand accent is the one personalisation the design carries: it is what
-    # the title, the header rule and the primary button render in, over the
-    # kit's own foreground.
-    brand = getattr(project, "brand", None)
-    if str(token) == "foreground" and isinstance(brand, dict):
-        return brand.get("accent") or table.get("foreground", "#ecedee")
     value = table.get(str(token))
     if value:
         return value
