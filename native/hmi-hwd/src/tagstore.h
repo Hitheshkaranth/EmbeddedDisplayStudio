@@ -15,7 +15,8 @@ typedef struct hwd_tagstore hwd_tagstore;
 hwd_tagstore *hwd_tagstore_create(void);
 void hwd_tagstore_destroy(hwd_tagstore *s);
 
-/* Register a tag with its initial value (copied). false when the name is
+/* Register a tag; the store takes ownership of `initial` (and frees it when
+ * registration fails). false when the name is
  * invalid, already registered or the store is full. Registration order is
  * the order hwd_tagstore_names returns (the `list` ack sorts on its own). */
 bool hwd_tagstore_register(hwd_tagstore *s, const char *tag, hwd_value initial, bool writable);
