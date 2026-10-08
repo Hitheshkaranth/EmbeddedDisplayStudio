@@ -115,9 +115,11 @@ jobs:
         # Opt-in suites (a live opencode server, a live panel runtime, the
         # retired Qt loader's own job) skip by design and are allowed by name;
         # any other skip fails the job.
+        # The C hardware daemon's end-to-end cases (HMI_HWD_CMD) run in the
+        # "Hardware daemon (C)" job, which builds the binary they need.
         run: |
           unexpected=$(grep -o "\.\.\. skipped '[^']*'" /tmp/suite.log \
-            | grep -v -e "OPENCODE_LIVE" -e "QT_RUNTIME_LIVE" -e "HMI_GUI_CMD not set" || true)
+            | grep -v -e "OPENCODE_LIVE" -e "QT_RUNTIME_LIVE" -e "HMI_GUI_CMD not set" -e "HMI_HWD_CMD" || true)
           if [ -n "$unexpected" ]; then
             echo "$unexpected" | sort | uniq -c
             echo "::error::Tests were skipped on Linux, where the full suite must run."
@@ -194,11 +196,25 @@ jobs:
           sudo ip link add vcan0 type vcan || true
           sudo ip link set up vcan0 || true
 
-      - name: Run the daemon protocol, native daemon and historian tests
+      # The historian and tag-engine suites import the Studio (PySide6), so
+      # this job carries the same interpreter and Qt libraries as the full one.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install PySide6 and the Qt runtime libraries
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3 libxkbcommon0
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run the daemon protocol, native daemon, historian and tag engine tests
         env:
           HMI_HWD_CMD: native/hmi-hwd/out/hmi-hwd
           QT_QPA_PLATFORM: offscreen
-        run: python3 -m unittest tests.test_daemon_protocol tests.test_hwd_native tests.test_w4_historian
+        run: python -m unittest tests.test_daemon_protocol tests.test_hwd_native tests.test_w4_historian tests.test_tagengine_integration
 
   package:
     name: Windows executable
