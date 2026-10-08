@@ -217,36 +217,41 @@ class TestRequestsSurviveALostDatagram(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QGuiApplication.instance() or QGuiApplication(sys.argv)
 
+    # The fake daemon is its own process: list_tags() blocks in a nested Qt
+    # event loop, and a Python *thread* answering it only runs when that loop
+    # happens to hand the GIL back -- on the Linux CI runner it did not, and
+    # the "lost" reply was the test's, not the engine's.
+    FAKE_DAEMON = (
+        "import json, socket, sys\n"
+        "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+        "s.bind(('127.0.0.1', 0)); s.settimeout(10.0)\n"
+        "print(s.getsockname()[1], flush=True)\n"
+        "seen = []\n"
+        "while True:\n"
+        "    data, addr = s.recvfrom(8192)\n"
+        "    msg = json.loads(data)\n"
+        "    if msg.get('cmd') != 'list':\n"
+        "        continue\n"
+        "    seen.append(msg['id'])\n"
+        "    if len(seen) == 2:\n"
+        "        s.sendto(json.dumps({'t': 'ack', 'id': msg['id'], 'ok': True,\n"
+        "                             'tags': ['di.estop']}).encode(), addr)\n"
+        "        print(json.dumps(seen), flush=True)\n"
+        "        break\n"
+    )
+
     def test_a_dropped_list_is_sent_again(self):
-        daemon = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        daemon.bind(("127.0.0.1", 0))
-        daemon.settimeout(3.0)
-        self.addCleanup(daemon.close)
-        seen = []
-
-        def _answer_only_the_second_list():
-            try:
-                while True:
-                    data, addr = daemon.recvfrom(8192)
-                    msg = json.loads(data)
-                    if msg.get("cmd") != "list":
-                        continue
-                    seen.append(msg["id"])
-                    if len(seen) == 2:
-                        reply = {"t": "ack", "id": msg["id"], "ok": True, "tags": ["di.estop"]}
-                        daemon.sendto(json.dumps(reply).encode("utf-8"), addr)
-                        return
-            except OSError:
-                return
-
-        worker = threading.Thread(target=_answer_only_the_second_list, daemon=True)
-        worker.start()
+        proc = subprocess.Popen([sys.executable, "-c", self.FAKE_DAEMON],
+                                stdout=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        port = int(proc.stdout.readline())
         engine = TagEngine(expected_tags=[], rx_port=0, allow_any_port=True,
-                           daemon_port=daemon.getsockname()[1])
+                           daemon_port=port)
         self.addCleanup(engine.deleteLater)
 
         self.assertEqual(engine.list_tags(), ["di.estop"])
-        worker.join(timeout=3.0)
+        seen = json.loads(proc.stdout.readline())
+        proc.wait(timeout=5)
         self.assertEqual(len(seen), 2)
         self.assertEqual(seen[0], seen[1], "a resend keeps the correlation id")
 

@@ -78,9 +78,16 @@ class DesignModeTests(unittest.TestCase):
         items = [i for i in self.ws.scene.items() if isinstance(i, DesignerItem)]
         self.assertTrue(any(i.opacity() == 0.0 for i in items), "nothing is held back")
         self.assertEqual(len(self.ws.undo_stack.command(self.ws.undo_stack.count() - 1).text()) > 0, True)
-        QTest.qWait(5 * len(items) + 400)
-        self.assertTrue(all(i.opacity() == 1.0 for i in self.ws.scene.items()
-                            if isinstance(i, DesignerItem)))
+        # Wait for the build-up to finish, not for a guess at how long it
+        # takes: a busy CI runner fires the reveal timer late.
+        def shown():
+            return all(i.opacity() == 1.0 for i in self.ws.scene.items()
+                       if isinstance(i, DesignerItem))
+        for _ in range(100):
+            if shown():
+                break
+            QTest.qWait(50)
+        self.assertTrue(shown())
 
     def test_the_same_page_reloaded_mid_build_up_carries_on(self):
         # Preview reopens the file it just saved: the build-up must not end there.
