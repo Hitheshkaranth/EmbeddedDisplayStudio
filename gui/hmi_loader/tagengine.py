@@ -41,6 +41,7 @@ import collections
 import copy
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -836,15 +837,30 @@ class TagEngine(QObject):
         cid = self._next_id()
         message = dict(cmd, id=cid)
         self._pending_acks[cid] = _handler
-        self._send_command(message)
+        last_send = [time.monotonic()]
 
+        def _send() -> None:
+            last_send[0] = time.monotonic()
+            self._send_command(message)
+
+        _send()
         resend = QTimer()
         resend.setInterval(REQUEST_RESEND_MS)
-        resend.timeout.connect(lambda: self._send_command(message))
+        resend.timeout.connect(_send)
         resend.start()
         QTimer.singleShot(REQUEST_TIMEOUT_MS, loop.quit)
         loop.exec()
         resend.stop()
+
+        # The window is wall-clock. When something else on this thread held
+        # the loop past it (a QProcess destroyed by the garbage collector
+        # waiting for its child, on the CI runner), the overdue resend and the
+        # overdue timeout fire back to back and that resend never gets its
+        # round trip. Give the last attempt one window the loop is free for.
+        if not reply and time.monotonic() - last_send[0] < REQUEST_RESEND_MS / 2000.0:
+            _send()
+            QTimer.singleShot(REQUEST_RESEND_MS, loop.quit)
+            loop.exec()
 
         self._pending_acks.pop(cid, None)
         return reply[0] if reply else None

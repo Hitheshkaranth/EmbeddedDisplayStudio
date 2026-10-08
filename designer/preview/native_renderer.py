@@ -30,6 +30,7 @@ import tempfile
 from collections import OrderedDict
 from dataclasses import asdict
 
+import shiboken6
 from PySide6.QtCore import QObject, QProcess, QTimer, Qt, Signal
 from PySide6.QtGui import QImage
 
@@ -361,6 +362,10 @@ class NativeRenderer(QObject):
             QTimer.singleShot(0, self._pump)
 
     def _pump(self):
+        # A pump scheduled just before the renderer went down with its window
+        # still fires (singleShot holds the bound method): nothing to start.
+        if not shiboken6.isValid(self):
+            return
         self._pump_pending = False
         while self._queue and len(self._running) < max(1, int(self.parallel)):
             _key, job = self._queue.popitem(last=False)
@@ -386,7 +391,9 @@ class NativeRenderer(QObject):
         QTimer.singleShot(RENDER_TIMEOUT_MS, lambda job=job: self._on_timeout(job))
 
     def _on_timeout(self, job):
-        if job.done or job.process is None or job.process.state() == QProcess.NotRunning:
+        if job.done or job.process is None or not shiboken6.isValid(job.process):
+            return
+        if job.process.state() == QProcess.NotRunning:
             return
         log.warning("hmi-ui render still running after %d ms: killed", RENDER_TIMEOUT_MS)
         job.process.kill()

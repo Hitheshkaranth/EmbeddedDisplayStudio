@@ -262,6 +262,26 @@ class TestRequestsSurviveALostDatagram(unittest.TestCase):
         self.assertEqual(len(seen), 2)
         self.assertEqual(seen[0], seen[1], "a resend keeps the correlation id")
 
+    def test_a_stalled_event_loop_does_not_lose_the_reply(self):
+        """
+        Something else on the GUI thread can hold the loop past the whole
+        window: on the CI runner, a QProcess destroyed by the garbage collector
+        waited for its hmi-ui to die. The overdue resend and the overdue
+        timeout then fired back to back, and the reply to that resend arrived
+        after the engine had given up.
+        """
+        from PySide6.QtCore import QTimer
+        proc = subprocess.Popen([sys.executable, "-c", self.FAKE_DAEMON],
+                                stdout=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        port = int(proc.stdout.readline())
+        engine = TagEngine(expected_tags=[], rx_port=0, allow_any_port=True,
+                           daemon_port=port)
+        self.addCleanup(engine.deleteLater)
+
+        QTimer.singleShot(50, lambda: time.sleep(2.5))   # the stall
+        self.assertEqual(engine.list_tags(), ["di.estop"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -181,7 +181,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake ninja-build gcc pkg-config libsqlite3-dev
-          native/hmi-hwd/build.sh --test
+          bash native/hmi-hwd/build.sh --test
 
       # vcan0 is how the daemon's CAN traffic is exercised on a CI host that has
       # no bus: a virtual CAN interface the daemon attaches to as if it were a
