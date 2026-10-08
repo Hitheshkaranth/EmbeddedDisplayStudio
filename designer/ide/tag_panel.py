@@ -27,6 +27,14 @@ Above the table: a status line `source_label` -- "Source: <name> (online)"
 Below: buttons "Copy tags" (copy_tags(): every tag name, one per line, to
 the clipboard) and "Generate backend..." (emits scaffoldRequested()).
 
+Modbus (Wave 5 B3): "Generate Modbus map..." (emits modbusRequested) prompts
+for the PLC host, derives the map (designer.ide.modbus_map.generate_map),
+rebinds the design's tags and writes <bundle>/hwd.json; "Test against PLC"
+(emits modbusTestRequested) runs the daemon + sim over a copy of the map
+with --sim --modbus-live --selftest and shows the frame. The test button is
+disabled until daemon/plc_sim.py is present. set_bundle_dir sets where the
+map is written and enables the test button.
+
 Values refresh from the source on a REFRESH_MS QTimer that runs only while
 the pane is visible AND a source is set (refresh_values() does one pass;
 tests call it directly). Also on the source's valuesChanged, throttled to at
@@ -108,12 +116,16 @@ class TagPanel(QWidget):
     tagActivated = Signal(str)
     scaffoldRequested = Signal()
     message = Signal(str)
+    # "Generate Modbus map..." / "Test against PLC" (the Backend tab's Modbus
+    # tools, Wave 5 B3).
+    modbusGenerateRequested = Signal()
+    modbusTestRequested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("tagPanel")
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self._theme = "dark"
+        self._bundle_dir = ""
         self._index: DesignIndex | None = None
         self._source = None
         self._tag_rows: dict[str, int] = {}
@@ -168,6 +180,21 @@ class TagPanel(QWidget):
         row.addWidget(self.scaffold_button)
         row.addStretch(1)
         layout.addLayout(row)
+        # Modbus: generate the map for the design's tags, then test it against
+        # a PLC. Emitted signals feed the Backend tab's preview.
+        self.modbus_button = QPushButton("Generate Modbus map...")
+        self.modbus_button.setObjectName("tagPanelModbus")
+        self.modbus_button.setToolTip("Map every bound value to a Modbus register and write hwd.json")
+        self.modbus_button.clicked.connect(lambda: self.modbus_requested())
+        self.modbus_test_button = QPushButton("Test against PLC")
+        self.modbus_test_button.setObjectName("tagPanelModbusTest")
+        self.modbus_test_button.setEnabled(False)
+        self.modbus_test_button.clicked.connect(lambda: self.modbus_test_requested())
+        modbus_row = QHBoxLayout()
+        modbus_row.addStretch(1)
+        modbus_row.addWidget(self.modbus_button)
+        modbus_row.addWidget(self.modbus_test_button)
+        layout.addLayout(modbus_row)
 
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(False)
@@ -495,6 +522,53 @@ class TagPanel(QWidget):
     def _write_value_action(self) -> None:
         if self._menu_tag:
             self.request_write(self._menu_tag)
+
+    def set_bundle_dir(self, bundle_dir: str) -> None:
+        """Where the map is written (the bundle) and the PLC-sim binary that
+        "Test against PLC" runs. The button is enabled once the daemon's
+        ``plc_sim.py`` is present, so a build without it is not offered."""
+        self._bundle_dir = bundle_dir or ""
+        from designer.ide.modbus_map import daemon_sim_path
+        self.modbus_test_button.setEnabled(
+            bool(self._bundle_dir) and bool(daemon_sim_path()))
+
+    def modbus_requested(self) -> None:
+        """"Generate Modbus map..." -- ask for the host/port, apply the map as
+        one undo step, write hwd.json, show the table."""
+        if not self._bundle_dir:
+            self.message.emit("Open a project to generate a Modbus map.")
+            return
+        from designer.ide.modbus_map import ask_host
+        host, ok = ask_host(self)
+        if not ok:
+            return
+        from designer.ide.modbus_map import generate_from_project, write_hwd
+        try:
+            mapping = generate_from_project(self._index.project, host=host)
+        except Exception as exc:
+            self.message.emit(f"Modbus map failed: {exc}")
+            return
+        write_hwd(self._bundle_dir, mapping)
+        self.message.emit(f"Modbus map written for {host}.")
+        self.modbusTestRequested.emit()
+
+    def modbus_test_requested(self) -> None:
+        """"Test against PLC": run ``daemon/plc_sim.py`` then the daemon with
+        ``--sim --modbus-live --selftest`` over a copy of the map; the caller
+        shows the frame. A bare emit here keeps tag_panel.py free of the
+        process plumbing."""
+        if not self._bundle_dir:
+            return
+        try:
+            from designer.ide.modbus_map import test_command
+            command, ok = test_command(self._bundle_dir)
+        except Exception as exc:
+            self.message.emit(f"Modbus test failed: {exc}")
+            return
+        if not ok:
+            self.modbusTestRequested.emit()
+            return
+        self.modbusTestRequested.emit(command)
 
     def _update_source_label(self) -> None:
         if self._source is None:

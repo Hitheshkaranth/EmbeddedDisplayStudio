@@ -58,6 +58,7 @@ import html
 import json
 import os
 import re
+import time
 from typing import Callable
 
 from PySide6.QtCore import QSettings, Qt, QTimer, QUrl, Signal
@@ -148,6 +149,40 @@ def _label(text: str = "", fmt=Qt.PlainText, name: str = "") -> QLabel:
     if name:
         label.setObjectName(name)
     return label
+
+
+def auto_permission(request: dict, daemon_dir: str) -> str | None:
+    """The panel's own answer to a permission request.
+
+    An "always" answer is given without asking only for a read of a path under
+    the daemon's own sources -- the modbus map generator (modbus_map.py) reads
+    daemon/hwd.json as the template and never edits it. Any edit or write, or
+    a path outside the daemon folder, is answered None (the user is asked).
+
+    Args:
+        request:    a permission request, e.g.
+                    {"type": "external_directory"|"edit", "pattern": PATH}.
+        daemon_dir: where the daemon's sources live (so reads stay local).
+
+    Returns:
+        "always" when `request` is a directory read whose pattern is inside
+        `daemon_dir`; None otherwise (so the caller asks the user).
+    """
+    if request.get("type") != "external_directory":
+        return None
+    pattern = request.get("pattern") or ""
+    if not pattern or not daemon_dir:
+        return None
+    # A trailing "/*" (or "*") means "anything under the directory"; the bare
+    # directory is what the daemon owns. Anything outside daemon_dir stays a
+    # question.
+    base = pattern.split("*", 1)[0].rstrip("\\/").lower()
+    daemon = daemon_dir.rstrip("\\/").lower()
+    # Match a path that is exactly the daemon folder, or starts with it as a
+    # directory (not merely a name prefix like "daemon2").
+    if base == daemon or base.startswith(daemon + "\\") or base.startswith(daemon + "/"):
+        return "always"
+    return None
 
 
 class _Block(QFrame):
@@ -399,10 +434,13 @@ class AgentPanel(QWidget):
     openFileRequested = Signal(str, int)
     fileEdited = Signal(str)
 
-    def __init__(self, backend, parent=None):
+    def __init__(self, backend, parent=None, clock=None):
         super().__init__(parent)
         self.setObjectName("agentPanel")
         self._backend = backend
+        # A monotonic clock so the elapsed read is immune to wall-clock jumps;
+        # tests pass a controllable one, otherwise time.monotonic.
+        self._clock = clock if clock is not None else time.monotonic
         self._directory = ""
         self._context_provider: Callable[[], dict] | None = None
         self._design_provider: Callable[[], str] | None = None
@@ -416,6 +454,19 @@ class AgentPanel(QWidget):
         self._follow = True
         self._theme = "dark"
         self._filling_models = False
+        # Connections the Code agent shares with AI Design (connections.py);
+        # created lazily so importing the panel does not touch QSettings.
+        self._connections = None
+        self._connections = None
+        # Elapsed: when busy, the moment the backend went busy (the clock
+        # reading now, so a panel first shown mid-reply is right); while busy
+        # it is live, and after idle "done in Xm Ys" is kept until the next
+        # send restarts the clock.
+        self._started = 0.0
+        self._elapsed_timer = QTimer(self)
+        self._elapsed_timer.setSingleShot(False)
+        self._elapsed_timer.setInterval(1000)
+        self._elapsed_timer.timeout.connect(self._tick_elapsed)
         self._build_ui()
         backend.stateChanged.connect(self._state_changed)
         backend.modelsChanged.connect(self._fill_models)
@@ -558,6 +609,8 @@ class AgentPanel(QWidget):
             QWidget#agentPanel {{ background: {c('background')}; }}
             QLabel {{ color: {c('foreground')}; font-size: 12px; background: transparent; }}
             QLabel#agentCaption {{ font-weight: 600; font-size: 13px; }}
+            QLabel#agentElapsed {{ color: {c('mutedForeground')}; font-size: 11px; }}
+            QLabel#agentElapsed {{ color: {c('mutedForeground')}; font-size: 11px; font-family: "Cascadia Mono", Consolas, Menlo, monospace; }}
             QLabel#agentText_notice {{ color: {c('mutedForeground')}; font-style: italic; }}
             QLabel#agentText_error {{ color: {c('destructive')}; }}
             QLabel#agentToolDetail {{ color: {c('mutedForeground')}; font-family: Consolas, monospace; }}
@@ -615,6 +668,11 @@ class AgentPanel(QWidget):
         caption = QLabel("Agent")
         caption.setObjectName("agentCaption")
         header.addWidget(caption)
+        # Elapsed while the agent works ("mm:ss"), then "done in Xm Ys" until
+        # the next send: a small label beside the title, muted.
+        self.elapsed_label = _label("", Qt.PlainText, "agentElapsed")
+        self.elapsed_label.setVisible(False)
+        header.addWidget(self.elapsed_label)
         header.addStretch(1)
         self.model_combo = QComboBox()
         self.model_combo.setObjectName("agentModel")
@@ -622,6 +680,21 @@ class AgentPanel(QWidget):
         self.model_combo.setMinimumContentsLength(14)
         self.model_combo.setToolTip("The model the agent uses")
         self.model_combo.currentIndexChanged.connect(self._model_picked)
+        # The "Manage connections..." entry sits beside the model combo: a
+        # small button opens a menu (the code agent shares the model list,
+        # connections.py, and this is the natural place to reach it).
+        self.connections_menu = QMenu()
+        self.connections_menu.setObjectName("agentModelMenu")
+        self.connections_menu.addAction("Manage connections...", self._open_connections)
+        self.connections_button = QToolButton()
+        self.connections_button.setObjectName("agentConnections")
+        self.connections_button.setToolTip("Manage model connections")
+        self.connections_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.connections_button.setText("\u2026")
+        self.connections_button.setPopupMode(QToolButton.InstantPopup)
+        self.connections_button.setMenu(self.connections_menu)
+        self.connections_button.setCursor(Qt.PointingHandCursor)
+        header.addWidget(self.connections_button)
         self.new_chat_button = QToolButton()
         self.new_chat_button.setObjectName("agentNewChat")
         self.new_chat_button.setText("New chat")
@@ -744,6 +817,7 @@ class AgentPanel(QWidget):
     def _fill_models(self, models) -> None:
         # Refilling the combo moves its index; that must not overwrite the
         # model the user chose (it may simply not be offered right now).
+        self._agent_models = list(models)
         saved = ModelRef.parse(QSettings("MIL-HMI", "Deployer").value(SETTINGS_MODEL_KEY, "") or "")
         current = self.selected_model()
         labels = [m.label for m in models]
@@ -763,6 +837,20 @@ class AgentPanel(QWidget):
         self.model_combo.setToolTip(model.label if model is not None else "The model the agent uses")
         if not self._filling_models and model is not None:
             QSettings("MIL-HMI", "Deployer").setValue(SETTINGS_MODEL_KEY, model.label)
+
+    def _open_connections(self) -> None:
+        """Open the "Manage connections" dialog from the model menu. Saved
+        connections refresh the provider list; on close the panel refreshes its
+        agent model list from the store's default."""
+        from tools.hmi_deployer.connections import (
+            ConnectionStore, ConnectionsDialog)
+        store = self._connections_store()
+        dialog = ConnectionsDialog(store, self)
+        dialog.exec()
+        store = self._connections_store()
+        default = store.default_for("agent")
+        models = [ModelRef(default.model, default.kind)] if default else []
+        self._fill_models(models)
 
     def _on_event(self, event: dict) -> None:
         kind = event.get("type")
@@ -803,11 +891,44 @@ class AgentPanel(QWidget):
         self._busy = busy
         self.stop_button.setVisible(busy)
         self.send_button.setEnabled(not busy and self._backend.state() == READY)
+        # The elapsed label: start the clock and mark the moment, or keep the
+        # "done in" readout until the next send clears it.
+        if busy:
+            self._started = self._clock()
+            self._elapsed_timer.start(1000)
+            self._render_elapsed()
+            self.elapsed_label.setVisible(True)
+        else:
+            self._elapsed_timer.stop()
+            self._elapsed_total()
         # The effects say the same thing: the face works, the bar sweeps and
         # the message box glows while a reply is under way.
         (self.glow.start if busy else self.glow.stop)()
         self._input_beam.set_active(busy)
         self._set_mood()
+
+    def _elapsed_format(self) -> str:
+        """Elapsed as "mm:ss" (busy) or "done in Xm Ys" (idle)."""
+        secs = max(0, int(self._clock() - self._started))
+        return f"{secs // 60:02d}:{secs % 60:02d}"
+
+    def _render_elapsed(self) -> None:
+        self.elapsed_label.setText(self._elapsed_format())
+
+    def _tick_elapsed(self) -> None:
+        """The 1-s timer while busy: refresh the mm:ss readout. Exposed so the
+        panel can show a live clock; tests call it directly."""
+        if self._busy:
+            self._render_elapsed()
+
+    def _elapsed_total(self) -> None:
+        """After idle: keep the total "done in Xm Ys" until the next send."""
+        secs = max(0, int(self._clock() - self._started))
+        minutes, seconds = divmod(secs, 60)
+        self.elapsed_label.setText(f"done in {minutes}m {seconds}s")
+
+    def _clear_elapsed(self) -> None:
+        self.elapsed_label.setVisible(False)
 
     def _set_mood(self) -> None:
         state = self._backend.state()
