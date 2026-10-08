@@ -44,6 +44,11 @@ REMOTE_STAGE = "/tmp/hmi_provision"
 # The panel GUI binary, as native/hmi-ui/arm64/build.sh leaves it.
 HMI_UI_BINARY = "native/hmi-ui/out/aarch64/hmi-ui"
 
+# The panel's own C hardware daemon, as native/hmi-hwd leaves it. Ships to
+# /usr/bin/hmi-hwd-native beside the launcher; a binary the daemon runs
+# directly instead of under the Python interpreter.
+HMI_HWD_NATIVE = "native/hmi-hwd/out/aarch64/hmi-hwd"
+
 # Text extensions that must reach the target with LF endings. The repository is
 # normalised to LF by .gitattributes, but a checkout on a machine with a
 # different git configuration can still produce CRLF, and a CRLF shebang fails
@@ -57,6 +62,10 @@ TEXT_SUFFIXES = (
 FILE_PAYLOAD: List[Tuple[str, str]] = [
     ("target/bin/hmi-install",              "usr/bin/hmi-install"),
     ("target/bin/hmi-hwd-launch",           "usr/bin/hmi-hwd-launch"),
+    # The panel's own C hardware daemon (native/hmi-hwd built for aarch64). The
+    # launcher runs it directly; shipped beside the launcher so it exists on the
+    # board. Skipped with a warning by build_payload when it is not built.
+    (HMI_HWD_NATIVE,                        "usr/bin/hmi-hwd-native"),
     # The panel GUI: native/hmi-ui built for aarch64 (native/hmi-ui/arm64/
     # build.sh). C + LVGL on DRM/KMS; no Qt, no compositor.
     (HMI_UI_BINARY,                         "usr/lib/hmi/ui/hmi-ui"),
@@ -78,7 +87,7 @@ FILE_PAYLOAD: List[Tuple[str, str]] = [
 ]
 
 # Payload sources that are binaries: never line-ending normalised.
-BINARY_SOURCES = {HMI_UI_BINARY}
+BINARY_SOURCES = {HMI_UI_BINARY, HMI_HWD_NATIVE}
 
 # The daemon's optional packages, installed into a freshly shipped
 # /opt/hmi-python from aarch64 wheels beside the tarball (see --python).
@@ -226,9 +235,18 @@ def build_payload(out_path: str, python_tarball: Optional[str] = None,
         for src_rel, dest_rel in FILE_PAYLOAD:
             src = os.path.join(REPO_ROOT, src_rel)
             if not os.path.isfile(src):
-                hint = ""
-                if src_rel == HMI_UI_BINARY:
-                    hint = " (build it: bash native/hmi-ui/arm64/build.sh, from WSL)"
+                # The native daemon is an optional build; ship the rest of the
+                # payload and let the panel run the Python daemon until it is
+                # compiled, rather than failing the whole provisioning over a
+                # file that simply is not on disk yet.
+                if src_rel in (HMI_UI_BINARY, HMI_HWD_NATIVE):
+                    hint = ""
+                    if src_rel == HMI_UI_BINARY:
+                        hint = " (build it: bash native/hmi-ui/arm64/build.sh, from WSL)"
+                    elif src_rel == HMI_HWD_NATIVE:
+                        hint = " (build it: see native/hmi-hwd, from WSL)"
+                    print(f"  WARNING: skipping {dest_rel} -- not built yet{hint}")
+                    continue
                 raise FileNotFoundError(f"payload source missing: {src_rel}{hint}")
             _add(tar, _normalised(src), f"files/{dest_rel}")
             count += 1
@@ -401,6 +419,9 @@ def main() -> int:
     parser.add_argument("--enable-hwd", action="store_true",
                         help="Enable and start hmi-hwd.service (verify hwd.json first: "
                              "it drives real GPIO outputs)")
+    parser.add_argument("--timesync", action="store_true",
+                        help="Enable systemd-timesyncd so the panel's clock is kept "
+                             "even after a power loss (no-op on an image without systemd)")
     args = parser.parse_args()
 
     base = ssh_base(args.host, args.user, args.port, args.key)
@@ -458,6 +479,8 @@ def main() -> int:
         env.append("HMI_FORCE_CONFIG=1")
     if args.enable_hwd:
         env.append("HMI_ENABLE_HWD=1")
+    if args.timesync:
+        env.append("HMI_TIMESYNC=1")
     if args.keep_qt:
         env.append("HMI_KEEP_QT=1")
     if args.force_python:
