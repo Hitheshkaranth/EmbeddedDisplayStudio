@@ -821,6 +821,7 @@ reference; the acceptance tests run against either (`HMI_HWD_CMD`).
 Additions, all in the C daemon (the Python daemon ignores sections it does
 not know):
 
+* **Self-test beside a live daemon.** `--selftest` takes no command port, so it runs on a panel while the daemon is up.
 * **Test hook.** `HWD_SIM_FAIL="ai.pot,serial.scan.rx"` (environment) makes
   those tags' simulated reads fail: published `null` with quality `bad`.
 * **Discovery.** UDP `0.0.0.0:47800` (`daemon.discovery`, default true;

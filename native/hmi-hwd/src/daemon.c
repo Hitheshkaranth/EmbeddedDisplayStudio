@@ -795,8 +795,11 @@ int hwd_run(const hwd_options *opt)
     if (!d->sink_ok) HWD_WARN("cannot resolve telemetry sink %s", d->cfg.sink_host);
     d->subs = hwd_subs_create(&sink, d->cfg.subscriber_ttl_s);
     err[0] = '\0';
-    d->cmd_fd = d->subs ? udp_socket("127.0.0.1", d->cfg.cmd_port, false, err, sizeof err) : -1;
-    if (d->cmd_fd < 0) {
+    /* A self-test answers no commands, so it does not take the command port:
+     * it runs on a panel beside the daemon that owns it. */
+    if (!opt->selftest)
+        d->cmd_fd = d->subs ? udp_socket("127.0.0.1", d->cfg.cmd_port, false, err, sizeof err) : -1;
+    if (!opt->selftest && d->cmd_fd < 0) {
         HWD_ERROR("command socket: %s", err[0] ? err : "out of memory");
         shutdown_daemon(d);
         sigprocmask(SIG_SETMASK, &orig, NULL);
