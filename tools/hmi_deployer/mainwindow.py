@@ -2500,7 +2500,7 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
             QMessageBox.information(self, "Mirror the panel",
                                     "Connect to a panel first.")
             return
-rate = int(self.mirror_combo.currentData() or 1)
+        rate = int(self.mirror_combo.currentData() or 1)
         interval_ms = 1000 // max(rate, 1)
         self.log(f"Mirroring {host} at {rate} fps from the panel.")
         mirror.start(host, self.inp_user.text().strip(),
