@@ -555,6 +555,31 @@ Lamps are steady rather than blinking: a tag that reads like a state
 flight. Ramps that cross a binding's `warning`/`critical` threshold raise
 real alarms, so the alarm table fills by itself.
 
+### A train instead of an aeroplane
+
+A design with Rail widgets (`ShSpeedArc`, `ShTractionBar`, `ShStationLine`,
+`ShTrainConsist`) is a cab display, and gets **one journey** instead of the
+flight: the train pulls away at 1 m/s², runs at 70 km/h, brakes into the
+next station at 0.9 m/s², stands 25 s at the platform with its doors open,
+and pulls away again, over the stations the design's own station line names
+(the last one is the terminus, shown but not reached). Distances between
+neighbouring Purple Line stations are approximately real; others default to
+1.15 km.
+
+| Bound to | Reads |
+|---|---|
+| `ShSpeedArc` value / target | speed, and the ATO target (it falls with the braking curve) |
+| `ShTractionBar` | +78 % pulling away, +12 % cruising, −55 % braking |
+| `ShStationLine` current / details | where the train is; COMPLETED, the train, NEXT · 0.8 km, UPCOMING · … |
+| `ShProgress` | how far along this hop |
+| `ShTrainConsist` doorsLeft | `open` at the platform, else `closed` |
+| a text tag named `*next*` · `*eta*` · `*distance*` · `*clock*` · `*door*` | the next station, `1m 05s`, `1,050 m`, `02:35:04 PM`, `OPEN`/`LOCKED` |
+
+`journey_at(t, stations)` is pure in `t`, like the flight. A bench panel's
+clock is often wrong; `--clock-offset` fixes what the cab display shows
+without touching the system time. On the panel both go in
+`/etc/default/hmi-tagsim` as `TAGSIM_EXTRA_ARGS`.
+
 ### Running it
 
 ```bash
@@ -596,6 +621,8 @@ To go back to real inputs, drop the `HMI_UI_EXTRA_ARGS` line from
 | `--hz N` | `20` | frames per second |
 | `--duration N` | `240` | seconds for one taxi-to-landing flight |
 | `--seconds N` | `0` | stop after this long; 0 runs until stopped |
+| `--start N` | `0` | begin N seconds into the flight (or the journey) |
+| `--clock-offset N` | `0` | seconds added to the panel clock a cab display shows |
 | `--print-plan` | - | print what each tag reports, then exit |
 | `--print-flight N` | - | print N samples of the flight, then exit |
 

@@ -15,9 +15,13 @@ Before=hmi-ui.service
 Type=simple
 # The image python3 is python3-core only; /opt/hmi-python is the complete
 # CPython the installer puts there.
+# Extra arguments go in /etc/default/hmi-tagsim, e.g. a cab display's clock
+# and where in the journey to begin:
+#     TAGSIM_EXTRA_ARGS=--clock-offset 19800 --start 120
+EnvironmentFile=-/etc/default/hmi-tagsim
 ExecStart=/opt/hmi-python/bin/python3 /usr/lib/hmi/tagsim.py \
           --project /opt/hmi_apps/current/project.edsui \
-          --port 5010 --hz 20
+          --port 5010 --hz 20 $TAGSIM_EXTRA_ARGS
 Restart=on-failure
 RestartSec=2
 # A new deploy rewrites /opt/hmi_apps/current: restarting picks up the new

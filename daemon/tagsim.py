@@ -194,6 +194,184 @@ def state_at(t: float, duration: float) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# The journey (rail designs)
+# ---------------------------------------------------------------------------
+#
+# A cab display is read the same way an instrument panel is: everything on it
+# describes one train. It pulls away, cruises, brakes into the next station,
+# stands at the platform with its doors open, and pulls away again, so the
+# speed, the traction bar, the distance to go, the ETA, the next station and
+# the station line all agree with each other -- and the next station changes
+# when the train gets there.
+
+RAIL_ACCEL = 1.0           # m/s2, service acceleration
+RAIL_BRAKE = 0.9           # m/s2, service braking
+RAIL_CRUISE_KMH = 70.0     # ATO line speed between stops
+RAIL_DWELL_S = 25.0        # at the platform
+RAIL_DOORS_S = (3.0, 4.0)  # doors open this long after stopping / close this long before leaving
+RAIL_TRAIN = "P-412"
+#: Used when the design's station line names no stations.
+RAIL_STATIONS = ("Trinity", "Halasuru", "Indiranagar", "Swami Vivekananda Road",
+                 "Whitefield (Kadugodi)")
+#: Metres between neighbouring Purple Line stations, either direction
+#: (approximate); others get the default.
+RAIL_GAPS_M = {
+    ("mysuru road", "deepanjali nagar"): 1000.0,
+    ("mysore road", "deepanjali nagar"): 1000.0,
+    ("deepanjali nagar", "attiguppe"): 1100.0,
+    ("attiguppe", "vijayanagar"): 1000.0,
+    ("vijayanagar", "hosahalli"): 1100.0,
+    ("hosahalli", "magadi road"): 1300.0,
+    ("mg road", "trinity"): 1100.0,
+    ("trinity", "halasuru"): 1250.0,
+    ("halasuru", "indiranagar"): 1120.0,
+    ("indiranagar", "swami vivekananda road"): 1180.0,
+    ("swami vivekananda road", "baiyappanahalli"): 1500.0,
+}
+RAIL_DEFAULT_GAP_M = 1150.0
+
+#: Seconds added to the panel's clock; the bench panel's RTC is often wrong.
+CLOCK_OFFSET = 0.0
+
+
+def _gap(a: str, b: str) -> float:
+    a, b = a.lower(), b.lower()
+    return RAIL_GAPS_M.get((a, b)) or RAIL_GAPS_M.get((b, a)) or RAIL_DEFAULT_GAP_M
+
+
+def _run(gap: float):
+    """(top speed m/s, accelerating s, cruising s, braking s) for one hop."""
+    v = RAIL_CRUISE_KMH / 3.6
+    d_acc, d_brk = v * v / (2 * RAIL_ACCEL), v * v / (2 * RAIL_BRAKE)
+    if d_acc + d_brk > gap:                       # never reaches line speed
+        v = (2 * gap * RAIL_ACCEL * RAIL_BRAKE / (RAIL_ACCEL + RAIL_BRAKE)) ** 0.5
+        d_acc, d_brk = v * v / (2 * RAIL_ACCEL), v * v / (2 * RAIL_BRAKE)
+    return v, v / RAIL_ACCEL, (gap - d_acc - d_brk) / v, v / RAIL_BRAKE
+
+
+def _along(gap: float, tau: float):
+    """(metres covered, speed m/s, phase) tau seconds after leaving."""
+    v, t_acc, t_cru, t_brk = _run(gap)
+    if tau < t_acc:
+        return 0.5 * RAIL_ACCEL * tau * tau, RAIL_ACCEL * tau, "accel"
+    d_acc = 0.5 * v * t_acc
+    if tau < t_acc + t_cru:
+        return d_acc + v * (tau - t_acc), v, "cruise"
+    tb = min(tau - t_acc - t_cru, t_brk)
+    return d_acc + v * t_cru + v * tb - 0.5 * RAIL_BRAKE * tb * tb, max(0.0, v - RAIL_BRAKE * tb), "brake"
+
+
+def _eta(seconds: float) -> str:
+    seconds = max(0, int(round(seconds)))
+    return "%dm %02ds" % divmod(seconds, 60) if seconds >= 60 else "%ds" % seconds
+
+
+def _metres(metres: float) -> str:
+    return format(int(round(max(0.0, metres) / 10.0) * 10), ",d") + " m"
+
+
+def journey_at(t: float, stations=RAIL_STATIONS, now: float = None) -> dict:
+    """The train, t seconds into the service, as tag-ready values.
+
+    The last station on the line is its terminus, shown but not reached: the
+    train serves the stops before it and then starts the run again.
+    """
+    stations = [s for s in (stations or RAIL_STATIONS) if s] or list(RAIL_STATIONS)
+    stops = stations[:-1] if len(stations) > 2 else stations
+    hops = [(i, _gap(stops[i], stops[i + 1])) for i in range(len(stops) - 1)] or [(0, RAIL_DEFAULT_GAP_M)]
+    spans = [sum(_run(g)[1:]) + RAIL_DWELL_S for _i, g in hops]
+    tau = t % sum(spans)
+    leg = 0
+    while tau >= spans[leg]:
+        tau -= spans[leg]
+        leg += 1
+    i, gap = hops[leg]
+    run_s = spans[leg] - RAIL_DWELL_S
+    target = RAIL_CRUISE_KMH
+    if tau < run_s:                                   # between i and i + 1
+        covered, speed, phase = _along(gap, tau)
+        at = i
+        nxt, to_go, eta = i + 1, gap - covered, run_s - tau
+        progress = covered / gap
+        doors = "closed"
+        if phase == "accel":
+            traction = 78.0 - 38.0 * speed / (RAIL_CRUISE_KMH / 3.6)
+        elif phase == "cruise":
+            traction = 12.0
+        else:
+            traction = -55.0 if speed > 0.5 else -20.0
+            target = min(RAIL_CRUISE_KMH, (2 * RAIL_BRAKE * max(to_go, 0.0)) ** 0.5 * 3.6 + 4.0)
+    else:                                             # at the platform of i + 1
+        dwell = tau - run_s
+        at = i + 1
+        speed, traction, target, progress = 0.0, 0.0, 0.0, 0.0
+        if at + 1 < len(stops):
+            nxt, next_gap = at + 1, hops[at][1]
+        else:                       # the last stop served: the terminus is next
+            nxt = min(at + 1, len(stations) - 1)
+            next_gap = _gap(stations[at], stations[nxt])
+        to_go = next_gap
+        eta = (RAIL_DWELL_S - dwell) + sum(_run(next_gap)[1:])
+        doors = "open" if RAIL_DOORS_S[0] <= dwell <= RAIL_DWELL_S - RAIL_DOORS_S[1] else "closed"
+    # What the station line says under each name.
+    details, ahead = [], to_go
+    for k, name in enumerate(stations):
+        if k < at:
+            details.append("COMPLETED")
+        elif k == at:
+            details.append("AT PLATFORM" if speed == 0.0 and tau >= run_s else RAIL_TRAIN)
+        elif k == nxt:
+            details.append("NEXT · %.1f km" % (to_go / 1000.0))
+        elif k < len(stops):
+            ahead += _gap(stations[k - 1], name)
+            details.append("UPCOMING · %.1f km" % (ahead / 1000.0))
+        else:
+            details.append("Purple Line terminus")
+    clock = time.localtime((time.time() if now is None else now) + CLOCK_OFFSET)
+    return {
+        "rail_speed": round(speed * 3.6, 1),
+        "rail_target": round(target, 0),
+        "rail_traction": round(traction, 1),
+        "rail_index": at,
+        "rail_progress": round(min(max(progress, 0.0), 1.0), 3),
+        "rail_next": stations[nxt],
+        "rail_distance": _metres(to_go),
+        "rail_eta": _eta(eta),
+        "rail_details": ",".join(details),
+        "rail_doors_left": doors,
+        "rail_doors": "OPEN" if doors == "open" else "LOCKED",
+        "rail_clock": time.strftime("%I:%M:%S %p", clock),
+    }
+
+
+#: Widget types that make a design a cab display.
+RAIL_TYPES = {"ShSpeedArc", "ShTractionBar", "ShStationLine", "ShTrainConsist"}
+
+
+def rail_key(tag: str, widget_type: str, prop: str):
+    """Which part of the journey a tag on a cab display reports, or None."""
+    leaf = _leaf(tag)
+    if widget_type == "ShSpeedArc":
+        return "rail_target" if prop == "target" or "target" in leaf else "rail_speed"
+    if widget_type == "ShTractionBar":
+        return "rail_traction"
+    if widget_type == "ShStationLine":
+        return {"current": "rail_index", "details": "rail_details"}.get(prop)
+    if widget_type == "ShTrainConsist":
+        return None if "right" in leaf or prop == "doorsRight" else "rail_doors_left"
+    if widget_type == "ShProgress":
+        return "rail_progress"
+    if widget_type in TEXT_TYPES:
+        for words, key in ((("next",), "rail_next"), (("eta", "arrival"), "rail_eta"),
+                           (("distance", "dist", "to_go"), "rail_distance"),
+                           (("clock", "time"), "rail_clock"), (("door",), "rail_doors"),
+                           (("speed",), "rail_speed")):
+            if any(word in leaf for word in words):
+                return key
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Alarms
 # ---------------------------------------------------------------------------
 
@@ -370,13 +548,14 @@ def quantity_for(tag: str, prop: str) -> str:
 class Signal:
     """One tag: the part of the flight it reports, on the dial that draws it."""
 
-    __slots__ = ("tag", "kind", "quantity", "lo", "hi", "decimals", "state_key")
+    __slots__ = ("tag", "kind", "quantity", "lo", "hi", "decimals", "state_key", "stations")
 
     def __init__(self, tag, kind, quantity="progress", lo=0.0, hi=1.0,
-                 decimals=1, state_key=""):
+                 decimals=1, state_key="", stations=None):
         self.tag, self.kind, self.quantity = tag, kind, quantity
         self.lo, self.hi = lo, hi
         self.decimals, self.state_key = decimals, state_key
+        self.stations = stations
 
     def at(self, state: dict):
         """This tag's value for the aeroplane's current state."""
@@ -387,6 +566,9 @@ class Signal:
         if self.kind == "word":
             # A status worded for people ("ACTIVE (21°C)"): steady, healthy.
             return self.state_key
+        if self.kind == "rail":
+            # The journey already speaks the widget's language.
+            return state[self.state_key]
         raw = float(state[self.quantity])
         if self.kind == "colour":
             span = (self.hi - self.lo) or 1.0
@@ -402,7 +584,7 @@ class Signal:
         return round(self.lo + unit * (self.hi - self.lo), self.decimals)
 
 
-def signal_for(tag: str, widget_type: str, prop: str, props: dict) -> Signal:
+def signal_for(tag: str, widget_type: str, prop: str, props: dict, stations=None) -> Signal:
     """Decide what one bound tag reports and how far its needle swings.
 
     The widget's own scale wins, then the kit's default for its type, then
@@ -410,6 +592,10 @@ def signal_for(tag: str, widget_type: str, prop: str, props: dict) -> Signal:
     it is drawn on, whatever the design asked for.
     """
     lowered = tag.lower()
+    if stations is not None:
+        key = rail_key(tag, widget_type, prop)
+        if key:
+            return Signal(tag, "rail", key, state_key=key, stations=stations)
     if widget_type == "ShStatusCard":
         # A status card states its system's condition in words; a number in
         # its place reads as a fault. Healthy and steady, like the lamps.
@@ -471,20 +657,29 @@ def plan(project: dict) -> dict:
     Studio's Python is not installed.
     """
     signals = {}
+    widgets = []
 
-    def walk(container):
-        for widget in container.get("widgets") or []:
-            props = widget.get("properties") or {}
-            for prop, spec in (widget.get("bindings") or {}).items():
-                tag = spec.get("tag") if isinstance(spec, dict) else spec
-                if not isinstance(tag, str) or not tag or tag == "*":
-                    continue          # "*" is the alarm table, not a value
-                if tag not in signals:
-                    signals[tag] = signal_for(tag, widget.get("type", ""), prop, props)
-            walk(widget)
+    def gather(container):
+        for widget in container.get("widgets") or container.get("children") or []:
+            widgets.append(widget)
+            gather(widget)
 
     for page in project.get("pages") or []:
-        walk(page)
+        gather(page)
+    # A cab display runs a train, on the stations its own line names.
+    stations = None
+    if any(widget.get("type") in RAIL_TYPES for widget in widgets):
+        named = next((str((w.get("properties") or {}).get("stations") or "")
+                      for w in widgets if w.get("type") == "ShStationLine"), "")
+        stations = tuple(s.strip() for s in named.split(",") if s.strip()) or RAIL_STATIONS
+    for widget in widgets:
+        props = widget.get("properties") or {}
+        for prop, spec in (widget.get("bindings") or {}).items():
+            tag = spec.get("tag") if isinstance(spec, dict) else spec
+            if not isinstance(tag, str) or not tag or tag == "*":
+                continue          # "*" is the alarm table, not a value
+            if tag not in signals:
+                signals[tag] = signal_for(tag, widget.get("type", ""), prop, props, stations)
     return signals
 
 
@@ -497,6 +692,9 @@ def values_at(signals: dict, t: float, duration: float, alarms: list = None) -> 
     filled in from that.
     """
     state = dict(state_at(t, duration))
+    rail = next((sig for sig in signals.values() if sig.kind == "rail"), None)
+    if rail is not None:
+        state.update(journey_at(t, rail.stations))
     state["engaged_true"] = True
     state["alarm_active"] = False
 
@@ -518,7 +716,8 @@ def frame(signals: dict, t: float, seq: int, duration: float = 240.0,
 
 
 def serve(signals: dict, port: int, hz: float, host: str = "127.0.0.1",
-          seconds: float = 0.0, duration: float = 240.0, alarms: list = None) -> int:
+          seconds: float = 0.0, duration: float = 240.0, alarms: list = None,
+          start: float = 0.0) -> int:
     """Answer subscribers and fly the panel until stopped.
 
     The runtime subscribes with a ttl and re-subscribes every 2 s; a
@@ -572,7 +771,7 @@ def serve(signals: dict, port: int, hz: float, host: str = "127.0.0.1",
 
             if now >= next_send:
                 next_send = now + interval
-                payload = frame(signals, now - started, seq, duration, alarms)
+                payload = frame(signals, now - started + start, seq, duration, alarms)
                 seq += 1
                 for addr, expiry in list(subscribers.items()):
                     if expiry < now:
@@ -603,6 +802,10 @@ def main(argv=None) -> int:
                         help="seconds for one taxi-to-landing flight")
     parser.add_argument("--seconds", type=float, default=0.0,
                         help="stop after this long (0 = run until stopped)")
+    parser.add_argument("--start", type=float, default=0.0,
+                        help="begin this many seconds into the flight / journey")
+    parser.add_argument("--clock-offset", type=float, default=0.0,
+                        help="seconds added to the panel clock a cab display shows")
     parser.add_argument("--print-plan", action="store_true",
                         help="show what each tag reports, then exit")
     parser.add_argument("--print-flight", type=int, default=0, metavar="N",
@@ -612,6 +815,8 @@ def main(argv=None) -> int:
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO),
                         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    global CLOCK_OFFSET
+    CLOCK_OFFSET = args.clock_offset
 
     if args.print_flight:
         print("%5s %7s %7s %6s %6s %6s %6s %6s %6s" % (
@@ -640,13 +845,15 @@ def main(argv=None) -> int:
             sig = signals[tag]
             if sig.kind == "bool":
                 print("%-24s lamp        %s" % (tag, sig.state_key or "steady dark"))
+            elif sig.kind in ("rail", "word"):
+                print("%-24s %-11s %s" % (tag, sig.kind, sig.state_key))
             else:
                 print("%-24s %-11s %-15s %9.2f .. %.2f" % (
                     tag, sig.kind, sig.quantity, sig.lo, sig.hi))
         return 0
 
     return serve(signals, args.port, args.hz, args.host, args.seconds,
-                 args.duration, load_alarms(args.project))
+                 args.duration, load_alarms(args.project), args.start)
 
 
 if __name__ == "__main__":

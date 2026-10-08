@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+**AI Design builds cab displays**
+
+* A brief about a train (metro, rail, tram, cab...) gets a cab-display guide
+  in the plan prompt, and a plan that holds the Rail widgets is laid out by
+  `designer/layout/cab.py` the way drivers read one: the line in its colour,
+  the train's fields and a clock across the top; speed and traction on the
+  left; the station line and the NEXT card in the middle; the consist, up to
+  three system status cards and a platform callout on the right. It scales
+  to the screen and recompiles to the same page.
+* The compiler puts right what models get wrong on these screens: a car
+  count instead of car names, a progress in percent, a whole line of
+  stations (a window round the next station is kept), a "current station"
+  tile beside the station line, a doors status card instead of the consist,
+  long system names (`PEA (Emergency Alarm)`), an unbound clock. What is
+  always live on a cab -- speed, target, traction, station line, next
+  station, ETA, distance, doors, clock -- is bound even when the plan left
+  it static.
+* A logo dropped into the header in the Designer is placed by **Tidy up**:
+  on a white plate at the end it was dropped at, with the title and clock
+  moved aside.
+* Lenient JSON intake drops a closer that does not match what is open
+  (`}}}}]}` where `}}}]}` closes a widget), so every later section survives.
+
+**tagsim drives a train**
+
+* A design with Rail widgets gets one journey instead of the flight: the
+  train pulls away, cruises, brakes into the next station and stands at the
+  platform with its doors open, over the stations its own station line
+  names. Speed, target, traction, distance to go, ETA, next station, the
+  station line, the hop progress, the doors and the cab clock all agree.
+* `--start` begins part-way through the journey; `--clock-offset` corrects
+  the clock a bench panel shows; on the panel both go in
+  `/etc/default/hmi-tagsim` (`TAGSIM_EXTRA_ARGS`).
+
 ## 0.1.3
 
 **Studio 2: four modes instead of seven tabs**

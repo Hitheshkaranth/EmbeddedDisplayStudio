@@ -1014,6 +1014,12 @@ def compile_page(project, page, registry, sections=None, title: str = "",
     if not sections and not header_widgets:
         return report
     width, height = int(project.screen.width), int(project.screen.height)
+    # A train's cab display has one layout drivers know (designer/layout/cab.py).
+    from . import cab
+    if width > height and cab.applies(sections, header_widgets):
+        cab.compile_cab(project, page, registry, sections, title, header_widgets, report,
+                        width, height)
+        return report
     sections = _consolidate(_ordered(sections), report.notes, section_limit(width, height))
     _hero_caption(sections, report.notes)
     tokens = tokens_for(width, height)
@@ -1766,6 +1772,19 @@ def _sections_from_marks(page, registry, widgets, planned_title, notes):
             order.append(key)
         groups[key].append(widget)
     sections = [Section(heading, role_of(role), groups[(heading, role)]) for heading, role in order]
+    # A picture dropped into the header band by hand is a logo for the
+    # header: it keeps the end it was dropped at, and stays there from now on.
+    right_edge = max((float(w.geometry.get("x", 0)) + float(w.geometry.get("width", 0))
+                      for w in _walk(page.widgets)), default=0.0)
+    for widget in [w for w in loose if w.type == "Image"]:
+        g = widget.geometry
+        if float(g.get("y", 0)) + float(g.get("height", 0)) / 2.0 <= 80:
+            if float(g.get("x", 0)) + float(g.get("width", 0)) / 2.0 < right_edge / 2.0:
+                widget.properties[SIDE_MARK] = "left"
+            widget.properties[SECTION_MARK] = "|header"
+            loose.remove(widget)
+            header.append(widget)
+            notes.append(f"{widget.id}: placed in the header as a logo")
     if loose:
         stand_in = type(page)(id=page.id, name=page.name, widgets=loose)
         _t, extra, extra_header, extra_notes = infer_sections(stand_in, registry)

@@ -167,6 +167,20 @@ def _repair_at(text: str, exc: json.JSONDecodeError):
     early = _closed_early(text, position)
     if early is not None:
         return early
+    if message.startswith("Expecting ',' delimiter") and text[position:position + 1] in ("}", "]"):
+        # One closer too many: `}}}}]}` where `}}}]}` closes the widget, so a
+        # `}` meets the widget list. Drop the closer that does not match
+        # what is open, and every section after it survives.
+        stack = []
+        for _index, char, in_string in _scan(text[:position]):
+            if in_string:
+                continue
+            if char in "{[":
+                stack.append(char)
+            elif char in "}]" and stack:
+                stack.pop()
+        if stack and {"[": "}", "{": "]"}[stack[-1]] == text[position]:
+            return text[:position] + text[position + 1:]
     if message.startswith("Expecting ',' delimiter") or message.startswith("Expecting ':' delimiter") \
             or message.startswith("Expecting property name"):
         # The usual cause: a string value whose closing quote is missing, so

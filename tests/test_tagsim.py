@@ -156,10 +156,68 @@ class PlanTests(unittest.TestCase):
             self.assertTrue(0 <= values["mb.train.speed"] <= 100)
             self.assertTrue(0 <= values["mb.train.station_index"] <= 3)
             self.assertTrue(0 <= values["mb.train.segment_progress"] <= 1)
-            self.assertIs(values["mb.train.doors_left"], True)          # closed
+            self.assertIn(values["mb.train.doors_left"], ("open", "closed"))
             self.assertEqual(values["mb.train.doors_right"], "disabled")
             self.assertEqual(values["mb.train.hvac_status"], "ACTIVE (21°C)")
             self.assertEqual(values["mb.train.pea_state"], "ok")
+            if values["mb.train.speed"] > 0:
+                self.assertEqual(values["mb.train.doors_left"], "closed")
+
+
+class JourneyTests(unittest.TestCase):
+    """A cab display describes one train: it gets to the next station."""
+
+    STATIONS = ("Trinity", "Halasuru", "Indiranagar", "Swami Vivekananda Road",
+                "Whitefield (Kadugodi)")
+
+    def _cab(self):
+        line = _widget("ShStationLine", "line",
+                       {"current": {"tag": "train.station_index"},
+                        "details": {"tag": "train.station_details"}},
+                       {"stations": ",".join(self.STATIONS)})
+        texts = [_widget("Text", name, {"text": {"tag": "train." + name}})
+                 for name in ("next_station", "eta", "distance_to_go", "clock", "doors")]
+        speed = _widget("ShSpeedArc", "arc", {"value": {"tag": "train.speed"}})
+        return tagsim.plan(_project([line, speed] + texts))
+
+    def _run(self, seconds, step=1.0):
+        signals = self._cab()
+        return [tagsim.values_at(signals, i * step, DURATION) for i in range(int(seconds / step))]
+
+    def test_the_next_station_changes_when_the_train_arrives(self):
+        seen = []
+        for values in self._run(400):
+            if not seen or seen[-1] != values["train.next_station"]:
+                seen.append(values["train.next_station"])
+        self.assertEqual(seen[:3], ["Halasuru", "Indiranagar", "Swami Vivekananda Road"])
+
+    def test_distance_and_eta_count_down_between_stations(self):
+        run = self._run(70)                      # inside the first hop
+        metres = [int(v["train.distance_to_go"].replace(",", "").split()[0]) for v in run]
+        self.assertEqual(metres, sorted(metres, reverse=True))
+        self.assertGreater(metres[0], metres[-1] + 500)
+        self.assertRegex(run[0]["train.eta"], r"^(\d+m \d\ds|\d+s)$")
+
+    def test_the_train_stops_at_the_platform_with_its_doors_open(self):
+        open_ = [v for v in self._run(400) if v["train.doors"] == "OPEN"]
+        self.assertTrue(open_)
+        self.assertTrue(all(v["train.speed"] == 0 for v in open_))
+
+    def test_the_station_line_follows_the_train(self):
+        for values in self._run(400, step=5.0):
+            details = values["train.station_details"].split(",")
+            self.assertEqual(len(details), len(self.STATIONS))
+            here = values["train.station_index"]
+            self.assertTrue(all(d == "COMPLETED" for d in details[:here]))
+            self.assertIn(values["train.next_station"], self.STATIONS)
+            self.assertTrue(details[self.STATIONS.index(values["train.next_station"])].startswith("NEXT"))
+
+    def test_the_clock_is_a_time_of_day(self):
+        self.assertRegex(self._run(1)[0]["train.clock"], r"^\d\d:\d\d:\d\d [AP]M$")
+
+    def test_a_design_without_rail_widgets_still_flies(self):
+        signals = tagsim.plan(_project([_widget("Text", "t", {"text": {"tag": "trip.eta"}})]))
+        self.assertNotEqual(signals["trip.eta"].kind, "rail")
 
     def test_the_alarm_table_wildcard_is_not_a_value(self):
         project = _project([_widget("ShAlarmTable", "t", {"alarms": {"tag": "*"}})])

@@ -458,6 +458,47 @@ PLAN_CATALOGUE = (
     ("alarms", ("ShAlarmTable",)),
     ("status lamps", ("ShStatDot", "ShAnnunciator", "ShTelltale")),
     ("controls", ("ShButton", "ShToggle", "ShSlider", "ShSelect", "ShNumInput")),
+    ("rail cab displays (metro, train, tram)", ("ShSpeedArc", "ShTractionBar", "ShStationLine",
+                                                "ShTrainConsist", "ShStatusCard")),
+)
+
+_RAIL_WORDS = re.compile(r"\b(metro|train|rail|railway|cab|tram|locomotive|subway|underground|"
+                         r"rolling stock|driver'?s desk)\b", re.IGNORECASE)
+
+
+def is_rail_brief(brief: str) -> bool:
+    """A brief for a train's cab display (designer/layout/cab.py lays it out)."""
+    return bool(_RAIL_WORDS.search(brief or ""))
+
+
+RAIL_PLAN_GUIDE = (
+    "This is a train's driver cab display. Plan it as drivers expect, and the compiler lays it "
+    "out the standard way (line and train across the top; speed left; route middle; the train "
+    "right):\n"
+    "- \"title\": the line's name, e.g. \"Purple Line\" (its colour becomes the accent).\n"
+    "- \"header\": the train's identity and modes as ShDataField(label, value) -- train id, "
+    "obstacle detection, signalling mode, door state (4 at most) -- and a Text with id "
+    "\"clock\" bound to <area>.clock for the time of day.\n"
+    "- a \"Drive\" section: one ShSpeedArc (value, target, maximumValue, unit) bound to the speed "
+    "and the ATP/ATO target speed, one ShTractionBar (value -100..100: + traction, - braking), "
+    "and two ShValueTile readings such as line voltage and ATC mode.\n"
+    "- a \"Route\" section: one ShStationLine whose \"stations\" (comma separated, six at most) "
+    "are the stations the brief names, in the order the train runs, ending with the line's "
+    "terminus; never invent a list of the whole line. \"details\": one short note per station "
+    "(COMPLETED, the train id, NEXT · 1.1 km, UPCOMING · 2.3 km, the terminus); \"current\": "
+    "the index of the station the train is at or just left; bind current and details.\n"
+    "- a \"Next station\" section: a ShValueTile for the next station's name (value = the name), "
+    "one for the estimated arrival and one for the distance to go, and one ShProgress for "
+    "this hop.\n"
+    "- a \"Train\" section: ALWAYS one ShTrainConsist (cars, doorsLeft, doorsRight; the doors "
+    "are shown on it, never on a status card), one ShStatusCard per on-board system the brief "
+    "names (HVAC, PA, passenger emergency alarm; 3 at most: icon, title, status in words, "
+    "state ok), and one ShTelltale for the platform callout (label \"Stop Marking Aligned\").\n"
+    "Bind every live value to a train.* tag (train.speed, train.target_speed, "
+    "train.traction_pct, train.station_index, train.station_details, train.next_station, "
+    "train.eta, train.distance_to_go, train.segment_progress, train.doors_left, "
+    "train.doors_right, train.doors, train.hvac_status, train.pa_status, train.pea_state, "
+    "train.clock).\n\n"
 )
 _PLAN_SKIP_PROPERTIES = {"opacity", "visible", "value", "enabled", "backgroundColor", "textColor",
                          "borderColor", "borderWidth", "cornerRadius", "normalColor",
@@ -542,6 +583,7 @@ def build_plan_prompt(registry: Optional[WidgetRegistry] = None,
         "(\"Discharge\", \"Motor\", \"Tank\"), never \"Section 1\" or \"Widgets\". "
         f"A page has 3-6 sections and about {budget} widgets at most; when the brief asks for more, "
         "add pages (one per system) and put a navigate ShButton for each in the main page's header.\n\n"
+        + (RAIL_PLAN_GUIDE if is_rail_brief(brief) else "") +
         "Widgets by purpose, with the properties they take:\n" + _plan_catalogue(registry) + "\n"
         "Other allowed types: " + ", ".join(types) + ".\n\n"
         "Every widget states what it is: a short Title-case label (at most 18 characters) in the "
@@ -713,7 +755,11 @@ def _merge_small_plan(pages_data: list, width: int, height: int) -> list:
     # against them: a fourth lamp must not push the customer's logo out.
     # Two logos at most: the operator's and the integrator's.
     logos = [w for w in header if isinstance(w, dict) and str(w.get("type", "")).endswith("Image")]
-    first["header"] = [w for w in header if w not in logos][:4] + logos[:2]
+    # A cab display's header also carries the train's fields and a clock.
+    fields = [w for w in header if isinstance(w, dict) and w not in logos
+              and str(w.get("type", "")) in ("ShDataField", "Text", "ShValueTile")]
+    rest = [w for w in header if w not in logos and w not in fields]
+    first["header"] = rest[:4] + fields[:5] + logos[:2]
     return [first]
 
 

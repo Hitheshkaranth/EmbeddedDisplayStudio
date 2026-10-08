@@ -41,6 +41,55 @@ A desktop studio for embedded Linux HMI panels. Write a brief and a model builds
 
 <br />
 
+## From a sentence to a running cab display
+
+One brief, end to end, on a real panel: a **Namma Metro Purple Line** driver cab display for train P-412, westbound from Hosahalli through Vijayanagar to Mysuru Road. Ornith 1.5 on our own GPU server plans it, the Studio lays it out, a person finishes it in the Designer, the Ornith agent in the IDE wires it to a Modbus PLC, and it is deployed to a Toradex Verdin panel.
+
+<div align="center">
+<img src="docs/assets/metro/metro-overview.gif" alt="The whole metro cab display build, time-lapsed: brief, AI design, Designer finish, Modbus wiring by the agent, deploy, and the live panel" width="900" />
+</div>
+
+<table>
+<tr>
+<td width="33%" valign="top">
+<img src="docs/assets/metro/metro-describe.gif" alt="Typing the brief into AI Design and Ornith building the cab display" />
+<p><strong>1 · Describe it</strong><br /><sub>Plain words in. Ornith plans the content; the compiler knows a cab display — the line across the top, speed left, route middle, the train right — and draws it with the Rail widgets.</sub></p>
+</td>
+<td width="33%" valign="top">
+<img src="docs/assets/metro/metro-design.gif" alt="Finishing the AI's screen in the Designer: shortening the title and dropping in two logos, then Tidy up" />
+<p><strong>2 · Finish it</strong><br /><sub>The AI's screen stays. Shorten the title, drop both logos into the header as images, and <strong>Tidy up</strong> places them.</sub></p>
+</td>
+<td width="33%" valign="top">
+<img src="docs/assets/metro/metro-agent.gif" alt="The Ornith agent in the Code IDE mapping every tag to a Modbus register and running the self-test" />
+<p><strong>3 · Wire it</strong><br /><sub>The agent in the IDE gives every value a Modbus register on the PLC, rebinds the design and proves it with the daemon's self-test.</sub></p>
+</td>
+</tr>
+<tr>
+<td width="33%" valign="top">
+<img src="docs/assets/metro/metro-deploy.gif" alt="Deploying to the panel and mirroring it: the train brakes into Vijayanagar and the next station changes" />
+<p><strong>4 · Ship it</strong><br /><sub>Validate, upload, checksum, atomic swap. The mirror shows the bench simulator's train brake into Vijayanagar, open its doors and move on to Attiguppe.</sub></p>
+</td>
+<td width="33%" valign="top">
+<img src="docs/assets/metro/metro-panel.gif" alt="The real 10.1-inch panel on the bench, filmed: the train pulling out of Vijayanagar" />
+<p><strong>5 · On the glass</strong><br /><sub>The real 10.1-inch panel, filmed on the bench: the train pulls out of Vijayanagar for Attiguppe and every reading follows it.</sub></p>
+</td>
+<td width="33%" valign="top">
+<p><strong>What it took</strong></p>
+<sub>
+
+* one brief and two image files
+* [`designer/layout/cab.py`](designer/layout/cab.py) — the cab layout
+* five Rail widgets, in QML and in C
+* [`daemon/tagsim.py`](daemon/tagsim.py) — a train for the bench
+* no hand-placed widgets
+
+</sub>
+</td>
+</tr>
+</table>
+
+<br />
+
 <div align="center">
 
 <img src="docs/assets/screens/design.png" alt="Studio 0.1.3 in Design mode: a pump station overview laid out by the AI layout compiler, the suction gauge selected, layers on the left, Size on screen and the gauge's properties on the right, and the AI composer under the canvas" width="920" />
@@ -164,7 +213,9 @@ No bundle is needed to start: the first Preview, Deploy or AI result creates one
 
 **The canvas follows the glass.** On **Connect** the Studio reads the panel's real geometry from its DRM connector and retargets the canvas and the bezel to it.
 
-**46 widgets from one registry** — shadcn/ui-derived basics (`ShButton`, `ShInput`, `ShCard`, `ShTabs`, …), industrial (`ShGauge`, `ShValueTile`, `ShTrendChart`, `ShAlarmTable`, …), avionics (`ShAttitude`, `ShTape`, `ShCompass`, `ShVSI`, `ShFlightDirector`, `ShEngineGauge`, `ShFuelQuantity`, `ShAnnunciator`, …) and automotive (`ShClusterGauge`, `ShGearIndicator`, `ShDriveMode`, `ShTelltale`, `ShTripInfo`, `ShVehicleStatus`, …). Every one binds to tags; interactive ones write back through actions.
+**51 widgets from one registry** — shadcn/ui-derived basics (`ShButton`, `ShInput`, `ShCard`, `ShTabs`, …), industrial (`ShGauge`, `ShValueTile`, `ShTrendChart`, `ShAlarmTable`, …), avionics (`ShAttitude`, `ShTape`, `ShCompass`, `ShVSI`, `ShFlightDirector`, `ShEngineGauge`, `ShFuelQuantity`, `ShAnnunciator`, …), automotive (`ShClusterGauge`, `ShGearIndicator`, `ShDriveMode`, `ShTelltale`, `ShTripInfo`, `ShVehicleStatus`, …) and **rail**: `ShSpeedArc` (speed with its ATP/ATO target), `ShTractionBar` (traction above zero, braking below), `ShStationLine` (the route, the train on it and a note per station), `ShTrainConsist` (the cars and both sides' doors) and `ShStatusCard` (an on-board system in words). Every one binds to tags; interactive ones write back through actions, and each is drawn the same by the QML kit and by `hmi-ui`.
+
+**Custom widgets.** Select a group on the canvas and **Save as custom widget**: it lands in the palette's **Custom** section (stored as `.edswidget` under `Documents/EmbeddedDisplay Studio/widgets`), and placing it drops a copy with fresh ids, its bindings and styling intact.
 
 <table>
 <tr>
@@ -227,6 +278,19 @@ flowchart LR
 </div>
 
 The older path — the model writes geometry, archetypes and a critic polish it, oversized designs split into linked pages — is still there as the fallback (`ai/layoutEngine = polish`).
+
+### Cab displays
+
+A brief about a train — metro, rail, tram, a driver's cab — adds a cab guide to the plan prompt, and a plan holding the Rail widgets is laid out by [`designer/layout/cab.py`](designer/layout/cab.py) the way drivers read one, whatever the screen size:
+
+| Where | What | From the plan |
+|---|---|---|
+| top | the line's name in its colour, the train's fields, a clock, logos at either end | title, header `ShDataField`s, a `clock` text, header images |
+| left | speed arc with its target, traction / brake bar, two readings | the *Drive* section |
+| middle | the station line, then **NEXT:** the next station with its ETA, distance and hop progress | the *Route* and *Next station* sections |
+| right | the consist with its doors, up to three system cards, a platform callout | the *Train* section |
+
+The compiler also puts right what models get wrong on these screens: a car count instead of car names, a progress in percent, a whole line of stations (it keeps a window round the next station and the terminus), a "current station" tile beside the station line, a doors status card instead of the consist, a system name too long for its card. What is always live on a cab — speed, target, traction, the station line, the next station, ETA, distance, doors, clock — is bound to a tag even when the plan left it static. A logo dropped into the header in the Designer is put on a plate at that end by **Tidy up**.
 
 <details>
 <summary><strong>The execution shell, presets and the self-driving cluster</strong></summary>
@@ -515,6 +579,8 @@ systemctl daemon-reload && systemctl enable --now hmi-tagsim && systemctl restar
 
 Remove that line from `/etc/default/hmi-ui` to go back to the real inputs.
 
+A design with Rail widgets gets a **train** instead of the flight: it pulls away, cruises at 70 km/h, brakes into the next of the stations its own station line names and stands at the platform with its doors open, so the speed, traction, distance to go, ETA, next station, station line and doors all agree — and the next station changes when the train gets there. `TAGSIM_EXTRA_ARGS="--start 60 --clock-offset 19800"` in `/etc/default/hmi-tagsim` starts it part-way along and corrects a bench panel's clock. Details in [daemon/README.md](daemon/README.md#8-tagsim---flying-a-panel-that-has-no-aircraft-behind-it).
+
 </details>
 
 **Built for the field.** The daemon cannot be crashed by its socket — malformed JSON, oversized frames, binary noise and invalid UTF-8 are counted and answered with a typed error, or with silence where no correlation id survives, so it cannot be used as a UDP reflector. Outputs go to configured safe states on `SIGTERM`, with systemd watchdog keep-alives every cycle.
@@ -600,7 +666,19 @@ native/hmi-ui/build.sh --test      # the runtime's C tests
 
 ---
 
-## What's new in 0.1.3
+## What's new
+
+**Since 0.1.3**
+
+<table>
+<tr>
+<td width="33%" valign="top"><strong>AI Design builds cab displays</strong><br /><sub>A train brief comes out as a driver's cab screen — line, train, speed, route, the next station, the consist and its systems — laid out by <code>designer/layout/cab.py</code>, with what is always live bound even when the model forgot.</sub></td>
+<td width="33%" valign="top"><strong>Rail widgets and custom widgets</strong><br /><sub>Speed arc, traction bar, station line, train consist and status card, in QML and in the C runtime; save any group as a custom widget and place it from the palette.</sub></td>
+<td width="33%" valign="top"><strong>A train on the bench</strong><br /><sub><code>tagsim</code> runs a cab display as one journey: it brakes into the next station, opens its doors and moves on. The agent learns the Modbus hardware layer; the panel mirror rides out a deploy's restart.</sub></td>
+</tr>
+</table>
+
+**0.1.3**
 
 <table>
 <tr>
