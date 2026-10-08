@@ -10,6 +10,7 @@ a coding agent that wires your PLC, and one-click deploys to a 1.4 MB C + LVGL r
 [![Release](https://img.shields.io/github/v/release/Hitheshkaranth/EmbeddedDisplayStudio?style=for-the-badge&label=Release&color=006FEE)](../../releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/Hitheshkaranth/EmbeddedDisplayStudio/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/Hitheshkaranth/EmbeddedDisplayStudio/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-555555?style=for-the-badge)](LICENSE)
+[![Presented at the Berkeley x DeepMind Hackathon](https://img.shields.io/badge/Presented%20at-Berkeley%20%C3%97%20DeepMind%20Hackathon-003262?style=for-the-badge&labelColor=FDB515)](#hackathon)
 
 [![Python](https://img.shields.io/badge/Studio-Python%203.12%20%C2%B7%20PySide6-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Runtime](https://img.shields.io/badge/Panel-C11%20%C2%B7%20LVGL%209.3%20%C2%B7%20DRM%2FKMS-1A5FB4?style=flat-square)](native/hmi-ui/)
@@ -25,6 +26,14 @@ a coding agent that wires your PLC, and one-click deploys to a 1.4 MB C + LVGL r
 <sub>One sentence to a running <strong>Namma Metro Purple Line</strong> cab display on a real Toradex panel — every step inside the Studio.</sub>
 
 </div>
+
+<br />
+
+<a id="hackathon"></a>
+
+> [!NOTE]
+> #### Presented at the Berkeley × DeepMind Hackathon
+> EmbeddedDisplay Studio was presented at the **Berkeley × DeepMind Hackathon**: a brief described in plain words, designed by AI, wired to the hardware and deployed to a real embedded panel — live, from one desktop app.
 
 <br />
 
