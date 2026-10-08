@@ -9,7 +9,51 @@ class ReadinessItem:
     action: str
 
 
-def audit_readiness(bundle_valid, manifest, connected, detected_resolution):
+#: The layout compiler's kinds (designer.layout.compiler.kind_of) that show a
+#: value the process reports: a face (dial, gauge), a tile or strip (readout,
+#: bar), a chart. A Text label is a caption, a lamp a state, a control an
+#: input -- none of them a reading.
+READING_KINDS = ("face", "tile", "strip", "chart")
+#: Registry categories that are a box for other things (a card, a picture), so
+#: the compiler's catch-all "tile" is not a reading there.
+_BOX_CATEGORIES = ("Basic", "Containers", "Navigation")
+
+
+def _is_reading(widget, registry) -> bool:
+    """True when the widget's registry kind is a face, tile, bar or chart."""
+    from designer.layout.compiler import CHROME_MARK, kind_of
+    if widget.children or widget.properties.get(CHROME_MARK):
+        return False
+    definition = registry.get(widget.type)
+    if definition is None or definition.category in _BOX_CATEGORIES:
+        return False
+    return kind_of(registry, widget) in READING_KINDS
+
+
+def static_readings(project) -> list:
+    """Every reading that shows a value with no tag: a static on live glass.
+
+    A reading with neither a binding nor an expression shows the sample it
+    was drawn with for ever: on the panel it is a number that never moves,
+    which reads as a live value that is wrong. Returns their ids, in design
+    order; a Text label, a lamp, a control or a container is never one.
+    """
+    if project is None:
+        return []
+    from designer.palette.widget_registry import default_registry
+    registry = default_registry()
+    statics = []
+    for widget in project.all_widgets():
+        if widget.bindings or not _is_reading(widget, registry):
+            continue
+        props = widget.properties
+        if props.get("expr") or props.get("expression"):
+            continue
+        statics.append(widget.id)
+    return statics
+
+
+def audit_readiness(bundle_valid, manifest, connected, detected_resolution, project=None):
     """Audit readiness and return exactly four ReadinessItem rows.
 
     Parameters
@@ -22,6 +66,9 @@ def audit_readiness(bundle_valid, manifest, connected, detected_resolution):
         Whether the target display is currently connected.
     detected_resolution : tuple[int, int] | None
         The detected screen resolution as (width, height), or None.
+    project : DesignerProject | None
+        The open design. When given, readings with no tag (static_readings)
+        make the Tags row a warning.
 
     Returns
     -------
@@ -100,7 +147,16 @@ def audit_readiness(bundle_valid, manifest, connected, detected_resolution):
     # --- Tags ---
     if manifest is not None:
         tags_required = manifest.get("tags_required")
-        if tags_required:
+        statics = static_readings(project) if project is not None else []
+        if statics:
+            tags_item = ReadinessItem(
+                name="Tags",
+                severity="warning",
+                detail=("1 reading has no tag." if len(statics) == 1
+                        else "{} readings have no tag.".format(len(statics))),
+                action="Bind them in the Designer, or they show their sample for ever.",
+            )
+        elif tags_required:
             tags_item = ReadinessItem(
                 name="Tags",
                 severity="ready",

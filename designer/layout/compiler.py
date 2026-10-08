@@ -1014,12 +1014,18 @@ def compile_page(project, page, registry, sections=None, title: str = "",
     if not sections and not header_widgets:
         return report
     width, height = int(project.screen.width), int(project.screen.height)
-    # A train's cab display has one layout drivers know (designer/layout/cab.py).
-    from . import cab
-    if width > height and cab.applies(sections, header_widgets):
-        accent = getattr(getattr(project, "brand", None) or {}, "get")("accent")
-        cab.compile_cab(project, page, registry, sections, title, header_widgets, report,
-                        width, height, accent)
+    # A train's cab display (and any other registered family) has one layout
+    # drivers or a reader know: it is laid out on the spot by that family, not
+    # by the card search below. The family search (designer/layout/families.py)
+    # picks the first family that fits a page of this size; no family fits a
+    # card screen, which then falls through to the search.
+    from . import families
+    family = families.family_for(sections, header_widgets, width, height)
+    if family is not None:
+        _name, family_compile = family
+        # The family reads the project's brand accent itself (cab.compile_cab
+        # takes project.brand["accent"] when no override is passed).
+        family_compile(project, page, registry, sections, title, header_widgets, report, width, height)
         return report
     sections = _consolidate(_ordered(sections), report.notes, section_limit(width, height))
     _hero_caption(sections, report.notes)

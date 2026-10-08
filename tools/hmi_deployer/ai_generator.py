@@ -18,6 +18,82 @@ from designer.layout.intake import loads_lenient, normalise_properties
 
 logger = logging.getLogger(__name__)
 
+def _open_object(properties: dict, required=()) -> dict:
+    """A JSON-schema object that names its fields and still takes others."""
+    schema = {"type": "object", "additionalProperties": True, "properties": properties}
+    if required:
+        schema["required"] = list(required)
+    return schema
+
+
+_FREE_OBJECT = {"type": "object", "additionalProperties": True}
+
+#: One widget of a planned screen: only its type is required, so a terse
+#: reply (a lamp with no properties) still validates.
+_PLAN_WIDGET = _open_object({
+    "type": {"type": "string"},
+    "id": {"type": "string"},
+    "size": {"type": "string"},
+    "side": {"type": "string"},
+    "properties": _FREE_OBJECT,
+    "bindings": _FREE_OBJECT,
+    "actions": _FREE_OBJECT,
+}, required=("type",))
+
+#: The plan build_plan_prompt asks for, as a JSON schema. A server that
+#: guides its decoding with it (vLLM guided_json, OpenAI json_schema, Ollama
+#: format) cannot return malformed JSON or a plan without pages. Every level
+#: is open (additionalProperties) and only the load-bearing keys are
+#: required, so the schema never rejects a plan the compiler would accept.
+PLAN_SCHEMA = _open_object({
+    "name": {"type": "string"},
+    "section": _open_object({
+        "index": {"type": "integer"},
+        "complete": {"type": "boolean"},
+        "label": {"type": "string"},
+        "next": {"type": "string"},
+    }),
+    "pages": {"type": "array", "items": _open_object({
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "title": {"type": "string"},
+        "header": {"type": "array", "items": _PLAN_WIDGET},
+        "sections": {"type": "array", "items": _open_object({
+            "title": {"type": "string"},
+            "role": {"type": "string"},
+            "size": {"type": "string"},
+            "widgets": {"type": "array", "items": _PLAN_WIDGET},
+        })},
+    })},
+}, required=("pages",))
+
+#: A reply that keeps fewer than this share of the tags the design had bound
+#: has dropped part of the screen (the canvas guard in mainwindow counts the
+#: same thing: the design's required tags).
+SHORTFALL_KEEP = 0.6
+
+
+def plan_shortfall(project, previous=None) -> str:
+    """Why an applied reply is not the whole design, or "" when it is.
+
+    "the reply held no widgets" when the design is empty; "the reply dropped
+    N of M tags" when ``previous`` (the design the reply replaced) had bound
+    tags and fewer than 60 % of them are still bound. The AI tab sends the
+    brief once more when this says something.
+    """
+    if project is None or not any(True for page in project.pages for _w in page.walk()):
+        return "the reply held no widgets"
+    if previous is None:
+        return ""
+    before = set(previous.required_tags())
+    if not before:
+        return ""
+    kept = before & set(project.required_tags())
+    if len(kept) < SHORTFALL_KEEP * len(before):
+        return f"the reply dropped {len(before) - len(kept)} of {len(before)} tags the design had"
+    return ""
+
+
 # Regex to extract QML code blocks from markdown or plain text.
 QML_BLOCK_RE = re.compile(r"```(?:qml|QML)?\s*\n(.*?)```", re.DOTALL)
 # Regex to extract JSON design payloads.
@@ -913,6 +989,22 @@ class AIDesignGenerator:
                 report = compile_page(project, page, self.registry)
                 self.last_compile.append(report)
                 self.last_fit_notes += [n for n in report.notes if "dropped" in n or "moved" in n]
+            # A cab display's readings name each other (the next station, the
+            # line, the distance to go): they are sampled from one moment of
+            # the bench's journey so the canvas never contradicts itself. A
+            # card screen keeps the compiler's running readings -- the bench
+            # flies a flight under tags it does not know, and a pump's flow
+            # read off a climb is no better a sample than two thirds up its
+            # own scale.
+            try:
+                from designer.layout.samples import coherent_samples, runs_a_journey
+                if runs_a_journey(project):
+                    n = coherent_samples(project)
+                    if n:
+                        self.last_fit_notes.append(
+                            f"samples: {n} reading(s) set from one moment of the journey")
+            except Exception as exc:
+                logger.warning("Coherent samples skipped: %s", exc)
             self.last_fit_notes += ensure_unique_ids(project)
             if before is not None:
                 after = critique(project, project.pages[0], self.registry)

@@ -155,6 +155,37 @@ def redact_url(url: str) -> str:
     return _SECRET_QUERY_RE.sub(r"\1***", url or "")
 
 
+def structured_output(provider: str, schema: Optional[dict]) -> dict:
+    """The structured-output half of a request, in each provider's dialect.
+
+    A JSON schema of what the model should return -- the plan's shape, say --
+    is folded into the request so the reply is that shape and cannot be
+    malformed JSON. Each provider guards output with its own keyword, so the
+    schema is shaped once per provider here rather than at the call sites. A
+    provider that keeps no guard (anthropic, or no schema at all) gets an
+    empty dict, so a caller can always put it in the payload unchanged.
+
+    vLLM (its Qwen templates) reads ``guided_json``; OpenAI reads
+    ``response_format``; Ollama reads ``format``.
+    """
+    if schema is None:
+        return {}
+    if provider == "vllm":
+        return {"guided_json": schema}
+    if provider == "openai":
+        return {"response_format": {"type": "json_schema",
+                                    "json_schema": {"schema": schema}}}
+    if provider == "ollama":
+        return {"format": schema}
+    return {}
+
+
+#: Request fields a server may not know: the reasoning-off template flag and
+#: every provider's structured-output keyword. A 400 on a request carrying any
+#: of them gets one retry without them (ODConnector._stream_events).
+_OPTIONAL_REQUEST_FIELDS = ("chat_template_kwargs", "guided_json", "response_format", "format")
+
+
 # A placeholder only: AIDesignTab sets ai_generator.build_system_prompt(),
 # which asks for a Studio design (.edsui JSON) for the panel's LVGL runtime,
 # before every run. This used to ask for QML, which nothing here renders.
@@ -558,6 +589,7 @@ class ODConnector:
         self.project_id: Optional[str] = None
         self.conversation: list[ChatMessage] = []
         self.system_prompt = DEFAULT_SYSTEM_PROMPT
+        self.response_schema: Optional[dict] = None
         self._available_models: list[ModelOption] = []
         self._connected = False
         self._cancel = threading.Event()
@@ -851,11 +883,16 @@ class ODConnector:
                 i += 1
         return pairs[-(HISTORY_TURNS * 2):]
 
-    def _byok_events(self, brief: str, model: Optional[str]) -> Generator[dict, None, None]:
-        if not self.byok:
-            yield {"type": "error", "message": "No BYOK provider configured."}
-            return
+    def byok_request(self, brief: str, model: Optional[str] = None):
+        """Build one BYOK request: (url, headers, payload).
 
+        Extracted from ``_byok_events`` so a caller (ai_tab) can fold the
+        structured-output schema into the payload before the request goes out.
+        The request body for every provider is exactly what it was before,
+        plus the schema under that provider's own keyword. A provider that
+        cannot go without an API key is reported by ``_byok_events`` from the
+        connection, not here.
+        """
         prov = self.byok.provider
         model_name = model or self.byok.model
         base = self.byok.baseUrl.rstrip("/")
@@ -866,7 +903,6 @@ class ODConnector:
         if prov == "ollama":
             url = f"{base}/api/chat"
             payload = {"model": model_name, "messages": messages, "stream": True}
-            parser = parse_ollama_stream
         elif prov in ("openai", "vllm"):
             url = f"{base}/v1/chat/completions"
             if self.byok.apiKey:
@@ -885,7 +921,6 @@ class ODConnector:
                 # Templates that do not know the flag ignore it, and a server
                 # that rejects the field gets one retry without it below.
                 payload["chat_template_kwargs"] = {"enable_thinking": False}
-            parser = parse_openai_stream
         elif prov == "anthropic":
             url = f"{base}/v1/messages"
             headers.update({
@@ -899,7 +934,6 @@ class ODConnector:
                 "stream": True,
                 "max_tokens": ANTHROPIC_MAX_OUTPUT_TOKENS,
             }
-            parser = parse_anthropic_stream
         elif prov == "google":
             url = f"{base}/v1beta/models/{model_name}:streamGenerateContent?alt=sse"
             if self.byok.apiKey:
@@ -913,6 +947,28 @@ class ODConnector:
                 ],
                 "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS},
             }
+        else:
+            raise ValueError(f"Unsupported BYOK provider: {prov}")
+
+        # Structured output: fold the schema under this provider's keyword.
+        structured = structured_output(prov, getattr(self, "response_schema", None))
+        if structured:
+            payload.update(structured)
+        return url, headers, payload
+
+    def _byok_events(self, brief: str, model: Optional[str]) -> Generator[dict, None, None]:
+        if not self.byok:
+            yield {"type": "error", "message": "No BYOK provider configured."}
+            return
+
+        prov = self.byok.provider
+        if prov == "ollama":
+            parser = parse_ollama_stream
+        elif prov in ("openai", "vllm"):
+            parser = parse_openai_stream
+        elif prov == "anthropic":
+            parser = parse_anthropic_stream
+        elif prov == "google":
             parser = parse_google_stream
         else:
             yield {"type": "error", "message": f"Unsupported BYOK provider: {prov}"}
@@ -922,7 +978,10 @@ class ODConnector:
             yield {"type": "error", "message": f"{BYOK_PRESETS[prov]['label']} needs an API key."}
             return
 
-        yield {"type": "start", "model": model_name, "provider": prov, "url": redact_url(url), "mode": "byok"}
+        url, headers, payload = self.byok_request(brief, model)
+
+        yield {"type": "start", "model": model or self.byok.model, "provider": prov,
+               "url": redact_url(url), "mode": "byok"}
         yield {"type": "status", "label": "connecting"}
         first = True
         for event in self._stream_events(url, payload, headers, parser):
@@ -954,12 +1013,15 @@ class ODConnector:
             try:
                 resp = _post(payload)
             except urllib.error.HTTPError as exc:
-                # A server whose chat template rejects unknown kwargs answers
-                # 400; the request is worth one retry in its plainest form.
-                if exc.code != 400 or "chat_template_kwargs" not in payload:
+                # A server that rejects a field (the chat template kwargs, or
+                # the structured-output schema) answers 400; the request is
+                # worth one retry in its plainest form, without any of the
+                # optional fields byok_request may have put on top.
+                optional = [k for k in payload if k in _OPTIONAL_REQUEST_FIELDS]
+                if exc.code != 400 or not optional:
                     raise
-                logger.info("retrying without chat_template_kwargs")
-                plain = {k: v for k, v in payload.items() if k != "chat_template_kwargs"}
+                logger.info("retrying without %s", ", ".join(optional))
+                plain = {k: v for k, v in payload.items() if k not in optional}
                 resp = _post(plain)
         except urllib.error.HTTPError as exc:
             body = ""
