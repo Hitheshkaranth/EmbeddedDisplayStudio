@@ -58,7 +58,11 @@ BACKGROUND = "#101318"
 
 # Every Designer type (kit_schema.json); stubs report as skips.
 WAVE = ["Column", "Grid", "Image", "Item", "Rectangle", "Row", "ShAlarmTable", "ShAlert", "ShAnalogDisplay", "ShAnnunciator", "ShAttitude", "ShAutoLevel", "ShAutoReadout", "ShButton", "ShCard", "ShCheckbox", "ShClusterGauge", "ShCompass", "ShDataField", "ShDriveMode", "ShEngineBar", "ShEngineGauge", "ShFlightDirector", "ShFuelQuantity", "ShGauge", "ShGearIndicator", "ShIconTile", "ShInput", "ShNumDisplay", "ShNumInput", "ShProgress", "ShSegmentBar", "ShSelect", "ShSlider", "ShStatDot", "ShTabs", "ShTape", "ShTelltale", "ShToggle", "ShTrendChart", "ShTripInfo", "ShTurnCoordinator", "ShVSI", "ShValueTile", "ShVehicleStatus", "Text",
-        "ShSpeedArc", "ShTractionBar", "ShStationLine", "ShTrainConsist", "ShStatusCard"]
+        "ShSpeedArc", "ShTractionBar", "ShStationLine", "ShTrainConsist", "ShStatusCard",
+        # Compared at its defaults: no source, so both kits draw the shared
+        # placeholder. A playing GIF is timing-dependent; test_widgets.c and
+        # tests/test_animated_image.py check the frames instead.
+        "ShAnimatedImage"]
 
 
 # Widgets that are almost entirely small text: glyph rasterisation alone

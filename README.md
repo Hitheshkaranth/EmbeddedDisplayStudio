@@ -76,7 +76,7 @@ a coding agent that wires your PLC, and one-click deploys to a 1.4 MB C + LVGL r
 **Also in the box**
 
 - **The panel's own renderer, everywhere** — canvas and previews are drawn by the same C runtime that runs on the glass, so what you see is what ships.
-- **51 widgets** — industrial, avionics, automotive and rail (speed arc, station line, train consist…), each in QML and in C. Save any group as a **custom widget**.
+- **52 widgets** — industrial, avionics, automotive, rail and animated GIFs (speed arc, station line, train consist…), each in QML and in C. Save any group as a **custom widget**.
 - **Simulate without hardware** — Tag Lab waveforms, and `tagsim` flies a whole aircraft or runs a train between stations so every reading agrees.
 - **Operator runtime** — expression bindings, action lists with confirm, alarm priorities, latching and shelving, history, keypad, screen idle.
 - **Bring your own Qt app** — PySide6 and PySide2 applications deploy too; the Studio installs their runtime on demand.
