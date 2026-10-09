@@ -1250,6 +1250,45 @@ def paint_alarm_table(painter, rect, props, ctx):
               weight=WEIGHT_MEDIUM, flags=Qt.AlignLeft | Qt.AlignVCenter)
 
 
+def animated_placeholder_geometry(width, height):
+    """ShAnimatedImage.qml's placeholder layout (w_shanimatedimage.c's ph_geom):
+    (glyph height, glyph width, text px, gap, top), all in whole pixels."""
+    def px(value):                         # Math.round / lround, not banker's
+        return int(math.floor(value + 0.5))
+    s = max(1.0, min(width, height))
+    glyph = max(12, min(64, px(s * 0.30)))
+    glyph_w = px(glyph * 1.35)
+    text_px = max(10, min(18, px(s * 0.11)))
+    gap = px(glyph * 0.18)
+    top = px((height - (glyph + gap + text_px)) / 2)
+    return glyph, glyph_w, text_px, gap, top
+
+
+def paint_animated_image(painter, rect, props, ctx):
+    """ShAnimatedImage with nothing to play: the muted card, a framed play
+    glyph and "GIF" -- what the QML and the panel draw for an empty or
+    unreadable source. The canvas item plays the real GIF over this when the
+    file is at hand (designer_view.DesignerItem._paint_movie)."""
+    painter.setRenderHint(painter.RenderHint.Antialiasing, True)
+    _rounded(painter, QRectF(rect).adjusted(0.5, 0.5, -0.5, -0.5), token("muted"), 6,
+             token("border"), 1)
+    glyph, glyph_w, text_px, gap, top = animated_placeholder_geometry(rect.width(), rect.height())
+    ink = token("mutedForeground")
+    frame = QRectF(rect.left() + round((rect.width() - glyph_w) / 2), rect.top() + top, glyph_w, glyph)
+    painter.setBrush(Qt.NoBrush)
+    painter.setPen(QPen(ink, 2))
+    painter.drawRoundedRect(frame.adjusted(1, 1, -1, -1), 3, 3)
+    th = glyph * 0.45
+    tw = th * 0.85
+    cx, cy = frame.center().x(), frame.center().y()
+    painter.setBrush(QBrush(ink))
+    painter.setPen(Qt.NoPen)
+    painter.drawPolygon(QPolygonF([QPointF(cx - tw / 3, cy - th / 2), QPointF(cx - tw / 3, cy + th / 2),
+                                   QPointF(cx + 2 * tw / 3, cy)]))
+    _text(painter, QRectF(rect.left(), rect.top() + top + glyph + gap, rect.width(), text_px),
+          "GIF", size=text_px, color=ink, weight=WEIGHT_SEMIBOLD, flags=Qt.AlignCenter, elide=False)
+
+
 _PAINTERS = {
     "Text": paint_text,
     "ShButton": paint_button,
@@ -1287,6 +1326,8 @@ _PAINTERS = {
     "ShAnalogDisplay": paint_analog_display,
     "ShTrendChart": paint_trend_chart,
     "ShAlarmTable": paint_alarm_table,
+    # The placeholder only; the canvas item plays the GIF itself.
+    "ShAnimatedImage": paint_animated_image,
 }
 # Automotive painters live in their own module; see automotive_previews.py.
 from designer.canvas import automotive_previews  # noqa: E402

@@ -393,6 +393,55 @@
    "choices": {},
    "assets": []
   },
+  "ShAnimatedImage": {
+   "qml": "ShAnimatedImage",
+   "category": "Basic",
+   "display_name": "Animated image",
+   "default_width": 240,
+   "default_height": 160,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "source": {
+     "kind": "str",
+     "default": ""
+    },
+    "playing": {
+     "kind": "bool",
+     "default": true
+    },
+    "speed": {
+     "kind": "int",
+     "default": 100
+    },
+    "fillMode": {
+     "kind": "str",
+     "default": "Image.PreserveAspectFit"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "playing"
+   ],
+   "signals": [],
+   "choices": {
+    "fillMode": [
+     "Image.PreserveAspectFit",
+     "Image.PreserveAspectCrop",
+     "Image.Stretch"
+    ]
+   },
+   "assets": [
+    "source"
+   ]
+  },
   "ShAnnunciator": {
    "qml": "ShAnnunciator",
    "category": "Avionics",

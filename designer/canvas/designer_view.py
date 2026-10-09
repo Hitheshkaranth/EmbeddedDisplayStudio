@@ -2,8 +2,8 @@
 from __future__ import annotations
 import os
 
-from PySide6.QtCore import QByteArray, QDataStream, QIODevice, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QDrag, QPainter, QPen, QPixmap, QPixmapCache
+from PySide6.QtCore import QBuffer, QByteArray, QDataStream, QIODevice, QPointF, QRectF, QSizeF, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QDrag, QMovie, QPainter, QPen, QPixmap, QPixmapCache
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView
 
 from designer.canvas import widget_previews
@@ -114,6 +114,11 @@ class DesignerItem(QGraphicsRectItem):
             painter.restore()
             self._paint_chrome(painter, selected)
             return
+        # An animated GIF plays on the canvas; without one (no source, a
+        # missing or unreadable file) its painter draws the placeholder.
+        if self.widget_model.type == "ShAnimatedImage" and self._paint_movie(painter):
+            self._paint_chrome(painter, selected)
+            return
         preview = widget_previews.painter_for(self.widget_model.type)
         if preview is not None:
             painter.save()
@@ -172,10 +177,106 @@ class DesignerItem(QGraphicsRectItem):
                                  Qt.AlignCenter | Qt.TextWordWrap, self.label_text())
         self._paint_chrome(painter, selected)
 
+    def _asset_path(self, source):
+        """A project-relative asset ("assets/truck.gif") as a path on disk."""
+        if not source:
+            return ""
+        project_dir = self._designer_scene.project_dir
+        if not project_dir or os.path.isabs(source):
+            return source
+        return os.path.join(project_dir, str(source).replace('/', os.sep))
+
+    def _movie_for(self, path):
+        """The QMovie playing ``path``, made once per file version, or None
+        when there is no such file or Qt cannot read it as an animation."""
+        try:
+            stat = os.stat(path) if path else None
+        except OSError:
+            stat = None
+        key = (path, stat.st_mtime_ns, stat.st_size) if stat else None
+        if key != getattr(self, "_movie_key", None):
+            self._drop_movie()
+            self._movie_key = key
+            if key is not None:
+                # Played from memory: a QMovie on the path keeps the file
+                # open, and Windows then refuses to replace or delete it
+                # while the Designer shows it.
+                try:
+                    with open(path, "rb") as fh:
+                        data = fh.read()
+                except OSError:
+                    data = b""
+                movie = QMovie()
+                buffer = QBuffer(movie)
+                buffer.setData(QByteArray(data))
+                buffer.open(QIODevice.ReadOnly)
+                movie.setDevice(buffer)
+                if data and movie.isValid():
+                    movie.setCacheMode(QMovie.CacheAll)
+                    movie.frameChanged.connect(self._movie_frame)
+                    self._movie = movie
+                    movie.start()
+                else:
+                    movie.deleteLater()
+        return getattr(self, "_movie", None)
+
+    def _drop_movie(self):
+        movie = getattr(self, "_movie", None)
+        self._movie = None
+        self._movie_key = None
+        if movie is not None:
+            movie.stop()
+            try:
+                movie.frameChanged.disconnect(self._movie_frame)
+            except (RuntimeError, TypeError):
+                pass
+            movie.deleteLater()
+
+    def _movie_frame(self, _frame):
+        try:
+            self.update()
+        except RuntimeError:       # the item went with its scene; so does the movie
+            self._drop_movie()
+
+    def _paint_movie(self, painter):
+        """Draw the current frame of an ShAnimatedImage's GIF the way its
+        fillMode places it; False when there is nothing to play."""
+        properties = self.widget_model.properties
+        movie = self._movie_for(self._asset_path(properties.get("source", "")))
+        if movie is None:
+            return False
+        movie.setPaused(properties.get("playing", True) is False)
+        try:
+            movie.setSpeed(max(1, int(float(properties.get("speed", 100) or 100))))
+        except (TypeError, ValueError):
+            movie.setSpeed(100)
+        frame = movie.currentPixmap()
+        if frame.isNull():
+            return False
+        target = self.rect()
+        mode = properties.get("fillMode", "Image.PreserveAspectFit")
+        painter.save()
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.setClipRect(target)
+        if mode == "Image.Stretch":
+            placed = QRectF(target)
+        else:
+            aspect = (Qt.KeepAspectRatioByExpanding if mode == "Image.PreserveAspectCrop"
+                      else Qt.KeepAspectRatio)
+            size = QSizeF(frame.size()).scaled(target.size(), aspect)
+            placed = QRectF(QPointF(0, 0), size)
+            placed.moveCenter(target.center())
+        painter.drawPixmap(placed, frame, QRectF(frame.rect()))
+        painter.restore()
+        return True
+
     def _qml_image(self, painter):
         """The cached QML render for this widget, or None."""
         renderer = self._designer_scene.qml_previews
-        if renderer is None or self.definition.container or self.widget_model.type == "Image":
+        # Image and ShAnimatedImage resolve their file against the project
+        # here; a still QML render could not animate a GIF anyway.
+        if (renderer is None or self.definition.container
+                or self.widget_model.type in ("Image", "ShAnimatedImage")):
             return None
         rect = self.rect()
         # Render at the zoom the canvas is showing so glyphs stay crisp.
@@ -309,6 +410,8 @@ class DesignerItem(QGraphicsRectItem):
             # Keep the final drag state, not a historic hit: moving away from
             # a guide should restore the ordinary grid-snap behavior.
             self._smart_snapped = snapped
+        elif change == QGraphicsItem.ItemSceneHasChanged and value is None:
+            self._drop_movie()     # off the canvas: stop playing its GIF
         return super().itemChange(change, value)
 
     def _drag_edges(self, point):

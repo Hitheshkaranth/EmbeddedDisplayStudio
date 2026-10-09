@@ -93,6 +93,16 @@ static const hmi_prop_schema_t props_ShAnalogDisplay[] = {
     {NULL, HMI_KIND_STR, NULL, false}
 };
 static const char *const signals_ShAnalogDisplay[] = { NULL};
+static const hmi_prop_schema_t props_ShAnimatedImage[] = {
+    {"source", HMI_KIND_STR, "", false},
+    {"playing", HMI_KIND_BOOL, "true", true},
+    {"speed", HMI_KIND_INT, "100", false},
+    {"fillMode", HMI_KIND_STR, "Image.PreserveAspectFit", false},
+    {"opacity", HMI_KIND_FLOAT, "1.0", false},
+    {"visible", HMI_KIND_BOOL, "true", false},
+    {NULL, HMI_KIND_STR, NULL, false}
+};
+static const char *const signals_ShAnimatedImage[] = { NULL};
 static const hmi_prop_schema_t props_ShAnnunciator[] = {
     {"text", HMI_KIND_STR, "LOW FUEL", false},
     {"severity", HMI_KIND_STR, "caution", true},
@@ -615,6 +625,7 @@ const hmi_type_schema_t hmi_kit_types[] = {
     {"ShAlarmTable", "Industrial", 350, 216, false, "", props_ShAlarmTable, 7, signals_ShAlarmTable, 1},
     {"ShAlert", "Industrial", 260, 90, false, "", props_ShAlert, 5, signals_ShAlert, 0},
     {"ShAnalogDisplay", "Industrial", 240, 64, false, "", props_ShAnalogDisplay, 16, signals_ShAnalogDisplay, 0},
+    {"ShAnimatedImage", "Basic", 240, 160, false, "", props_ShAnimatedImage, 6, signals_ShAnimatedImage, 0},
     {"ShAnnunciator", "Avionics", 140, 38, false, "", props_ShAnnunciator, 5, signals_ShAnnunciator, 0},
     {"ShAttitude", "Avionics", 220, 220, false, "", props_ShAttitude, 5, signals_ShAttitude, 0},
     {"ShAutoLevel", "Automotive", 90, 220, false, "", props_ShAutoLevel, 13, signals_ShAutoLevel, 0},
@@ -658,7 +669,7 @@ const hmi_type_schema_t hmi_kit_types[] = {
     {"ShVehicleStatus", "Automotive", 150, 190, false, "", props_ShVehicleStatus, 13, signals_ShVehicleStatus, 0},
     {"Text", "Basic", 140, 32, false, "", props_Text, 9, signals_Text, 0},
 };
-const size_t hmi_kit_type_count = 51;
+const size_t hmi_kit_type_count = 52;
 
 const hmi_theme_colour_t hmi_theme_colours[] = {
     {"background", "#ffffff", "#09090b"},

@@ -540,6 +540,7 @@ PLAN_CATALOGUE = (
     ("controls", ("ShButton", "ShToggle", "ShSlider", "ShSelect", "ShNumInput")),
     ("rail cab displays (metro, train, tram)", ("ShSpeedArc", "ShTractionBar", "ShStationLine",
                                                 "ShTrainConsist", "ShStatusCard")),
+    ("moving picture (a .gif the user supplies)", ("ShAnimatedImage",)),
 )
 
 _RAIL_WORDS = re.compile(r"\b(metro|train|rail|railway|cab|tram|locomotive|subway|underground|"

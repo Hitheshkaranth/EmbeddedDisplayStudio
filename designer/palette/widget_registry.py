@@ -38,6 +38,7 @@ PROPERTY_MINIMUMS = {
     "cornerRadius": 0, "radius": 0, "handleRadius": 1, "lineWidth": 0.5,
     "rowHeight": 8, "pixelsPerDegree": 0.1, "spacing": 0, "columns": 0,
     "rows": 0, "majorStep": 0.001, "sweep": 10, "redZoneSpan": 0, "step": 0,
+    "speed": 1,
 }
 
 
@@ -135,6 +136,15 @@ def default_registry() -> WidgetRegistry:
         {"source": str, "fillMode": str, "smooth": bool, **common},
         {"source": "", "fillMode": "Image.PreserveAspectFit", "smooth": True, **common_defaults}, (), False,
         {"fillMode": ("Image.PreserveAspectFit", "Image.PreserveAspectCrop", "Image.Stretch", "Image.Tile")},
+        (), ("source",))
+    # A moving picture: an animated GIF the user supplies, played by QtQuick's
+    # AnimatedImage and by LVGL's lv_gif on the panel. ``speed`` is playback
+    # speed in percent (100 = as the file says).
+    add("ShAnimatedImage", "Animated image", "Basic", "ShAnimatedImage", 240, 160,
+        {"source": str, "playing": bool, "speed": int, "fillMode": str, **common},
+        {"source": "", "playing": True, "speed": 100, "fillMode": "Image.PreserveAspectFit",
+         **common_defaults}, ("playing",), False,
+        {"fillMode": ("Image.PreserveAspectFit", "Image.PreserveAspectCrop", "Image.Stretch")},
         (), ("source",))
     add("Rectangle", "Rectangle", "Basic", "Rectangle", 140, 90,
         {"color": str, "borderColor": str, "borderWidth": int, "radius": int, **common},
