@@ -117,6 +117,22 @@ BYOK_PRESETS = {
             "qwen3.8-35b-a3b",
         ],
     },
+    "ornith": {
+        "label": "Ornith (spark-ba51)",
+        # Ornith 1.5 on the same lab vLLM server (the model it serves since
+        # 2026-10-08, and the one the Code agent's opencode entry uses). It is
+        # a vLLM endpoint, so requests are shaped as for "vllm" (dialect).
+        # Leave thinking off: its reasoning pass spends the reply's tokens.
+        "baseUrl": "http://spark-ba51:8080",
+        "apiVersion": "",
+        "requiresApiKey": True,
+        "apiKey": "",
+        "protocol": "openai",
+        "dialect": "vllm",
+        "models": [
+            "ornith-1.5-35b-a3b",
+        ],
+    },
     "anthropic": {
         "label": "Anthropic (Claude)",
         "baseUrl": "https://api.anthropic.com",
@@ -146,6 +162,12 @@ BYOK_PRESETS = {
         ],
     },
 }
+
+def dialect(provider: str) -> str:
+    """The request dialect a provider key speaks: its own name, unless its
+    preset names another provider's ("ornith" is a vLLM server)."""
+    return BYOK_PRESETS.get(provider, {}).get("dialect", provider)
+
 
 _SECRET_QUERY_RE = re.compile(r"([?&](?:key|api_key|apikey|token)=)[^&#]+", re.I)
 
@@ -631,9 +653,9 @@ class ODConnector:
                 return self._probe_result(ok, started, "OpenDesign daemon" if ok else "daemon not reachable", [])
             if not self.byok:
                 return self._probe_result(False, started, "no provider configured", [])
-            prov, base = self.byok.provider, self.byok.baseUrl.rstrip("/")
+            prov, base = dialect(self.byok.provider), self.byok.baseUrl.rstrip("/")
             headers = {}
-            label = BYOK_PRESETS.get(prov, {}).get("label", prov)
+            label = BYOK_PRESETS.get(self.byok.provider, {}).get("label", prov)
             unreachable = f"{label} unreachable at {base}"
             if prov == "ollama":
                 url = f"{base}/api/tags"
@@ -893,7 +915,7 @@ class ODConnector:
         cannot go without an API key is reported by ``_byok_events`` from the
         connection, not here.
         """
-        prov = self.byok.provider
+        prov = dialect(self.byok.provider)
         model_name = model or self.byok.model
         base = self.byok.baseUrl.rstrip("/")
         chat_messages = self._history_messages() + [{"role": "user", "content": brief}]
@@ -961,7 +983,7 @@ class ODConnector:
             yield {"type": "error", "message": "No BYOK provider configured."}
             return
 
-        prov = self.byok.provider
+        prov = dialect(self.byok.provider)
         if prov == "ollama":
             parser = parse_ollama_stream
         elif prov in ("openai", "vllm"):
