@@ -626,9 +626,213 @@ def _plan_brand(brand: Optional[dict]) -> str:
     return "You are building this screen to a brand.\n" + " ".join(lines) + "\n\n"
 
 
+# Reference mode (a picture is attached): the widgets a reproduction is built
+# from, by what the picture shows. Each is quoted with its properties and,
+# apart, the colour properties it declares, which this mode lets the model
+# fill with the picture's colours.
+REFERENCE_CATALOGUE = (
+    ("status strip", ("ShTelltale", "ShStatDot", "ShDataField", "Text")),
+    ("gear selector", ("ShGearIndicator",)),
+    ("speed", ("ShSpeedArc",)),
+    ("round dials", ("ShClusterGauge", "ShGauge", "ShEngineGauge")),
+    ("heading and attitude", ("ShCompass", "ShAttitude")),
+    ("tyres", ("ShVehicleStatus",)),
+    ("bars and levels", ("ShEngineBar", "ShSegmentBar", "ShAutoLevel", "ShTape")),
+    ("readouts", ("ShDataField", "ShValueTile", "ShTripInfo", "ShNumDisplay")),
+    ("pictures", ("Image", "ShAnimatedImage")),
+    ("trend, alarms, controls", ("ShTrendChart", "ShAlarmTable", "ShButton", "ShToggle")),
+)
+_REFERENCE_SKIP_PROPERTIES = {"opacity", "visible", "enabled", "handleRadius", "size",
+                              "pixelsPerDegree", "smooth", "fillMode"}
+
+# What sits in each region, as designer.layout.compiler.REGIONS defines them.
+REFERENCE_REGION_GUIDE = {
+    "top": "the status strip across the top (clock, connectivity, weather). Write it as the "
+           "page's \"header\", never as a section",
+    "rail": "a narrow column at the left edge (a gear selector, mode lamps)",
+    "left": "the left column of the body (a speed dial, the dials beside the hero)",
+    "center": "the middle of the body -- the hero: a picture of the machine, the main dial",
+    "right": "a column of cards at the right edge (one card per titled block, top to bottom)",
+    "bottom": "a row along the bottom, under left and center: every dial or bar in the lower "
+              "part of the picture, below the speed and the hero, side by side -- a dial under "
+              "the speed arc is \"bottom\", not \"left\"",
+}
+
+
+def _reference_catalogue(registry) -> str:
+    lines = []
+    for purpose, names in REFERENCE_CATALOGUE:
+        entries = []
+        for name in names:
+            definition = registry.get(name) if registry is not None else None
+            if definition is None:
+                continue
+            colours = tuple(definition.color_properties)
+            props = [p for p in definition.properties
+                     if p not in _REFERENCE_SKIP_PROPERTIES and p not in colours][:11]
+            entry = f"{name}({', '.join(props)}"
+            if colours:
+                entry += "; colours: " + ", ".join(colours)
+            entries.append(entry + ")")
+        if entries:
+            lines.append(f"- {purpose}: " + "; ".join(entries))
+    return "\n".join(lines)
+
+
+def _reference_regions() -> str:
+    try:
+        from designer.layout.compiler import REGIONS
+    except Exception:
+        REGIONS = tuple(REFERENCE_REGION_GUIDE)
+    return "\n".join(f"- \"{region}\": {REFERENCE_REGION_GUIDE.get(region, region)}."
+                     for region in REGIONS)
+
+
+def build_reference_plan_prompt(registry: Optional[WidgetRegistry] = None,
+                                screen_width: int = 1280, screen_height: int = 800,
+                                brief: str = "", brand: Optional[dict] = None) -> str:
+    """System prompt for a plan that reproduces an attached picture.
+
+    The plain plan prompt keeps the model to a title and a few generic cards,
+    which is how a reference picture used to come back as a card grid: here
+    the model inventories the picture's blocks, gives each a section with the
+    region it sits in (compiler.REGIONS) and the widget that shows it, and
+    keeps the picture's colours on the widgets' colour properties. Geometry
+    still belongs to the layout compiler.
+    """
+    registry = registry or default_registry()
+    try:
+        types = sorted(d.type for d in registry.definitions())
+    except Exception:
+        types = sorted(set(_AI_TYPE_ALIASES.values()))
+    try:
+        from designer.layout.intake import kit_icons
+        icons = ", ".join(sorted(kit_icons()))
+    except Exception:
+        icons = ""
+    picture = "Image"
+    if registry.get("ShAnimatedImage") is not None:
+        picture = "Image (or ShAnimatedImage for a moving picture)"
+    prompt = (
+        "You are an expert HMI designer for embedded touch panels built with the EmbeddedDisplay "
+        f"Studio widget set. The target screen is {screen_width}x{screen_height} px.\n\n"
+        "REFERENCE MODE: the user attached a picture of the screen they want. Reproduce that "
+        "picture: the same blocks in the same places, the same kinds of widgets, the same "
+        "labels, sample values and colours. Do not fall back to a generic title-and-card-grid "
+        "dashboard, and do not drop blocks to keep the page short.\n\n"
+        "You decide WHAT each block shows and WHERE in the picture it sits (its region); the "
+        "Studio's layout compiler turns the regions into the layout. Do not write x, y, width, "
+        "height or font sizes.\n\n"
+        "Step 1 -- inventory. Look at the picture region by region (the top strip, the rail at "
+        "the left edge, the left column, the middle, the right column, the bottom row) and "
+        "list every visual block in it: every dial, arc, bar group, card, picture, selector "
+        "and readout, and in the top strip every icon, the clock, the weather, check marks and "
+        "any name badge. Do this silently or in a few short lines before the JSON.\n"
+        "Step 2 -- plan. Each block becomes one section of the page (10 sections at most), in "
+        "reading order within its region (top to bottom, then left to right). Never merge two "
+        "blocks into one section and never leave one out; a titled card in the picture is one "
+        "section with that title, and it holds one widget for EVERY instrument drawn in it (a "
+        "card with a compass and a pitch/roll scale is a ShCompass and a ShAttitude).\n\n"
+        "Regions -- every section carries \"region\", one of:\n" + _reference_regions() + "\n"
+        "A section may also carry \"accent\": that block's main colour sampled from the picture, "
+        "as hex (\"#f97316\").\n\n"
+        "The top strip is the page \"header\" (8 items at most, in the picture's order); it "
+        "takes everything around the clock, a name badge hanging under it included:\n"
+        "- connectivity and status icons (LTE, GPS, WiFi, Bluetooth, a lock) -> ShTelltale with "
+        "an \"icon\" from the icon list below, \"label\" the word beside it, \"lit\": true, and "
+        "\"side\": \"left\";\n"
+        "- the time of day -> a Text with id \"clock\", \"text\" the time shown, bound to "
+        "<area>.clock;\n"
+        "- weather or outside temperature, and the driver or operator's name (a name badge, "
+        "often under the clock) -> ShDataField with \"label\" what it is (\"Outside\", "
+        "\"Driver\") and \"value\" what it shows (\"24°C\", \"J. Smith\");\n"
+        "- a healthy check mark -> ShStatDot with \"state\": \"ok\".\n\n"
+        "What the picture shows -> the widget for it:\n"
+        "- a gear selector (P R N D L) -> ShGearIndicator, \"gears\": \"P,R,N,D,L\", \"gear\" the "
+        "lit one, \"orientation\": \"vertical\" when the gears stand in a column; region \"rail\".\n"
+        "- a speed arc or speedometer -> ShSpeedArc(value, maximumValue, unit) with outerColor "
+        "and innerColor the arc's colours; \"showTarget\": false unless a target is shown.\n"
+        "- round dials (RPM, payload, load, pressure) -> one ShClusterGauge each (caption, label, "
+        "minimumValue, maximumValue, majorStep, redlineFrom), \"accentColor\" the dial's colour; "
+        "one section per dial.\n"
+        "- a compass or heading (N E S W) -> ShCompass(heading), never a ShClusterGauge.\n"
+        "- pitch and roll, incline, tilt drawn as a scale, a horizon or a level -> "
+        "ShAttitude(pitch, roll); a ShDataField pair (Pitch, Roll) only for bare numbers, such "
+        "as readouts drawn over the picture of the machine.\n"
+        "- tyre pressures -> ShVehicleStatus(frontLeft, frontRight, rearLeft, rearRight, unit, "
+        "warnBelow). Count the tyres drawn: six tyres (three rows of two) MUST set \"axles\": 3 "
+        "and give midLeft and midRight too; four tyres leave axles out.\n"
+        "- temperature or health bars -> one ShEngineBar per bar (\"orientation\": "
+        "\"horizontal\", label, units, value, maximumValue, cautionValue, warningValue), "
+        "\"barColor\" the bar's colour.\n"
+        "- a fuel or battery bar -> ShSegmentBar(label, value, showPercent) with \"barColor\", "
+        "or ShAutoLevel.\n"
+        "- warning or status lamps -> ShTelltale(icon, color, label) or ShStatDot(state).\n"
+        f"- a picture of the machine (a truck, a pump, a vehicle) -> {picture} with "
+        "\"source\": \"\" (the user supplies the file), in a \"center\" section with role "
+        "\"hero\"; live readouts drawn over the picture go in the same section. A drawing, "
+        "render or photo of the machine is always a block of its own: never leave it out.\n"
+        "- text readouts (a number with a label) -> ShDataField(label, value, units) or "
+        "ShValueTile(title, value, unit).\n"
+        "- a trend line -> ShTrendChart; an alarm list -> ShAlarmTable; buttons -> ShButton.\n\n"
+        "Colours ARE part of the reproduction in this mode: keep the picture's colours. Write "
+        "them as hex (\"#3b82f6\") on the colour properties each widget declares (after "
+        "\"colours:\" in the list below, and accentColor/barColor where named above) and as the "
+        "section's \"accent\". Leave a colour out where the picture shows none.\n\n"
+        "Reply with ONE fenced ```json block and nothing after it:\n"
+        '{"name": "<short name>", "section": {"index": 1, "complete": true, "label": "", "next": ""}, '
+        '"pages": [{"id": "main", "name": "Main", "title": "<screen title, 2-5 words>", '
+        '"header": [{"type": "ShTelltale", "id": "wifi", "side": "left", "properties": '
+        '{"icon": "wifi", "label": "WiFi", "lit": true}}, {"type": "Text", "id": "clock", '
+        '"properties": {"text": "<the time shown>"}, "bindings": {"text": {"tag": "<area>.clock"}}}, '
+        '{"type": "ShDataField", "id": "driver", "properties": {"label": "Driver", "value": '
+        '"<the name on the badge>"}}, <the rest of the top strip: weather, the status check>], '
+        '"sections": [{"title": "Gear", "role": "status", "region": "rail", "widgets": ['
+        '{"type": "ShGearIndicator", "id": "gear", "properties": {"gears": "P,R,N,D", "gear": "D", '
+        '"orientation": "vertical"}, "bindings": {"gear": {"tag": "<area>.gear"}}}]}, '
+        '{"title": "", "role": "hero", "region": "left", "accent": "#<hex>", "widgets": ['
+        '{"type": "ShSpeedArc", "id": "speed", "properties": {"value": <shown>, "maximumValue": '
+        '<full scale>, "unit": "km/h", "outerColor": "#<hex>", "innerColor": "#<hex>"}, '
+        '"bindings": {"value": {"tag": "<area>.speed", "unit": "km/h"}}}]}, '
+        '<one section per remaining block of the picture, each with its "region">]}]}\n'
+        "The <...> are placeholders: fill every one from the picture and the brief, with real "
+        "JSON numbers. <area> is one lowercase word naming the machine (truck, loader, pump) and "
+        "every tag starts with it (truck.clock, truck.speed); never write \"<area>\" or "
+        "\"area\" itself.\n\n"
+        "Section roles: hero (the picture of the machine, the main dial), instruments (dials, "
+        "arcs, bars), readings (tiles and readouts), status (lamps), trend, alarms, controls. "
+        "A section's \"title\" is the label the picture gives the block (\"Incline\", "
+        "\"Tires\", \"Fuel\"); \"\" when the picture shows none. A section may carry \"size\": "
+        "\"compact\", \"normal\" or \"large\" when the block is clearly small or large in the "
+        "picture.\n\n"
+        "Widgets by what they show, with the properties they take:\n"
+        + _reference_catalogue(registry) + "\n"
+        + _plan_brand(brand) +
+        "Other allowed types: " + ", ".join(types) + ".\n\n"
+        "Every widget states what it is: the label the picture shows (Title-case, at most 18 "
+        "characters) in the property its type uses for it, and its unit. Ranges are in "
+        "engineering units with warning and critical thresholds where the process has them.\n"
+        "Every reading carries the value the picture shows as its sample \"value\" (a gauge "
+        "reading 342 t has \"value\": 342); a healthy lamp gets \"state\": \"ok\".\n"
+        "Bindings: live values bind to lowercase dotted tags named for the machine "
+        "(truck.speed, truck.gear, truck.tire_fl, truck.coolant_c); a binding may carry "
+        "\"unit\", \"warning\" and \"critical\" (\"> 80\", \"< 10\").\n"
+        "Actions, keyed by the widget's signal: ShButton clicked; ShToggle toggled. Kinds: "
+        "{\"kind\": \"write\", \"tag\": \"do.x\", \"value\": true}, "
+        "{\"kind\": \"navigate\", \"page\": \"<page id>\"}.\n"
+    )
+    if icons:
+        prompt += ("Icons (ShTelltale, ShAutoReadout, ShIconTile) must be one of: " + icons
+                   + ". Pick the nearest one (LTE -> wifi or link, GPS -> road, a lock -> lock).\n")
+    prompt += ("Ids are unique camelCase (coolantTemp, never coolant_temp). Return the whole "
+               "design in this one reply with section.complete=true.")
+    return prompt
+
+
 def build_plan_prompt(registry: Optional[WidgetRegistry] = None,
                       screen_width: int = 1280, screen_height: int = 800,
-                      brief: str = "", brand: Optional[dict] = None) -> str:
+                      brief: str = "", brand: Optional[dict] = None,
+                      reference: bool = False) -> str:
     """System prompt for planned screens: content and structure, no geometry.
 
     The model says what the screen holds -- a title, and sections with a role
@@ -637,7 +841,13 @@ def build_plan_prompt(registry: Optional[WidgetRegistry] = None,
     Geometry was the part of the old payload the model was worst at and the
     longest part of its reply; leaving it out makes the reply shorter, the
     JSON less likely to break, and the result composed every time.
+
+    ``reference``: the run carries a picture of the screen wanted, and the
+    prompt asks for a reproduction of it (build_reference_plan_prompt).
     """
+    if reference:
+        return build_reference_plan_prompt(registry, screen_width, screen_height,
+                                           brief=brief, brand=brand)
     registry = registry or default_registry()
     try:
         types = sorted(d.type for d in registry.definitions())

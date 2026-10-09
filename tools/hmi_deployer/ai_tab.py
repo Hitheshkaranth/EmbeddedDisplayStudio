@@ -2642,8 +2642,11 @@ class AIDesignTab(QWidget):
                 self.connector.system_prompt = build_system_prompt(registry, width, height,
                                                                    brief=self._root_brief)
             else:
+                # A run that carries pictures asks for a reproduction of them:
+                # every block, the region it sits in, its widget and colours.
                 self.connector.system_prompt = build_plan_prompt(registry, width, height,
-                                                                 brief=self._root_brief)
+                                                                 brief=self._root_brief,
+                                                                 reference=bool(images))
             # A plan request carries the plan's JSON schema, so a server that
             # guides decoding (vLLM, OpenAI, Ollama) cannot answer with broken
             # JSON; ai/structuredOutput=false sends the plain request.
