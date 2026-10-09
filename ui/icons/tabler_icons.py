@@ -43,6 +43,7 @@ TABLER_ICONS = {
     'search': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/>  <path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" />  <path d="M21 21l-6 -6" />',
     'plus': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/>  <path d="M12 5l0 14" />  <path d="M5 12l14 0" />',
     'x': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/>  <path d="M18 6l-12 12" />  <path d="M6 6l12 12" />',
+    'paperclip': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/>  <path d="M15 7l-6.5 6.5a1.5 1.5 0 0 0 3 3l6.5 -6.5a3 3 0 0 0 -6 -6l-6.5 6.5a4.5 4.5 0 0 0 9 9l6.5 -6.5" />',
     'chevron-down': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/>  <path d="M6 9l6 6l6 -6" />',
     'chevron-right': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/>  <path d="M9 6l6 6l-6 6" />',
     'clipboard-text': '<path stroke="none" d="M0 0h24v24H0z" fill="none"/>  <path d="M9 5h-2a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-12a2 2 0 0 0 -2 -2h-2" />  <path d="M9 3m0 2a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v0a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2z" />  <path d="M9 12h6" />  <path d="M9 16h6" />',

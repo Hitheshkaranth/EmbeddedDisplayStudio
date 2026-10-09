@@ -274,6 +274,99 @@ class ChatMessage:
     timestamp: float = field(default_factory=time.time)
 
 
+# ---------------------------------------------------------------------------
+# Reference images
+#
+# A brief can carry pictures of what the user wants: a screenshot of an
+# existing HMI, a sketch, a brand sheet. They go with the request in each
+# provider's own image format; the model must accept images (Ornith,
+# GPT-4o, Claude, Gemini, a vision model on Ollama), or the server answers
+# with an error the turn shows.
+# ---------------------------------------------------------------------------
+
+#: The files the composer accepts.
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
+#: Images one brief carries at most.
+MAX_BRIEF_IMAGES = 4
+#: The long side an image is scaled down to before it is sent: enough for a
+#: model to read a layout and its labels, small enough to keep the request
+#: (and the vision encoder's token count) modest.
+MAX_IMAGE_SIDE = 1568
+
+#: Told to the model with the brief when images are attached.
+REFERENCE_IMAGES_NOTE = (
+    "The attached image(s) are the user's reference for this screen. Follow them: "
+    "the layout and where things sit, the colours, the kinds of widgets and the "
+    "labels they show. The brief's own words win wherever they say otherwise.")
+
+
+@dataclass
+class BriefImage:
+    """One reference image, encoded once for every request of its run."""
+    name: str
+    mime: str     # "image/png" or "image/jpeg"
+    data: str     # base64 of the encoded bytes
+    width: int = 0
+    height: int = 0
+
+    @property
+    def data_url(self) -> str:
+        return f"data:{self.mime};base64,{self.data}"
+
+
+def encode_brief_image(image, name: str = "image") -> BriefImage:
+    """A QImage as a BriefImage: scaled down to MAX_IMAGE_SIDE, PNG when it
+    has transparency (a logo), JPEG otherwise (a screenshot or a photo)."""
+    import base64
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt
+    if image.isNull():
+        raise ValueError(f"{name}: not a readable image")
+    if max(image.width(), image.height()) > MAX_IMAGE_SIDE:
+        image = image.scaled(MAX_IMAGE_SIDE, MAX_IMAGE_SIDE, Qt.KeepAspectRatio,
+                             Qt.SmoothTransformation)
+    fmt, mime = ("PNG", "image/png") if image.hasAlphaChannel() else ("JPEG", "image/jpeg")
+    raw = QByteArray()
+    buffer = QBuffer(raw)
+    buffer.open(QIODevice.WriteOnly)
+    image.save(buffer, fmt, 85 if fmt == "JPEG" else -1)
+    buffer.close()
+    return BriefImage(name, mime, base64.b64encode(bytes(raw)).decode("ascii"),
+                      image.width(), image.height())
+
+
+def load_brief_image(path: str) -> BriefImage:
+    """Read an image file into a BriefImage (ValueError when it cannot be read)."""
+    import os
+    from PySide6.QtGui import QImage
+    return encode_brief_image(QImage(path), os.path.basename(path))
+
+
+def user_message(provider: str, text: str, images=None):
+    """The user's message for `provider`'s dialect, carrying `images`.
+
+    Without images it is the plain text message every dialect already sent.
+    Google's request is assembled from parts, so for "google" this returns
+    the parts list rather than a message.
+    """
+    images = list(images or [])
+    if provider == "google":
+        return [{"text": text}] + [{"inline_data": {"mime_type": i.mime, "data": i.data}}
+                                   for i in images]
+    if not images:
+        return {"role": "user", "content": text}
+    if provider == "ollama":
+        return {"role": "user", "content": text, "images": [i.data for i in images]}
+    if provider == "anthropic":
+        return {"role": "user", "content": [
+            *[{"type": "image", "source": {"type": "base64", "media_type": i.mime, "data": i.data}}
+              for i in images],
+            {"type": "text", "text": text}]}
+    # openai / vllm: OpenAI's content parts.
+    return {"role": "user", "content": [
+        {"type": "text", "text": text},
+        *[{"type": "image_url", "image_url": {"url": i.data_url}} for i in images]]}
+
+
 @dataclass
 class GenerateResult:
     """Result of a design generation request."""
@@ -825,21 +918,28 @@ class ODConnector:
         self,
         brief: str,
         model: Optional[str] = None,
+        images=None,
     ) -> Generator[dict, None, None]:
         """Generate UI from a brief as a structured event stream.
 
         Always begins with ``start`` and ends with ``turn_end``; the answer
         text is accumulated into the conversation history on the way out.
+        ``images`` (BriefImage) go with this request only: the history keeps
+        a note that they were attached, not the pictures, so a follow-up is
+        not re-sent megabytes it already answered.
         """
         self._cancel.clear()
-        self.conversation.append(ChatMessage(role="user", content=brief))
+        images = list(images or [])
+        remembered = brief if not images else (
+            f"{brief}\n[{len(images)} reference image(s) were attached to this request.]")
+        self.conversation.append(ChatMessage(role="user", content=remembered))
         answer_parts: list[str] = []
         stopped = False
         try:
             if self.mode == "daemon":
                 source = self._daemon_events(brief, model)
             else:
-                source = self._byok_events(brief, model)
+                source = self._byok_events(brief, model, images)
             for event in source:
                 if event["type"] == "delta":
                     answer_parts.append(event["delta"])
@@ -905,7 +1005,7 @@ class ODConnector:
                 i += 1
         return pairs[-(HISTORY_TURNS * 2):]
 
-    def byok_request(self, brief: str, model: Optional[str] = None):
+    def byok_request(self, brief: str, model: Optional[str] = None, images=None):
         """Build one BYOK request: (url, headers, payload).
 
         Extracted from ``_byok_events`` so a caller (ai_tab) can fold the
@@ -913,12 +1013,16 @@ class ODConnector:
         The request body for every provider is exactly what it was before,
         plus the schema under that provider's own keyword. A provider that
         cannot go without an API key is reported by ``_byok_events`` from the
-        connection, not here.
+        connection, not here. ``images`` ride on the last user message, in
+        the provider's own image format (user_message).
         """
         prov = dialect(self.byok.provider)
         model_name = model or self.byok.model
         base = self.byok.baseUrl.rstrip("/")
-        chat_messages = self._history_messages() + [{"role": "user", "content": brief}]
+        history = self._history_messages()
+        chat_messages = history + [{"role": "user", "content": brief}]
+        if prov != "google":
+            chat_messages = history + [user_message(prov, brief, images)]
         messages = [{"role": "system", "content": self.system_prompt}] + chat_messages
         headers = {"Content-Type": "application/json"}
 
@@ -965,8 +1069,8 @@ class ODConnector:
                 "contents": [
                     {"role": "model" if m["role"] == "assistant" else "user",
                      "parts": [{"text": m["content"]}]}
-                    for m in chat_messages
-                ],
+                    for m in history
+                ] + [{"role": "user", "parts": user_message("google", brief, images)}],
                 "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS},
             }
         else:
@@ -978,7 +1082,7 @@ class ODConnector:
             payload.update(structured)
         return url, headers, payload
 
-    def _byok_events(self, brief: str, model: Optional[str]) -> Generator[dict, None, None]:
+    def _byok_events(self, brief: str, model: Optional[str], images=None) -> Generator[dict, None, None]:
         if not self.byok:
             yield {"type": "error", "message": "No BYOK provider configured."}
             return
@@ -1000,7 +1104,7 @@ class ODConnector:
             yield {"type": "error", "message": f"{BYOK_PRESETS[prov]['label']} needs an API key."}
             return
 
-        url, headers, payload = self.byok_request(brief, model)
+        url, headers, payload = self.byok_request(brief, model, images)
 
         yield {"type": "start", "model": model or self.byok.model, "provider": prov,
                "url": redact_url(url), "mode": "byok"}

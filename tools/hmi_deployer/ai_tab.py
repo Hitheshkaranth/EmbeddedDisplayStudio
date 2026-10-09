@@ -43,7 +43,10 @@ from PySide6.QtWidgets import (
     QToolButton, QVBoxLayout, QWidget, QMessageBox,
 )
 
-from tools.hmi_deployer.ai_design import BYOK_PRESETS, ProviderConfig
+from tools.hmi_deployer.ai_design import (
+    BYOK_PRESETS, IMAGE_SUFFIXES, MAX_BRIEF_IMAGES, REFERENCE_IMAGES_NOTE, ProviderConfig,
+    encode_brief_image, load_brief_image,
+)
 from tools.hmi_deployer.ai_generator import (
     PLAN_SCHEMA, brief_resolution, build_plan_prompt, build_system_prompt, diff_projects,
     drop_dangling_navigation, merge_project_section, plan_shortfall, summarize_widgets,
@@ -198,13 +201,17 @@ class GenerationWorker(QThread):
     """Runs ``connector.generate_events`` off the UI thread."""
     event = Signal(dict)
 
-    def __init__(self, connector, brief, model, parent=None):
+    def __init__(self, connector, brief, model, parent=None, images=None):
         super().__init__(parent)
         self.connector, self.brief, self.model = connector, brief, model
+        self.images = list(images or [])
 
     def run(self):
+        # Only a request with pictures passes them, so a connector written
+        # before images (a test double, the daemon) is called as it always was.
+        extra = {"images": self.images} if self.images else {}
         try:
-            for ev in self.connector.generate_events(self.brief, self.model):
+            for ev in self.connector.generate_events(self.brief, self.model, **extra):
                 self.event.emit(ev)
         except Exception as exc:  # pragma: no cover - belt and braces
             self.event.emit({"type": "error", "message": str(exc)})
@@ -1094,10 +1101,11 @@ class TurnWidget(QWidget):
     editRequested = Signal(str)   # "Edit brief & retry": put the brief back in the composer
     variantPicked = Signal(object)  # a composition from the strip, for the canvas
 
-    def __init__(self, brief: str, parent=None):
+    def __init__(self, brief: str, parent=None, images=None):
         super().__init__(parent)
         self.setObjectName("turn")
         self.brief_text = brief
+        self.images = list(images or [])
         self.project = None
         self._theme = "dark"
         self._chips = []
@@ -1114,6 +1122,21 @@ class TurnWidget(QWidget):
         self.bubble.setMaximumWidth(440)
         bubble_row.addWidget(self.bubble)
         col.addLayout(bubble_row)
+        if self.images:
+            # The reference pictures this brief was sent with, under it.
+            self.image_row = QWidget()
+            self.image_row.setObjectName("turnImages")
+            images_row = QHBoxLayout(self.image_row)
+            images_row.setContentsMargins(0, 0, 0, 0)
+            images_row.setSpacing(6)
+            images_row.addStretch(1)
+            for image in self.images:
+                thumb = QLabel()
+                thumb.setObjectName("turnImage")
+                thumb.setPixmap(_thumbnail(image, 96))
+                thumb.setToolTip(f"{image.name} · {image.width}×{image.height}")
+                images_row.addWidget(thumb)
+            col.addWidget(self.image_row)
 
         self.shell = ExecutionShell()
         col.addWidget(self.shell)
@@ -1301,9 +1324,37 @@ class PromptCard(QFrame):
 # ---------------------------------------------------------------------------
 
 class BriefInput(QPlainTextEdit):
-    """Grows with its text between one and six lines, like a chat composer."""
+    """Grows with its text between one and six lines, like a chat composer.
+
+    An image pasted (a screenshot on the clipboard) or dropped on it (files
+    from Explorer) is not text: it is handed on as imagesAdded, a list of
+    file paths or QImages, for the composer to attach.
+    """
     submitted = Signal()
+    imagesAdded = Signal(list)
     MIN_LINES, MAX_LINES = 1, 6
+
+    @staticmethod
+    def _image_sources(source) -> list:
+        paths = [url.toLocalFile() for url in source.urls() if url.isLocalFile()]
+        images = [p for p in paths if p.lower().endswith(IMAGE_SUFFIXES)]
+        if images:
+            return images
+        if source.hasImage():
+            image = source.imageData()
+            if image is not None and not image.isNull():
+                return [image]
+        return []
+
+    def canInsertFromMimeData(self, source):
+        return bool(self._image_sources(source)) or super().canInsertFromMimeData(source)
+
+    def insertFromMimeData(self, source):
+        found = self._image_sources(source)
+        if found:
+            self.imagesAdded.emit(found)
+            return
+        super().insertFromMimeData(source)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1327,6 +1378,44 @@ class BriefInput(QPlainTextEdit):
         pad = int(self.document().documentMargin() * 2) + 4
         lines = max(self.MIN_LINES, int(self.document().size().height() + 0.5))
         self.setFixedHeight(min(self.MAX_LINES, lines) * line + pad)
+
+
+def _thumbnail(image, side: int) -> QPixmap:
+    """A BriefImage as a square-bounded pixmap for the composer and the turn."""
+    import base64
+    from PySide6.QtGui import QImage
+    picture = QImage.fromData(base64.b64decode(image.data))
+    return QPixmap.fromImage(picture).scaled(side, side, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+
+class AttachmentChip(QFrame):
+    """One attached reference image in the composer: thumbnail, name, ×."""
+    removeRequested = Signal(object)
+
+    def __init__(self, image, parent=None):
+        super().__init__(parent)
+        self.setObjectName("attachmentChip")
+        self.image = image
+        row = QHBoxLayout(self)
+        row.setContentsMargins(4, 4, 4, 4)
+        row.setSpacing(6)
+        thumb = QLabel()
+        thumb.setPixmap(_thumbnail(image, 36))
+        thumb.setFixedSize(36, 36)
+        thumb.setAlignment(Qt.AlignCenter)
+        row.addWidget(thumb)
+        name = image.name if len(image.name) <= 22 else image.name[:19] + "…"
+        self.name_label = QLabel(name)
+        self.name_label.setObjectName("attachmentName")
+        self.name_label.setToolTip(f"{image.name} · {image.width}×{image.height}")
+        row.addWidget(self.name_label)
+        self.remove_btn = QToolButton()
+        self.remove_btn.setObjectName("attachmentRemove")
+        self.remove_btn.setCursor(Qt.PointingHandCursor)
+        self.remove_btn.setToolTip("Remove")
+        self.remove_btn.setIcon(_icon("x", 12))
+        self.remove_btn.clicked.connect(lambda: self.removeRequested.emit(self.image))
+        row.addWidget(self.remove_btn)
 
 
 class PreviewView(QGraphicsView):
@@ -1619,16 +1708,38 @@ class AIDesignTab(QWidget):
         cc = QVBoxLayout(self.composer_card)
         cc.setContentsMargins(14, 12, 10, 8)
         cc.setSpacing(8)
+        # Reference images for the next brief (BriefImage), shown as chips
+        # above the text; hidden while there are none.
+        self._attachments = []
+        self._root_images = []
+        self.attachment_strip = QWidget()
+        self.attachment_strip.setObjectName("attachmentStrip")
+        self._attachment_row = QHBoxLayout(self.attachment_strip)
+        self._attachment_row.setContentsMargins(0, 0, 0, 0)
+        self._attachment_row.setSpacing(6)
+        self._attachment_row.addStretch(1)
+        self.attachment_strip.setVisible(False)
+        cc.addWidget(self.attachment_strip)
         self.brief_input = BriefInput()
         self.brief_input.setObjectName("briefInput")
         self.brief_input.setFrameShape(QFrame.NoFrame)
-        self.brief_input.setPlaceholderText("Describe the screen you want on the panel…")
+        self.brief_input.setPlaceholderText(
+            "Describe the screen you want on the panel… (paste or drop a reference image)")
         self.brief_input.submitted.connect(self._on_send)
+        self.brief_input.imagesAdded.connect(self.add_images)
         self.brief_input.installEventFilter(self)
         cc.addWidget(self.brief_input)
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
+        self.attach_btn = QToolButton()
+        self.attach_btn.setObjectName("attachButton")
+        self.attach_btn.setCursor(Qt.PointingHandCursor)
+        self.attach_btn.setToolTip(
+            f"Attach reference images (up to {MAX_BRIEF_IMAGES}): a screenshot, a sketch, a brand sheet")
+        self.attach_btn.setIconSize(QSize(16, 16))
+        self.attach_btn.clicked.connect(self.attach_images)
+        actions.addWidget(self.attach_btn)
         self.auto_apply = QCheckBox("Auto-apply to canvas")
         self.auto_apply.setObjectName("autoApply")
         self.auto_apply.setCursor(Qt.PointingHandCursor)
@@ -1862,6 +1973,8 @@ class AIDesignTab(QWidget):
         hover = tint(fg, 0.06)
         mono = '"Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace'
         arrow = _icon_file("chevron-down", 12, muted_fg)
+        if hasattr(self, "attach_btn"):
+            self.attach_btn.setIcon(_icon("paperclip", 16, muted_fg))
         primary_grad = (f"qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {tint(primary, 1.0)}, "
                         f"stop:1 {tint(info, 0.95)})")
         self.setStyleSheet(f"""
@@ -1878,7 +1991,7 @@ class AIDesignTab(QWidget):
                slabs behind captions and inside the shell heads. */
             QWidget#fieldBox, QWidget#shellHead, QWidget#toolRow, QWidget#turn,
             QWidget#chipHost, QWidget#foldBody, QWidget#hero, QWidget#heroColumn,
-            QWidget#variantStrip {{ background: transparent; }}
+            QWidget#variantStrip, QWidget#attachmentStrip, QWidget#turnImages {{ background: transparent; }}
 
             /* -- variant strip: three quiet thumbnails, one click each ------ */
             QFrame#variantThumb {{ background: {raised}; border: 1px solid {border};
@@ -1995,6 +2108,12 @@ class AIDesignTab(QWidget):
                 border-radius: 8px; padding: 0 12px; font-size: 12px; font-weight: 500;
                 min-height: 28px; max-height: 28px; height: 28px; }}
             QPushButton#ghostAction {{ border-color: transparent; color: {muted_fg}; }}
+            QFrame#attachmentChip {{ background: {surface}; border: 1px solid {border}; border-radius: 10px; }}
+            QLabel#attachmentName {{ color: {muted_fg}; font-size: 11px; background: transparent; }}
+            QToolButton#attachmentRemove, QToolButton#attachButton {{
+                background: transparent; border: none; border-radius: 6px; padding: 2px; }}
+            QToolButton#attachmentRemove:hover, QToolButton#attachButton:hover {{ background: {hover}; }}
+            QLabel#turnImage {{ border: 1px solid {border}; border-radius: 8px; background: {surface}; }}
             QPushButton#secondaryAction:hover, QPushButton#ghostAction:hover {{
                 background: {hover}; color: {fg}; border-color: {border}; }}
             QCheckBox#autoApply {{ color: {muted_fg}; font-size: 12px; spacing: 7px; background: transparent; }}
@@ -2379,6 +2498,56 @@ class AIDesignTab(QWidget):
     # Generation
     # ------------------------------------------------------------------
 
+    # -- reference images -------------------------------------------------
+
+    def attachments(self) -> list:
+        """The BriefImages the next brief will carry."""
+        return list(self._attachments)
+
+    def attach_images(self):
+        """The paperclip: pick image files to attach."""
+        from PySide6.QtWidgets import QFileDialog
+        pattern = " ".join(f"*{s}" for s in IMAGE_SUFFIXES)
+        paths, _ = QFileDialog.getOpenFileNames(self, "Attach reference images", "",
+                                                f"Images ({pattern})")
+        if paths:
+            self.add_images(paths)
+
+    def add_images(self, sources):
+        """Attach images (file paths or QImages) to the next brief, up to
+        MAX_BRIEF_IMAGES; one that cannot be read is said and skipped."""
+        for source in sources:
+            if len(self._attachments) >= MAX_BRIEF_IMAGES:
+                self.statusMessage.emit(f"AI Design: a brief carries at most {MAX_BRIEF_IMAGES} images.")
+                break
+            try:
+                if isinstance(source, str):
+                    image = load_brief_image(source)
+                else:
+                    number = len(self._attachments) + 1
+                    image = encode_brief_image(source, f"pasted-{number}.png")
+            except ValueError as exc:
+                self.statusMessage.emit(f"AI Design: could not attach {exc}")
+                continue
+            self._attachments.append(image)
+        self._refresh_attachments()
+
+    def remove_attachment(self, image):
+        self._attachments = [i for i in self._attachments if i is not image]
+        self._refresh_attachments()
+
+    def _refresh_attachments(self):
+        row = self._attachment_row
+        while row.count() > 1:                     # keep the trailing stretch
+            item = row.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        for image in self._attachments:
+            chip = AttachmentChip(image)
+            chip.removeRequested.connect(self.remove_attachment)
+            row.insertWidget(row.count() - 1, chip)
+        self.attachment_strip.setVisible(bool(self._attachments))
+
     def _on_send_or_stop(self):
         if self.streaming:
             self.stop_generation()
@@ -2395,8 +2564,14 @@ class AIDesignTab(QWidget):
 
     def _on_send(self):
         brief = self.brief_input.toPlainText().strip()
-        if not brief or self.streaming:
+        images = list(self._attachments)
+        if self.streaming or not (brief or images):
             return
+        if not brief:
+            brief = "Design the screen shown in the attached image."
+        # Every request of this run (the plan, a retry, a section follow-up)
+        # carries the pictures (_start_generation).
+        self._root_images = images
         self._root_brief = brief
         self._resolution_noted = False
         self._section_run = 1
@@ -2423,8 +2598,17 @@ class AIDesignTab(QWidget):
             return
 
         self.brief_input.setPlainText("")
+        if self._attachments:
+            self._attachments = []
+            self._refresh_attachments()
         self.empty_hint.setVisible(False)
-        turn = TurnWidget(display_brief)
+        images = list(getattr(self, "_root_images", []) or [])
+        if images:
+            brief = f"{brief}\n\n{REFERENCE_IMAGES_NOTE}"
+        # The user's own turn shows the pictures it carries; the automatic
+        # follow-ups (a retry, the next section) send them without repeating them.
+        turn = TurnWidget(display_brief,
+                          images=images if display_brief == getattr(self, "_root_brief", None) else None)
         turn.request_text = brief
         turn.retheme(self._theme)
         turn.applyRequested.connect(lambda project: self.apply_to_canvas(project=project, focus=True))
@@ -2477,7 +2661,7 @@ class AIDesignTab(QWidget):
             # Bound-method slots so PySide queues the calls onto the UI thread;
             # a lambda would run on the worker thread and touch widgets there.
             self._active_turn = turn
-            self._worker = GenerationWorker(self.connector, brief, model, self)
+            self._worker = GenerationWorker(self.connector, brief, model, self, images=images)
             self._worker.event.connect(self._on_worker_event)
             self._worker.finished.connect(self._on_worker_done)
             self._worker.finished.connect(self._worker.deleteLater)
