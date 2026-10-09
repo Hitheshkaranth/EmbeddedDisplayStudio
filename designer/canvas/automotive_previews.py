@@ -12,8 +12,15 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetrics, QLinearGradient,
                            QPainterPath, QPen, QPolygonF, QRadialGradient)
 
 from designer.canvas.widget_previews import (
-    FONT, WEIGHT_MEDIUM, WEIGHT_SEMIBOLD, _number, _prop, _rounded, _text, auto, token,
+    FONT, WEIGHT_MEDIUM, WEIGHT_SEMIBOLD, _number, _override_colour, _prop, _rounded, _text, auto, token,
 )
+
+
+def _mix(colour, toward, amount):
+    """``colour`` moved ``amount`` of the way to ``toward`` (Qt.tint)."""
+    return QColor(round(colour.red() + (toward.red() - colour.red()) * amount),
+                  round(colour.green() + (toward.green() - colour.green()) * amount),
+                  round(colour.blue() + (toward.blue() - colour.blue()) * amount))
 
 
 def _painter_font(painter, pixel_size, weight=QFont.Normal):
@@ -52,6 +59,10 @@ def paint_cluster_gauge(painter, rect, props, ctx):
     label = str(given("label", "x1000 RPM"))
     decimals = int(_number(props, "decimals", 0))
     show_inner = bool(_prop(props, "showInnerDial", "true") in ("true", "True", True, 1, "1"))
+    custom = _override_colour(props, "accentColor")
+    accent = custom or auto("accent")
+    accent_deep = _mix(custom, QColor("#000000"), 0.35) if custom else auto("accentDeep")
+    glow = _mix(custom, QColor("#ffffff"), 0.35) if custom else auto("glow")
     span = max(0.0001, maximum - minimum)
     clamped = max(minimum, min(maximum, value))
 
@@ -90,8 +101,8 @@ def paint_cluster_gauge(painter, rect, props, ctx):
 
     # Gradient for the value arc (horizontal mapping: left=deep, right=accent)
     grad = QLinearGradient(cx - arc_r, cy, cx + arc_r, cy)
-    grad.setColorAt(0.0, auto("accentDeep"))
-    grad.setColorAt(1.0, auto("accent"))
+    grad.setColorAt(0.0, accent_deep)
+    grad.setColorAt(1.0, accent)
     painter.setPen(QPen(grad, stroke_w, Qt.SolidLine, Qt.FlatCap))
     painter.drawArc(
         QRectF(cx - arc_r, cy - arc_r, arc_r * 2, arc_r * 2),
@@ -100,7 +111,7 @@ def paint_cluster_gauge(painter, rect, props, ctx):
 
     # 2 px glow line on outer edge of value arc
     glow_r = arc_r + stroke_w * 0.35
-    painter.setPen(QPen(auto("glow"), 2, Qt.SolidLine, Qt.FlatCap))
+    painter.setPen(QPen(glow, 2, Qt.SolidLine, Qt.FlatCap))
     painter.drawArc(
         QRectF(cx - glow_r, cy - glow_r, glow_r * 2, glow_r * 2),
         int(-start_angle * 16),
@@ -176,12 +187,8 @@ def paint_cluster_gauge(painter, rect, props, ctx):
 
         # Radial gradient overlay (center: accentDeep 20% alpha, edge: transparent)
         rad_grad = QRadialGradient(QPointF(cx, cy), inner_r)
-        rad_grad.setColorAt(0.0, QColor(auto("accentDeep").red(),
-                                         auto("accentDeep").green(),
-                                         auto("accentDeep").blue(), 51))
-        rad_grad.setColorAt(1.0, QColor(auto("accentDeep").red(),
-                                         auto("accentDeep").green(),
-                                         auto("accentDeep").blue(), 0))
+        rad_grad.setColorAt(0.0, QColor(accent_deep.red(), accent_deep.green(), accent_deep.blue(), 51))
+        rad_grad.setColorAt(1.0, QColor(accent_deep.red(), accent_deep.green(), accent_deep.blue(), 0))
         painter.setBrush(QBrush(rad_grad))
         painter.setPen(Qt.NoPen)
         painter.drawEllipse(QPointF(cx, cy), inner_r, inner_r)
@@ -234,6 +241,28 @@ def paint_gear_indicator(painter, rect, props, ctx):
         gears.append(gear)
     if not show_all:
         gears = [gear]
+
+    if _prop(props, "orientation", "horizontal") == "vertical":
+        # The rail (ShGearIndicator.qml): equal slots, the engaged gear a
+        # dark letter on a bright disc, the others muted.
+        w, h = rect.width(), rect.height()
+        _rounded(painter, rect, auto("tileBg"), min(w, h) / 2, auto("tileBorder"), 1)
+        count = max(1, len(gears))
+        pad = min(w * 0.25, h * 0.05)
+        slot = max(1.0, (h - 2 * pad) / count)
+        disc = max(4.0, min(w * 0.82, slot * 0.92))
+        for index, g in enumerate(gears):
+            current = g == gear
+            cy = rect.top() + pad + slot * (index + 0.5)
+            if current:
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(auto("text")))
+                painter.drawEllipse(QPointF(rect.center().x(), cy), disc / 2, disc / 2)
+            size = max(7, round(disc * 0.62 if current else min(slot * 0.5, w * 0.5)))
+            _text(painter, QRectF(rect.left(), cy - slot / 2, w, slot), g, size=size,
+                  color=auto("panel") if current else auto("muted"),
+                  weight=WEIGHT_SEMIBOLD if current else WEIGHT_MEDIUM, flags=Qt.AlignCenter, elide=False)
+        return
 
     h = rect.height()
     spacing = max(2, int(h * 0.12))
@@ -585,40 +614,36 @@ def paint_segment_bar(painter, rect, props, ctx):
     total_full = full_cells + 1 if last_full else full_cells
 
     low = value <= low_level and low_level > 0
-    accent = auto("redline") if low else auto("accent")
-    accent_deep = auto("redline") if low else auto("accentDeep")
+    bar = _override_colour(props, "barColor")
+    accent = auto("redline") if low else bar or auto("accent")
+    accent_deep = auto("redline") if low else bar or auto("accentDeep")
     pct_color = auto("red") if low else auto("text")
 
     gap = int(h * 0.12)
     radius = int(h * 0.1)
 
-    # Label on the left
+    # As ShSegmentBar.qml lays it out: the caption at the left, the percent
+    # at the right, the cells (0.6 h tall) between them 0.3 h from each.
+    left, top = rect.left(), rect.top()
+    margin = round(h * 0.3)
     label_width = 0
     if label:
-        _text(painter, QRectF(2, 0, h, h), label, size=int(h * 0.4),
-              color=auto("muted"), flags=Qt.AlignLeft | Qt.AlignVCenter)
-        fm = painter.fontMetrics()
-        label_width = fm.horizontalAdvance(label) + 4
+        _text(painter, QRectF(left, top, w, h), label, size=max(7, round(h * 0.4)),
+              color=auto("muted"), flags=Qt.AlignLeft | Qt.AlignVCenter, elide=False)
+        label_width = painter.fontMetrics().horizontalAdvance(label) + margin
 
-    # Percent text on the right
     pct_width = 0
     if show_pct:
         pct_text = str(round(frac * 100)) + "%"
-        _text(painter, QRectF(w - h, 0, h, h), pct_text, size=int(h * 0.45),
-              color=pct_color, weight=WEIGHT_SEMIBOLD, flags=Qt.AlignRight | Qt.AlignVCenter)
-        fm = painter.fontMetrics()
-        pct_width = fm.horizontalAdvance(pct_text) + 4
+        _text(painter, QRectF(left, top, w, h), pct_text, size=max(7, round(h * 0.45)),
+              color=pct_color, weight=WEIGHT_SEMIBOLD, flags=Qt.AlignRight | Qt.AlignVCenter, elide=False)
+        pct_width = painter.fontMetrics().horizontalAdvance(pct_text) + margin
 
-    # Segment cells
-    avail = w - 4 - label_width - pct_width - 8
-    if avail < 0:
-        avail = 0
-    cell_w = (avail - gap * (seg_count - 1)) / seg_count
-    if cell_w < 0:
-        cell_w = 0
-
-    cell_y = (h - cell_w) / 2.0
-    x = 4 + label_width
+    avail = max(0.0, w - label_width - pct_width)
+    cell_w = max(1.0, (avail - gap * (seg_count - 1)) / seg_count)
+    cell_h = round(h * 0.6)
+    cell_y = top + (h - cell_h) / 2.0
+    x = left + label_width
 
     for i in range(seg_count):
         if i < total_full:
@@ -627,10 +652,8 @@ def paint_segment_bar(painter, rect, props, ctx):
             brush_color = auto("track")
         painter.setBrush(QBrush(brush_color))
         painter.setPen(Qt.NoPen)
-        if cell_w >= 2 * radius:
-            painter.drawRoundedRect(x, cell_y, cell_w, cell_w, radius, radius)
-        else:
-            painter.drawRoundedRect(x, cell_y, cell_w, cell_w, int(cell_w / 2), int(cell_w / 2))
+        r = min(radius, cell_w / 2)
+        painter.drawRoundedRect(QRectF(x, cell_y, cell_w, cell_h), r, r)
         x += cell_w + gap
 
 
@@ -681,10 +704,15 @@ def paint_vehicle_status(painter, rect, props, ctx):
     the pressures at the corners (red when low), unit under, label over."""
     warn_below = _number(props, "warnBelow", 1.8)
     decimals = int(_number(props, "decimals", 1))
-    values = {name: _number(props, name, 0.0) for name in ("frontLeft", "frontRight", "rearLeft", "rearRight")}
+    values = {name: _number(props, name, 0.0) for name in ("frontLeft", "frontRight", "rearLeft", "rearRight",
+                                                           "midLeft", "midRight")}
 
     def low(v):
         return warn_below > 0 and v < warn_below
+
+    if int(_number(props, "axles", 2)) >= 3:
+        _paint_haul_truck(painter, rect, props, values, low, decimals)
+        return
 
     w, h = rect.width(), rect.height()
     body_w, body_h = w * 0.42, h * 0.7
@@ -750,3 +778,62 @@ PAINTERS = {
     "ShIconTile": paint_icon_tile,
     "ShVehicleStatus": paint_vehicle_status,
 }
+
+
+def _paint_haul_truck(painter, rect, props, values, low, decimals):
+    """ShVehicleStatus with axles 3: a grey truck outline, six tyres drawn as
+    green outlines (amber when low) and each reading in green over its unit,
+    centred in the column beside its tyre."""
+    w, h = rect.width(), rect.height()
+    body_w, body_h = w * 0.34, h * 0.74
+    x, y = rect.left() + (w - body_w) / 2, rect.top() + (h - body_h) / 2
+    wheel_w, wheel_h = w * 0.06, h * 0.15
+    radius = min(w * 0.05, body_w / 2, body_h / 2)
+    rows = {0: y + body_h * 0.12, 1: y + body_h * 0.5 - wheel_h / 2, 2: y + body_h * 0.88 - wheel_h}
+    tyres = (("frontLeft", 0, 0), ("frontRight", 1, 0), ("midLeft", 0, 1), ("midRight", 1, 1),
+             ("rearLeft", 0, 2), ("rearRight", 1, 2))
+    for name, side, row in tyres:
+        v = values[name]
+        wx = x + body_w - wheel_w * 0.4 if side else x - wheel_w * 0.6
+        stroke = QColor(auto("amber")) if low(v) else QColor(auto("green"))
+        fill = QColor(stroke)
+        if not low(v):
+            fill.setAlphaF(0.18)
+        painter.setBrush(QBrush(fill))
+        painter.setPen(QPen(stroke, 1.5))
+        painter.drawRoundedRect(QRectF(wx, rows[row], wheel_w, wheel_h), wheel_w * 0.3, wheel_w * 0.3)
+
+    muted = QColor(auto("muted"))
+    fill = QColor(muted)
+    fill.setAlphaF(0.15)
+    painter.setBrush(QBrush(fill))
+    painter.setPen(QPen(muted, 1.5))
+    painter.drawRoundedRect(QRectF(x, y, body_w, body_h), radius, radius)
+    glass = QColor(muted)
+    glass.setAlphaF(0.6)
+    painter.setPen(QPen(glass, 1.2))
+    inset = body_w * 0.12
+    for f in (0.28, 0.72):
+        painter.drawLine(QPointF(x + inset, y + body_h * f), QPointF(x + body_w - inset, y + body_h * f))
+
+    col_w = x - rect.left() - wheel_w * 0.6
+    size = max(7, round(min(h * 0.11, col_w * 0.38)))
+    small = max(7, round(h * 0.06))
+    unit = str(_prop(props, "unit", ""))
+    for name, side, row in tyres:
+        v = values[name]
+        cy = rows[row] + wheel_h / 2
+        block = size * 1.2 + (small * 1.2 if unit else 0)
+        left = rect.right() - col_w if side else rect.left()
+        top = cy - block / 2
+        _text(painter, QRectF(left, top, col_w, size * 1.2), f"{v:.{decimals}f}", size=size,
+              color=auto("red") if low(v) else auto("green"), weight=WEIGHT_SEMIBOLD,
+              flags=Qt.AlignCenter, elide=False)
+        if unit:
+            _text(painter, QRectF(left, top + size * 1.2, col_w, small * 1.2), unit, size=small,
+                  color=auto("muted"), flags=Qt.AlignCenter, elide=False)
+    label = str(_prop(props, "label", ""))
+    if label:
+        label_size = max(7, int(h * 0.08))
+        _text(painter, QRectF(rect.left(), rect.top(), w, label_size * 1.3), label,
+              size=label_size, color=auto("muted"), flags=Qt.AlignCenter)

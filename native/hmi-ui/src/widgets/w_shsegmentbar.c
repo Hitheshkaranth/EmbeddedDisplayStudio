@@ -2,7 +2,8 @@
 // Spec: ui/qml/Shadcn/ShSegmentBar.qml: caption left (muted, 0.4 h), percent
 // right (semibold 0.45 h, red when low), a row of `segments` cells between
 // them (height 0.6 h, gap round(0.12 h), radius round(0.1 h)); filled cells
-// accent (the first accentDeep), redline when low, autoTrack otherwise.
+// accent (the first accentDeep), redline when low, autoTrack otherwise;
+// a set barColor fills every cell in that colour instead of the accent.
 #include <stdio.h>
 #include <string.h>
 
@@ -13,6 +14,7 @@ typedef struct {
     double value, minimumValue, maximumValue, lowLevel;
     int segments;
     bool showPercent;
+    char barColor[32];   // "" = the accent
     lv_obj_t *face, *caption, *percent;
 } state_t;
 
@@ -37,9 +39,13 @@ static void draw_cb(lv_event_t *e)
     double cellW = fmax(1, (width - gap * (count - 1)) / count);
     double y = round(H / 2 - cellsH / 2);
     int radius = (int)round(H * 0.1);
+    lv_opa_t barOpa = 0;
+    lv_color_t bar = st->barColor[0] ? hmi_colour_hex(st->barColor, &barOpa) : lv_color_black();
+    bool custom = st->barColor[0] && barOpa > 0;
     for (int i = 0; i < count; ++i) {
         lv_color_t c = i >= filled ? hmi_colour("autoTrack")
                      : low ? hmi_colour("autoRedline")
+                     : custom ? bar
                      : i == 0 ? hmi_colour("autoAccentDeep") : hmi_colour("autoAccent");
         hmi_draw_fill(&d, left + i * (cellW + gap), y, cellW, cellsH, c, LV_OPA_COVER, radius);
     }
@@ -75,6 +81,7 @@ static void read_model(hmi_widget_t *w)
     st->segments = (int)hmi_widget_num(w, "segments", 12);
     st->lowLevel = hmi_widget_num(w, "lowLevel", 20);
     st->showPercent = hmi_widget_bool(w, "showPercent", true);
+    snprintf(st->barColor, sizeof st->barColor, "%s", hmi_widget_str(w, "barColor", ""));
 }
 
 static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
@@ -104,6 +111,8 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
     else if (strcmp(prop, "segments") == 0) st->segments = (int)hmi_value_as_num(value, st->segments);
     else if (strcmp(prop, "lowLevel") == 0) st->lowLevel = hmi_value_as_num(value, st->lowLevel);
     else if (strcmp(prop, "showPercent") == 0) st->showPercent = hmi_value_as_bool(value, st->showPercent);
+    else if (strcmp(prop, "barColor") == 0)
+        snprintf(st->barColor, sizeof st->barColor, "%s", hmi_value_as_str(value, ""));
     else if (strcmp(prop, "label") != 0) return;
     layout(w);
 }

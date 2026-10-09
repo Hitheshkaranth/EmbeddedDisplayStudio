@@ -5,6 +5,10 @@
  * ``modeNumber`` above 0 follows the engaged gear as a lighter digit
  * ("D4"). A gear that is not in the list is still shown, appended, so a
  * telemetry value the list did not foresee never blanks the display.
+ *
+ * ``orientation: "vertical"`` stacks the gears top to bottom in a rounded
+ * rail (a haul truck's shifter strip): the engaged gear is a dark letter on
+ * a bright disc, the others muted letters. The rail shows no mode number.
  */
 import QtQuick 2.15
 
@@ -15,6 +19,7 @@ Item {
     property string gear: "D"
     property int modeNumber: 4
     property bool showAll: true
+    property string orientation: "horizontal"   // "horizontal" | "vertical"
 
     implicitWidth: 120
     implicitHeight: 70
@@ -31,7 +36,10 @@ Item {
         return root.showAll ? parts : (known ? [root.gear] : []);
     }
 
+    readonly property bool _vertical: root.orientation === "vertical"
+
     Row {
+        visible: !root._vertical
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: root._h * 0.12
@@ -63,6 +71,50 @@ Item {
                     color: Theme.autoLine
                     font.family: Theme.fontFamily
                     font.pixelSize: Math.max(8, Math.round(root._h * 0.45))
+                }
+            }
+        }
+    }
+
+    // -- vertical: the rail --------------------------------------------------
+    Rectangle {
+        id: rail
+        visible: root._vertical
+        anchors.fill: parent
+        radius: Math.min(width, height) / 2
+        color: Theme.autoTileBg
+        border.color: Theme.autoTileBorder
+        border.width: 1
+
+        readonly property int count: Math.max(1, root._list.length)
+        readonly property real pad: Math.min(width * 0.25, height * 0.05)
+        readonly property real slot: Math.max(1, (height - 2 * pad) / count)
+        readonly property real disc: Math.max(4, Math.min(width * 0.82, slot * 0.92))
+
+        Repeater {
+            model: root._vertical ? root._list : []
+            delegate: Item {
+                readonly property bool current: modelData === root.gear
+                x: 0
+                y: rail.pad + rail.slot * index
+                width: rail.width
+                height: rail.slot
+                Rectangle {
+                    visible: parent.current
+                    anchors.centerIn: parent
+                    width: rail.disc
+                    height: rail.disc
+                    radius: rail.disc / 2
+                    color: Theme.autoText
+                }
+                Text {
+                    anchors.centerIn: parent
+                    text: modelData
+                    color: parent.current ? Theme.autoPanel : Theme.autoMuted
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Math.max(7, Math.round(parent.current ? rail.disc * 0.62
+                                                 : Math.min(rail.slot * 0.5, rail.width * 0.5)))
+                    font.weight: parent.current ? Theme.fontSemibold : Theme.fontMedium
                 }
             }
         }

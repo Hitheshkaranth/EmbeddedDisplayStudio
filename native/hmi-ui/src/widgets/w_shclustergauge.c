@@ -20,9 +20,30 @@ typedef struct {
     lv_obj_t *readout, *unit, *caption, *label;
     lv_obj_t *scale[MAX_MAJORS];
     int nscale;
+    char accentColor[32];   // "" = Theme.autoAccent
 } state_t;
 
 static double clamp(double v, double lo, double hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+/* accentColor, as ShClusterGauge.qml resolves it: unset (or fully
+   transparent) keeps autoAccent/autoAccentDeep/autoGlow; otherwise the arc
+   is that colour, its deep end the colour 35 % of the way to black (Qt.tint
+   with 35 % black) and the glow 35 % of the way to white. */
+static bool accent_colours(const state_t *st, lv_color_t *accent, lv_color_t *deep, lv_color_t *glow)
+{
+    lv_opa_t opa = LV_OPA_COVER;
+    lv_color_t c = st->accentColor[0] ? hmi_colour_hex(st->accentColor, &opa) : lv_color_black();
+    if (!st->accentColor[0] || opa == 0) {
+        *accent = hmi_colour("autoAccent");
+        *deep = hmi_colour("autoAccentDeep");
+        *glow = hmi_colour("autoGlow");
+        return false;
+    }
+    *accent = c;
+    *deep = lv_color_mix(lv_color_black(), c, (lv_opa_t)(0.35 * 255));
+    *glow = lv_color_mix(lv_color_white(), c, (lv_opa_t)(0.35 * 255));
+    return true;
+}
 
 static void draw_cb(lv_event_t *e)
 {
@@ -37,8 +58,9 @@ static void draw_cb(lv_event_t *e)
     double startAngle = 90 + (360 - st->sweep) / 2;
     double arcR = 0.38 * dim, strokeW = 0.05 * dim;
     lv_color_t track = hmi_colour("autoTrack"), redline = hmi_colour("autoRedline");
-    lv_color_t accentDeep = hmi_colour("autoAccentDeep"), accent = hmi_colour("autoAccent");
-    lv_color_t glow = hmi_colour("autoGlow"), line = hmi_colour("autoLine"), muted = hmi_colour("autoMuted");
+    lv_color_t accentDeep, accent, glow;
+    bool custom = accent_colours(st, &accent, &accentDeep, &glow);
+    lv_color_t line = hmi_colour("autoLine"), muted = hmi_colour("autoMuted");
 
     // 1. track
     hmi_draw_arc(&d, cx, cy, arcR, strokeW, startAngle, startAngle + st->sweep, track, LV_OPA_COVER);
@@ -84,7 +106,8 @@ static void draw_cb(lv_event_t *e)
     if (st->showInnerDial) {
         double innerR = 0.28 * dim;
         hmi_draw_disc(&d, cx, cy, innerR, hmi_colour("autoPanel"), LV_OPA_COVER);
-        hmi_draw_disc(&d, cx, cy, innerR * 0.6, hmi_colour_hex("#0a4f8a", NULL), (lv_opa_t)(0.20 * 255 * 0.5));
+        hmi_draw_disc(&d, cx, cy, innerR * 0.6, custom ? accentDeep : hmi_colour_hex("#0a4f8a", NULL),
+                      (lv_opa_t)(0.20 * 255 * 0.5));
         hmi_draw_arc(&d, cx, cy, innerR - 0.75, 1.5, 0, 360, hmi_colour("autoTileBorder"), LV_OPA_COVER);
     }
 }
@@ -182,6 +205,7 @@ static void read_model(hmi_widget_t *w)
     st->sweep = hmi_widget_num(w, "sweep", 240);
     st->showInnerDial = hmi_widget_bool(w, "showInnerDial", true);
     st->decimals = (int)hmi_widget_num(w, "decimals", 0);
+    snprintf(st->accentColor, sizeof st->accentColor, "%s", hmi_widget_str(w, "accentColor", ""));
 }
 
 static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
@@ -219,6 +243,8 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
     else if (strcmp(prop, "sweep") == 0) st->sweep = hmi_value_as_num(value, st->sweep);
     else if (strcmp(prop, "showInnerDial") == 0) st->showInnerDial = hmi_value_as_bool(value, st->showInnerDial);
     else if (strcmp(prop, "decimals") == 0) st->decimals = (int)hmi_value_as_num(value, st->decimals);
+    else if (strcmp(prop, "accentColor") == 0)
+        snprintf(st->accentColor, sizeof st->accentColor, "%s", hmi_value_as_str(value, ""));
     else if (strcmp(prop, "readout") == 0 || strcmp(prop, "readoutUnit") == 0 ||
              strcmp(prop, "caption") == 0 || strcmp(prop, "label") == 0) {
         // text props: read back through the model (bound text arrives as the value)

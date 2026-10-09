@@ -57,6 +57,14 @@ ALTERED = {
     "frontRight": lambda v: 0.4,
     "rearLeft": lambda v: 0.4,
     "rearRight": lambda v: 0.4,
+    "midLeft": lambda v: 0.4,
+    "midRight": lambda v: 0.4,
+}
+# Properties that only show in a mode the defaults do not select: both the
+# base picture and the altered one are drawn with these set.
+CONTEXT = {
+    "midLeft": {"axles": 3},
+    "midRight": {"axles": 3},
 }
 
 
@@ -162,8 +170,10 @@ class AutomotiveContractTests(unittest.TestCase):
             for name in definition.bindable_properties:
                 with self.subTest(widget=definition.type, prop=name):
                     props = copy.deepcopy(definition.defaults)
+                    props.update(CONTEXT.get(name, {}))
+                    before = self._render_qml(definition, props) if name in CONTEXT else base
                     props[name] = ALTERED[name](props[name])
-                    self.assertTrue(self._differs(base, self._render_qml(definition, props)),
+                    self.assertTrue(self._differs(before, self._render_qml(definition, props)),
                                     f"{definition.type}.{name} = {props[name]!r} changed nothing")
 
     def test_every_bindable_property_changes_the_preview(self):
@@ -173,8 +183,10 @@ class AutomotiveContractTests(unittest.TestCase):
             for name in definition.bindable_properties:
                 with self.subTest(widget=definition.type, prop=name):
                     props = copy.deepcopy(definition.defaults)
+                    props.update(CONTEXT.get(name, {}))
+                    before = self._render_preview(definition, props) if name in CONTEXT else base
                     props[name] = ALTERED[name](props[name])
-                    self.assertTrue(self._differs(base, self._render_preview(definition, props)),
+                    self.assertTrue(self._differs(before, self._render_preview(definition, props)),
                                     f"preview of {definition.type}.{name} changed nothing")
 
     def test_previews_are_not_the_placeholder(self):

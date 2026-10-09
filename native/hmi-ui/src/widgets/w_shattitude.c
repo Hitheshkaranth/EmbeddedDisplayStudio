@@ -19,7 +19,7 @@
 
 typedef struct {
     double pitch, roll, pixelsPerDegree;
-    lv_obj_t *face, *numbers[8];
+    lv_obj_t *face, *clip, *numbers[8];
 } state_t;
 
 static const double kTicks[8] = {-20, -15, -10, -5, 5, 10, 15, 20};
@@ -143,8 +143,18 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     state_t *st = lv_malloc_zeroed(sizeof *st);
     w->state = st;
     st->face = face;
+    // The ladder numbers live in a box the size of the widget: every widget
+    // root lets its children overflow (QML Items do not clip), but
+    // ShAttitude.qml clips, and a pitched ladder put "20" outside the
+    // instrument, over its neighbours.
+    st->clip = lv_obj_create(face);
+    lv_obj_remove_style_all(st->clip);
+    lv_obj_set_size(st->clip, (int32_t)w->width, (int32_t)w->height);
+    lv_obj_set_pos(st->clip, 0, 0);
+    lv_obj_remove_flag(st->clip, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(st->clip, LV_OBJ_FLAG_CLICKABLE);
     for (int i = 0; i < 8; ++i)
-        st->numbers[i] = hmi_make_label(face, hmi_font_size("fontSizeXs"), 400, hmi_colour("efisText"), "");
+        st->numbers[i] = hmi_make_label(st->clip, hmi_font_size("fontSizeXs"), 400, hmi_colour("efisText"), "");
     lv_obj_add_event_cb(face, draw_cb, LV_EVENT_DRAW_MAIN, w);
     read_model(w);
     layout(w);

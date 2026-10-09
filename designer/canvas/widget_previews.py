@@ -22,7 +22,7 @@ follow it. tests/test_designer_previews.py holds the pairs that matter.
 import math
 
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen, QPolygonF
+from PySide6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QPainterPath, QPen, QPolygonF
 from ui.python.shadcn import load_tokens
 
 # ---------------------------------------------------------------------------
@@ -168,6 +168,13 @@ def _number(props, key, default=0.0):
         return float(_prop(props, key, default))
     except (TypeError, ValueError):
         return float(default)
+
+
+def _override_colour(props, key):
+    """An optional colour property (accentColor, barColor): its QColor, or
+    None when unset, invalid or fully transparent -- the theme's look."""
+    colour = QColor(str(_prop(props, key, "") or "transparent"))
+    return colour if colour.isValid() and colour.alpha() > 0 else None
 
 
 # QML alignment tokens -> Qt flags. Shared by the painter and the Designer's
@@ -837,10 +844,36 @@ def paint_turn_coordinator(painter, rect, props, ctx):
 
 
 def paint_engine_bar(painter, rect, props, ctx):
-    _rounded(painter, rect, efis("panel"), RADIUS["sm"])
     minimum=_number(props,"minimumValue",0); maximum=_number(props,"maximumValue",100); span=max(.001,maximum-minimum)
     value=max(minimum,min(maximum,_number(props,"value",0))); caution=_number(props,"cautionValue",80); warning=_number(props,"warningValue",90)
-    colour=efis("warning" if value>=warning else "caution" if value>=caution else "normal")
+    colour=_override_colour(props,"barColor") or efis("warning" if value>=warning else "caution" if value>=caution else "normal")
+    if _prop(props, "orientation", "vertical") == "horizontal":
+        # A vitals row: label | thin rounded bar | value (ShEngineBar.qml "hrow").
+        size = max(7, min(FONT["sm"], round(rect.height() * 0.5)))
+        bar_h = round(min(10, max(4, rect.height() * 0.22)))
+        label = str(_prop(props, "label", ""))
+        reading = f"{value:.0f}{_prop(props, 'units', '')}"
+        font = painter.font()
+        font.setPixelSize(size)
+        font.setWeight(WEIGHT_SEMIBOLD)
+        value_w = min(QFontMetricsF(font).horizontalAdvance(reading) + 1, rect.width() * 0.25)
+        font.setWeight(WEIGHT_MEDIUM)
+        label_w = min(QFontMetricsF(font).horizontalAdvance(label) + 1, rect.width() * 0.3) if label else 0
+        if label:
+            _text(painter, QRectF(rect.left(), rect.top(), label_w, rect.height()), label, size=size,
+                  color=efis("text"), weight=WEIGHT_MEDIUM)
+        _text(painter, QRectF(rect.right() - value_w, rect.top(), value_w, rect.height()), reading, size=size,
+              color=efis("text"), weight=WEIGHT_SEMIBOLD, flags=Qt.AlignRight | Qt.AlignVCenter)
+        x0 = rect.left() + (label_w + 8 if label else 0)
+        track = QRectF(x0, rect.center().y() - bar_h / 2, max(1.0, rect.right() - value_w - 8 - x0), bar_h)
+        line = QColor(efis("line"))
+        line.setAlphaF(0.18)
+        _rounded(painter, track, line, bar_h / 2)
+        fill = QRectF(track.left(), track.top(), round(track.width() * (value - minimum) / span), bar_h)
+        if fill.width() > 0:
+            _rounded(painter, fill, colour, bar_h / 2)
+        return
+    _rounded(painter, rect, efis("panel"), RADIUS["sm"])
     _text(painter,QRectF(rect.left(),rect.top(),rect.width(),22),_prop(props,"label","N1"),size=FONT["sm"],color=efis("text"),weight=WEIGHT_SEMIBOLD,flags=Qt.AlignCenter)
     well=QRectF(rect.center().x()-9,rect.top()+25,18,max(10,rect.height()-50))
     painter.setPen(QPen(efis("line"),1)); painter.setBrush(Qt.NoBrush); painter.drawRect(well)

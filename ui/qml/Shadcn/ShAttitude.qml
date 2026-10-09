@@ -33,7 +33,10 @@ Item {
         transformOrigin: Item.Center
 
         Item {
-            anchors.fill: parent
+            // Sized, not anchored: an anchors.fill pinned y to 0 and the
+            // horizon never moved with pitch.
+            width: parent.width
+            height: parent.height
             y: root.pitch * root.pixelsPerDegree
 
             Rectangle {
