@@ -9,7 +9,32 @@
 
 typedef struct {
     lv_obj_t *img;
+    lv_obj_t *hint;     // the placeholder's caption, while there is no picture
 } image_state_t;
+
+// No picture yet (an AI design's "put the truck here"): a framed, faintly
+// filled box with a caption, as the Designer canvas draws it, rather than
+// nothing on the glass. A source set later takes the frame away.
+static void placeholder(image_state_t *st, bool on)
+{
+    lv_obj_t *img = st->img;
+    lv_obj_set_style_border_width(img, on ? 1 : 0, 0);
+    lv_obj_set_style_border_color(img, hmi_colour("border"), 0);
+    lv_obj_set_style_border_opa(img, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(img, on ? 12 : 0, 0);
+    lv_obj_set_style_bg_color(img, hmi_colour("muted"), 0);
+    lv_obj_set_style_bg_opa(img, on ? LV_OPA_40 : LV_OPA_TRANSP, 0);
+    if (on && !st->hint) {
+        st->hint = lv_label_create(img);
+        lv_label_set_text(st->hint, "Image");
+        lv_obj_set_style_text_font(st->hint, hmi_font(hmi_font_size("fontSizeSm"), 500), 0);
+        lv_obj_set_style_text_color(st->hint, hmi_colour("mutedForeground"), 0);
+        lv_obj_center(st->hint);
+    } else if (!on && st->hint) {
+        lv_obj_delete(st->hint);
+        st->hint = NULL;
+    }
+}
 
 static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
 {
@@ -45,6 +70,8 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
             lv_image_set_inner_align(img, LV_IMAGE_ALIGN_CENTER);
             lv_obj_set_size(img, ow, oh);
         }
+    } else {
+        placeholder(st, true);
     }
 
     w->state = st;
@@ -65,6 +92,7 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
             const char *fullpath = hmi_widget_asset_path(w, src, pathbuf, sizeof pathbuf);
             lv_image_set_src(img, fullpath);
         }
+        placeholder(st, !(src && *src));
     }
 }
 

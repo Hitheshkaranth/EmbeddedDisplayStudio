@@ -22,6 +22,8 @@ def _builtin() -> None:
     register itself, so the search loads it on first use instead.
     """
     from . import cab  # noqa: F401
+    # After cab: a plan with Rail widgets and regions is still a cab display.
+    from . import reference  # noqa: F401
 
 
 def register(name: str, applies, compile) -> None:
