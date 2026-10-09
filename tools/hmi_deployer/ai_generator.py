@@ -758,6 +758,10 @@ def build_reference_plan_prompt(registry: Optional[WidgetRegistry] = None,
         "value such as 1.6, label \"x1000\"; never a raw 0..5000 scale under an x1000 label. "
         "A dial's caption is what it measures (\"RPM\", \"Payload\"), never decorative text "
         "printed in the picture.\n"
+        "- words printed on or beside an instrument (its name, \"x1000\", \"7350 t max\", a "
+        "unit) go into that widget's own caption, label, unit or title properties, never into "
+        "separate Text widgets; leave out taglines and decoration (\"Active level telemetry "
+        "arcs\"). A section holds instruments, not their labels.\n"
         "- round dials (RPM, payload, load, pressure) -> one ShClusterGauge each (caption, label, "
         "minimumValue, maximumValue, majorStep, redlineFrom), \"accentColor\" the dial's colour; "
         "one section per dial.\n"
@@ -774,8 +778,13 @@ def build_reference_plan_prompt(registry: Optional[WidgetRegistry] = None,
         "- a fuel or battery bar -> ShSegmentBar(label, value, showPercent) with \"barColor\", "
         "or ShAutoLevel.\n"
         "- warning or status lamps -> ShTelltale(icon, color, label) or ShStatDot(state).\n"
+        f"- a picture in the reference (the machine, a vehicle, an illustration) also carries "
+        f"\"crop\": [left, top, right, bottom], where it sits in the reference image on a "
+        f"0..1000 scale of the image's width and height, tight around the picture: the Studio "
+        f"cuts that part of the reference out and shows it in the {picture}.\n"
         f"- a picture of the machine (a truck, a pump, a vehicle) -> {picture} with "
-        "\"source\": \"\" (the user supplies the file), in a \"center\" section with role "
+        "\"source\": \"\" and its \"crop\" (the Studio fills the picture from the crop), in a "
+        "\"center\" section with role "
         "\"hero\"; live readouts drawn over the picture go in the same section. A drawing, "
         "render or photo of the machine is always a block of its own: never leave it out.\n"
         "- text readouts (a number with a label) -> ShDataField(label, value, units) or "
@@ -1360,7 +1369,7 @@ class AIDesignGenerator:
         The marks (compiler.SECTION_MARK) are what compose() compiles from, so
         they survive a sectioned run's merge and a later "Tidy up".
         """
-        from designer.layout.compiler import REGION_MARK, SECTION_MARK, sections_from_plan
+        from designer.layout.compiler import REGION_MARK, SECTION_ID_MARK, SECTION_MARK, sections_from_plan
         from designer.model import DesignerScreen
         pages, taken = [], set()
         for index, page_data in enumerate(_merge_small_plan(design.get("pages") or [], width, height)):
@@ -1380,11 +1389,12 @@ class AIDesignGenerator:
             for widget in header:
                 widget.properties[SECTION_MARK] = "|header"
                 widgets.append(widget)
-            for section in sections:
+            for number, section in enumerate(sections, 1):
                 for widget in section.widgets:
                     widget.properties[SECTION_MARK] = f"{section.title}|{section.role}"
                     if section.region:
                         widget.properties[REGION_MARK] = section.region
+                        widget.properties[SECTION_ID_MARK] = number
                     widgets.append(widget)
             widgets.extend(loose)
             page_id = str(page_data.get("id") or ("main" if index == 0 else f"page{index + 1}"))

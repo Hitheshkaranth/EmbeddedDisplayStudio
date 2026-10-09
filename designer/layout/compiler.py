@@ -107,6 +107,15 @@ REGION_MARK = "_region"
 # widgets like REGION_MARK: the reference layout tints the section's card and
 # fills its widgets' empty colour properties with it.
 ACCENT_MARK = "_accent"
+# Which planned section a widget belongs to, when the plan follows a picture.
+# Sections are regrouped from their marks on every recompile; two untitled
+# dials of the same role ("|instruments") in different regions merged into
+# one card. The plan's section index keeps them apart.
+SECTION_ID_MARK = "_sectionId"
+# Where a picture sits in the reference picture the user attached, as
+# [left, top, right, bottom] fractions: the Studio crops that part of the
+# reference into the project's assets for the Image (ai_tab).
+CROP_MARK = "_crop"
 #: The screen's regions, as a reference picture divides it:
 #:   top    -- the status strip across the top (clock, connectivity, weather)
 #:   rail   -- a narrow column at the left edge (a gear selector, mode lamps)
@@ -124,6 +133,24 @@ _REGION_ALIASES = {
     "bottomright": "right", "footer": "bottom", "lower": "bottom", "bottomleft": "bottom",
     "bottomcenter": "bottom", "bottomcentre": "bottom", "bottommiddle": "bottom", "base": "bottom",
 }
+
+
+def crop_of(value):
+    """[left, top, right, bottom] as fractions of the reference picture, from
+    what a model wrote: fractions, or Qwen's 0..1000 grounding scale. None
+    when it is not a usable box."""
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return None
+    try:
+        box = [float(v) for v in value]
+    except (TypeError, ValueError):
+        return None
+    if max(box) > 1.5:
+        box = [v / 1000.0 for v in box]
+    left, top, right, bottom = (min(1.0, max(0.0, v)) for v in box)
+    if right - left < 0.02 or bottom - top < 0.02:
+        return None
+    return [round(left, 4), round(top, 4), round(right, 4), round(bottom, 4)]
 
 
 def region_of(text) -> str:
@@ -1885,15 +1912,17 @@ def _sections_from_marks(page, registry, widgets, planned_title, notes):
             loose.append(widget)
             continue
         heading, _bar, role = mark.rpartition("|")
-        key = (heading, role)
+        # A plan that follows a picture numbers its sections (SECTION_ID_MARK):
+        # two untitled dials of one role stay two sections.
+        key = (heading, role, widget.properties.get(SECTION_ID_MARK, ""))
         if key not in groups:
             groups[key] = []
             order.append(key)
         groups[key].append(widget)
-    sections = [Section(heading, role_of(role), groups[(heading, role)],
-                        region=region_of(groups[(heading, role)][0].properties.get(REGION_MARK)),
-                        accent=accent_of(groups[(heading, role)][0].properties.get(ACCENT_MARK)))
-                for heading, role in order]
+    sections = [Section(key[0], role_of(key[1]), groups[key],
+                        region=region_of(groups[key][0].properties.get(REGION_MARK)),
+                        accent=accent_of(groups[key][0].properties.get(ACCENT_MARK)))
+                for key in order]
     # A picture dropped into the header band by hand is a logo for the
     # header: it keeps the end it was dropped at, and stays there from now on.
     right_edge = max((float(w.geometry.get("x", 0)) + float(w.geometry.get("width", 0))
@@ -2009,18 +2038,28 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
             else:
                 wish = ""
             wishes.append(wish or (section_wish if section_wish in SIZE_FACTORS else ""))
+        # A picture's place in the reference ("crop"): read here, since the
+        # converter keeps only the properties the kit declares.
+        crops = {str(item.get("id") or ""): crop_of(item.get("crop") or
+                                                     (item.get("properties") or {}).get("crop"))
+                 for item in raw if isinstance(item, dict)}
         widgets = convert(raw)
         if len(widgets) == len(wishes):
             for widget, wish in zip(widgets, wishes):
                 if wish and wish not in ("normal", "medium", "default"):
                     widget.properties[SIZE_MARK] = wish
+        for widget in widgets:
+            if crops.get(widget.id):
+                widget.properties[CROP_MARK] = crops[widget.id]
         if not widgets:
             continue
         role = role_of(entry.get("role") or entry.get("kind") or "")
         heading = str(entry.get("title") or entry.get("name") or "").strip()
-        if not heading and role != "hero":
-            heading = ROLE_TITLES.get(role, "")
         region = region_of(entry.get("region") or entry.get("area") or entry.get("position") or "")
+        if not heading and role != "hero" and not region:
+            # A card screen names an untitled card by its role; a picture's
+            # block stays as untitled as the picture drew it.
+            heading = ROLE_TITLES.get(role, "")
         accent = accent_of(entry.get("accent") or entry.get("colour") or entry.get("color") or "")
         if accent:
             # Marked here, where the widgets are made, so the colour survives

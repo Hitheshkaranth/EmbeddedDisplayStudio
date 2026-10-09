@@ -381,10 +381,48 @@ def _accent_card(card, accent, tokens):
             child.properties["color"] = accent
 
 
+#: Bars: a lone one is drawn at a bar's height, not stretched to its card.
+_BARS = ("ShSegmentBar", "ShProgress", "ShEngineBar", "ShTractionBar")
+
+
+def _captions(section) -> list:
+    """Plain text in a section that holds instruments: words printed beside
+    them in the picture ("x1000", "7350 t max", "Thermal/Health"). They are
+    captions, not content to lay out between the instruments."""
+    notes = [w for w in section.widgets if w.type == "Text" and not w.bindings and not w.actions]
+    return notes if len(notes) < len(section.widgets) else []
+
+
 def _section_card(project, registry, section, rect, tokens, framed, report):
     """One section in its rect: a card (framed) or the widgets on the glass."""
     from . import compiler as c
     x, y, w, h = rect
+    notes = _captions(section)
+    if notes:
+        # The instruments keep the section; the captions get a band under
+        # them, small and muted. Laid out with the instruments, three lines of
+        # a picture's printed text shrank an RPM dial to a thumbnail.
+        line = tokens.label_font * 1.5
+        band = min(len(notes) * line, h * 0.35)
+        # Lines that do not fit at the label size are drawn smaller, never
+        # on top of each other.
+        font = max(8, min(tokens.label_font, int(band / len(notes) / 1.3)))
+        content = dataclasses.replace(section, widgets=[wd for wd in section.widgets if wd not in notes])
+        card = _section_card(project, registry, content, (x, y, w, h - band), tokens, framed, report)
+        card.geometry["height"] = h
+        pad = tokens.pad if framed else max(4, tokens.gap // 2)
+        each = band / len(notes)
+        for index, note in enumerate(notes):
+            note.geometry.update({"x": pad, "y": int(round(h - band - pad / 2.0 + index * each)),
+                                  "width": int(w - 2 * pad), "height": int(each)})
+            note.properties.update({"fontSize": int(font), "bold": False,
+                                    "color": c._theme(project, "mutedForeground"),
+                                    "horizontalAlignment": "Text.AlignHCenter",
+                                    "verticalAlignment": "Text.AlignVCenter",
+                                    "wrapMode": "Text.NoWrap"})
+            note.children = list(note.children)
+            card.children.append(note)
+        return card
     lone = section.widgets[0] if len(section.widgets) == 1 else None
     pictures = [wd for wd in section.widgets if wd.type == "Image"]
     heading = section.title
@@ -428,6 +466,11 @@ def _section_card(project, registry, section, rect, tokens, framed, report):
         y0 = inner[1] + (inner[3] - used) / 2.0
         for index, widget in enumerate(section.widgets):
             _set(widget, inner[0], y0 + index * (row_h + tokens.gap), inner[2], row_h)
+    elif lone is not None and lone.type in _BARS:
+        # A lone bar keeps a bar's height, centred: stretched to its card's
+        # height a fuel bar's cells became thin vertical lines.
+        bar_h = min(inner[3], c._design(registry, lone)[1] * 1.3)
+        _set(lone, inner[0], inner[1] + (inner[3] - bar_h) / 2.0, inner[2], bar_h)
     if not framed:
         _frameless(card)
     _accent_card(card, section.accent if framed else "", tokens)
@@ -589,7 +632,8 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
             if widget.type == "ShSpeedArc" and "target" not in widget.properties \
                     and "target" not in (widget.bindings or {}) and "showTarget" not in widget.properties:
                 widget.properties["showTarget"] = False
-        if section.region == "right" and all(w.type == "ShEngineBar" for w in section.widgets):
+        if section.region == "right" and any(w.type == "ShEngineBar" for w in section.widgets) and all(
+                w.type == "ShEngineBar" or w in _captions(section) for w in section.widgets):
             # In a column of cards, bars lie down, one row each, when the
             # kit's bar can (a picture's vitals are drawn that way).
             for widget in section.widgets:
@@ -599,7 +643,15 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
                     widget.properties["orientation"] = "horizontal"
     by_region = {name: [] for name in c.REGIONS}
     for section in sections:
-        by_region[section.region if section.region in c.REGIONS else "center"].append(section)
+        bucket = by_region[section.region if section.region in c.REGIONS else "center"]
+        plain = section.widgets and all(w.type == "Text" and not w.bindings and not w.actions
+                                        for w in section.widgets)
+        if plain and bucket:
+            # Words printed under an instrument in the picture, planned as a
+            # section of their own: they caption the section before them.
+            bucket[-1] = dataclasses.replace(bucket[-1], widgets=bucket[-1].widgets + section.widgets)
+            continue
+        bucket.append(section)
 
     widgets = []
     strip_items = list(header_widgets or []) + [w for s in by_region["top"] for w in s.widgets]
@@ -656,8 +708,14 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
     else:
         parts = ()
     for group, rect in parts:
-        widgets += _stack(project, registry, group, rect, tokens, False, report,
-                          needs=[c._section_weight(registry, s) ** 0.5 for s in group])
+        weights = [c._section_weight(registry, s) ** 0.5 for s in group]
+        # Dials and pictures stacked in one column are shown alike: by role
+        # weight a "hero" speed arc took the column and the RPM dial under it
+        # was left a thumbnail.
+        top = max(weights) if weights else 1.0
+        weights = [top if any(_is_dial(registry, wd) or wd.type in ("Image", "ShAnimatedImage")
+                              for wd in s.widgets) else wgt for s, wgt in zip(group, weights)]
+        widgets += _stack(project, registry, group, rect, tokens, False, report, needs=weights)
     if bottom:
         # The row runs under the rail too, as the picture's dials do.
         widgets += _row(project, registry, bottom, (bx0, by1 - bottom_h, main_x1 - bx0, bottom_h),

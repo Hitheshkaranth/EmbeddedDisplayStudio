@@ -1393,6 +1393,53 @@ class BriefInput(QPlainTextEdit):
         self._fit()
 
 
+def _walk_widgets(widgets):
+    for widget in widgets:
+        yield widget
+        yield from _walk_widgets(widget.children)
+
+
+def pictures_to_fill(project) -> list:
+    """The plan's pictures still without a file that say where they sit in
+    the reference picture (compiler.CROP_MARK)."""
+    from designer.layout.compiler import CROP_MARK
+    return [w for page in getattr(project, "pages", []) for w in _walk_widgets(page.widgets)
+            if w.type == "Image" and not str(w.properties.get("source") or "").strip()
+            and w.properties.get(CROP_MARK)]
+
+
+def fill_pictures(project, references, bundle_dir: str) -> int:
+    """Cut each picture the plan placed out of the reference picture.
+
+    A reference that shows the machine (a truck's wireframe) is the best
+    picture of it the user has: the model says where it sits ("crop"), and
+    that part of the first reference is saved as <bundle>/assets/<id>.png
+    and set as the Image's source. Returns how many were filled.
+    """
+    import base64
+    from PySide6.QtGui import QImage
+    targets = pictures_to_fill(project)
+    if not targets or not references or not bundle_dir:
+        return 0
+    reference = QImage.fromData(base64.b64decode(references[0].data))
+    if reference.isNull():
+        return 0
+    from designer.layout.compiler import CROP_MARK
+    assets = os.path.join(bundle_dir, "assets")
+    os.makedirs(assets, exist_ok=True)
+    width, height = reference.width(), reference.height()
+    filled = 0
+    for widget in targets:
+        left, top, right, bottom = widget.properties[CROP_MARK]
+        rect = QRect(int(round(left * width)), int(round(top * height)),
+                     max(1, int(round((right - left) * width))), max(1, int(round((bottom - top) * height))))
+        name = re.sub(r"[^A-Za-z0-9_-]", "_", widget.id or "picture") + ".png"
+        if reference.copy(rect).save(os.path.join(assets, name), "PNG"):
+            widget.properties["source"] = f"assets/{name}"
+            filled += 1
+    return filled
+
+
 def _thumbnail(image, side: int) -> QPixmap:
     """A BriefImage as a square-bounded pixmap for the composer and the turn."""
     import base64
@@ -2435,6 +2482,16 @@ class AIDesignTab(QWidget):
         workspace = designer_workspace or self.workspace
         outcome = "no-workspace"
         if workspace is not None and hasattr(workspace, "load_project"):
+            references = getattr(project, "_reference_images", None)
+            if references and pictures_to_fill(project):
+                # The plan's pictures come out of the reference itself: they
+                # need the bundle's assets folder, made if there is none yet.
+                if not getattr(workspace, "bundle_dir", "") and hasattr(workspace, "ensure_bundle"):
+                    workspace.ensure_bundle()
+                filled = fill_pictures(project, references, getattr(workspace, "bundle_dir", ""))
+                if filled:
+                    self.statusMessage.emit(
+                        f"AI Design: {filled} picture(s) cut from the reference image into assets/")
             workspace.load_project(project)
             outcome = "applied"
             if hasattr(workspace, "preview") and (
@@ -2782,6 +2839,11 @@ class AIDesignTab(QWidget):
             width, height = self._screen_size()
             try:
                 project = self.generator.generate(full_text, width, height) if self.generator else None
+                if project is not None and getattr(self, "_root_images", None):
+                    # The pictures this run was sent with: Apply crops the
+                    # plan's pictures out of them (fill_pictures), even after
+                    # a later brief has replaced the run's attachments.
+                    project._reference_images = list(self._root_images)
             except Exception as exc:
                 project = None
                 shell.note_error(f"Parse error: {exc}")
