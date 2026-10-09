@@ -2712,7 +2712,7 @@ class DesignerWorkspace(QWidget):
                 return os.path.join(root, path)
         return ""
 
-    def drop_image_file(self, path, x, y):
+    def drop_image_file(self, path, x, y, animate=True):
         """Copy a dropped image file into the bundle and place an Image on it.
 
         Only picture files the panel can decode land: png, jpg, jpeg, bmp, gif,
@@ -2720,6 +2720,10 @@ class DesignerWorkspace(QWidget):
         PNG, named from the file in the same way import_prompt_images names
         one (lowercase, spaces -> _), capped at 240x120, and an Image with
         PreserveAspectFit is placed at (x, y) as one undo step.
+
+        A .gif is the exception: it is copied as it is (still a GIF, every
+        frame kept) and lands as an ShAnimatedImage that plays it, 240x160.
+        ``animate=False`` (a brand logo) keeps the old way: a still PNG Image.
         """
         stem = os.path.basename(path)
         if not (stem.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".svg"))):
@@ -2732,20 +2736,26 @@ class DesignerWorkspace(QWidget):
         assets = os.path.join(self.bundle_dir, "assets"); os.makedirs(assets, exist_ok=True)
         stem = re.sub(r"\.(?:png|jpe?g|bmp|gif|webp|svg)$", "", os.path.basename(resolved).lower(),
                       flags=re.I)
-        name = re.sub(r"[^a-z0-9._]+", "_", stem) + ".png"
+        animated = animate and resolved.lower().endswith(".gif")
+        name = re.sub(r"[^a-z0-9._]+", "_", stem) + (".gif" if animated else ".png")
         destination = os.path.join(assets, name)
-        if not _trim_transparent_margins(resolved, destination):
+        if animated:
+            if os.path.abspath(resolved) != os.path.abspath(destination):
+                shutil.copy2(resolved, destination)
+        elif not _trim_transparent_margins(resolved, destination):
             if resolved.lower().endswith(".png"):
                 shutil.copy2(resolved, destination)
             else:
                 from PySide6.QtGui import QImage
                 if not QImage(resolved).save(destination, "PNG"):
                     return None
-        definition = self.registry.get("Image")
-        model = DesignerWidget("Image", self.project.unique_id("image"),
+        widget_type = "ShAnimatedImage" if animated else "Image"
+        definition = self.registry.get(widget_type)
+        cap_w, cap_h = (240, 160) if animated else (240, 120)
+        model = DesignerWidget(widget_type, self.project.unique_id("animation" if animated else "image"),
             {"x": max(0, int(x)), "y": max(0, int(y)),
-             "width": min(definition.default_width, 240),
-             "height": min(definition.default_height, 120)},
+             "width": min(definition.default_width, cap_w),
+             "height": min(definition.default_height, cap_h)},
             copy.deepcopy(definition.defaults))
         model.properties["source"] = os.path.relpath(destination, self.bundle_dir).replace(os.sep, "/")
         siblings = self.siblings_of("")
@@ -2800,7 +2810,7 @@ class DesignerWorkspace(QWidget):
         """
         imported = []
         for logo in (logos or []):
-            if self.drop_image_file(logo, 0, 0) is not None:
+            if self.drop_image_file(logo, 0, 0, animate=False) is not None:
                 model = self.current_page.widgets[-1]
                 imported.append(model.properties["source"])
         self.project.brand = {"logos": imported, "accent": accent or ""}
