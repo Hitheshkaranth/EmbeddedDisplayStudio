@@ -164,8 +164,13 @@ QPushButton {{
     color: {p['primaryForeground']};
     border: 1px solid transparent;
     border-radius: {r['md']}px;
-    padding: {scale[1]}px {scale[3]}px;
-    height: 36px;
+    /* Deploy's height, 32px on screen: 26px of content, 2px of padding
+       above and below and the 1px border. Qt adds padding and border on
+       top of min/max-height, so the old 8px padding made a 28px minimum
+       46-50px tall; no button in the Studio stands taller than Deploy. */
+    padding: 2px {scale[3]}px;
+    height: 26px;
+    max-height: 26px;
 }}
 QPushButton:hover {{
     background-color: {hex_to_rgba(p['primary'], 0.9)};
@@ -768,15 +773,15 @@ QLabel#connectionFieldLabel {{
 }}
 /* One pill geometry for every control the user operates the target with:
    Open Bundle, New App, Target IP, Port, Connect, the link badge, and the
-   User/Key fields. The 36px height and 16px radius are the navigation tab's
-   own -- "Display Console" is the reference the rest of the chrome is matched
-   to, so a row of controls reads as one family rather than five sizes.
+   User/Key fields. 30px plus the border is Deploy's 32px, the tallest any
+   button in the Studio may be (tests/test_button_heights.py), so a row of
+   controls reads as one family rather than five sizes.
    Heights are pinned at both ends because a QSS `height` alone is a hint the
    layout is free to stretch, which is what left these controls at 54px. */
 QPushButton#topBarAction {{
-    height: 34px;
-    min-height: 34px;
-    max-height: 34px;
+    height: 30px;
+    min-height: 30px;
+    max-height: 30px;
     border-radius: 16px;
     padding-top: 0;
     padding-bottom: 0;
@@ -812,9 +817,9 @@ QLineEdit#targetHostInput, QLineEdit#targetPortInput {{
 QPushButton#connectButton {{
     background-color: {p['brand']};
     color: {p['brandForeground']};
-    height: 34px;
-    min-height: 34px;
-    max-height: 34px;
+    height: 30px;
+    min-height: 30px;
+    max-height: 30px;
     border-radius: 16px;
     padding-top: 0;
     padding-bottom: 0;
@@ -936,7 +941,7 @@ QLineEdit, QComboBox {{
 QPushButton {{
     border-radius: {r['lg']}px;
     font-weight: 600;
-    min-height: 28px;
+    min-height: 26px;
 }}
 QPushButton[variant="secondary"] {{ background-color: {p['secondary']}; }}
 QPlainTextEdit, QTextEdit {{

@@ -1758,7 +1758,7 @@ class AIDesignTab(QWidget):
         self.send_btn = QPushButton()
         self.send_btn.setObjectName("sendButton")
         self.send_btn.setCursor(Qt.PointingHandCursor)
-        self.send_btn.setFixedSize(34, 34)
+        self.send_btn.setFixedSize(32, 32)
         self.send_btn.setToolTip("Generate (Ctrl+Enter)")
         self.send_btn.clicked.connect(self._on_send_or_stop)
         actions.addWidget(self.send_btn)
@@ -2026,7 +2026,7 @@ class AIDesignTab(QWidget):
                 padding: 4px; outline: 0; selection-background-color: {tint(primary, 0.18)}; selection-color: {fg}; }}
             QFrame#endpointBox {{ background: {raised}; border: 1px solid {border}; border-radius: 10px; }}
             QToolButton#iconButton {{ background: {raised}; border: 1px solid {border}; border-radius: 9px;
-                                      min-width: 32px; max-width: 32px; min-height: 32px; max-height: 32px; padding: 0; }}
+                                      min-width: 30px; max-width: 30px; min-height: 30px; max-height: 30px; padding: 0; }}
             QToolButton#iconButton:hover {{ background: {hover}; border-color: {tint(primary, 0.55)}; }}
             QToolButton#iconButton:pressed {{ background: {tint(primary, 0.15)}; }}
             QToolButton#linkButton {{ background: transparent; border: none; border-radius: 6px;
@@ -2097,8 +2097,8 @@ class AIDesignTab(QWidget):
             QFrame#composerCard[focused="true"] {{ border: 1px solid {primary}; background: {tint(primary, 0.07)}; }}
             QPlainTextEdit#briefInput {{ background: transparent; border: none; color: {fg}; font-size: 13px;
                                          font-family: inherit; padding: 0; selection-background-color: {tint(primary, 0.35)}; }}
-            QPushButton#sendButton {{ background: {primary_grad}; border: none; border-radius: 17px; padding: 0;
-                                      min-width: 34px; max-width: 34px; min-height: 34px; max-height: 34px; }}
+            QPushButton#sendButton {{ background: {primary_grad}; border: none; border-radius: 16px; padding: 0;
+                                      min-width: 32px; max-width: 32px; min-height: 32px; max-height: 32px; }}
             QPushButton#sendButton:hover {{ background: {tint(primary, 0.85)}; }}
             QPushButton#sendButton:pressed {{ background: {tint(primary, 0.7)}; }}
             QPushButton#sendButton:disabled {{ background: {muted}; }}
