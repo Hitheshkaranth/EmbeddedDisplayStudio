@@ -144,13 +144,13 @@ Then: **Design → AI Design**, describe the screen → **Simulate** → connect
 </table>
 </details>
 
-## What's new
+## What's new in 0.1.4
 
 <table>
 <tr>
+<td width="33%" valign="top"><strong>Design from a picture</strong><br /><sub>Attach a screenshot or mock-up to the AI Design brief: the screen comes back laid out the way the picture is, in its colours, with its main picture cut in.</sub></td>
+<td width="33%" valign="top"><strong>Cockpit widgets and moving pictures</strong><br /><sub>A vertical gear rail, six-tyre pressures, coloured dials and vitals bars, status-strip icons, and <code>ShAnimatedImage</code> playing a GIF on the panel.</sub></td>
 <td width="33%" valign="top"><strong>A hardware daemon in C</strong><br /><sub><code>hmi-hwd</code> drops Python: GPIO, ADC, serial, Modbus TCP/RTU, CAN, USB and HID devices, I2C/SPI sensors and the historian, same wire protocol.</sub></td>
-<td width="33%" valign="top"><strong>Connections and a Modbus map</strong><br /><sub>One list of model endpoints for AI Design and the agent; a design's tags become PLC registers in one click, tested against a simulated PLC.</sub></td>
-<td width="33%" valign="top"><strong>Find, watch, simulate</strong><br /><sub>Find panels on the network, a link that recovers by itself, clock sync, drop-in images and brand, and Tag Lab simulating the open design.</sub></td>
 </tr>
 </table>
 
