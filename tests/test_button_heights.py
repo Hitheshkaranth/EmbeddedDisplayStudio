@@ -36,6 +36,11 @@ class ButtonHeights(unittest.TestCase):
 
     def setUp(self):
         from tools.hmi_deployer.mainwindow import MainWindow
+        # The main window themes the whole application (shadcn.apply sets the
+        # app's stylesheet). Left behind, it gave the Designer toolbar test
+        # that runs after this one 54 px fields instead of 26.
+        self.addCleanup(self.app.setStyleSheet, self.app.styleSheet())
+        self.addCleanup(self.app.setPalette, self.app.palette())
         self.window = MainWindow()
         self.window.resize(1600, 1000)
         self.window.show()

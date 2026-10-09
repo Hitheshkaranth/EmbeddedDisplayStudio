@@ -65,6 +65,13 @@ WAVE = ["Column", "Grid", "Image", "Item", "Rectangle", "Row", "ShAlarmTable", "
         "ShAnimatedImage"]
 
 
+# Compared nowhere at their defaults, for a reason given in the results: an
+# Image with no file is a framed placeholder on the panel (hmi-ui; the
+# Designer canvas draws one too), and a design-time aid QML has no reason to
+# draw -- its blank QML picture leaves nothing to compare against.
+PANEL_PLACEHOLDER = {"Image"}
+
+
 # Widgets that are almost entirely small text: glyph rasterisation alone
 # keeps them above the relative bar although the pictures match (verified by
 # eye in swarm/qc/ui-parity). They pass at 0.8 x blank / 1.0 x blank.
@@ -192,6 +199,9 @@ class ParityTests(unittest.TestCase):
             definition = self.registry.get(type_name)
             self.assertIsNotNone(definition, type_name)
             props = copy.deepcopy(definition.defaults)
+            if type_name in PANEL_PLACEHOLDER and not str(props.get("source") or "").strip():
+                results.append(f"{type_name:16s} not compared: a panel-only placeholder without a file")
+                continue
             with self.subTest(widget=type_name):
                 qml = self._qml_render(definition, props)
                 ui, stub = self._ui_render(definition, props)
