@@ -823,6 +823,10 @@
      "kind": "bool",
      "default": true
     },
+    "accentColor": {
+     "kind": "color",
+     "default": ""
+    },
     "opacity": {
      "kind": "float",
      "default": 1.0
@@ -1011,6 +1015,14 @@
      "kind": "str",
      "default": "%"
     },
+    "orientation": {
+     "kind": "str",
+     "default": "vertical"
+    },
+    "barColor": {
+     "kind": "color",
+     "default": ""
+    },
     "opacity": {
      "kind": "float",
      "default": 1.0
@@ -1024,7 +1036,12 @@
     "value"
    ],
    "signals": [],
-   "choices": {},
+   "choices": {
+    "orientation": [
+     "vertical",
+     "horizontal"
+    ]
+   },
    "assets": []
   },
   "ShEngineGauge": {
@@ -1260,6 +1277,10 @@
      "kind": "bool",
      "default": true
     },
+    "orientation": {
+     "kind": "str",
+     "default": "horizontal"
+    },
     "opacity": {
      "kind": "float",
      "default": 1.0
@@ -1274,7 +1295,12 @@
     "modeNumber"
    ],
    "signals": [],
-   "choices": {},
+   "choices": {
+    "orientation": [
+     "horizontal",
+     "vertical"
+    ]
+   },
    "assets": []
   },
   "ShIconTile": {
@@ -1560,6 +1586,10 @@
     "lowLevel": {
      "kind": "float",
      "default": 20.0
+    },
+    "barColor": {
+     "kind": "color",
+     "default": ""
     },
     "opacity": {
      "kind": "float",
@@ -2494,6 +2524,18 @@
      "kind": "str",
      "default": "TPMS"
     },
+    "axles": {
+     "kind": "int",
+     "default": 2
+    },
+    "midLeft": {
+     "kind": "float",
+     "default": 2.4
+    },
+    "midRight": {
+     "kind": "float",
+     "default": 2.4
+    },
     "opacity": {
      "kind": "float",
      "default": 1.0
@@ -2507,7 +2549,9 @@
     "frontLeft",
     "frontRight",
     "rearLeft",
-    "rearRight"
+    "rearRight",
+    "midLeft",
+    "midRight"
    ],
    "signals": [],
    "choices": {},
@@ -2706,19 +2750,12 @@
   "sim.car.trip_mi",
   "sim.car.turn_left",
   "sim.car.turn_right",
-  "sim.fd_active",
-  "sim.fd_mode",
   "sim.fd_pitch",
   "sim.fd_roll",
-  "sim.flaps_lit",
   "sim.fuel2_left",
   "sim.fuel2_right",
   "sim.fuel_left",
-  "sim.fuel_pct",
   "sim.fuel_right",
-  "sim.gear_down",
-  "sim.gear_lit",
-  "sim.ground_distance",
   "sim.ground_speed",
   "sim.heading",
   "sim.heading_bug",
@@ -2727,7 +2764,6 @@
   "sim.n1_eng1",
   "sim.n1_eng2",
   "sim.oat",
-  "sim.oat_alt",
   "sim.oil_press_eng1",
   "sim.oil_press_eng2",
   "sim.oil_temp_eng1",
@@ -2735,9 +2771,6 @@
   "sim.pitch",
   "sim.roll",
   "sim.slip",
-  "sim.sls_lit",
-  "sim.toga_lit",
-  "sim.true_air_speed",
   "sim.turn_rate",
   "sim.vsi",
   "sim.wind_speed"

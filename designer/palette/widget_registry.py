@@ -166,9 +166,10 @@ def default_registry() -> WidgetRegistry:
         ("visible",), False, {"variant": ("default", "destructive")})
     # -- Avionics -------------------------------------------------------
     # Instrument colours do not follow the light/dark theme; they are the
-    # conventions a crew is trained to read, so none of these expose colour
-    # properties. What they expose is the reading, which is what gets bound
-    # to a tag.
+    # conventions a crew is trained to read, so they expose no colour
+    # properties (ShEngineBar's optional barColor, for a vehicle's vitals row,
+    # is the one exception). What they expose is the reading, which is what
+    # gets bound to a tag.
     add("ShDataField", "Data Field", "Avionics", "ShDataField", 150, 46,
         {"label": str, "value": str, "units": str, "severity": str,
          "stacked": bool, **common},
@@ -211,15 +212,16 @@ def default_registry() -> WidgetRegistry:
         {"severity": ("advisory", "caution", "warning")})
     # -- Automotive ----------------------------------------------------------
     # Instrument cluster widgets after the two reference dashboards; colours
-    # come from Theme.qml's auto* block and are not exposed as properties.
+    # come from Theme.qml's auto* block. An accent override (accentColor,
+    # barColor; "" keeps the theme's) is the only colour they expose.
     add("ShClusterGauge", "Cluster Gauge", "Automotive", "ShClusterGauge", 240, 240,
-        {"value": float, "minimumValue": float, "maximumValue": float, "majorStep": float, "redlineFrom": float, "sweep": float, "readout": str, "readoutUnit": str, "caption": str, "label": str, "decimals": int, "showInnerDial": bool, **common},
-        {"value": 4.2, "minimumValue": 0.0, "maximumValue": 8.0, "majorStep": 1.0, "redlineFrom": 7.0, "sweep": 240.0, "readout": '137', "readoutUnit": 'km/h', "caption": '', "label": 'x1000 RPM', "decimals": 0, "showInnerDial": True, **common_defaults},
-        ('value', 'readout', 'caption'))
+        {"value": float, "minimumValue": float, "maximumValue": float, "majorStep": float, "redlineFrom": float, "sweep": float, "readout": str, "readoutUnit": str, "caption": str, "label": str, "decimals": int, "showInnerDial": bool, "accentColor": str, **common},
+        {"value": 4.2, "minimumValue": 0.0, "maximumValue": 8.0, "majorStep": 1.0, "redlineFrom": 7.0, "sweep": 240.0, "readout": '137', "readoutUnit": 'km/h', "caption": '', "label": 'x1000 RPM', "decimals": 0, "showInnerDial": True, "accentColor": "", **common_defaults},
+        ('value', 'readout', 'caption'), False, {}, ("accentColor",))
     add("ShGearIndicator", "Gear Indicator", "Automotive", "ShGearIndicator", 120, 70,
-        {"gears": str, "gear": str, "modeNumber": int, "showAll": bool, **common},
-        {"gears": 'P,R,N,D', "gear": 'D', "modeNumber": 4, "showAll": True, **common_defaults},
-        ('gear', 'modeNumber'))
+        {"gears": str, "gear": str, "modeNumber": int, "showAll": bool, "orientation": str, **common},
+        {"gears": 'P,R,N,D', "gear": 'D', "modeNumber": 4, "showAll": True, "orientation": 'horizontal', **common_defaults},
+        ('gear', 'modeNumber'), False, {'orientation': ('horizontal', 'vertical')})
     add("ShAutoLevel", "Level Bar", "Automotive", "ShAutoLevel", 90, 220,
         {"value": float, "minimumValue": float, "maximumValue": float, "topLabel": str, "midLabel": str, "bottomLabel": str, "redZone": str, "redZoneSpan": float, "icon": str, "curved": bool, "showTicks": bool, **common},
         {"value": 55.0, "minimumValue": 0.0, "maximumValue": 100.0, "topLabel": 'F', "midLabel": '1/2', "bottomLabel": 'E', "redZone": 'low', "redZoneSpan": 12.0, "icon": 'gas-station', "curved": True, "showTicks": True, **common_defaults},
@@ -241,17 +243,17 @@ def default_registry() -> WidgetRegistry:
         {"title": 'Distance', "row1Label": 'Day', "row1Value": '352', "row1Unit": 'km', "row2Label": 'Total', "row2Value": '110 593', "row2Unit": 'km', **common_defaults},
         ('row1Value', 'row2Value'))
     add("ShSegmentBar", "Segment Bar", "Automotive", "ShSegmentBar", 320, 36,
-        {"value": float, "minimumValue": float, "maximumValue": float, "segments": int, "label": str, "showPercent": bool, "lowLevel": float, **common},
-        {"value": 60.0, "minimumValue": 0.0, "maximumValue": 100.0, "segments": 12, "label": 'SOC', "showPercent": True, "lowLevel": 20.0, **common_defaults},
-        ('value',))
+        {"value": float, "minimumValue": float, "maximumValue": float, "segments": int, "label": str, "showPercent": bool, "lowLevel": float, "barColor": str, **common},
+        {"value": 60.0, "minimumValue": 0.0, "maximumValue": 100.0, "segments": 12, "label": 'SOC', "showPercent": True, "lowLevel": 20.0, "barColor": "", **common_defaults},
+        ('value',), False, {}, ("barColor",))
     add("ShIconTile", "Icon Tile", "Automotive", "ShIconTile", 100, 110,
         {"icon": str, "label": str, "enabled": bool, "active": bool, **common},
         {"icon": 'phone', "label": 'BT', "enabled": True, "active": False, **common_defaults},
         ('active',))
     add("ShVehicleStatus", "Vehicle Status", "Automotive", "ShVehicleStatus", 150, 190,
-        {"frontLeft": float, "frontRight": float, "rearLeft": float, "rearRight": float, "unit": str, "warnBelow": float, "decimals": int, "label": str, **common},
-        {"frontLeft": 2.6, "frontRight": 2.5, "rearLeft": 1.6, "rearRight": 2.2, "unit": 'bar', "warnBelow": 1.8, "decimals": 1, "label": 'TPMS', **common_defaults},
-        ('frontLeft', 'frontRight', 'rearLeft', 'rearRight'))
+        {"frontLeft": float, "frontRight": float, "rearLeft": float, "rearRight": float, "unit": str, "warnBelow": float, "decimals": int, "label": str, "axles": int, "midLeft": float, "midRight": float, **common},
+        {"frontLeft": 2.6, "frontRight": 2.5, "rearLeft": 1.6, "rearRight": 2.2, "unit": 'bar', "warnBelow": 1.8, "decimals": 1, "label": 'TPMS', "axles": 2, "midLeft": 2.4, "midRight": 2.4, **common_defaults},
+        ('frontLeft', 'frontRight', 'rearLeft', 'rearRight', 'midLeft', 'midRight'))
     # -- Rail (metro cab and control-room faces) ---------------------------
     add("ShSpeedArc", "Speed Arc", "Rail", "ShSpeedArc", 420, 420,
         {"value": float, "maximumValue": float, "target": float, "showTarget": bool, "unit": str,
@@ -365,10 +367,11 @@ def default_registry() -> WidgetRegistry:
     add("ShEngineBar", "Engine Bar", "Avionics", "ShEngineBar", 76, 190,
         {"value": float, "minimumValue": float, "maximumValue": float,
          "cautionValue": float, "warningValue": float, "label": str,
-         "units": str, **common},
+         "units": str, "orientation": str, "barColor": str, **common},
         {"value": 68.0, "minimumValue": 0.0, "maximumValue": 100.0,
          "cautionValue": 80.0, "warningValue": 90.0, "label": "N1",
-         "units": "%", **common_defaults}, ("value",))
+         "units": "%", "orientation": "vertical", "barColor": "", **common_defaults}, ("value",),
+        False, {"orientation": ("vertical", "horizontal")}, ("barColor",))
     add("ShFuelQuantity", "Fuel Quantity", "Avionics", "ShFuelQuantity", 190, 130,
         {"leftValue": float, "rightValue": float, "capacity": float,
          "lowLevel": float, "units": str, **common},
