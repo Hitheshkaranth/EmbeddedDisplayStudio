@@ -1545,7 +1545,8 @@ def _lamp_label(widget) -> str:
     for key in (LAMP_LABEL_MARK, "label", "text", "title"):
         value = str(widget.properties.get(key, "") or "").strip()
         if value:
-            return value
+            # "Weather icon": a model describing the lamp, not naming it.
+            return re.sub(r"\s+(icon|indicator|symbol|lamp)$", "", value, flags=re.I) or value
     return _widget_label(widget)
 
 
