@@ -98,6 +98,37 @@ SECTION_MARK = "_section"
 LAMP_LABEL_MARK = "_lampLabel"
 # A header logo the plan asked to put at the left end, before the title.
 SIDE_MARK = "_side"
+# Where on the screen a planned section sits when the plan follows a
+# reference picture (designer/layout/reference.py lays such a page out): one
+# of REGIONS, carried on each of the section's widgets so a recompile ("Tidy
+# up", Size on screen) rebuilds the same arrangement.
+REGION_MARK = "_region"
+#: The screen's regions, as a reference picture divides it:
+#:   top    -- the status strip across the top (clock, connectivity, weather)
+#:   rail   -- a narrow column at the left edge (a gear selector, mode lamps)
+#:   left   -- the left column of the body
+#:   center -- the middle of the body (the hero: a picture, the main dial)
+#:   right  -- a column of cards at the right edge
+#:   bottom -- a row along the bottom, under left and center
+REGIONS = ("top", "rail", "left", "center", "right", "bottom")
+_REGION_ALIASES = {
+    "header": "top", "topbar": "top", "statusbar": "top", "status": "top", "upper": "top",
+    "leftrail": "rail", "sidebar": "rail", "edge": "rail", "leftedge": "rail", "strip": "rail",
+    "leftcolumn": "left", "topleft": "left", "lefttop": "left", "westside": "left",
+    "centre": "center", "middle": "center", "main": "center", "hero": "center", "mid": "center",
+    "rightcolumn": "right", "rightside": "right", "sidepanel": "right", "topright": "right",
+    "bottomright": "right", "footer": "bottom", "lower": "bottom", "bottomleft": "bottom",
+    "bottomcenter": "bottom", "bottomcentre": "bottom", "bottommiddle": "bottom", "base": "bottom",
+}
+
+
+def region_of(text) -> str:
+    """A region name (REGIONS) from whatever the plan wrote ("Centre",
+    "right column", "top-left"), or "" when it names none."""
+    key = re.sub(r"[^a-z]", "", str(text or "").lower())
+    if key in REGIONS:
+        return key
+    return _REGION_ALIASES.get(key, "")
 
 
 def is_planned(page) -> bool:
@@ -112,6 +143,7 @@ class Section:
     role: str
     widgets: list
     note: str = ""
+    region: str = ""          # REGIONS, when the plan follows a reference picture
 
 
 @dataclass
@@ -1779,7 +1811,9 @@ def _sections_from_marks(page, registry, widgets, planned_title, notes):
             groups[key] = []
             order.append(key)
         groups[key].append(widget)
-    sections = [Section(heading, role_of(role), groups[(heading, role)]) for heading, role in order]
+    sections = [Section(heading, role_of(role), groups[(heading, role)],
+                        region=region_of(groups[(heading, role)][0].properties.get(REGION_MARK)))
+                for heading, role in order]
     # A picture dropped into the header band by hand is a logo for the
     # header: it keeps the end it was dropped at, and stays there from now on.
     right_edge = max((float(w.geometry.get("x", 0)) + float(w.geometry.get("width", 0))
@@ -1906,7 +1940,8 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
         heading = str(entry.get("title") or entry.get("name") or "").strip()
         if not heading and role != "hero":
             heading = ROLE_TITLES.get(role, "")
-        sections.append(Section(heading, role, widgets))
+        region = region_of(entry.get("region") or entry.get("area") or entry.get("position") or "")
+        sections.append(Section(heading, role, widgets, region=region))
     raw_header = [w for w in page_data.get("header") or [] if isinstance(w, dict)]
     # A logo may ask for the left end ("side": "left", beside or inside its
     # properties); the converter drops keys the kit does not declare, so the

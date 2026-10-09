@@ -62,6 +62,10 @@ PLAN_SCHEMA = _open_object({
             "title": {"type": "string"},
             "role": {"type": "string"},
             "size": {"type": "string"},
+            # Only when the plan follows a reference picture: where on the
+            # screen the section sits (compiler.REGIONS) and its colour.
+            "region": {"type": "string"},
+            "accent": {"type": "string"},
             "widgets": {"type": "array", "items": _PLAN_WIDGET},
         })},
     })},
@@ -1140,7 +1144,7 @@ class AIDesignGenerator:
         The marks (compiler.SECTION_MARK) are what compose() compiles from, so
         they survive a sectioned run's merge and a later "Tidy up".
         """
-        from designer.layout.compiler import SECTION_MARK, sections_from_plan
+        from designer.layout.compiler import REGION_MARK, SECTION_MARK, sections_from_plan
         from designer.model import DesignerScreen
         pages, taken = [], set()
         for index, page_data in enumerate(_merge_small_plan(design.get("pages") or [], width, height)):
@@ -1163,6 +1167,8 @@ class AIDesignGenerator:
             for section in sections:
                 for widget in section.widgets:
                     widget.properties[SECTION_MARK] = f"{section.title}|{section.role}"
+                    if section.region:
+                        widget.properties[REGION_MARK] = section.region
                     widgets.append(widget)
             widgets.extend(loose)
             page_id = str(page_data.get("id") or ("main" if index == 0 else f"page{index + 1}"))

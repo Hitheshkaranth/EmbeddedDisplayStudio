@@ -1,0 +1,57 @@
+{
+  "name": "Haul truck cockpit",
+  "section": {"index": 1, "complete": true, "label": "", "next": ""},
+  "pages": [{
+    "id": "main", "name": "Main", "title": "Haul Truck",
+    "header": [
+      {"type": "ShTelltale", "id": "lte", "side": "left", "properties": {"icon": "antenna-bars-5", "color": "white", "label": "LTE"}},
+      {"type": "ShTelltale", "id": "gps", "side": "left", "properties": {"icon": "map-pin", "color": "green", "label": "GPS"}},
+      {"type": "Text", "id": "clock", "properties": {"text": "14:32"}, "bindings": {"text": {"tag": "truck.clock"}}},
+      {"type": "ShDataField", "id": "outsideTemp", "properties": {"label": "Outside", "value": "24°C"}},
+      {"type": "ShStatDot", "id": "systemOk", "properties": {"label": "System", "state": "ok"}}
+    ],
+    "sections": [
+      {"title": "Gear", "role": "status", "region": "rail", "widgets": [
+        {"type": "ShGearIndicator", "id": "gear", "properties": {"gears": "P,R,N,D,L", "gear": "D"},
+         "bindings": {"gear": {"tag": "truck.gear"}}}]},
+      {"title": "", "role": "hero", "region": "left", "accent": "#3b82f6", "widgets": [
+        {"type": "ShSpeedArc", "id": "speed", "properties": {"value": 32, "maximumValue": 70, "unit": "km/h",
+         "showTarget": false, "outerColor": "#3b82f6", "innerColor": "#1d4ed8"},
+         "bindings": {"value": {"tag": "truck.speed", "unit": "km/h"}}}]},
+      {"title": "Truck", "role": "hero", "region": "center", "widgets": [
+        {"type": "Image", "id": "truckPicture", "properties": {"source": ""}},
+        {"type": "ShDataField", "id": "pitchLive", "properties": {"label": "Pitch", "value": "12°"},
+         "bindings": {"value": {"tag": "truck.pitch"}}},
+        {"type": "ShDataField", "id": "rollLive", "properties": {"label": "Roll", "value": "0.5°"},
+         "bindings": {"value": {"tag": "truck.roll"}}}]},
+      {"title": "RPM", "role": "instruments", "region": "bottom", "accent": "#f97316", "widgets": [
+        {"type": "ShClusterGauge", "id": "rpm", "properties": {"caption": "RPM", "label": "x1000",
+         "minimumValue": 0, "maximumValue": 3, "majorStep": 0.5, "redlineFrom": 2.4, "value": 1.6},
+         "bindings": {"value": {"tag": "truck.rpm"}}}]},
+      {"title": "Payload", "role": "instruments", "region": "bottom", "accent": "#f59e0b", "widgets": [
+        {"type": "ShClusterGauge", "id": "payload", "properties": {"caption": "Payload", "label": "t",
+         "minimumValue": 0, "maximumValue": 400, "majorStep": 50, "redlineFrom": 360, "value": 342},
+         "bindings": {"value": {"tag": "truck.payload_t"}}}]},
+      {"title": "Incline", "role": "instruments", "region": "right", "widgets": [
+        {"type": "ShCompass", "id": "heading", "properties": {"heading": 12},
+         "bindings": {"heading": {"tag": "truck.heading"}}},
+        {"type": "ShAttitude", "id": "attitude", "properties": {"pitch": 3, "roll": 1},
+         "bindings": {"pitch": {"tag": "truck.pitch"}, "roll": {"tag": "truck.roll"}}}]},
+      {"title": "Tires", "role": "readings", "region": "right", "widgets": [
+        {"type": "ShVehicleStatus", "id": "tires", "properties": {"label": "PSI", "unit": "psi",
+         "frontLeft": 120, "frontRight": 120, "rearLeft": 119, "rearRight": 119, "warnBelow": 100, "decimals": 0},
+         "bindings": {"frontLeft": {"tag": "truck.tire_fl"}, "frontRight": {"tag": "truck.tire_fr"},
+                      "rearLeft": {"tag": "truck.tire_rl"}, "rearRight": {"tag": "truck.tire_rr"}}}]},
+      {"title": "Fuel", "role": "readings", "region": "right", "widgets": [
+        {"type": "ShSegmentBar", "id": "fuel", "properties": {"label": "Fuel", "value": 78, "showPercent": true},
+         "bindings": {"value": {"tag": "truck.fuel_pct"}}}]},
+      {"title": "Vitals", "role": "instruments", "region": "right", "widgets": [
+        {"type": "ShEngineBar", "id": "coolant", "properties": {"label": "Coolant", "units": "°C", "value": 82,
+         "maximumValue": 120, "cautionValue": 95, "warningValue": 105}, "bindings": {"value": {"tag": "truck.coolant_c"}}},
+        {"type": "ShEngineBar", "id": "oil", "properties": {"label": "Oil", "units": "°C", "value": 76,
+         "maximumValue": 120, "cautionValue": 100, "warningValue": 110}, "bindings": {"value": {"tag": "truck.oil_c"}}},
+        {"type": "ShEngineBar", "id": "trans", "properties": {"label": "Trans", "units": "°C", "value": 45,
+         "maximumValue": 120, "cautionValue": 95, "warningValue": 105}, "bindings": {"value": {"tag": "truck.trans_c"}}}]}
+    ]
+  }]
+}
