@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+**AI Design follows a reference picture**
+
+* Attach a picture to a brief: paste it, drop it on the composer, or use
+  the paperclip (up to four). Each request of the run sends it in the
+  provider's own image format.
+* With a picture, the plan prompt asks the model to reproduce it:
+  * every block of the picture, region by region;
+  * each block as a section with a `region` (top strip, left rail, left,
+    center, right column, bottom row) and the picture's colours;
+  * the closest kit widget for each, from a mapping table (gear selector,
+    compass and attitude, tyre diagram, vitals bars, arcs, a picture slot).
+* The **reference layout** lays such a plan out the way the picture is:
+  * a status strip with the clock centred and big;
+  * a gear rail at the left edge;
+  * frameless dials and a hero picture in the body, a bottom row;
+  * a column of cards on the right.
+
+  The regions are kept on the widgets, so Tidy up rebuilds the same screen.
+* Widgets for a vehicle cockpit:
+  * `ShGearIndicator` `orientation: vertical`;
+  * `ShVehicleStatus` `axles: 3` (six tyres);
+  * `ShClusterGauge` `accentColor`;
+  * `ShEngineBar` `orientation: horizontal` with `barColor`;
+  * `ShSegmentBar` `barColor`.
+
+  Status-strip icons: signal bars, map pin, cloud, user, truck.
+* **`ShAnimatedImage`**: an animated GIF on the canvas, in the preview and
+  on the panel (LVGL's GIF decoder), with `playing`, `speed` and
+  `fillMode`. A dropped .gif becomes one.
+* Fixes found on the way:
+  * an Image with no picture is a framed placeholder on the panel;
+  * a value tile elides its title instead of clipping it under its badge;
+  * ShAttitude's ladder moves in QML and stays inside its box on the panel;
+  * a speed arc alone no longer makes tagsim treat a design as a train;
+  * a sample that already carries its unit is not drawn with it twice.
+* Ornith 1.5 is a built-in AI Design provider. Saved connections are shared
+  by AI Design and the Code agent ("Manage connections…"). No button is
+  taller than Deploy.
+
 **hmi-hwd in C** (`native/hmi-hwd`, CONTRACT §14)
 
 * The panel's hardware daemon is now a C program with no Python underneath.

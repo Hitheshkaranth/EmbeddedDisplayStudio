@@ -275,6 +275,21 @@ def _strip(project, registry, title, items, tokens, width, report):
         _set(widget, x, y0 + (h - dot) / 2.0, dot, dot)
         return x
 
+    def field_w(widget, design_w, ih):
+        """A header reading is as wide as its text, never wider than its
+        design: at the kit's 150 px a driver's name and the outside
+        temperature left no room beside the clock."""
+        if widget.type != "ShDataField":
+            return design_w
+        props = widget.properties
+        label = str(props.get("label", "") or "")
+        value = str(props.get("value", "") or "") + str(props.get("units", "") or "")
+        side = props.get("stacked") is False
+        label_w = len(label) * tokens.label_font * 0.62
+        value_w = len(value) * ih * 0.42 * 0.62
+        need = (label_w + 8 + value_w) if side else max(label_w, value_w)
+        return min(design_w, max(48.0, need + 12))
+
     def other(widget, x, towards_right):
         design_w, design_h = c._design(registry, widget)
         definition = registry.get(widget.type) if registry is not None else None
@@ -285,18 +300,48 @@ def _strip(project, registry, title, items, tokens, width, report):
             design_h = h - 8
         ih = min(design_h, h - 8)
         iw = design_w * ih / float(design_h) if design_h > h - 8 else design_w
+        iw = field_w(widget, iw, ih)
         if not towards_right:
             x -= iw
         _set(widget, x, y0 + (h - ih) / 2.0, iw, ih)
         return x + iw if towards_right else x
 
+    def span(widget):
+        """How wide an item is drawn in the strip (as lamp/other place it)."""
+        if widget.type in _LAMPS:
+            dot = 16 if widget.type == "ShStatDot" else 28
+            return dot + 6 + max(32, len(c._lamp_label(widget)) * tokens.label_font * 0.62)
+        design_w, design_h = c._design(registry, widget)
+        if design_h > h - 8 and widget.type == "ShDataField":
+            return field_w(widget, design_w, h - 8)   # side by side, no taller than the strip
+        ih = min(design_h, h - 8)
+        return field_w(widget, design_w * ih / float(design_h) if design_h > h - 8 else design_w, ih)
+
+    # The clock's tab is the strip's middle: the right-hand items fill from
+    # the right edge towards it and never into it; one that would reach it
+    # goes to the left half after the lamps there, or stays (noted) when
+    # neither half has room.
+    stop = clock_right + tokens.gap if clock is not None else x0
+    end = x1 - tokens.pad
+    keep, moved = [], []
+    for widget in reversed(right):
+        need = span(widget)
+        if clock is not None and end - need < stop:
+            moved.append(widget)
+            continue
+        keep.append(widget)
+        end -= need + tokens.gap
     x = x0 + tokens.pad
     limit = clock_left - tokens.gap
-    for widget in left:
+    for widget in left + list(reversed(moved)):
+        if widget in moved and x + span(widget) > limit:
+            keep.append(widget)
+            report.notes.append(f"{widget.id}: the status strip is full; it overlaps the clock")
+            continue
         x = (lamp if widget.type in _LAMPS else other)(widget, x, True) + tokens.gap
         placed.append(widget)
     end = x1 - tokens.pad
-    for widget in reversed(right):
+    for widget in keep:
         end = (lamp if widget.type in _LAMPS else other)(widget, end, False) - tokens.gap
         placed.append(widget)
     # The title: in the strip's left end when it is free, small after the
@@ -491,6 +536,13 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
     for section in sections:
         c._prepare(registry, section, report.notes)
         _apply_accent(registry, section)
+        for widget in section.widgets:
+            # A speed arc with no target in the plan is a vehicle's
+            # speedometer, not a cab's: the kit's sample "TARGET: 60" flag
+            # would be a target nobody set.
+            if widget.type == "ShSpeedArc" and "target" not in widget.properties \
+                    and "target" not in (widget.bindings or {}) and "showTarget" not in widget.properties:
+                widget.properties["showTarget"] = False
         if section.region == "right" and all(w.type == "ShEngineBar" for w in section.widgets):
             # In a column of cards, bars lie down, one row each, when the
             # kit's bar can (a picture's vitals are drawn that way).

@@ -1356,6 +1356,28 @@ def _ordered(sections):
     return heroes[:1] + rest
 
 
+_TYRES = ("frontLeft", "frontRight", "midLeft", "midRight", "rearLeft", "rearRight")
+
+
+def _tyre_card(widget, section):
+    """A tyre diagram's caption and decimals.
+
+    Its "label" is the small caption over the outline. Filled from a tag
+    like the other widgets' labels it read "Tire fl"; in a titled card the
+    card names it, so the caption is the unit ("PSI"). Empty is not an
+    option: the QML kit then shows its default, "TPMS". Pressures the plan
+    wrote as whole numbers drop the ".0" the kit's one decimal adds.
+    """
+    props = widget.properties
+    if not str(props.get("label", "") or "").strip() and section.title:
+        unit = str(props.get("unit", "") or "").strip()
+        props["label"] = unit.upper() if unit else section.title
+    values = [props[k] for k in _TYRES if isinstance(props.get(k), (int, float))
+              and not isinstance(props.get(k), bool)]
+    if "decimals" not in props and values and all(float(v).is_integer() for v in values):
+        props["decimals"] = 0
+
+
 def _prepare(registry, section, notes):
     """Make every widget in the section say what it is."""
     for widget in section.widgets:
@@ -1367,6 +1389,9 @@ def _prepare(registry, section, notes):
         _live_readout(definition, widget, notes)
         _bands_inside_range(widget, notes)
         _explicit_unit(definition, widget)
+        if widget.type == "ShVehicleStatus":
+            _tyre_card(widget, section)
+            continue
         label_prop = _intake.label_property(definition)
         if widget.type == "ShClusterGauge":
             # Its "label" is the small unit text by the scale ("x1000 RPM");
@@ -1400,6 +1425,11 @@ def _explicit_unit(definition, widget):
     kit's sample unit (a pH readout drew "°C" from ShAutoReadout's default)."""
     binding = (widget.bindings or {}).get("value")
     unit = str(getattr(binding, "unit", "") or "").strip() if binding is not None else ""
+    sample = widget.properties.get("value")
+    if unit and isinstance(sample, str) and sample.strip().endswith(unit) and sample.strip() != unit:
+        # "12°" with unit "°" drew "12° °": the sample says the number, the
+        # unit is drawn once beside it (as live values arrive bare).
+        widget.properties["value"] = sample.strip()[: -len(unit)].strip()
     for key in _UNIT_PROPERTIES:
         if key in definition.properties and key not in widget.properties:
             if key == "readoutUnit" and "readout" not in definition.properties:

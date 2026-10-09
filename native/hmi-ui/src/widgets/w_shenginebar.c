@@ -51,6 +51,9 @@ static void layout_horizontal(hmi_widget_t *w, double clamped, double fraction, 
         lv_obj_update_layout(st->label);
         labelW = (int)fmin(lv_obj_get_width(st->label), W * 0.3);
         lv_obj_set_width(st->label, labelW);
+        // One line: LVGL only elides (LONG_DOT) a label whose height is
+        // fixed; left to grow, "Transmission" wrapped onto a second line.
+        lv_obj_set_height(st->label, lv_font_get_line_height(hmi_font(fs, 500)));
         lv_obj_remove_flag(st->label, LV_OBJ_FLAG_HIDDEN);
         lv_obj_align(st->label, LV_ALIGN_LEFT_MID, 0, 0);
     } else {
@@ -65,6 +68,7 @@ static void layout_horizontal(hmi_widget_t *w, double clamped, double fraction, 
     lv_obj_update_layout(st->readout);
     int valueW = (int)fmin(lv_obj_get_width(st->readout), W * 0.25);
     lv_obj_set_width(st->readout, valueW);
+    lv_obj_set_height(st->readout, lv_font_get_line_height(hmi_font(fs, 600)));
     lv_obj_set_style_text_align(st->readout, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_align(st->readout, LV_ALIGN_RIGHT_MID, 0, 0);
 
@@ -121,6 +125,7 @@ static void layout(hmi_widget_t *w)
     }
     lv_obj_set_style_text_align(st->readout, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_width(st->readout, LV_SIZE_CONTENT);
+    lv_obj_set_height(st->readout, LV_SIZE_CONTENT);
 
     /* Background */
     lv_obj_set_style_bg_color(st->face, hmi_colour("efisPanel"), 0);
@@ -138,6 +143,7 @@ static void layout(hmi_widget_t *w)
     lv_obj_set_style_text_font(st->label, hmi_font((int)labelFs, 600), 0);
     lv_obj_set_style_text_color(st->label, hmi_colour("efisText"), 0);
     lv_obj_set_width(st->label, (int32_t)W);
+    lv_obj_set_height(st->label, LV_SIZE_CONTENT);   // a horizontal row pinned it to one line
     lv_label_set_long_mode(st->label, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_align(st->label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_remove_flag(st->label, LV_OBJ_FLAG_HIDDEN);
