@@ -346,6 +346,9 @@ def journey_at(t: float, stations=RAIL_STATIONS, now: float = None) -> dict:
 
 #: Widget types that make a design a cab display.
 RAIL_TYPES = {"ShSpeedArc", "ShTractionBar", "ShStationLine", "ShTrainConsist"}
+#: The Rail widgets only a train has. A speed arc alone is any vehicle's
+#: speedometer (a haul truck's, a bus's): it does not make a design a train.
+TRAIN_TYPES = RAIL_TYPES - {"ShSpeedArc"}
 
 
 def rail_key(tag: str, widget_type: str, prop: str):
@@ -704,7 +707,7 @@ def plan(project: dict) -> dict:
         gather(page)
     # A cab display runs a train, on the stations its own line names.
     stations = None
-    if any(widget.get("type") in RAIL_TYPES for widget in widgets):
+    if any(widget.get("type") in TRAIN_TYPES for widget in widgets):
         named = next((str((w.get("properties") or {}).get("stations") or "")
                       for w in widgets if w.get("type") == "ShStationLine"), "")
         stations = tuple(s.strip() for s in named.split(",") if s.strip()) or RAIL_STATIONS

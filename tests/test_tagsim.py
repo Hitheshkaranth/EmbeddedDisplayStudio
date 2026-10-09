@@ -180,6 +180,16 @@ class JourneyTests(unittest.TestCase):
         speed = _widget("ShSpeedArc", "arc", {"value": {"tag": "train.speed"}})
         return tagsim.plan(_project([line, speed] + texts))
 
+    def test_a_speed_arc_alone_is_a_vehicle_not_a_train(self):
+        """A haul truck's speedometer is a ShSpeedArc too: with no station
+        line, consist or traction bar it is not a journey, and its gear and
+        tyre readings are not driven as one."""
+        signals = tagsim.plan(_project([
+            _widget("ShSpeedArc", "arc", {"value": {"tag": "truck.speed"}}),
+            _widget("ShGearIndicator", "gear", {"gear": {"tag": "truck.gear"}}, {"gears": "P,R,N,D,L"}),
+        ]))
+        self.assertFalse(any(sig.kind == "rail" for sig in signals.values()))
+
     def _run(self, seconds, step=1.0):
         signals = self._cab()
         return [tagsim.values_at(signals, i * step, DURATION) for i in range(int(seconds / step))]
