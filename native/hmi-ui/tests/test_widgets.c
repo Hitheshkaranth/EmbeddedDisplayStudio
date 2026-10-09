@@ -73,6 +73,19 @@ static void test_toggle_tap_flips_it(void)
     hmi_project_free(p);
 }
 
+// An Image with no picture yet is a framed placeholder, not nothing.
+static void test_image_without_source_is_a_placeholder(void)
+{
+    hmi_project_t *p = one_widget("Image", "{\"source\":\"\"}");
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    CHECK(lv_obj_get_style_border_width(w->native, 0) > 0);
+    CHECK(lv_obj_get_child_count(w->native) == 1);       // the caption
+    lv_obj_delete(w->native);
+    hmi_project_free(p);
+}
+
 int main(void)
 {
     lv_init();
@@ -81,5 +94,6 @@ int main(void)
     hmi_display_headless(320, 120);
     test_toggle_starts_checked();
     test_toggle_tap_flips_it();
+    test_image_without_source_is_a_placeholder();
     return check_summary("test_widgets");
 }
