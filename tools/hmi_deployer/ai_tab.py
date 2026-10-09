@@ -1375,9 +1375,22 @@ class BriefInput(QPlainTextEdit):
 
     def _fit(self):
         line = self.fontMetrics().lineSpacing()
-        pad = int(self.document().documentMargin() * 2) + 4
+        margin = self.document().documentMargin()
+        pad = int(margin * 2) + 4
         lines = max(self.MIN_LINES, int(self.document().size().height() + 0.5))
+        if not self.toPlainText() and self.placeholderText():
+            # Empty, the box shows the placeholder, which is not in the
+            # document: sized from the document alone, a placeholder that
+            # wraps lost its second line under the composer's action row.
+            width = max(1, self.viewport().width() - int(margin * 2))
+            wrapped = self.fontMetrics().boundingRect(
+                QRect(0, 0, width, 10_000), Qt.TextWordWrap, self.placeholderText())
+            lines = max(lines, -(-wrapped.height() // line))
         self.setFixedHeight(min(self.MAX_LINES, lines) * line + pad)
+
+    def setPlaceholderText(self, text):
+        super().setPlaceholderText(text)
+        self._fit()
 
 
 def _thumbnail(image, side: int) -> QPixmap:
@@ -1724,7 +1737,7 @@ class AIDesignTab(QWidget):
         self.brief_input.setObjectName("briefInput")
         self.brief_input.setFrameShape(QFrame.NoFrame)
         self.brief_input.setPlaceholderText(
-            "Describe the screen you want on the panel… (paste or drop a reference image)")
+            "Describe the screen you want, or paste a reference image…")
         self.brief_input.submitted.connect(self._on_send)
         self.brief_input.imagesAdded.connect(self.add_images)
         self.brief_input.installEventFilter(self)

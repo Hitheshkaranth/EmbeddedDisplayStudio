@@ -130,6 +130,18 @@ class Composer(unittest.TestCase):
         self.assertEqual(tab.brief_input.toPlainText(), "")
         self.assertFalse(tab.attachment_strip.isHidden())
 
+    def test_a_wrapping_placeholder_is_not_cut_off(self):
+        """Empty, the box is as tall as its placeholder: sized from its (empty)
+        text alone, the placeholder's second line hid under the action row."""
+        from tools.hmi_deployer.ai_tab import BriefInput
+        box = BriefInput()
+        self.addCleanup(box.deleteLater)
+        box.resize(160, 40)
+        box.show()
+        box.setPlaceholderText("Describe the screen you want on the panel " * 3)
+        self.app.processEvents()
+        self.assertGreaterEqual(box.height(), 2 * box.fontMetrics().lineSpacing())
+
     def test_at_most_four_and_one_can_be_removed(self):
         tab = self._tab()
         tab.add_images([_image() for _ in range(MAX_BRIEF_IMAGES + 2)])
