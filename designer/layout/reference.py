@@ -414,6 +414,12 @@ def _section_card(project, registry, section, rect, tokens, framed, report):
         _set(lone, inner[0] + (inner[2] - fw) / 2.0, inner[1] + (inner[3] - fh) / 2.0, fw, fh)
     elif pictures and len(pictures) < len(section.widgets):
         _picture_with_readings(project, registry, card, pictures, section, inner, tokens)
+    elif not framed and _face_with_readings(registry, section):
+        # A dial with its readings (speed with pitch and roll): the readings
+        # in a row above it, the dial as large as the rest allows -- left to
+        # the tile layout it shrank to a thumbnail beside two numbers.
+        faces = [wd for wd in section.widgets if _is_dial(registry, wd)]
+        _picture_with_readings(project, registry, card, faces, section, inner, tokens, fit=True)
     elif _bar_rows(section):
         # Bars lying down, one row each across the card (a picture's vitals).
         rows = _shares(inner[3], [1.0] * len(section.widgets), tokens.gap)
@@ -429,12 +435,48 @@ def _section_card(project, registry, section, rect, tokens, framed, report):
     return card
 
 
-def _picture_with_readings(project, registry, card, pictures, section, inner, tokens):
-    """A picture with its readings: the readings in a row above it (where a
-    picture's callouts sit), the picture filling the rest."""
+#: Small readings that ride above a dial or a picture in their section.
+_READINGS = ("ShDataField", "ShValueTile", "ShNumDisplay", "ShAutoReadout", "Text",
+             "ShStatDot", "ShTelltale")
+
+
+def _is_dial(registry, widget) -> bool:
+    """A round instrument: a face, or a speed arc (the Rail kit's speedometer,
+    which the compiler files as a tile)."""
+    from . import compiler as c
+    return widget.type == "ShSpeedArc" or c.kind_of(registry, widget) == c.FACE
+
+
+def _face_with_readings(registry, section) -> bool:
+    """One dial and only small readings beside it."""
+    faces = [wd for wd in section.widgets if _is_dial(registry, wd)]
+    rest = [wd for wd in section.widgets if wd not in faces]
+    return len(faces) == 1 and bool(rest) and all(wd.type in _READINGS for wd in rest)
+
+
+def _picture_with_readings(project, registry, card, pictures, section, inner, tokens, fit=False):
+    """A picture (or, with `fit`, a dial) with its readings: the readings in
+    a row above it (where a picture's callouts sit), the picture filling the
+    rest -- a dial at its own proportion, centred."""
     from . import compiler as c
     rest = [wd for wd in section.widgets if wd not in pictures]
     ix, iy, iw, ih = inner
+    dials = [] if fit else [wd for wd in rest if _is_dial(registry, wd)]
+    if dials:
+        # A dial grouped with the picture (a speedometer beside the truck)
+        # is not a small reading: it takes a column of its own at the left,
+        # and the picture with its readings the rest.
+        col = min(iw * 0.4, ih / max(1, len(dials)))
+        each = (ih - tokens.gap * (len(dials) - 1)) / len(dials)
+        for index, dial in enumerate(dials):
+            fw, fh = _fit(registry, dial, col, each)
+            _set(dial, ix + (col - fw) / 2.0, iy + index * (each + tokens.gap) + (each - fh) / 2.0, fw, fh)
+        rest = [wd for wd in rest if wd not in dials]
+        ix, iw = ix + col + tokens.gap, iw - col - tokens.gap
+        if not rest:
+            for index, picture in enumerate(pictures):
+                _set(picture, ix, iy, iw, ih)
+            return
     # Drop the readings layout_content made and lay them out in one row.
     row_h = max(c._design(registry, wd)[1] for wd in rest) * 1.1
     row_h = min(row_h, ih * 0.3)
@@ -449,7 +491,11 @@ def _picture_with_readings(project, registry, card, pictures, section, inner, to
     top = iy + row_h + tokens.gap
     each = (ih - row_h - tokens.gap - tokens.gap * (len(pictures) - 1)) / len(pictures)
     for index, picture in enumerate(pictures):
-        _set(picture, ix, top + index * (each + tokens.gap), iw, each)
+        if fit:
+            fw, fh = _fit(registry, picture, iw, each)
+            _set(picture, ix + (iw - fw) / 2.0, top + index * (each + tokens.gap) + (each - fh) / 2.0, fw, fh)
+        else:
+            _set(picture, ix, top + index * (each + tokens.gap), iw, each)
 
 
 def _rail_card(project, registry, section, rect, tokens, report):

@@ -1378,6 +1378,27 @@ def _tyre_card(widget, section):
         props["decimals"] = 0
 
 
+def _thousands_scale(widget, notes):
+    """A dial labelled "x1000" whose scale runs in raw units (0..5000 rpm)
+    is put in thousands, as its label says: models wrote the raw scale with
+    the x1000 label, and the readout then showed "1450.00" or a 12 on a
+    0..5000 arc."""
+    props = widget.properties
+    label = " ".join(str(props.get(k) or "") for k in ("label", "readoutUnit", "caption")).lower()
+    top = props.get("maximumValue")
+    if not re.search(r"x\s*1\s*000|×\s*1\s*000|x1k\b", label) or not isinstance(top, (int, float)) \
+            or isinstance(top, bool) or top <= 100:
+        return
+    for key in ("minimumValue", "maximumValue", "majorStep", "redlineFrom"):
+        if isinstance(props.get(key), (int, float)) and not isinstance(props.get(key), bool):
+            props[key] = round(props[key] / 1000.0, 3)
+    value = props.get("value")
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value > top / 1000.0 * 1.5:
+        props["value"] = round(value / 1000.0, 2)     # a raw sample; a 12 on 0..5000 stays as read
+    props["decimals"] = min(int(props.get("decimals", 1) or 0), 1)
+    notes.append(f"{widget.id}: scale in thousands, as its x1000 label says")
+
+
 def _prepare(registry, section, notes):
     """Make every widget in the section say what it is."""
     for widget in section.widgets:
@@ -1389,6 +1410,8 @@ def _prepare(registry, section, notes):
         _live_readout(definition, widget, notes)
         _bands_inside_range(widget, notes)
         _explicit_unit(definition, widget)
+        if widget.type == "ShClusterGauge":
+            _thousands_scale(widget, notes)
         if widget.type == "ShVehicleStatus":
             _tyre_card(widget, section)
             continue
