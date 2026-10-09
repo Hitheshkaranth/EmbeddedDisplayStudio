@@ -452,6 +452,13 @@ ICON_ALIASES = {
     "bolt": "bolt", "voltage": "bolt", "current": "bolt", "pressure": "gauge", "flow": "wind",
     "file-text": "clipboard-text", "list": "list-tree", "history": "history", "chart": "activity",
     "trend": "activity", "sun": "sun", "night": "moon", "lock": "lock", "unlock": "lock-open",
+    # A vehicle's status strip: cellular signal, position, weather, driver.
+    "signal": "antenna-bars-5", "lte": "antenna-bars-5", "cellular": "antenna-bars-5",
+    "antenna": "antenna-bars-5", "4g": "antenna-bars-5", "5g": "antenna-bars-5",
+    "network": "antenna-bars-5", "gps": "map-pin", "location": "map-pin", "pin": "map-pin",
+    "position": "map-pin", "navigation": "map-pin", "weather": "cloud", "cloudy": "cloud",
+    "clouds": "cloud", "driver": "user", "operator": "user", "person": "user", "profile": "user",
+    "haul": "truck", "lorry": "truck", "dump-truck": "truck", "vehicle": "truck",
 }
 _ICON_CACHE: dict = {}
 
