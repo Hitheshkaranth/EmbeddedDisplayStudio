@@ -103,6 +103,10 @@ SIDE_MARK = "_side"
 # of REGIONS, carried on each of the section's widgets so a recompile ("Tidy
 # up", Size on screen) rebuilds the same arrangement.
 REGION_MARK = "_region"
+# A planned section's colour ("accent": "#f97316"), carried on each of its
+# widgets like REGION_MARK: the reference layout tints the section's card and
+# fills its widgets' empty colour properties with it.
+ACCENT_MARK = "_accent"
 #: The screen's regions, as a reference picture divides it:
 #:   top    -- the status strip across the top (clock, connectivity, weather)
 #:   rail   -- a narrow column at the left edge (a gear selector, mode lamps)
@@ -131,6 +135,25 @@ def region_of(text) -> str:
     return _REGION_ALIASES.get(key, "")
 
 
+_ACCENT_NAMES = {
+    "blue": "#3b82f6", "orange": "#f97316", "amber": "#f59e0b", "yellow": "#facc15",
+    "green": "#22c55e", "lime": "#84cc16", "red": "#ef4444", "cyan": "#22d3ee",
+    "teal": "#14b8a6", "purple": "#a855f7", "violet": "#8b5cf6", "pink": "#ec4899",
+    "white": "#f4f4f5", "grey": "#a1a1aa", "gray": "#a1a1aa",
+}
+
+
+def accent_of(text) -> str:
+    """A '#rrggbb' accent from whatever the plan wrote ("#F97316", "orange"),
+    or "" when it names no colour. The panel reads hex only, so a colour
+    name becomes the kit's shade of it."""
+    value = str(text or "").strip()
+    if re.fullmatch(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})", value):
+        return value.lower()
+    key = re.sub(r"[^a-z]", "", value.lower())
+    return _ACCENT_NAMES.get(key, "")
+
+
 def is_planned(page) -> bool:
     """True when the page's widgets carry a plan (SECTION_MARK)."""
     return any(widget.properties.get(SECTION_MARK) for widget in _walk(page.widgets))
@@ -144,6 +167,7 @@ class Section:
     widgets: list
     note: str = ""
     region: str = ""          # REGIONS, when the plan follows a reference picture
+    accent: str = ""          # '#rrggbb', the section's colour (reference plans)
 
 
 @dataclass
@@ -1553,12 +1577,14 @@ def _header(project, registry, title, header_widgets, tokens, width):
     right = x + inner_w
     # Logos that asked for the left end go before the title, left to right.
     placed_left = []
-    for widget in [w for w in header_widgets if w.properties.get(SIDE_MARK) == "left"]:
+    def to_the_left(widget):
+        return widget.type == "Image" and widget.properties.get(SIDE_MARK) == "left"
+    for widget in [w for w in header_widgets if to_the_left(w)]:
         design_w, design_h = _design(registry, widget)
         h = min(design_h, tokens.header - 8)
         _place_logo(project, widget, x, y + (tokens.header - h) / 2, design_w, h, placed_left)
         x += design_w + tokens.gap
-    header_widgets = [w for w in header_widgets if w.properties.get(SIDE_MARK) != "left"]
+    header_widgets = [w for w in header_widgets if not to_the_left(w)]
     # Header widgets, right to left at their design width.
     placed_right = []
     for widget in reversed(header_widgets):
@@ -1812,7 +1838,8 @@ def _sections_from_marks(page, registry, widgets, planned_title, notes):
             order.append(key)
         groups[key].append(widget)
     sections = [Section(heading, role_of(role), groups[(heading, role)],
-                        region=region_of(groups[(heading, role)][0].properties.get(REGION_MARK)))
+                        region=region_of(groups[(heading, role)][0].properties.get(REGION_MARK)),
+                        accent=accent_of(groups[(heading, role)][0].properties.get(ACCENT_MARK)))
                 for heading, role in order]
     # A picture dropped into the header band by hand is a logo for the
     # header: it keeps the end it was dropped at, and stays there from now on.
@@ -1941,11 +1968,19 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
         if not heading and role != "hero":
             heading = ROLE_TITLES.get(role, "")
         region = region_of(entry.get("region") or entry.get("area") or entry.get("position") or "")
-        sections.append(Section(heading, role, widgets, region=region))
+        accent = accent_of(entry.get("accent") or entry.get("colour") or entry.get("color") or "")
+        if accent:
+            # Marked here, where the widgets are made, so the colour survives
+            # into the page (and a recompile) with the section's other marks.
+            for widget in widgets:
+                widget.properties[ACCENT_MARK] = accent
+        sections.append(Section(heading, role, widgets, region=region, accent=accent))
     raw_header = [w for w in page_data.get("header") or [] if isinstance(w, dict)]
-    # A logo may ask for the left end ("side": "left", beside or inside its
-    # properties); the converter drops keys the kit does not declare, so the
-    # wish is read here and carried as a mark.
+    # A logo -- or any header item -- may ask for the left end ("side":
+    # "left", beside or inside its properties); the converter drops keys the
+    # kit does not declare, so the wish is read here and carried as a mark.
+    # The card layout's header moves only logos to the left end; the
+    # reference layout's status strip puts every marked item there.
     sides = {}
     for item in raw_header:
         props = item.get("properties") if isinstance(item.get("properties"), dict) else {}
@@ -1956,6 +1991,6 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
     header = [w for w in convert(raw_header)
               if not (w.type == "Image" and not str(w.properties.get("source") or "").strip())]
     for widget in header:
-        if widget.type == "Image" and sides.get(widget.id) == "left":
+        if sides.get(widget.id) == "left":
             widget.properties[SIDE_MARK] = "left"
     return title, sections, header
