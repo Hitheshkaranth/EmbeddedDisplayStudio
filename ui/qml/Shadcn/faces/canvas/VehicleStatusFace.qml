@@ -7,6 +7,8 @@
  *   bodyX bodyY bodyW bodyH bodyRadius wheelW wheelH
  *   frontLeftLow frontRightLow rearLeftLow rearRightLow (bool)
  *   wheel wheelLow bodyFill bodyLine glass
+ *   axles (2 | 3) midLeftLow midRightLow (bool) wheelStroke -- three axles
+ *   add a middle pair at half the body's height and outline every tyre
  * C++ twin: native/hmi-gui/src/faces/vehiclestatusface.cpp.
  */
 import QtQuick 2.15
@@ -48,10 +50,22 @@ Canvas {
             [x + w - wheelW * 0.4, y + h * 0.12, s.frontRightLow],
             [x - wheelW * 0.6, y + h * 0.88 - wheelH, s.rearLeftLow],
             [x + w - wheelW * 0.4, y + h * 0.88 - wheelH, s.rearRightLow]];
+        // Three axles: a middle pair centred on the body, every tyre
+        // outlined in wheelStroke (wheelLow when low).
+        var truck = s.axles === 3;
+        if (truck) {
+            wheels.push([x - wheelW * 0.6, y + h * 0.5 - wheelH / 2, s.midLeftLow]);
+            wheels.push([x + w - wheelW * 0.4, y + h * 0.5 - wheelH / 2, s.midRightLow]);
+        }
         for (var i = 0; i < wheels.length; ++i) {
             ctx.fillStyle = wheels[i][2] ? s.wheelLow : s.wheel;
             roundedRect(wheels[i][0], wheels[i][1], wheelW, wheelH, wheelW * 0.3);
             ctx.fill();
+            if (truck) {
+                ctx.strokeStyle = wheels[i][2] ? s.wheelLow : s.wheelStroke;
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+            }
         }
 
         // Body.

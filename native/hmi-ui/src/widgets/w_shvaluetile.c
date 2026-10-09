@@ -51,7 +51,10 @@ static void layout(hmi_widget_t *w)
     const char *caption = hmi_widget_str(w, "title", "");
     if (!caption[0]) caption = hmi_widget_str(w, "label", "");
     lv_label_set_text(st->label, caption);
-    lv_obj_set_width(st->label, (int)fmax(10, W - 2 * inset - badgeW));
+    // A gap of 6 px between the title and the badge; one line tall, so a
+    // long title ends in dots instead of wrapping.
+    lv_obj_set_size(st->label, (int)fmax(10, W - 2 * inset - badgeW - 6),
+                    lv_font_get_line_height(hmi_font(hmi_font_size("fontSizeSm"), 500)));
     lv_obj_set_pos(st->label, inset, inset + (20 - lv_font_get_line_height(hmi_font(14, 500))) / 2);
 
     int rowY = inset + 20 + spacing;
@@ -80,6 +83,9 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     w->state = st;
     st->face = face;
     st->label = hmi_make_label(face, hmi_font_size("fontSizeSm"), 500, hmi_colour("mutedForeground"), "");
+    // The title elides ("Front-L...") in the room the badge leaves, as the
+    // QML Text does; clipped, it read "Front-Le" up against the badge.
+    lv_label_set_long_mode(st->label, LV_LABEL_LONG_DOT);
     st->badge = lv_obj_create(face);
     lv_obj_remove_style_all(st->badge);
     lv_obj_set_style_radius(st->badge, LV_RADIUS_CIRCLE, 0);

@@ -1,6 +1,7 @@
 // faces/vehiclestatusface.h -- native twin of ui/qml/Shadcn/faces/canvas/VehicleStatusFace.qml.
 //
-// Paints: four wheels, rounded car body, two window lines.
+// Paints: four wheels (six, outlined, for axles 3), rounded car body, two
+// window lines.
 // The Canvas file is the drawing specification; the spec keys are listed in
 // its header comment.
 #pragma once

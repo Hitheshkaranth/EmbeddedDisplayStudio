@@ -4,7 +4,8 @@
  * cluster: N cells filled in the accent blue up to the value, empty cells
  * in the track colour, an optional caption on the left and the percentage
  * on the right. At or below ``lowLevel`` the filled cells and the number
- * turn red.
+ * turn red. ``barColor`` fills the cells in that colour instead of the
+ * accent (unset -- transparent, the Designer's "" -- keeps the accent).
  */
 import QtQuick 2.15
 
@@ -18,6 +19,7 @@ Item {
     property string label: "SOC"
     property bool showPercent: true
     property real lowLevel: 20.0
+    property color barColor: "transparent"
 
     implicitWidth: 320
     implicitHeight: 36
@@ -74,6 +76,7 @@ Item {
                 radius: Math.round(root._h * 0.1)
                 color: !filled ? Theme.autoTrack
                      : root._low ? Theme.autoRedline
+                     : root.barColor.a > 0 ? root.barColor
                      : index === 0 ? Theme.autoAccentDeep : Theme.autoAccent
             }
         }

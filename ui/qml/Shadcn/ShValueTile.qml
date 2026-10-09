@@ -34,14 +34,17 @@ ShCard {
             
             Row {
                 width: parent.width
-                
+                // The title elides in the room the badge leaves, 6 px short
+                // of it, never running under it (hmi-ui does the same).
+                spacing: 6
+
                 Text {
                     text: root.label
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSizeSm
                     font.weight: Theme.fontMedium
                     color: Theme.mutedForeground
-                    width: parent.width - badge.width
+                    width: Math.max(0, parent.width - badge.width - parent.spacing)
                     elide: Text.ElideRight
                 }
                 

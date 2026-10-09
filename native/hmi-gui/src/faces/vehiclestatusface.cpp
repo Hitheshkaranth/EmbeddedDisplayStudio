@@ -45,17 +45,27 @@ void VehicleStatusFace::paintFace(QPainter *painter, const QVariantMap &spec)
     const bool rlLow = flag("rearLeftLow");
     const bool rrLow = flag("rearRightLow");
 
+    // Three axles: a middle pair at half the body's height, every tyre
+    // outlined in wheelStroke (wheelLow when low).
+    const bool truck = qRound(num("axles", 2)) == 3;
+    const QColor wheelStroke = color("wheelStroke");
+
     // Wheels
-    const struct { qreal x; qreal y; bool low; } wheels[4] = {
+    const struct { qreal x; qreal y; bool low; } wheels[6] = {
         { bodyX - wheelW * 0.6,      bodyY + bodyH * 0.12, flLow },
         { bodyX + bodyW - wheelW * 0.4, bodyY + bodyH * 0.12, frLow },
         { bodyX - wheelW * 0.6,      bodyY + bodyH * 0.88 - wheelH, rlLow },
         { bodyX + bodyW - wheelW * 0.4, bodyY + bodyH * 0.88 - wheelH, rrLow },
+        { bodyX - wheelW * 0.6,      bodyY + bodyH * 0.5 - wheelH / 2, flag("midLeftLow") },
+        { bodyX + bodyW - wheelW * 0.4, bodyY + bodyH * 0.5 - wheelH / 2, flag("midRightLow") },
     };
 
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < (truck ? 6 : 4); ++i) {
         painter->setBrush(wheels[i].low ? wheelLowClr : wheelClr);
-        painter->setPen(Qt::NoPen);
+        if (truck)
+            painter->setPen(pen(wheels[i].low ? wheelLowClr : wheelStroke, 1.5));
+        else
+            painter->setPen(Qt::NoPen);
         painter->drawPath(roundedRect(wheels[i].x, wheels[i].y, wheelW, wheelH, wheelW * 0.3));
     }
 

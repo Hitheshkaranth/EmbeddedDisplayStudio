@@ -32,6 +32,11 @@ Item {
     property string label: "x1000 RPM"
     property int decimals: 0
     property bool showInnerDial: true
+    /** The value arc's colour (orange RPM, yellow payload). Unset
+     *  (transparent, the Designer's "") keeps Theme.autoAccent. The deep end
+     *  of the gradient is this colour 35 % of the way to black, the glow
+     *  line 35 % of the way to white (hmi-ui mixes the same). */
+    property color accentColor: "transparent"
 
     implicitWidth: 240
     implicitHeight: 240
@@ -57,6 +62,12 @@ Item {
     }
     readonly property real _clamped:
         Math.max(root.minimumValue, Math.min(root.maximumValue, root.value))
+    readonly property bool _custom: root.accentColor.a > 0
+    readonly property color _accent: root._custom ? root.accentColor : Theme.autoAccent
+    readonly property color _accentDeep: root._custom ? Qt.tint(root.accentColor, Qt.rgba(0, 0, 0, 0.35))
+                                                      : Theme.autoAccentDeep
+    readonly property color _glow: root._custom ? Qt.tint(root.accentColor, Qt.rgba(1, 1, 1, 0.35))
+                                                : Theme.autoGlow
 
     // Everything the face painter needs, values and colours alike; the
     // painter (faces/canvas or faces/native) never reads Theme itself.
@@ -65,9 +76,11 @@ Item {
         majorStep: root.majorStep, redlineFrom: root.redlineFrom, sweep: root.sweep,
         showInnerDial: root.showInnerDial,
         track: Theme.autoTrack, redline: Theme.autoRedline,
-        accentDeep: Theme.autoAccentDeep, accent: Theme.autoAccent, glow: Theme.autoGlow,
+        accentDeep: root._accentDeep, accent: root._accent, glow: root._glow,
         line: Theme.autoLine, muted: Theme.autoMuted, panel: Theme.autoPanel,
-        tileBorder: Theme.autoTileBorder, dialTint: Qt.rgba(10 / 255, 79 / 255, 138 / 255, 0.20)
+        tileBorder: Theme.autoTileBorder,
+        dialTint: root._custom ? Qt.rgba(root._accentDeep.r, root._accentDeep.g, root._accentDeep.b, 0.20)
+                               : Qt.rgba(10 / 255, 79 / 255, 138 / 255, 0.20)
     })
 
     // Face painter: faces/canvas/ClusterGaugeFace.qml, or the C++ twin when
