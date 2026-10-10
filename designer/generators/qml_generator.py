@@ -374,6 +374,8 @@ class QmlGenerator:
             ("Rectangle", "borderWidth"): "border.width",
             ("ShCard", "borderColor"): "border.color",
             ("ShCard", "borderWidth"): "border.width",
+            # Rectangle has a gradient of its own; ShCard's switch is this.
+            ("ShCard", "gradient"): "fillGradient",
             ("ShTabs", "tabs"): "model",
             ("ShSelect", "options"): "model",
             ("ShToggle", "onLabel"): "onText",

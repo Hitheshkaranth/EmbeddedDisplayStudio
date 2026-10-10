@@ -5,6 +5,11 @@
  * Unlit is drawn as a dimmed caption rather than as nothing, because a crew
  * needs to know the lamp exists before it lights -- a panel of empty squares
  * says nothing about what could go wrong.
+ *
+ * Style options (off by default): litColor -- the lamp's colour instead of
+ * the severity's (a SCADA screen's bright green "#22d34a"); glow -- when lit,
+ * a soft outer glow of that colour (ShGlow, ~8 px). w_shannunciator.c draws
+ * the same.
  */
 import QtQuick 2.15
 
@@ -15,14 +20,24 @@ Item {
     /** advisory | caution | warning */
     property string severity: "caution"
     property bool lit: true
+    property color litColor: "transparent"
+    property bool glow: false
 
     implicitWidth: 130
     implicitHeight: 36
 
     readonly property color _colour: {
+        if (root.litColor.a > 0) return root.litColor
         if (root.severity === "warning") return Theme.efisWarning
         if (root.severity === "advisory") return Theme.efisNormal
         return Theme.efisCaution
+    }
+
+    ShGlow {
+        anchors.fill: parent
+        visible: root.lit && root.glow
+        color: root._colour
+        radius: Theme.radiusSm
     }
 
     Rectangle {

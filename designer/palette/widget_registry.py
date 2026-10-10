@@ -38,7 +38,7 @@ PROPERTY_MINIMUMS = {
     "cornerRadius": 0, "radius": 0, "handleRadius": 1, "lineWidth": 0.5,
     "rowHeight": 8, "pixelsPerDegree": 0.1, "spacing": 0, "columns": 0,
     "rows": 0, "majorStep": 0.001, "sweep": 10, "redZoneSpan": 0, "step": 0,
-    "speed": 1,
+    "speed": 1, "headerHeight": 0,
 }
 
 # Per-type exceptions to the floors above, keyed (type, property). A
@@ -136,16 +136,22 @@ def default_registry() -> WidgetRegistry:
          "verticalAlignment": ("Text.AlignTop", "Text.AlignVCenter",
                                "Text.AlignBottom")},
         ("color",))
+    # Style options, off by default: ``gradient`` shades the fill from 12 %
+    # lighter at the top to 12 % darker at the bottom (a raised key);
+    # ``glowColor`` puts a soft ~8 px glow of that colour around the button
+    # (the active tab of a navigation row).
     add("ShButton", "Button", "Basic", "ShButton", 120, 40,
         {"text": str, "variant": str, "size": str, "enabled": bool,
          "backgroundColor": str, "textColor": str, "borderColor": str,
-         "borderWidth": int, "cornerRadius": int, **common},
+         "borderWidth": int, "cornerRadius": int, "gradient": bool, "glowColor": str,
+         **common},
         {"text": "Button", "variant": "default", "size": "default", "enabled": True,
          "backgroundColor": "", "textColor": "", "borderColor": "",
-         "borderWidth": 0, "cornerRadius": 6, **common_defaults}, (), False,
+         "borderWidth": 0, "cornerRadius": 6, "gradient": False, "glowColor": "",
+         **common_defaults}, (), False,
         {"variant": ("default", "secondary", "destructive", "outline", "ghost", "link"),
          "size": ("default", "sm", "lg", "icon")},
-        ("backgroundColor", "textColor", "borderColor"))
+        ("backgroundColor", "textColor", "borderColor", "glowColor"))
     add("Image", "Image", "Basic", "Image", 160, 120,
         {"source": str, "fillMode": str, "smooth": bool, **common},
         {"source": "", "fillMode": "Image.PreserveAspectFit", "smooth": True, **common_defaults}, (), False,
@@ -229,11 +235,14 @@ def default_registry() -> WidgetRegistry:
          "greenLow": 20.0, "greenHigh": 70.0, "cautionHigh": 85.0,
          "label": "OIL PRESS", "units": "PSI", **common_defaults},
         ("value",))
+    # ``litColor`` ("" = the severity's) is the lamp's colour, e.g. a SCADA
+    # screen's bright green; ``glow`` adds a soft ~8 px glow of it when lit.
     add("ShAnnunciator", "Annunciator", "Avionics", "ShAnnunciator", 140, 38,
-        {"text": str, "severity": str, "lit": bool, **common},
-        {"text": "LOW FUEL", "severity": "caution", "lit": True, **common_defaults},
+        {"text": str, "severity": str, "lit": bool, "litColor": str, "glow": bool, **common},
+        {"text": "LOW FUEL", "severity": "caution", "lit": True, "litColor": "", "glow": False,
+         **common_defaults},
         ("lit", "severity"), False,
-        {"severity": ("advisory", "caution", "warning")})
+        {"severity": ("advisory", "caution", "warning")}, ("litColor",))
     # -- Automotive ----------------------------------------------------------
     # Instrument cluster widgets after the two reference dashboards; colours
     # come from Theme.qml's auto* block. An accent override (accentColor,
@@ -366,14 +375,15 @@ def default_registry() -> WidgetRegistry:
     # optional sparkline of the recent values, a dark inset box with bright
     # right-aligned digits, and a unit column. ``value`` is a number or a
     # string ("76,600"); ``decimals`` -1 shows it as given. warnAbove /
-    # warnBelow of 0 are off, as on ShAutoReadout.
+    # warnBelow of 0 are off, as on ShAutoReadout. ``bevel`` draws the boxes
+    # inset (a dark line along the top, a light one along the bottom).
     add("ShProcessValue", "Process value", "Industrial", "ShProcessValue", 260, 30,
         {"label": str, "value": str, "decimals": int, "unit": str, "valueColor": str,
          "boxColor": str, "trend": bool, "trendColor": str, "warnAbove": float,
-         "warnBelow": float, **common},
+         "warnBelow": float, "bevel": bool, **common},
         {"label": "Value", "value": 0, "decimals": -1, "unit": "", "valueColor": "#3ee05a",
          "boxColor": "#0a0d0b", "trend": False, "trendColor": "#f5a524", "warnAbove": 0.0,
-         "warnBelow": 0.0, **common_defaults}, ("value",), False,
+         "warnBelow": 0.0, "bevel": False, **common_defaults}, ("value",), False,
         {}, ("valueColor", "boxColor", "trendColor"))
     add("ShTrendChart", "Trend Chart", "Industrial", "ShTrendChart", 300, 180,
         {"minValue": float, "maxValue": float, "warningLow": float,
@@ -416,10 +426,16 @@ def default_registry() -> WidgetRegistry:
          "lowLevel": 15.0, "units": "KG", **common_defaults},
         ("leftValue", "rightValue"))
 
+    # Style options, off by default: ``headerHeight`` > 0 draws a title band
+    # that high across the top in ``headerColor`` ("" = the card colour a
+    # little lighter) with a 1 px divider in the border colour under it;
+    # ``gradient`` shades the fill from 6 % lighter at the top to the colour.
     add("ShCard", "Card", "Containers", "ShCard", 260, 180,
-        {"color": str, "borderColor": str, "borderWidth": int, "radius": int, **common},
+        {"color": str, "borderColor": str, "borderWidth": int, "radius": int,
+         "headerHeight": int, "headerColor": str, "gradient": bool, **common},
         {"color": "#18181b", "borderColor": "#27272a", "borderWidth": 1,
-         "radius": 10, **common_defaults}, (), True, {}, ("color", "borderColor"))
+         "radius": 10, "headerHeight": 0, "headerColor": "", "gradient": False,
+         **common_defaults}, (), True, {}, ("color", "borderColor", "headerColor"))
     add("Row", "Row", "Containers", "Row", 300, 80,
         {"spacing": int, "layoutDirection": str, **common},
         {"spacing": 8, "layoutDirection": "Qt.LeftToRight", **common_defaults}, (), True,

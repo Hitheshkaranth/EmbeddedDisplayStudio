@@ -463,6 +463,14 @@
      "kind": "bool",
      "default": true
     },
+    "litColor": {
+     "kind": "color",
+     "default": ""
+    },
+    "glow": {
+     "kind": "bool",
+     "default": false
+    },
     "opacity": {
      "kind": "float",
      "default": 1.0
@@ -706,6 +714,14 @@
      "kind": "int",
      "default": 6
     },
+    "gradient": {
+     "kind": "bool",
+     "default": false
+    },
+    "glowColor": {
+     "kind": "color",
+     "default": ""
+    },
     "opacity": {
      "kind": "float",
      "default": 1.0
@@ -761,6 +777,18 @@
     "radius": {
      "kind": "int",
      "default": 10
+    },
+    "headerHeight": {
+     "kind": "int",
+     "default": 0
+    },
+    "headerColor": {
+     "kind": "color",
+     "default": ""
+    },
+    "gradient": {
+     "kind": "bool",
+     "default": false
     },
     "opacity": {
      "kind": "float",
@@ -1614,6 +1642,10 @@
     "warnBelow": {
      "kind": "float",
      "default": 0.0
+    },
+    "bevel": {
+     "kind": "bool",
+     "default": false
     },
     "opacity": {
      "kind": "float",

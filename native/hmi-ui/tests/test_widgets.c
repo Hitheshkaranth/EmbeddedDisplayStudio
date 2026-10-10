@@ -12,6 +12,8 @@
 #include "registry.h"
 #include "theme.h"
 #include "src/libs/gif/lv_gif_private.h"
+#include "src/core/lv_obj_draw_private.h"
+#include "widgets/draw_util.h"
 
 static hmi_project_t *one_widget_sized(const char *type, const char *props_json, int width, int height)
 {
@@ -343,6 +345,204 @@ static void test_button_colour_overrides(void)
     hmi_project_free(p);
 }
 
+// -- style options: header band, gradients, glow, bevel ----------------------
+
+static uint32_t rgb(lv_color_t c) { return lv_color_to_u32(c) & 0xffffff; }
+
+
+// Unset, a card is the flat card it always was: no band, no gradient.
+static void test_card_style_defaults_are_flat(void)
+{
+    hmi_project_t *p = one_widget_sized("ShCard", "{}", 280, 150);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    CHECK(lv_obj_has_flag(lv_obj_get_child(w->native, 0), LV_OBJ_FLAG_HIDDEN));
+    CHECK(lv_obj_get_style_bg_grad_dir(w->native, 0) == LV_GRAD_DIR_NONE);
+    CHECK(rgb(lv_obj_get_style_bg_color(w->native, 0)) == 0x18181b);
+    CHECK(lv_obj_get_style_border_width(w->native, 0) == 1);
+    anim_free(p, w);
+}
+
+// headerHeight 30: a band inside the 1 px border, 29 px high, its fill the
+// card colour 12 % lighter, cut square at the bottom, and a 1 px divider in
+// the border colour as its last row (outer y 29).
+static void test_card_header_band(void)
+{
+    hmi_project_t *p = one_widget_sized("ShCard", "{\"headerHeight\":30,\"color\":\"#141a21\","
+                                        "\"borderColor\":\"#2c3640\",\"radius\":6}", 280, 150);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    lv_obj_t *clip = lv_obj_get_child(w->native, 0);
+    lv_obj_t *band = lv_obj_get_child(clip, 0), *divider = lv_obj_get_child(clip, 1);
+    CHECK(!lv_obj_has_flag(clip, LV_OBJ_FLAG_HIDDEN));
+    CHECK(lv_obj_get_height(clip) == 29);
+    CHECK(lv_obj_get_width(clip) == 278);
+    lv_area_t a;
+    lv_obj_get_coords(clip, &a);
+    lv_area_t card;
+    lv_obj_get_coords(w->native, &card);
+    CHECK(a.x1 - card.x1 == 1 && a.y1 - card.y1 == 1);
+    CHECK(lv_obj_get_height(band) == 29 + 5);          // + the inner radius, clipped off
+    CHECK(lv_obj_get_style_radius(band, 0) == 5);
+    CHECK(rgb(lv_obj_get_style_bg_color(band, 0)) == rgb(hmi_shade(lv_color_hex(0x141a21), 12)));
+    CHECK(lv_obj_get_style_bg_opa(band, 0) == LV_OPA_COVER);
+    lv_obj_get_coords(divider, &a);
+    CHECK(a.y1 - card.y1 == 29 && lv_area_get_height(&a) == 1);
+    CHECK(rgb(lv_obj_get_style_bg_color(divider, 0)) == 0x2c3640);
+    // headerColor wins over the derived shade; 0 takes the band away again.
+    anim_set(w, "headerColor", hmi_value_str("#334155"));
+    CHECK(rgb(lv_obj_get_style_bg_color(band, 0)) == 0x334155);
+    anim_set(w, "headerHeight", hmi_value_num(0));
+    CHECK(lv_obj_has_flag(clip, LV_OBJ_FLAG_HIDDEN));
+    // the band draws without trouble
+    anim_set(w, "headerHeight", hmi_value_num(30));
+    lv_obj_invalidate(w->native);
+    lv_refr_now(NULL);
+    anim_free(p, w);
+}
+
+// gradient: 6 % lighter at the top to the card colour at the bottom.
+static void test_card_gradient(void)
+{
+    hmi_project_t *p = one_widget_sized("ShCard", "{\"gradient\":true,\"color\":\"#1f2937\"}", 280, 150);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    CHECK(lv_obj_get_style_bg_grad_dir(w->native, 0) == LV_GRAD_DIR_VER);
+    CHECK(rgb(lv_obj_get_style_bg_color(w->native, 0)) == rgb(hmi_shade(lv_color_hex(0x1f2937), 6)));
+    CHECK(rgb(lv_obj_get_style_bg_grad_color(w->native, 0)) == 0x1f2937);
+    anim_set(w, "gradient", hmi_value_bool(false));
+    CHECK(lv_obj_get_style_bg_grad_dir(w->native, 0) == LV_GRAD_DIR_NONE);
+    CHECK(rgb(lv_obj_get_style_bg_color(w->native, 0)) == 0x1f2937);
+    anim_free(p, w);
+}
+
+static void test_shade_helper(void)
+{
+    CHECK(rgb(hmi_shade(lv_color_hex(0x000000), 50)) == 0x808080);
+    CHECK(rgb(hmi_shade(lv_color_hex(0x804020), -50)) == 0x402010);
+    CHECK(rgb(hmi_shade(lv_color_hex(0x123456), 0)) == 0x123456);
+    CHECK(rgb(hmi_shade(lv_color_hex(0x808080), 200)) == 0xffffff);
+}
+
+// gradient: a raised key around the fill; glowColor: a shadow of that colour.
+static void test_button_gradient_and_glow(void)
+{
+    hmi_project_t *p = one_widget_sized("ShButton", "{\"text\":\"FURNACE\",\"variant\":\"secondary\","
+                                        "\"backgroundColor\":\"#2a2f36\",\"gradient\":true,"
+                                        "\"glowColor\":\"#22c55e\"}", 136, 48);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    lv_color_t fill = lv_color_hex(0x2a2f36);
+    CHECK(lv_obj_get_style_bg_grad_dir(w->native, 0) == LV_GRAD_DIR_VER);
+    CHECK(rgb(lv_obj_get_style_bg_color(w->native, 0)) == rgb(hmi_shade(fill, 12)));
+    CHECK(rgb(lv_obj_get_style_bg_grad_color(w->native, 0)) == rgb(hmi_shade(fill, -12)));
+    CHECK(lv_obj_get_style_shadow_width(w->native, 0) == HMI_GLOW_BLUR);
+    CHECK(rgb(lv_obj_get_style_shadow_color(w->native, 0)) == 0x22c55e);
+    CHECK(lv_obj_get_style_shadow_opa(w->native, 0) == HMI_GLOW_OPA);
+    CHECK(lv_obj_get_style_shadow_offset_y(w->native, 0) == 0);
+    // the glow needs room outside the box: widget roots let it out
+    CHECK(lv_obj_has_flag(w->native, LV_OBJ_FLAG_OVERFLOW_VISIBLE));
+    CHECK(lv_obj_get_ext_draw_size(w->native) >= HMI_GLOW_BLUR / 2 + HMI_GLOW_SPREAD);
+    lv_obj_invalidate(w->native);
+    lv_refr_now(NULL);
+    // a variant change keeps the gradient and does not compound it
+    anim_set(w, "variant", hmi_value_str("default"));
+    anim_set(w, "variant", hmi_value_str("secondary"));
+    CHECK(rgb(lv_obj_get_style_bg_color(w->native, 0)) == rgb(hmi_shade(fill, 12)));
+    // off again
+    anim_set(w, "glowColor", hmi_value_str(""));
+    anim_set(w, "gradient", hmi_value_bool(false));
+    CHECK(lv_obj_get_style_shadow_width(w->native, 0) == 0);
+    CHECK(lv_obj_get_style_bg_grad_dir(w->native, 0) == LV_GRAD_DIR_NONE);
+    CHECK(rgb(lv_obj_get_style_bg_color(w->native, 0)) == 0x2a2f36);
+    anim_free(p, w);
+
+    // an outline button has no fill to shade; unset, no glow
+    p = one_widget("ShButton", "{\"variant\":\"outline\",\"gradient\":true}");
+    CHECK(p != NULL);
+    if (!p) return;
+    w = build(p);
+    CHECK(lv_obj_get_style_bg_grad_dir(w->native, 0) == LV_GRAD_DIR_NONE);
+    CHECK(lv_obj_get_style_shadow_width(w->native, 0) == 0);
+    anim_free(p, w);
+}
+
+// litColor replaces the severity's colour; glow lights a shadow only when lit.
+static void test_annunciator_lit_colour_and_glow(void)
+{
+    hmi_project_t *p = one_widget_sized("ShAnnunciator", "{\"text\":\"BLOWER RUNNING\",\"lit\":true,"
+                                        "\"litColor\":\"#22d34a\",\"glow\":true}", 600, 36);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    CHECK(rgb(lv_obj_get_style_bg_color(w->native, 0)) == 0x22d34a);
+    CHECK(rgb(lv_obj_get_style_border_color(w->native, 0)) == 0x22d34a);
+    CHECK(lv_obj_get_style_shadow_width(w->native, 0) == HMI_GLOW_BLUR);
+    CHECK(rgb(lv_obj_get_style_shadow_color(w->native, 0)) == 0x22d34a);
+    CHECK(lv_obj_get_style_shadow_opa(w->native, 0) == HMI_GLOW_OPA);
+    lv_obj_invalidate(w->native);
+    lv_refr_now(NULL);
+    anim_set(w, "lit", hmi_value_bool(false));
+    CHECK(lv_obj_get_style_shadow_opa(w->native, 0) == LV_OPA_TRANSP);
+    CHECK(lv_obj_get_style_shadow_width(w->native, 0) == 0);
+    // unlit, the caption is still drawn in the lit colour
+    CHECK(rgb(lv_obj_get_style_text_color(lv_obj_get_child(w->native, 0), 0)) == 0x22d34a);
+    anim_set(w, "litColor", hmi_value_str(""));
+    anim_set(w, "lit", hmi_value_bool(true));
+    CHECK(rgb(lv_obj_get_style_bg_color(w->native, 0)) == rgb(hmi_colour("efisCaution")));
+    anim_free(p, w);
+
+    p = one_widget("ShAnnunciator", "{\"lit\":true}");
+    CHECK(p != NULL);
+    if (!p) return;
+    w = build(p);
+    CHECK(lv_obj_get_style_shadow_width(w->native, 0) == 0);
+    anim_free(p, w);
+}
+
+// bevel: in each box, a 1 px darker line along the top and a 1 px lighter one
+// along the bottom, inside the border (outer x 2 .. w-3, y 1 and h-2).
+static void test_process_value_bevel(void)
+{
+    hmi_project_t *p = one_widget_sized("ShProcessValue", "{\"label\":\"Hot Blast Temp\",\"value\":1185,"
+                                        "\"unit\":\"\xc2\xb0" "C\",\"trend\":true}", 280, 30);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    lv_obj_t *box = pv_box(w);
+    CHECK(lv_obj_has_flag(lv_obj_get_child(box, 0), LV_OBJ_FLAG_HIDDEN));
+    CHECK(lv_obj_has_flag(lv_obj_get_child(box, 1), LV_OBJ_FLAG_HIDDEN));
+    anim_set(w, "bevel", hmi_value_bool(true));
+    lv_obj_update_layout(lv_screen_active());
+    lv_obj_t *boxes[2] = {pv_box(w), pv_spark(w)};
+    for (int b = 0; b < 2; ++b) {
+        lv_obj_t *o = boxes[b];
+        lv_area_t outer, top, bottom;
+        lv_obj_get_coords(o, &outer);
+        lv_obj_get_coords(lv_obj_get_child(o, 0), &top);
+        lv_obj_get_coords(lv_obj_get_child(o, 1), &bottom);
+        CHECK(!lv_obj_has_flag(lv_obj_get_child(o, 0), LV_OBJ_FLAG_HIDDEN));
+        CHECK(!lv_obj_has_flag(lv_obj_get_child(o, 1), LV_OBJ_FLAG_HIDDEN));
+        CHECK(top.y1 - outer.y1 == 1 && lv_area_get_height(&top) == 1);
+        CHECK(outer.y2 - bottom.y2 == 1 && lv_area_get_height(&bottom) == 1);
+        CHECK(top.x1 - outer.x1 == 2 && outer.x2 - top.x2 == 2);
+        CHECK(rgb(lv_obj_get_style_bg_color(lv_obj_get_child(o, 0), 0)) == rgb(hmi_shade(lv_color_hex(0x0a0d0b), -70)));
+        CHECK(rgb(lv_obj_get_style_bg_color(lv_obj_get_child(o, 1), 0)) == rgb(hmi_shade(lv_color_hex(0x0a0d0b), 20)));
+    }
+    // the root's children are unchanged (label, spark, box, value, unit)
+    CHECK(lv_obj_get_child_count(w->native) == 5);
+    CHECK_EQ_STR(pv_text(w), "1185");
+    lv_obj_invalidate(w->native);
+    lv_refr_now(NULL);
+    anim_set(w, "bevel", hmi_value_bool(false));
+    CHECK(lv_obj_has_flag(lv_obj_get_child(pv_box(w), 0), LV_OBJ_FLAG_HIDDEN));
+    anim_free(p, w);
+}
+
 int main(void)
 {
     lv_init();
@@ -359,5 +559,12 @@ int main(void)
     test_process_value_warn_colour();
     test_process_value_trend_and_unit_column();
     test_button_colour_overrides();
+    test_shade_helper();
+    test_card_style_defaults_are_flat();
+    test_card_header_band();
+    test_card_gradient();
+    test_button_gradient_and_glow();
+    test_annunciator_lit_colour_and_glow();
+    test_process_value_bevel();
     return check_summary("test_widgets");
 }

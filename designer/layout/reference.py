@@ -792,7 +792,7 @@ def _row(project, registry, sections, rect, tokens, framed, report):
     return out
 
 
-def _band(project, registry, section, rect, tokens, report):
+def _band(project, registry, section, rect, tokens, report, title=""):
     """A bar across the screen: a status banner filling it, or buttons side
     by side in one row, equal widths (a picture's navigation row)."""
     from . import compiler as c
@@ -804,6 +804,19 @@ def _band(project, registry, section, rect, tokens, report):
     _frameless(card)
     kind = _band_kind(section)
     gap = tokens.gap if kind == "buttons" else tokens.gap // 2
+    palette = getattr(project.screen, "palette", None) or {}
+    if kind == "buttons" and palette.get("success") and title and not any(
+            str(w.properties.get("borderColor") or "").strip() for w in section.widgets):
+        # No tab highlighted in the plan: the page shown is the one the
+        # screen's title names (FURNACE on "BLAST FURNACE - 5"), lit in the
+        # picture's signal colour as its active tab is.
+        words = set(re.findall(r"[a-z0-9]+", title.lower()))
+        named = [w for w in section.widgets
+                 if set(re.findall(r"[a-z0-9]+", str(w.properties.get("text") or "").lower())) <= words
+                 and str(w.properties.get("text") or "").strip()]
+        if len(named) == 1:
+            named[0].properties["borderColor"] = palette["success"]
+            named[0].properties.setdefault("textColor", palette["success"])
     widths = _shares(w, [1.0] * len(section.widgets), gap)
     left = 0.0
     for widget, cw in zip(section.widgets, widths):
@@ -1051,7 +1064,8 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
         band_hs = [_band_h(_band_kind(s), tokens) for s in bands]
         band_y = by1 - sum(band_hs) - gap * (len(bands) - 1)
         for section, bh in zip(bands, band_hs):
-            widgets.append(_band(project, registry, section, (bx0, band_y, body_w, bh), tokens, report))
+            widgets.append(_band(project, registry, section, (bx0, band_y, body_w, bh), tokens, report,
+                                 title=title))
             band_y += bh + gap
         by1 -= sum(band_hs) + gap * len(bands)
         body_h = by1 - by0

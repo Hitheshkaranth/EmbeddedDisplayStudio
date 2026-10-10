@@ -21,6 +21,10 @@
  * laid out as the native face does (Inter hhea 1984/-494 of 2048, truncated
  * like LVGL's tiny_ttf), and shrinks to fit (the label to 70 %, the digits
  * and the unit to 60 %) before it elides.
+ *
+ * bevel (off by default) draws the value box and the sparkline box inset: a
+ * 1 px line in the box colour darker by 70 % along the top and one lighter by
+ * 20 % along the bottom, inside the border and clear of its rounded corners.
  */
 import QtQuick 2.15
 
@@ -36,6 +40,7 @@ Item {
     property color valueColor: "#3ee05a"
     property color boxColor: "#0a0d0b"
     property bool trend: false
+    property bool bevel: false
     property color trendColor: "#f5a524"
     property real warnAbove: 0.0
     property real warnBelow: 0.0
@@ -136,6 +141,8 @@ Item {
         border.color: "#3a3f45"
         border.width: 1
 
+        ShProcessBevel { visible: root.bevel; fill: root.boxColor }
+
         Canvas {
             id: spark
             anchors.fill: parent
@@ -186,6 +193,8 @@ Item {
         color: root.boxColor
         border.color: "#3a3f45"
         border.width: 1
+
+        ShProcessBevel { visible: root.bevel; fill: root.boxColor }
     }
 
     Text {
@@ -223,5 +232,21 @@ Item {
         minimumPixelSize: Math.max(8, Math.round(root._unitPx * 0.6))
         elide: Text.ElideRight
         maximumLineCount: 1
+    }
+
+    // The inset bevel of a box: two 1 px lines inside its border.
+    component ShProcessBevel: Item {
+        property color fill
+        anchors.fill: parent
+        Rectangle {
+            x: 2; y: 1; width: parent.width - 4; height: 1
+            visible: parent.width >= 6 && parent.height >= 4
+            color: Theme.shade(parent.fill, -70)
+        }
+        Rectangle {
+            x: 2; y: parent.height - 2; width: parent.width - 4; height: 1
+            visible: parent.width >= 6 && parent.height >= 4
+            color: Theme.shade(parent.fill, 20)
+        }
     }
 }

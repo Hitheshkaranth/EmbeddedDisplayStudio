@@ -67,6 +67,25 @@ WAVE = ["Column", "Grid", "Image", "Item", "Rectangle", "Row", "ShAlarmTable", "
         "ShProcessValue"]
 
 
+# Style options compared with them set (registry defaults plus these), at the
+# type's default size: the header band and gradients, the glow (whose part
+# outside the box is off the picture; its rounded corners are not) and the
+# bevel. Named <Type>-<sample> in the results and in swarm/qc/ui-parity.
+STYLE_SAMPLES = [
+    ("ShCard", "header", {"headerHeight": 30, "color": "#161b22", "borderColor": "#2d3742",
+                          "radius": 6}),
+    ("ShCard", "gradient", {"gradient": True, "headerHeight": 28, "headerColor": "#2a3442"}),
+    ("ShButton", "gradient", {"variant": "secondary", "backgroundColor": "#2a3038", "gradient": True}),
+    ("ShButton", "activeTab", {"text": "FURNACE", "variant": "secondary", "backgroundColor": "#1f2a24",
+                               "gradient": True, "glowColor": "#22c55e", "textColor": "#22c55e",
+                               "borderColor": "#22c55e", "borderWidth": 1}),
+    ("ShAnnunciator", "litColorGlow", {"text": "RUNNING", "litColor": "#22d34a", "glow": True}),
+    ("ShAnnunciator", "litColorUnlit", {"text": "RUNNING", "litColor": "#22d34a", "lit": False}),
+    ("ShProcessValue", "bevel", {"label": "Hot Blast Temp", "value": 1185, "unit": "\u00b0C",
+                                 "trend": True, "bevel": True}),
+]
+
+
 # Compared nowhere at their defaults, for a reason given in the results: an
 # Image with no file is a framed placeholder on the panel (hmi-ui; the
 # Designer canvas draws one too), and a design-time aid QML has no reason to
@@ -190,6 +209,35 @@ class ParityTests(unittest.TestCase):
         out.save(path)
 
     # -- the test --------------------------------------------------------------
+
+    def _compare(self, name, definition, props, results):
+        qml = self._qml_render(definition, props)
+        ui, stub = self._ui_render(definition, props)
+        mean, frac, diff = self._diff(qml, ui)
+        blank_mean, blank_frac, _ = self._diff(qml, self._blank(qml))
+        self._triptych(qml, ui, diff, os.path.join(OUT_DIR, f"{name}.png"))
+        passed = (mean <= blank_mean * 0.5 and frac <= blank_frac * 0.5) or \
+                 (blank_mean >= 4.0 and mean <= 10.0 and frac <= 0.06)
+        verdict = "STUB" if stub else ("ok" if passed else "FAIL")
+        results.append(f"{name:16s} mean {mean:6.2f} (blank {blank_mean:6.2f})  >64: {frac:6.3f} (blank {blank_frac:6.3f})  {verdict}")
+        self.assertFalse(stub, f"{name}: placeholder render")
+        self.assertTrue(passed, f"{name}: mean diff {mean:.2f} vs blank {blank_mean:.2f}; "
+                                f"{frac:.3f} of pixels differ vs blank {blank_frac:.3f}")
+
+    def test_style_samples_match_qml(self):
+        self.assertTrue(os.path.exists(BIN), f"no hmi-ui binary at {BIN} (build native/hmi-ui first)")
+        results = []
+        self.addCleanup(lambda: sys.stderr.write(
+            "\nparity (QML vs hmi-ui, dark, style options set):\n" + "\n".join(results) + "\n"))
+        selected = set(_selected())
+        for type_name, sample, overrides in STYLE_SAMPLES:
+            if os.environ.get("HMI_UI_TYPES") and type_name not in selected:
+                continue
+            definition = self.registry.get(type_name)
+            props = copy.deepcopy(definition.defaults)
+            props.update(overrides)
+            with self.subTest(widget=f"{type_name}-{sample}"):
+                self._compare(f"{type_name}-{sample}", definition, props, results)
 
     def test_wave_matches_qml(self):
         self.assertTrue(os.path.exists(BIN), f"no hmi-ui binary at {BIN} (build native/hmi-ui first)")

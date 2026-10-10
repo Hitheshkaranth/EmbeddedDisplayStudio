@@ -15,6 +15,11 @@
 // its nominal size in a line slot centred in the row and shrinks to fit (the
 // label to 70 %, the digits and the unit to 60 %) before it elides.
 //
+// bevel (off by default) draws the value box and the sparkline box inset: a
+// 1 px line in the box colour darker by BEVEL_DARK % along the top and one
+// lighter by BEVEL_LIGHT % along the bottom, inside the border and clear of
+// its rounded corners (x 2 .. w-3). They are each box's two children.
+//
 // Children of the root, in order: label, spark box, value box, value, unit.
 #include <math.h>
 #include <stdio.h>
@@ -25,6 +30,8 @@
 #include "registry.h"
 
 #define HISTORY 32
+#define BEVEL_DARK -70.0
+#define BEVEL_LIGHT 20.0
 
 typedef struct {
     lv_obj_t *face, *label, *spark, *box, *value, *unit;
@@ -32,7 +39,7 @@ typedef struct {
     double n;                 // its number, NAN when it is not one
     int decimals;
     double warnAbove, warnBelow;
-    bool trend;
+    bool trend, bevel;
     char label_text[128], unit_text[48];
     char value_colour[32], box_colour[32], trend_colour[32];
     double hist[HISTORY];
@@ -122,14 +129,35 @@ static void place_line(lv_obj_t *label, const char *text, int px, int weight, do
     lv_obj_set_pos(label, x, top + ascent(px, weight) - ascent(p, weight));
 }
 
-static void style_box(lv_obj_t *o, const state_t *st)
+// A box's bevel lines (its children 0 = top, 1 = bottom) for a box w x h.
+static void style_bevel(lv_obj_t *o, const state_t *st, lv_color_t fill, lv_opa_t opa, int w, int h)
+{
+    for (int i = 0; i < 2; ++i) {
+        lv_obj_t *line = lv_obj_get_child(o, i);
+        if (!line) continue;
+        if (!st->bevel || w < 6 || h < 4) {
+            lv_obj_add_flag(line, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        lv_obj_remove_flag(line, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_bg_color(line, hmi_shade(fill, i == 0 ? BEVEL_DARK : BEVEL_LIGHT), 0);
+        lv_obj_set_style_bg_opa(line, opa, 0);
+        // Positions are inside the 1 px border: outer x 2, y 1 and y h-2.
+        lv_obj_set_pos(line, 1, i == 0 ? 0 : h - 3);
+        lv_obj_set_size(line, w - 4, 1);
+    }
+}
+
+static void style_box(lv_obj_t *o, const state_t *st, int w, int h)
 {
     lv_opa_t opa = LV_OPA_COVER;
-    lv_obj_set_style_bg_color(o, colour_or(st->box_colour, "#0a0d0b", &opa), 0);
+    lv_color_t fill = colour_or(st->box_colour, "#0a0d0b", &opa);
+    lv_obj_set_style_bg_color(o, fill, 0);
     lv_obj_set_style_bg_opa(o, opa, 0);
     lv_obj_set_style_border_color(o, lv_color_hex(0x3a3f45), 0);
     lv_obj_set_style_border_width(o, 1, 0);
     lv_obj_set_style_radius(o, 3, 0);
+    style_bevel(o, st, fill, opa, w, h);
 }
 
 static void layout(hmi_widget_t *w)
@@ -168,7 +196,7 @@ static void layout(hmi_widget_t *w)
 
     // sparkline box
     if (st->trend) {
-        style_box(st->spark, st);
+        style_box(st->spark, st, sparkW, boxH);
         lv_obj_set_pos(st->spark, sparkX, inset);
         lv_obj_set_size(st->spark, sparkW, boxH);
         lv_obj_remove_flag(st->spark, LV_OBJ_FLAG_HIDDEN);
@@ -178,7 +206,7 @@ static void layout(hmi_widget_t *w)
     }
 
     // value box and digits
-    style_box(st->box, st);
+    style_box(st->box, st, boxW, boxH);
     lv_obj_set_pos(st->box, boxX, inset);
     lv_obj_set_size(st->box, boxW, boxH);
     bool warns = !isnan(st->n) && ((st->warnAbove != 0 && st->n > st->warnAbove)
@@ -272,6 +300,13 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     st->box = lv_obj_create(face);
     lv_obj_remove_style_all(st->box);
     lv_obj_remove_flag(st->box, LV_OBJ_FLAG_SCROLLABLE);
+    for (int i = 0; i < 4; ++i) {
+        lv_obj_t *line = lv_obj_create(i < 2 ? st->spark : st->box);
+        lv_obj_remove_style_all(line);
+        lv_obj_remove_flag(line, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(line, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(line, LV_OBJ_FLAG_HIDDEN);
+    }
     st->value = hmi_make_label(face, 17, 600, lv_color_hex(0x3ee05a), "");
     st->unit = hmi_make_label(face, 13, 400, hmi_colour("mutedForeground"), "");
 
@@ -281,6 +316,7 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     st->warnAbove = hmi_widget_num(w, "warnAbove", 0);
     st->warnBelow = hmi_widget_num(w, "warnBelow", 0);
     st->trend = hmi_widget_bool(w, "trend", false);
+    st->bevel = hmi_widget_bool(w, "bevel", false);
     snprintf(st->label_text, sizeof st->label_text, "%s", hmi_widget_str(w, "label", "Value"));
     snprintf(st->unit_text, sizeof st->unit_text, "%s", hmi_widget_str(w, "unit", ""));
     snprintf(st->value_colour, sizeof st->value_colour, "%s", hmi_widget_str(w, "valueColor", "#3ee05a"));
@@ -311,6 +347,7 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
     else if (strcmp(prop, "warnAbove") == 0) st->warnAbove = hmi_value_as_num(value, st->warnAbove);
     else if (strcmp(prop, "warnBelow") == 0) st->warnBelow = hmi_value_as_num(value, st->warnBelow);
     else if (strcmp(prop, "trend") == 0) st->trend = hmi_value_as_bool(value, st->trend);
+    else if (strcmp(prop, "bevel") == 0) st->bevel = hmi_value_as_bool(value, st->bevel);
     else if (strcmp(prop, "label") == 0) copy_str(st->label_text, sizeof st->label_text, value, "");
     else if (strcmp(prop, "unit") == 0) copy_str(st->unit_text, sizeof st->unit_text, value, "");
     else if (strcmp(prop, "valueColor") == 0)

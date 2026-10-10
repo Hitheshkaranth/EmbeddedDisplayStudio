@@ -33,6 +33,12 @@ Item {
     property color borderColor: "transparent"
     property int borderWidth: 0
     property real cornerRadius: Theme.radiusMd
+    // Style options, off by default. gradient: the fill runs from its colour
+    // lighter by 12 % at the top to darker by 12 % at the bottom, a raised
+    // key. glowColor: a soft glow of that colour about 8 px around the
+    // button (a highlighted / active tab). w_shbutton.c draws the same.
+    property bool gradient: false
+    property color glowColor: "transparent"
     
     /**
      * @property {bool} enabled
@@ -66,10 +72,23 @@ Item {
     
     opacity: enabled ? 1.0 : 0.5
     
+    ShGlow {
+        anchors.fill: parent
+        color: root.glowColor
+        radius: root.cornerRadius
+    }
+
     Rectangle {
         id: bgRect
         anchors.fill: parent
         radius: root.cornerRadius
+        gradient: root.gradient && color.a > 0 ? raisedGradient : undefined
+
+        Gradient {
+            id: raisedGradient
+            GradientStop { position: 0.0; color: Theme.shade(bgRect.color, 12) }
+            GradientStop { position: 1.0; color: Theme.shade(bgRect.color, -12) }
+        }
         
         color: {
             var result

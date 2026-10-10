@@ -43,6 +43,20 @@ NativeProbe {}", root, "NativeProbe");
         return Qt.resolvedUrl((nativeFaces ? "faces/native/" : "faces/canvas/") + name + "Face.qml");
     }
 
+    /**
+     * A colour lighter by pct % (pct > 0: every channel moves pct % of the
+     * way to white) or darker by -pct % (pct < 0: every channel loses that
+     * share); alpha is kept. hmi_shade() in native/hmi-ui's draw_util.h is
+     * the same formula, so gradients, header bands and bevels match on the
+     * panel.
+     */
+    function shade(c, pct) {
+        var k = Math.max(-1, Math.min(1, pct / 100));
+        var q = Qt.tint(c, "transparent");   // a color, whether c is one or a "#rrggbb"
+        function ch(v) { return k >= 0 ? v + (1 - v) * k : v * (1 + k); }
+        return Qt.rgba(ch(q.r), ch(q.g), ch(q.b), q.a);
+    }
+
     /** @property {color} background */
     readonly property color background: mode === "light" ? "#ffffff" : "#09090b"
     /** @property {color} foreground */

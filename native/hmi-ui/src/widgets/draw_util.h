@@ -118,5 +118,44 @@ static inline lv_obj_t *hmi_make_label(lv_obj_t *parent, int px, int weight, lv_
     return l;
 }
 
+// A colour "lighter by pct %" (pct > 0: each channel moves pct % of the way
+// to white) or "darker by -pct %" (pct < 0: each channel loses that share).
+// Theme.shade() in ui/qml/Shadcn/Theme.qml is the same formula, so the
+// kit's gradients, header bands and bevels match on both sides.
+static inline lv_color_t hmi_shade(lv_color_t c, double pct)
+{
+    double k = pct / 100.0;
+    if (k > 1) k = 1;
+    if (k < -1) k = -1;
+    double ch[3] = {c.red, c.green, c.blue};
+    for (int i = 0; i < 3; ++i) {
+        double v = k >= 0 ? ch[i] + (255.0 - ch[i]) * k : ch[i] * (1.0 + k);
+        ch[i] = v < 0 ? 0 : v > 255 ? 255 : v;
+    }
+    return lv_color_make((uint8_t)lround(ch[0]), (uint8_t)lround(ch[1]), (uint8_t)lround(ch[2]));
+}
+
+// The kit's soft outer glow (ShButton glowColor, ShAnnunciator glow): an
+// LVGL shadow with no offset, blurred over HMI_GLOW_BLUR px so it fades out
+// about HMI_GLOW_BLUR / 2 px beyond the edge. ShGlow.qml draws the same
+// fall-off as stacked rounded rings. opa 0 removes it.
+#define HMI_GLOW_BLUR 16
+#define HMI_GLOW_SPREAD 2
+#define HMI_GLOW_OPA 255
+static inline void hmi_set_glow(lv_obj_t *o, lv_color_t colour, lv_opa_t opa)
+{
+    if (opa == 0) {
+        lv_obj_set_style_shadow_width(o, 0, 0);
+        lv_obj_set_style_shadow_opa(o, LV_OPA_TRANSP, 0);
+        return;
+    }
+    lv_obj_set_style_shadow_width(o, HMI_GLOW_BLUR, 0);
+    lv_obj_set_style_shadow_spread(o, HMI_GLOW_SPREAD, 0);
+    lv_obj_set_style_shadow_offset_x(o, 0, 0);
+    lv_obj_set_style_shadow_offset_y(o, 0, 0);
+    lv_obj_set_style_shadow_color(o, colour, 0);
+    lv_obj_set_style_shadow_opa(o, opa, 0);
+}
+
 static inline int hmi_px(double v) { return (int)lround(v); }
 static inline int hmi_px_min(double v, int floor_px) { int p = hmi_px(v); return p < floor_px ? floor_px : p; }

@@ -22,7 +22,8 @@ follow it. tests/test_designer_previews.py holds the pairs that matter.
 import math
 
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QPainterPath, QPen, QPolygonF
+from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QLinearGradient, QPainterPath, QPen,
+                           QPolygonF)
 from ui.python.shadcn import load_tokens
 
 # ---------------------------------------------------------------------------
@@ -170,6 +171,45 @@ def _number(props, key, default=0.0):
         return float(default)
 
 
+def shade(colour, pct):
+    """Theme.shade / draw_util.h hmi_shade: lighter by pct % (each channel
+    moves pct % of the way to white) or darker by -pct %; alpha kept."""
+    k = max(-1.0, min(1.0, pct / 100.0))
+    c = QColor(colour)
+    ch = [c.redF(), c.greenF(), c.blueF()]
+    ch = [v + (1 - v) * k if k >= 0 else v * (1 + k) for v in ch]
+    return QColor.fromRgbF(*ch, c.alphaF())
+
+
+def _vertical_gradient(rect, top, bottom):
+    gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+    gradient.setColorAt(0.0, top)
+    gradient.setColorAt(1.0, bottom)
+    return QBrush(gradient)
+
+
+# ShGlow.qml's fall-off (coverage 1..8 px outside the edge), shared with the
+# panel's LVGL shadow.
+GLOW_PROFILE = (0.55, 0.43, 0.32, 0.23, 0.15, 0.089, 0.042, 0.010)
+
+
+def _glow(painter, rect, colour, radius):
+    """A soft outer glow around ``rect``: rings whose coverage follows
+    GLOW_PROFILE, outermost first."""
+    painter.save()
+    painter.setPen(Qt.NoPen)
+    reach = len(GLOW_PROFILE)
+    for d in range(reach, 0, -1):
+        outer = GLOW_PROFILE[d] if d < reach else 0.0
+        alpha = max(0.0, 1 - (1 - GLOW_PROFILE[d - 1]) / (1 - outer))
+        c = QColor(colour)
+        c.setAlphaF(c.alphaF() * alpha)
+        painter.setBrush(QBrush(c))
+        r = QRectF(rect).adjusted(-d, -d, d, d)
+        painter.drawRoundedRect(r, radius + d if radius > 0 else 0, radius + d if radius > 0 else 0)
+    painter.restore()
+
+
 def _override_colour(props, key):
     """An optional colour property (accentColor, barColor): its QColor, or
     None when unset, invalid or fully transparent -- the theme's look."""
@@ -243,7 +283,15 @@ def paint_button(painter, rect, props, ctx):
         border, width = None, 0
 
     radius = _number(props, "cornerRadius", RADIUS["md"])
-    _rounded(painter, rect, fill, radius, border, width)
+    glow = _override_colour(props, "glowColor")
+    if glow is not None:
+        _glow(painter, rect, glow, radius)
+    if bool(_prop(props, "gradient", False)) and fill.alpha() > 0:
+        painter.setBrush(_vertical_gradient(QRectF(rect), shade(fill, 12), shade(fill, -12)))
+        painter.setPen(QPen(border, width) if border is not None and width else Qt.NoPen)
+        painter.drawRoundedRect(rect, radius, radius)
+    else:
+        _rounded(painter, rect, fill, radius, border, width)
 
     text_override = QColor(_prop(props, "textColor", "") or "transparent")
     if text_override.isValid() and text_override.alpha() > 0:
@@ -281,11 +329,32 @@ def paint_rectangle(painter, rect, props, ctx):
 
 
 def paint_card(painter, rect, props, ctx):
-    """ShCard: the surface other components are composed onto."""
+    """ShCard: the surface other components are composed onto; optionally a
+    title band (headerHeight, headerColor) and a gradient fill."""
     width = int(_number(props, "borderWidth", 1))
-    _rounded(painter, rect, QColor(_prop(props, "color", _TOKENS["card"])),
-             _number(props, "radius", RADIUS["xl"]),
-             QColor(_prop(props, "borderColor", "#27272a")) if width else None, width)
+    fill = QColor(_prop(props, "color", _TOKENS["card"]))
+    border = QColor(_prop(props, "borderColor", "#27272a"))
+    radius = _number(props, "radius", RADIUS["xl"])
+    header = int(_number(props, "headerHeight", 0))
+    if not bool(_prop(props, "gradient", False)) and header <= width:
+        _rounded(painter, rect, fill, radius, border if width else None, width)
+        return
+    r = QRectF(rect)
+    brush = _vertical_gradient(r, shade(fill, 6), fill) if _prop(props, "gradient", False) else QBrush(fill)
+    painter.setBrush(brush)
+    painter.setPen(Qt.NoPen)
+    painter.drawRoundedRect(r, radius, radius)
+    if header > width:
+        band = _override_colour(props, "headerColor") or shade(fill, 12)
+        painter.save()
+        clip = QPainterPath()
+        clip.addRoundedRect(r, radius, radius)
+        painter.setClipPath(clip)
+        painter.fillRect(QRectF(r.left(), r.top(), r.width(), header - 1), band)
+        painter.fillRect(QRectF(r.left(), r.top() + header - 1, r.width(), 1), border)
+        painter.restore()
+    if width:
+        _rounded(painter, rect, None, radius, border, width)
 
 
 def paint_value_tile(painter, rect, props, ctx):
@@ -791,7 +860,10 @@ def paint_annunciator(painter, rect, props, ctx):
     colour = _severity_color(_prop(props, "severity", "caution"))
     if _prop(props, "severity", "caution") == "advisory":
         colour = efis("normal")
+    colour = _override_colour(props, "litColor") or colour
     lit = bool(_prop(props, "lit", True))
+    if lit and bool(_prop(props, "glow", False)):
+        _glow(painter, rect, colour, RADIUS["sm"])
 
     painter.save()
     painter.setOpacity(1.0 if lit else 0.35)
@@ -1345,6 +1417,14 @@ def paint_process_value(painter, rect, props, ctx):
     box_colour = _override_colour(props, "boxColor") or QColor("#0a0d0b")
     border = QColor("#3a3f45")
     left, top = rect.left(), rect.top()
+    bevel = bool(props.get("bevel", False))
+
+    def bevel_lines(x, bw):
+        # The bevel: a darker line along the top, a lighter one along the
+        # bottom, inside the border (ShProcessValue.qml).
+        if bevel and bw >= 6 and box_h >= 4:
+            painter.fillRect(QRectF(left + x + 2, top + inset + 1, bw - 4, 1), shade(box_colour, -70))
+            painter.fillRect(QRectF(left + x + 2, top + inset + box_h - 2, bw - 4, 1), shade(box_colour, 20))
 
     if label_w > 0:
         _text(painter, QRectF(left, top, label_w, h), props.get("label", "Value"), size=label_px,
@@ -1352,6 +1432,7 @@ def paint_process_value(painter, rect, props, ctx):
     if trend:
         spark = QRectF(left + spark_x + 0.5, top + inset + 0.5, spark_w - 1, box_h - 1)
         _rounded(painter, spark, box_colour, 3, border, 1)
+        bevel_lines(spark_x, spark_w)
         ys = (0.30, 0.52, 0.40, 0.62, 0.48, 0.70, 0.58, 0.80)
         pad_x, pad_y = 4, max(3, px(box_h * 0.16))
         pw, ph = spark_w - 2 * pad_x, box_h - 2 * pad_y
@@ -1366,6 +1447,7 @@ def paint_process_value(painter, rect, props, ctx):
             painter.drawPolyline(QPolygonF(points))
     _rounded(painter, QRectF(left + box_x + 0.5, top + inset + 0.5, box_w - 1, box_h - 1),
              box_colour, 3, border, 1)
+    bevel_lines(box_x, box_w)
     try:
         number = float(text) if text != "--" else None
     except ValueError:
