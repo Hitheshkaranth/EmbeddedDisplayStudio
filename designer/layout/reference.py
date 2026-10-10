@@ -817,6 +817,19 @@ def _band(project, registry, section, rect, tokens, report):
             # The highlighted tab (the page shown): its colour needs a width
             # to be drawn at all.
             widget.properties["borderWidth"] = 2
+        palette = getattr(project.screen, "palette", None) or {}
+        if kind == "buttons" and palette:
+            # The picture's button grey and text, raised; the highlighted tab
+            # glows in its own colour.
+            props = widget.properties
+            if not str(props.get("backgroundColor") or "").strip():
+                props["backgroundColor"] = palette.get("secondary", "")
+            if not str(props.get("textColor") or "").strip():
+                props["textColor"] = palette.get("foreground", "")
+            if _has(registry, "ShButton", "gradient"):
+                props.setdefault("gradient", True)
+            if _has(registry, "ShButton", "glowColor") and str(props.get("borderColor") or "").strip():
+                props.setdefault("glowColor", props["borderColor"])
         _set(widget, left, 0, cw, h)
         card.children.append(widget)
         left += cw + gap
@@ -905,6 +918,50 @@ def _clamp_crops(by_region, width, height, strip_bottom, right_x, foot):
                     b = foot_edge
                 widget.properties[c.CROP_MARK] = _cut([l, t, r, b], (0.0, 0.0, 1.0, 1.0)) \
                     or [0.0, round(top_edge, 4), round(right_edge, 4), round(foot_edge, 4)]
+
+
+def _has(registry, widget_type, prop) -> bool:
+    definition = registry.get(widget_type) if registry is not None else None
+    return definition is not None and prop in definition.properties
+
+
+def _dress(project, registry, widgets, tokens) -> None:
+    """A picture's palette (screen.palette) on what draws its own colours,
+    and the kit's finish where the kit has it: title bands on the cards,
+    raised buttons, a glow on the lit banner and the highlighted tab, inset
+    value boxes. Only colours the plan left empty are filled."""
+    from . import compiler as c
+    palette = getattr(project.screen, "palette", None) or {}
+    if not palette:
+        return
+
+    def fill(widget, prop, value):
+        if value and _has(registry, widget.type, prop) and not str(widget.properties.get(prop) or "").strip():
+            widget.properties[prop] = value
+
+    for widget in c._walk(widgets):
+        props = widget.properties
+        if widget.id == "titleBox" and props.get(c.CHROME_MARK):
+            props["color"] = palette.get("inset", props.get("color"))
+        elif widget.type == "Text" and props.get(c.CHROME_MARK) and re.search(r"Heading\d*$", widget.id or ""):
+            props["color"] = palette.get("foreground", props.get("color"))
+        elif widget.type == "ShCard" and props.get(c.CHROME_MARK) and _has(registry, "ShCard", "headerHeight"):
+            headings = [ch for ch in widget.children
+                        if ch.type == "Text" and re.search(r"Heading\d*$", ch.id or "")]
+            if headings:
+                # The band under the heading, as the picture's cards have it.
+                props["headerHeight"] = int(max(ch.geometry["y"] + ch.geometry["height"] for ch in headings) + 3)
+                props["headerColor"] = palette.get("header", "")
+        elif widget.type == "ShProcessValue":
+            fill(widget, "boxColor", palette.get("inset"))
+            fill(widget, "valueColor", palette.get("success"))
+            if _has(registry, widget.type, "bevel"):
+                props.setdefault("bevel", True)
+        elif widget.type == "ShAnnunciator" and props.get("lit") and \
+                str(props.get("severity") or "") in ("advisory", "normal", ""):
+            fill(widget, "litColor", palette.get("success"))
+            if _has(registry, widget.type, "glow"):
+                props.setdefault("glow", True)
 
 
 def compile_reference(project, page, registry, sections, title, header_widgets, report,
@@ -1052,6 +1109,7 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
 
     _clamp_crops(by_region, width, height, strip_bottom=m + tokens.header if has_strip else 0,
                  right_x=bx1 - right_w if right else width, foot=by1 + gap if bands else height)
+    _dress(project, registry, widgets, tokens)
     page.widgets[:] = widgets
     report.layout = FAMILY_NAME
     c._tidy_scales(page, registry, report.notes)

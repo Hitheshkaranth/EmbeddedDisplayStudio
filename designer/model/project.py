@@ -374,12 +374,19 @@ class DesignerScreen:
     theme: str = "dark"
     # CONTRACT 13.5: {"dimAfterS", "dimPercent", "offAfterS"}; {} = never idle.
     idle: dict = field(default_factory=dict)
+    # Theme tokens a design followed from a picture takes from it
+    # ({"card": "#333333", ...}, designer.layout.palette). The Studio's
+    # layout reads them before the kit's; the panel only sees the colours
+    # they put on widgets, and ignores this key.
+    palette: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         data = {"width": self.width, "height": self.height,
                 "background": self.background, "theme": self.theme}
         if self.idle:
             data["idle"] = dict(self.idle)
+        if self.palette:
+            data["palette"] = dict(self.palette)
         return data
 
 
@@ -414,6 +421,8 @@ class DesignerProject:
             str(raw_screen.get("background", "#101418")),
             "light" if str(raw_screen.get("theme", "dark")) == "light" else "dark",
             dict(raw_screen.get("idle") or {}) if isinstance(raw_screen.get("idle"), dict) else {},
+            {str(k): str(v) for k, v in raw_screen["palette"].items()}
+            if isinstance(raw_screen.get("palette"), dict) else {},
         )
         raw_brand = data.get("brand")
         brand = {"logos": list(raw_brand.get("logos") or []),

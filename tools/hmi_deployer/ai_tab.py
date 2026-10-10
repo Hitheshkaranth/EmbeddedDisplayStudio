@@ -2869,6 +2869,14 @@ class AIDesignTab(QWidget):
                     # plan's pictures out of them (fill_pictures), even after
                     # a later brief has replaced the run's attachments.
                     project._reference_images = list(self._root_images)
+                    if self.settings.value("ai/referencePalette", True, type=bool):
+                        # The picture's colours, not the kit's dark theme.
+                        try:
+                            from designer.layout.palette import apply_reference_palette
+                            apply_reference_palette(project, project._reference_images,
+                                                    getattr(self.generator, "registry", None))
+                        except Exception:
+                            logger.exception("AI Design: the reference palette was not applied")
             except Exception as exc:
                 project = None
                 shell.note_error(f"Parse error: {exc}")
@@ -3009,7 +3017,7 @@ class AIDesignTab(QWidget):
         """Show the model the reference and the screen as built, with what the
         layout measures, and ask for fixes (tools.hmi_deployer.ai_review)."""
         from tools.hmi_deployer.ai_review import (
-            REVIEW_SCHEMA, cut_images, layout_findings, review_brief, review_prompt, strip_pictures)
+            REVIEW_SCHEMA, cut_images, layout_findings, review_brief, review_prompt, still, strip_pictures)
         if (self.streaming or self._worker is not None or self._review_worker is not None
                 or self._queued_section_request or self._queued_retry
                 or project is not self.last_project):
@@ -3018,7 +3026,8 @@ class AIDesignTab(QWidget):
         if renderer is None:
             return
         renderer.project_dir = getattr(self.workspace, "bundle_dir", "") or None
-        image = renderer.render_page_sync(project, project.pages[0], project.screen.theme or "dark")
+        shown_still = still(project)
+        image = renderer.render_page_sync(shown_still, shown_still.pages[0], project.screen.theme or "dark")
         if image is None or image.isNull():
             return
         registry = getattr(self.generator, "registry", None)

@@ -131,6 +131,10 @@ def theme_colour(project, token: str) -> str:
     'success', 'card', 'border', 'mutedForeground', ...) for the project's
     theme, read from the same tokens the panel renders with."""
     light, dark, _numbers, _values = _tokens()
+    picked = (getattr(getattr(project, "screen", None), "palette", None) or {}).get(str(token))
+    if picked:
+        # A design followed from a picture draws in the picture's colours.
+        return picked
     mode = "light" if getattr(getattr(project, "screen", None), "theme", "dark") == "light" else "dark"
     table = light if mode == "light" else dark
     value = table.get(str(token))

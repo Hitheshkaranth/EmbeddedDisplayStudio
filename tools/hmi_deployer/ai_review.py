@@ -22,6 +22,7 @@ The AI tab keeps a reviewed design only when its findings did not grow.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 
@@ -156,6 +157,19 @@ def review_prompt() -> str:
         '{"op": "crop", "id": "<picture id>", "crop": [left, top, right, bottom]}, '
         '{"op": "set", "id": "<id>", "property": "<name>", "value": <value>}]}. Crops are on a '
         "0..1000 scale of image 1's width and height.")
+
+
+def still(project):
+    """A copy of the project with its bindings and actions taken off, as
+    the canvas draws it: rendered with them, every reading whose tag has
+    not arrived shows 0 and every bound text is blank, and the review was
+    shown a broken screen."""
+    copy_ = copy.deepcopy(project)
+    for page in copy_.pages:
+        for widget in page.walk():
+            widget.bindings = {}
+            widget.actions = {}
+    return copy_
 
 
 def strip_pictures(project, page=None) -> list:
