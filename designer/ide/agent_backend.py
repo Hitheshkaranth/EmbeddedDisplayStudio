@@ -31,7 +31,18 @@ SYSTEM_PROMPT = (
     "server, a simulator such as daemon/plc_sim.py, a watcher, a tail -f) never runs in the "
     "foreground: the bash tool waits for it to finish and you stop answering. Start it "
     "detached (PowerShell: Start-Process -WindowStyle Hidden ...; sh: nohup ... &), then "
-    "check it with a short command that does exit."
+    "check it with a short command that does exit.\n\n"
+    "What the Studio already does -- say so and stop, never rebuild it or read the "
+    "Studio's own source to find out:\n"
+    "- Live or simulated values on the screen: Simulate mode > Tag Lab > \"Simulate the "
+    "design\" > Start drives every bound tag from the design itself (readings move around "
+    "the values the design shows, in a loop; clocks show the time). Hand-made waveforms are "
+    "in Tag Lab too. A design only needs its widgets bound to tags (bindings in "
+    "project.edsui) for this.\n"
+    "- The panel reads real values from its hardware daemon; a PLC over Modbus is mapped in "
+    "the project's hwd.json.\n"
+    "Work in the project folder; the Studio's own code is not yours to change. Keep to a "
+    "few steps: when the answer is a Studio feature, answer in one."
 )
 
 
