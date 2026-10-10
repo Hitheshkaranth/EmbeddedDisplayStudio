@@ -116,6 +116,11 @@ SECTION_ID_MARK = "_sectionId"
 # [left, top, right, bottom] fractions: the Studio crops that part of the
 # reference into the project's assets for the Image (ai_tab).
 CROP_MARK = "_crop"
+# Where a planned section's block sits in the reference picture, as
+# [left, top, right, bottom] fractions (the plan's "box"): the reference
+# layout sizes its columns, rows and cards in the picture's proportions.
+# Carried on the section's widgets like REGION_MARK.
+BOX_MARK = "_box"
 #: The screen's regions, as a reference picture divides it:
 #:   top    -- the status strip across the top (clock, connectivity, weather)
 #:   rail   -- a narrow column at the left edge (a gear selector, mode lamps)
@@ -195,6 +200,7 @@ class Section:
     note: str = ""
     region: str = ""          # REGIONS, when the plan follows a reference picture
     accent: str = ""          # '#rrggbb', the section's colour (reference plans)
+    box: tuple = ()           # (l, t, r, b) fractions of the picture (reference plans)
 
 
 @dataclass
@@ -1922,7 +1928,8 @@ def _sections_from_marks(page, registry, widgets, planned_title, notes):
         groups[key].append(widget)
     sections = [Section(key[0], role_of(key[1]), groups[key],
                         region=region_of(groups[key][0].properties.get(REGION_MARK)),
-                        accent=accent_of(groups[key][0].properties.get(ACCENT_MARK)))
+                        accent=accent_of(groups[key][0].properties.get(ACCENT_MARK)),
+                        box=tuple(crop_of(groups[key][0].properties.get(BOX_MARK)) or ()))
                 for key in order]
     # A picture dropped into the header band by hand is a logo for the
     # header: it keeps the end it was dropped at, and stays there from now on.
@@ -2103,7 +2110,12 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
             # into the page (and a recompile) with the section's other marks.
             for widget in widgets:
                 widget.properties[ACCENT_MARK] = accent
-        sections.append(Section(heading, role, widgets, region=region, accent=accent))
+        box = crop_of(entry.get("box") or entry.get("bbox") or entry.get("rect"))
+        if box:
+            for widget in widgets:
+                widget.properties[BOX_MARK] = box
+        sections.append(Section(heading, role, widgets, region=region, accent=accent,
+                                box=tuple(box or ())))
     raw_header = [w for w in page_data.get("header") or [] if isinstance(w, dict)]
     # A logo -- or any header item -- may ask for the left end ("side":
     # "left", beside or inside its properties); the converter drops keys the

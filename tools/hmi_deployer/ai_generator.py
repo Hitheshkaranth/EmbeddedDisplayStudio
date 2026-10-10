@@ -77,6 +77,8 @@ PLAN_SCHEMA = _open_object({
                 # screen the section sits (compiler.REGIONS) and its colour.
                 "region": {"type": "string"},
                 "accent": {"type": "string"},
+                # ... and where the block sits in it, on the 0..1000 scale.
+                "box": {"type": "array", "items": {"type": "number"}},
                 "widgets": {"type": "array", "minItems": 1, "items": _PLAN_WIDGET},
                 "bindings": _FREE_OBJECT,
                 "actions": _FREE_OBJECT,
@@ -812,6 +814,10 @@ def build_reference_plan_prompt(registry: Optional[WidgetRegistry] = None,
         "section with that title, and it holds one widget for EVERY instrument drawn in it (a "
         "card with a compass and a pitch/roll scale is a ShCompass and a ShAttitude).\n\n"
         "Regions -- every section carries \"region\", one of:\n" + _reference_regions() + "\n"
+        "Every section also carries \"box\": [left, top, right, bottom], where the block sits in "
+        "the picture on a 0..1000 scale of its width and height, around the block alone (a big "
+        "dial gets a big box, a small card a small one): the layout keeps the picture's "
+        "proportions from the boxes.\n"
         "A section may also carry \"accent\": that block's main colour sampled from the picture, "
         "as hex (\"#f97316\"), only when the block is drawn in a colour of its own; a grey or "
         "white card has none.\n\n"
@@ -883,14 +889,14 @@ def build_reference_plan_prompt(registry: Optional[WidgetRegistry] = None,
         '"properties": {"text": "<the time shown>"}, "bindings": {"text": {"tag": "<area>.clock"}}}, '
         '{"type": "ShDataField", "id": "driver", "properties": {"label": "Driver", "value": '
         '"<the name on the badge>"}}, <the rest of the top strip: weather, the status check>], '
-        '"sections": [{"title": "Gear", "role": "status", "region": "rail", "widgets": ['
+        '"sections": [{"title": "Gear", "role": "status", "region": "rail", "box": [<l>, <t>, <r>, <b>], "widgets": ['
         '{"type": "ShGearIndicator", "id": "gear", "properties": {"gears": "P,R,N,D", "gear": "D", '
         '"orientation": "vertical"}, "bindings": {"gear": {"tag": "<area>.gear"}}}]}, '
-        '{"title": "", "role": "hero", "region": "left", "accent": "#<hex>", "widgets": ['
+        '{"title": "", "role": "hero", "region": "left", "box": [<l>, <t>, <r>, <b>], "accent": "#<hex>", "widgets": ['
         '{"type": "ShSpeedArc", "id": "speed", "properties": {"value": <shown>, "maximumValue": '
         '<full scale>, "unit": "km/h", "outerColor": "#<hex>", "innerColor": "#<hex>"}, '
         '"bindings": {"value": {"tag": "<area>.speed", "unit": "km/h"}}}]}, '
-        '<one section per remaining block of the picture, each with its "region">]}]}\n'
+        '<one section per remaining block of the picture, each with its "region" and "box">]}]}\n'
         "The <...> are placeholders: fill every one from the picture and the brief, with real "
         "JSON numbers. <area> is one lowercase word naming the machine (truck, loader, pump) and "
         "every tag starts with it (truck.clock, truck.speed); never write \"<area>\" or "
@@ -1450,7 +1456,8 @@ class AIDesignGenerator:
         The marks (compiler.SECTION_MARK) are what compose() compiles from, so
         they survive a sectioned run's merge and a later "Tidy up".
         """
-        from designer.layout.compiler import REGION_MARK, SECTION_ID_MARK, SECTION_MARK, sections_from_plan
+        from designer.layout.compiler import (BOX_MARK, REGION_MARK, SECTION_ID_MARK, SECTION_MARK,
+                                              sections_from_plan)
         from designer.model import DesignerScreen
         pages, taken = [], set()
         for index, page_data in enumerate(_merge_small_plan(design.get("pages") or [], width, height)):
@@ -1476,6 +1483,8 @@ class AIDesignGenerator:
                     if section.region:
                         widget.properties[REGION_MARK] = section.region
                         widget.properties[SECTION_ID_MARK] = number
+                    if section.box:
+                        widget.properties[BOX_MARK] = list(section.box)
                     widgets.append(widget)
             widgets.extend(loose)
             page_id = str(page_data.get("id") or ("main" if index == 0 else f"page{index + 1}"))

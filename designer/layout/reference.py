@@ -275,6 +275,12 @@ def _strip(project, registry, title, items, tokens, width, report, height=0):
     # A plant overview's strip leads with its title in a box in the middle;
     # its clock shows the date too and is one more reading at the right end.
     boxed = bool(title) and (clock is None or bool(_DATE_RE.search(str(clock.properties.get("text") or ""))))
+    if boxed:
+        # The title is the box's: a header Text with the same words (the
+        # flash model wrote both) would print it twice.
+        same = (lambda text: re.sub(r"[^a-z0-9]+", "", str(text or "").lower()))
+        items = [w for w in items if not (w.type == "Text" and w is not clock
+                                          and same(w.properties.get("text")) == same(title))]
     dated = clock if boxed else None
     if boxed and clock is not None:
         clock.properties.update({"fontSize": int(tokens.label_font + 1), "bold": False,
@@ -779,10 +785,26 @@ def _stack(project, registry, sections, rect, tokens, framed, report, needs=None
     return out
 
 
-def _row(project, registry, sections, rect, tokens, framed, report):
-    """Sections side by side in `rect`, in plan order."""
+def _row(project, registry, sections, rect, tokens, framed, report, span=None):
+    """Sections side by side in `rect`, in plan order; with `span` (the
+    picture's x extent the row covers) each at its box's place and width,
+    as the picture spaces them (a payload dial under the truck, not beside
+    the RPM dial)."""
     from . import compiler as c
     x, y, w, h = rect
+    if span and all(s.box for s in sections):
+        u0, u1 = span
+        scale = w / max(0.05, u1 - u0)
+        rects, edge = [], x
+        for section in sorted(sections, key=lambda s: s.box[0]):
+            sx = max(edge, x + (section.box[0] - u0) * scale)
+            sw = min((section.box[2] - section.box[0]) * scale, x + w - sx)
+            rects.append((section, sx, sw))
+            edge = sx + sw + tokens.gap
+        if all(sw >= 40 for _s, _x, sw in rects):
+            # (A box too small or squeezed out: the plain row, nothing lost.)
+            return [_section_card(project, registry, section, (sx, y, sw, h), tokens, framed, report)
+                    for section, sx, sw in rects]
     weights = [max(1.0, c._section_weight(registry, s)) ** 0.5 for s in sections]
     widths = _shares(w, weights, tokens.gap, floor=max(weights) * 0.5)
     out = []
@@ -790,6 +812,90 @@ def _row(project, registry, sections, rect, tokens, framed, report):
         out.append(_section_card(project, registry, section, (x, y, sw, h), tokens, framed, report))
         x += sw + tokens.gap
     return out
+
+
+def _union(sections):
+    """The box around the sections' boxes, or None when one has none."""
+    if not sections or not all(s.box for s in sections):
+        return None
+    return (min(s.box[0] for s in sections), min(s.box[1] for s in sections),
+            max(s.box[2] for s in sections), max(s.box[3] for s in sections))
+
+
+def _clamp(value, low, high):
+    return max(low, min(high, value))
+
+
+def _box_shares(rail, left, center, right, bottom) -> dict:
+    """The picture's proportions from its blocks' boxes: the right column's
+    share of the body's width, the rail's, the left column's share of left
+    and center, the bottom row's share of the body's height. {} unless
+    every body section has a box -- a guess for some of them would skew
+    the rest."""
+    body = list(rail) + list(left) + list(center) + list(right) + list(bottom)
+    whole = _union(body)
+    if whole is None or len(body) < 2:
+        return {}
+    width, height = whole[2] - whole[0], whole[3] - whole[1]
+    if width < 0.2 or height < 0.2:
+        return {}
+    shares = {}
+    if right:
+        shares["right"] = _clamp((whole[2] - _union(right)[0]) / width, 0.16, 0.45)
+    if rail:
+        shares["rail"] = _clamp((_union(rail)[2] - whole[0]) / width, 0.04, 0.15)
+    if left and center:
+        lw = _union(left)[2] - _union(left)[0]
+        cw = _union(center)[2] - _union(center)[0]
+        shares["left"] = _clamp(lw / max(0.01, lw + cw), 0.2, 0.7)
+    upper = _union(list(rail) + list(left) + list(center))
+    if bottom and upper:
+        bh = _union(bottom)[3] - _union(bottom)[1]
+        uh = upper[3] - upper[1]
+        shares["bottom"] = _clamp(bh / max(0.01, bh + uh), 0.2, 0.65)
+    return shares
+
+
+def _into_columns(left, center, bottom):
+    """(left, center, bottom) with the bottom blocks that sit under one
+    column moved into it, when the other column runs down beside the row.
+
+    A haul truck's picture has the RPM dial at the lower left, as tall as
+    the payload dial under the truck; laid as a row under both columns the
+    payload was squeezed into a strip. Only with every box known.
+    """
+    lu, cu, bu = _union(left), _union(center), _union(bottom)
+    if not (lu and cu and bu):
+        return left, center, bottom
+    band = bu[3] - bu[1]
+    left, center, rest = list(left), list(center), []
+    for section in bottom:
+        mid = (section.box[0] + section.box[2]) / 2.0
+        if cu[0] <= mid <= cu[2] and lu[3] > bu[1] + 0.3 * band:
+            center.append(section)        # left runs down beside it
+        elif lu[0] <= mid <= lu[2] and cu[3] > bu[1] + 0.3 * band:
+            left.append(section)
+        else:
+            rest.append(section)
+    key = (lambda s: s.box[1])
+    return sorted(left, key=key), sorted(center, key=key), rest
+
+
+def _box_heights(sections):
+    """The sections' heights in the picture, for a column stacked in its
+    proportions; None unless every one has a box."""
+    if not sections or not all(s.box for s in sections):
+        return None
+    # In thousandths: _shares takes weights of 1 and up (it divides by at
+    # least 1), and fractions squeezed every column to about 70 %.
+    return [1000.0 * max(0.02, s.box[3] - s.box[1]) for s in sections]
+
+
+def _row_span(rail, left, center, bottom):
+    """The picture's x extent a bottom row covers: from the body's left edge
+    to the right end of left, center and the row itself."""
+    whole = _union(list(rail) + list(left) + list(center) + list(bottom))
+    return (whole[0], whole[2]) if whole else None
 
 
 def _band(project, registry, section, rect, tokens, report, title=""):
@@ -1076,12 +1182,20 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
         by1 -= sum(band_hs) + gap * len(bands)
         body_h = by1 - by0
         bottom = []
-    right_w = round(body_w * RIGHT_SHARE) if right else 0
-    rail_w = max(44, round(width * RAIL_SHARE)) if rail else 0
+    if bottom and left and center:
+        left, center, bottom = _into_columns(left, center, bottom)
+    # The picture's own proportions, when its blocks came with their boxes.
+    shares = _box_shares(rail, left, center, right, bottom)
+    if shares:
+        report.notes.append("proportions from the picture: " + ", ".join(
+            f"{k} {v:.2f}" for k, v in sorted(shares.items())))
+    right_w = round(body_w * shares.get("right", RIGHT_SHARE)) if right else 0
+    rail_w = max(44, round(body_w * shares["rail"]) if "rail" in shares
+                 else round(width * RAIL_SHARE)) if rail else 0
     main_x1 = bx1 - (right_w + gap if right else 0)
     upper = bool(rail or left or center)
     if bottom and upper:
-        bottom_h = round(body_h * BOTTOM_SHARE)
+        bottom_h = round(body_h * shares.get("bottom", BOTTOM_SHARE))
     elif bottom:
         bottom_h = body_h
     else:
@@ -1095,7 +1209,7 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
         column = dataclasses.replace(tokens, pad=max(8, tokens.pad * 3 // 4),
                                      card_title=int(round(tokens.card_title_font * 1.6)))
         widgets += _stack(project, registry, right, (bx1 - right_w, by0, right_w, body_h),
-                          column, True, report)
+                          column, True, report, needs=_box_heights(right))
     if rail:
         rail_sizes = _shares(upper_h if upper_h > 0 else body_h,
                              [len(s.widgets) for s in rail], gap)
@@ -1106,7 +1220,7 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
     mx0 = bx0 + (rail_w + gap if rail else 0)
     span = main_x1 - mx0
     if left and center:
-        left_w = round(span * LEFT_SHARE)
+        left_w = round(span * shares.get("left", LEFT_SHARE))
         parts = ((left, (mx0, by0, left_w, upper_h)),
                  (center, (mx0 + left_w + gap, by0, span - left_w - gap, upper_h)))
     elif left or center:
@@ -1121,11 +1235,12 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
         top = max(weights) if weights else 1.0
         weights = [top if any(_is_dial(registry, wd) or wd.type in ("Image", "ShAnimatedImage")
                               for wd in s.widgets) else wgt for s, wgt in zip(group, weights)]
-        widgets += _stack(project, registry, group, rect, tokens, False, report, needs=weights)
+        widgets += _stack(project, registry, group, rect, tokens, False, report,
+                          needs=_box_heights(group) or weights)
     if bottom:
         # The row runs under the rail too, as the picture's dials do.
         widgets += _row(project, registry, bottom, (bx0, by1 - bottom_h, main_x1 - bx0, bottom_h),
-                        tokens, False, report)
+                        tokens, False, report, span=_row_span(rail, left, center, bottom))
 
     _clamp_crops(by_region, width, height, strip_bottom=m + tokens.header if has_strip else 0,
                  right_x=bx1 - right_w if right else width, foot=by1 + gap if bands else height)
