@@ -171,6 +171,50 @@ class ReadingRows(unittest.TestCase):
         self.assertLess(bottom, 0.87, "the banner is not part of it")
 
 
+class StudioRun(unittest.TestCase):
+    """What Ornith wrote in the Studio itself (2026-10-10 11:29): the drawing's
+    source a placeholder photo URL, and the status and the alarm marked to
+    the strip's left."""
+
+    def _plan(self):
+        plan = _plan()
+        page = plan["pages"][0]
+        hero = next(s for s in page["sections"] if s.get("role") == "hero")
+        hero["widgets"][0]["properties"]["source"] = "https://picsum.photos/seed/bf5process/900x560"
+        for item in page["header"]:
+            if item["type"] in ("ShAnnunciator", "ShStatDot"):
+                item["side"] = "left"
+        return plan
+
+    def test_a_web_address_is_no_picture_and_the_drawing_is_still_cut(self):
+        from designer.layout.compiler import CROP_MARK
+        from tools.hmi_deployer.ai_tab import pictures_to_fill
+        project = _generate(self._plan())
+        picture = next(w for w, _r in _walk(project.pages[0].widgets) if w.id == "processDiagram")
+        self.assertEqual(picture.properties["source"], "")
+        self.assertTrue(picture.properties.get(CROP_MARK))
+        self.assertIn(picture, pictures_to_fill(project))
+
+    def test_a_drawing_without_a_crop_is_cut_from_the_body(self):
+        from designer.layout.compiler import CROP_MARK
+        plan = self._plan()
+        hero = next(s for s in plan["pages"][0]["sections"] if s.get("role") == "hero")
+        hero["widgets"][0]["properties"].pop("crop", None)
+        hero["widgets"][0].pop("crop", None)
+        project = _generate(plan)
+        picture = next(w for w, _r in _walk(project.pages[0].widgets) if w.id == "processDiagram")
+        left, top, right, bottom = picture.properties[CROP_MARK]
+        self.assertLess(right, 0.75)
+        self.assertGreater(top, 0.05)
+
+    def test_the_readings_follow_the_title_whatever_side_was_written(self):
+        rects = {w.id: r for w, r in _walk(_generate(self._plan()).pages[0].widgets)}
+        box = rects["titleBox"]
+        for wid in ("status", "alarm", "clock"):
+            self.assertGreater(rects[wid][0], box[0] + box[2] - 1, f"{wid} is right of the title")
+        self.assertLess(rects["siteName"][0], box[0])
+
+
 class LampStates(unittest.TestCase):
     def test_a_models_status_words_light_the_lamp(self):
         # Ornith's alarm lamp said "warning"; the kit's word is "warn", and the

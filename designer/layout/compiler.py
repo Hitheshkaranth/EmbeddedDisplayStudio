@@ -2006,6 +2006,17 @@ def _distribute(section: dict, widgets: list) -> None:
             if index < len(widgets) and not widgets[index].get(key):
                 widgets[index][key] = {match.group(1): value}
 
+def _no_web_pictures(widgets) -> None:
+    """A picture's source that is a web address is no picture: the panel
+    loads files from its bundle only. Ornith filled a blast furnace's drawing
+    with a placeholder photo URL, so it was not cut from the reference and
+    drew as an empty frame; with no source it is."""
+    for widget in widgets:
+        source = str(widget.properties.get("source") or "").strip().lower()
+        if widget.type in ("Image", "ShAnimatedImage") and source.startswith(("http:", "https:", "data:", "//")):
+            widget.properties["source"] = ""
+
+
 def sections_from_plan(page_data: dict, convert) -> tuple:
     """(title, [Section], header_widgets) from a planned page.
 
@@ -2045,6 +2056,7 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
                                                      (item.get("properties") or {}).get("crop"))
                  for item in raw if isinstance(item, dict)}
         widgets = convert(raw)
+        _no_web_pictures(widgets)
         if len(widgets) == len(wishes):
             for widget, wish in zip(widgets, wishes):
                 if wish and wish not in ("normal", "medium", "default"):
@@ -2086,6 +2098,7 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
                                                  (item.get("properties") or {}).get("crop"))
              for item in raw_header}
     header = convert(raw_header)
+    _no_web_pictures(header)
     for widget in header:
         if crops.get(widget.id):
             widget.properties[CROP_MARK] = crops[widget.id]

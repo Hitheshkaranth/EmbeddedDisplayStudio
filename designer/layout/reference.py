@@ -294,10 +294,12 @@ def _strip(project, registry, title, items, tokens, width, report, height=0):
     # column at the right end, as a plant overview's strip draws them.
     if boxed:
         # The strip's left end is the plant's: its name and logo lead, before
-        # the title box, whether or not the plan said "side".
-        named = [w for w in right if w is not dated and (w.type == "Text" or w.type in _PICTURES)]
-        left += named
-        right = [w for w in right if w not in named]
+        # the title box, and the readings (status, alarm, date) follow it,
+        # whatever "side" the plan wrote -- Ornith put the status and the
+        # alarm at the left, and the title box split them from the date.
+        everything = left + right
+        left = [w for w in everything if w is not dated and (w.type == "Text" or w.type in _PICTURES)]
+        right = [w for w in everything if w not in left]
     partner = None
     if dated is not None and dated in right:
         partner = next((w for w in right if w.type in ("ShDataField", "ShAnnunciator")), None)
@@ -860,7 +862,13 @@ def _clamp_crops(by_region, width, height, strip_bottom, right_x, foot):
     right_edge = min(1.0, right_x / W)
     foot_edge = min(1.0, foot / H - 0.02)
     body = [s for name in ("left", "center") for s in by_region.get(name, ())]
-    if len(body) == 1 and len(body[0].widgets) == 1 and _cuttable(body[0].widgets[0]):
+    lone = body[0].widgets[0] if len(body) == 1 and len(body[0].widgets) == 1 else None
+    if lone is not None and lone.type in _PICTURES and not str(lone.properties.get("source") or "").strip() \
+            and not lone.properties.get(c.CROP_MARK):
+        # No crop given: the picture is still the body of the reference,
+        # cut to the body's box below.
+        lone.properties[c.CROP_MARK] = [0.0, 0.0, 1.0, 1.0]
+    if lone is not None and _cuttable(lone):
         # The body is one picture (a plant's process drawing): it sits where
         # the layout's body does, and that box is a better crop than the
         # model's guess unless the guess is nearly it. Ornith's guesses for
