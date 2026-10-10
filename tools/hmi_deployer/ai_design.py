@@ -187,16 +187,16 @@ def structured_output(provider: str, schema: Optional[dict]) -> dict:
     provider that keeps no guard (anthropic, or no schema at all) gets an
     empty dict, so a caller can always put it in the payload unchanged.
 
-    vLLM (its Qwen templates) reads ``guided_json``; OpenAI reads
-    ``response_format``; Ollama reads ``format``.
+    vLLM and OpenAI read ``response_format`` (a json_schema, which OpenAI
+    requires to be named); Ollama reads ``format``. vLLM once read
+    ``guided_json`` too, but the lab server's vLLM ignores it without an
+    error, and the model then answered in a layout tree of its own.
     """
     if schema is None:
         return {}
-    if provider == "vllm":
-        return {"guided_json": schema}
-    if provider == "openai":
+    if provider in ("vllm", "openai"):
         return {"response_format": {"type": "json_schema",
-                                    "json_schema": {"schema": schema}}}
+                                    "json_schema": {"name": "plan", "schema": schema}}}
     if provider == "ollama":
         return {"format": schema}
     return {}

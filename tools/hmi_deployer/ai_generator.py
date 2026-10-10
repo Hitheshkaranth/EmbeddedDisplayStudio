@@ -41,7 +41,7 @@ _PLAN_WIDGET = _open_object({
 }, required=("type",))
 
 #: The plan build_plan_prompt asks for, as a JSON schema. A server that
-#: guides its decoding with it (vLLM guided_json, OpenAI json_schema, Ollama
+#: guides its decoding with it (vLLM and OpenAI json_schema, Ollama
 #: format) cannot return malformed JSON or a plan without pages. Every level
 #: is open (additionalProperties) and only the load-bearing keys are
 #: required, so the schema never rejects a plan the compiler would accept.
@@ -236,21 +236,35 @@ def _choice_key(value) -> str:
     return key
 
 
+#: Status words a model writes for a lamp's state, and the kit's word for
+#: each ("alarm" lit a ShStatDot grey: it is not one of idle/ok/warn/fault).
+_CHOICE_SYNONYMS = {
+    "alarm": "fault", "error": "fault", "critical": "fault", "danger": "fault", "tripped": "fault",
+    "normal": "ok", "good": "ok", "healthy": "ok", "running": "ok", "online": "ok", "active": "ok",
+    "caution": "warn", "offline": "idle", "off": "idle", "unknown": "idle", "inactive": "idle",
+}
+
+
 def _coerce_choices(definition, properties: dict) -> dict:
     """Map a model's enum spellings onto the registry's declared choices.
 
     A value already in the choices is kept; one that matches a single
-    choice once the boilerplate words are stripped is replaced by it; one
-    that matches nothing is dropped so the widget's default applies rather
-    than the panel failing to load the page.
+    choice once the boilerplate words are stripped (or is a longer form of
+    one: "warning" for "warn"), or is a status word for one ("alarm" for
+    "fault"), is replaced by it; one that matches nothing is dropped so the
+    widget's default applies rather than the panel failing to load the page.
     """
     for key, choices in (definition.choices or {}).items():
         if key not in properties or properties[key] in choices:
             continue
         wanted = _choice_key(properties[key])
         hits = [c for c in choices if _choice_key(c) == wanted]
+        if not hits and _CHOICE_SYNONYMS.get(wanted) in choices:
+            hits = [_CHOICE_SYNONYMS[wanted]]
         if not hits:
             hits = [c for c in choices if wanted and wanted in _choice_key(c)]
+        if not hits:
+            hits = [c for c in choices if len(_choice_key(c)) >= 3 and wanted.startswith(_choice_key(c))]
         if len(hits) == 1:
             properties[key] = hits[0]
         else:
@@ -639,7 +653,8 @@ REFERENCE_CATALOGUE = (
     ("heading and attitude", ("ShCompass", "ShAttitude")),
     ("tyres", ("ShVehicleStatus",)),
     ("bars and levels", ("ShEngineBar", "ShSegmentBar", "ShAutoLevel", "ShTape")),
-    ("readouts", ("ShDataField", "ShValueTile", "ShTripInfo", "ShNumDisplay")),
+    ("readouts", ("ShProcessValue", "ShDataField", "ShValueTile", "ShTripInfo", "ShNumDisplay")),
+    ("banners and alarm lamps", ("ShAnnunciator",)),
     ("pictures", ("Image", "ShAnimatedImage")),
     ("trend, alarms, controls", ("ShTrendChart", "ShAlarmTable", "ShButton", "ShToggle")),
 )
@@ -656,8 +671,52 @@ REFERENCE_REGION_GUIDE = {
     "right": "a column of cards at the right edge (one card per titled block, top to bottom)",
     "bottom": "a row along the bottom, under left and center: every dial or bar in the lower "
               "part of the picture, below the speed and the hero, side by side -- a dial under "
-              "the speed arc is \"bottom\", not \"left\"",
+              "the speed arc is \"bottom\", not \"left\"; also the full-width bars at the foot "
+              "of the screen (a status banner, a row of navigation buttons)",
 }
+
+
+def _reference_process_guide(registry) -> str:
+    """The reference prompt's part for industrial screens (a plant overview,
+    SCADA): a process drawing, a titled top strip, cards of reading lines, a
+    status banner and a navigation row. Without it a blast furnace's picture
+    came back as its printed labels turned into readouts, a 3x3 grid of
+    buttons and the banner as a lamp in a corner card."""
+    has = (lambda name: registry is not None and registry.get(name) is not None)
+    if has("ShProcessValue"):
+        line = ("one ShProcessValue per line (label as printed without the colon, value as "
+                "shown, unit, \"valueColor\" the digits' colour, \"trend\": true when a small "
+                "trend line is drawn in the line)")
+    else:
+        line = "one ShDataField per line (label, value, units) with \"stacked\": false"
+    return (
+        "Industrial and process screens (a plant overview, SCADA):\n"
+        "- a process drawing (a furnace, tanks, pipes, a flow diagram, a mimic) -> ONE Image "
+        "with \"source\": \"\" and a \"crop\" around the whole drawing: every unit, pipe and "
+        "arrow, the labels printed on it (\"IRON ORE ->\", \"TUYERES\") and the headings over "
+        "it (\"MATERIALS INPUT\"), and no further -- stop before the cards beside it. Those "
+        "labels are part of the picture: never readouts, Text widgets or sections. Its section "
+        "has role \"hero\", region \"center\" and nothing else.\n"
+        "- the screen's name in a box in the top strip -> the page \"title\", as printed.\n"
+        "- a plant or company name and logo at the top-left -> header items with \"side\": "
+        "\"left\": an Image with \"source\": \"\" and the logo's \"crop\", and a Text with the "
+        "name.\n"
+        "- a status line (\"STATUS: OPERATIONAL\") -> a header ShDataField, \"label\": "
+        "\"Status\", \"value\" the words, \"stacked\": false; a date and time is the clock "
+        "Text; an ALARM lamp -> a header ShAnnunciator(text, \"severity\": \"warning\", "
+        "\"lit\" as drawn).\n"
+        f"- a card of readings, one per line (\"Hot Blast Temp: [1185] °C\") -> {line}. A "
+        "numbered card (\"1  BLAST / AIR SUPPLY\", \"SECTION 3: FURNACE TOP\") is one section "
+        "titled with its words (\"Blast / Air Supply\"), role \"readings\", region \"right\". "
+        "A trend line inside a reading's line belongs to that reading, never a ShTrendChart.\n"
+        "- a full-width status bar (\"SYSTEM NORMAL - CASTING IN PROGRESS\") -> a section of its "
+        "own, title \"\", role \"status\", region \"bottom\": one ShAnnunciator with \"text\" "
+        "the words, \"lit\": true, \"severity\" \"advisory\" when green, \"caution\" amber, "
+        "\"warning\" red.\n"
+        "- a row of navigation buttons along the foot -> ONE section, title \"\", role "
+        "\"controls\", region \"bottom\", one ShButton per button in the picture's order, each "
+        "with a navigate action; the highlighted one (the current page) gets \"borderColor\" "
+        "and \"textColor\" its highlight colour.\n\n")
 
 
 def _reference_catalogue(registry) -> str:
@@ -736,7 +795,8 @@ def build_reference_plan_prompt(registry: Optional[WidgetRegistry] = None,
         "card with a compass and a pitch/roll scale is a ShCompass and a ShAttitude).\n\n"
         "Regions -- every section carries \"region\", one of:\n" + _reference_regions() + "\n"
         "A section may also carry \"accent\": that block's main colour sampled from the picture, "
-        "as hex (\"#f97316\").\n\n"
+        "as hex (\"#f97316\"), only when the block is drawn in a colour of its own; a grey or "
+        "white card has none.\n\n"
         "The top strip is the page \"header\" (8 items at most, in the picture's order); it "
         "takes everything around the clock, a name badge hanging under it included:\n"
         "- connectivity and status icons (LTE, GPS, WiFi, Bluetooth, a lock) -> ShTelltale with "
@@ -791,13 +851,14 @@ def build_reference_plan_prompt(registry: Optional[WidgetRegistry] = None,
         "- text readouts (a number with a label) -> ShDataField(label, value, units) or "
         "ShValueTile(title, value, unit).\n"
         "- a trend line -> ShTrendChart; an alarm list -> ShAlarmTable; buttons -> ShButton.\n\n"
+        + _reference_process_guide(registry) +
         "Colours ARE part of the reproduction in this mode: keep the picture's colours. Write "
         "them as hex (\"#3b82f6\") on the colour properties each widget declares (after "
         "\"colours:\" in the list below, and accentColor/barColor where named above) and as the "
         "section's \"accent\". Leave a colour out where the picture shows none.\n\n"
         "Reply with ONE fenced ```json block and nothing after it:\n"
         '{"name": "<short name>", "section": {"index": 1, "complete": true, "label": "", "next": ""}, '
-        '"pages": [{"id": "main", "name": "Main", "title": "<screen title, 2-5 words>", '
+        '"pages": [{"id": "main", "name": "Main", "title": "<the screen title as the picture prints it, else 2-5 words>", '
         '"header": [{"type": "ShTelltale", "id": "wifi", "side": "left", "properties": '
         '{"icon": "wifi", "label": "WiFi", "lit": true}}, {"type": "Text", "id": "clock", '
         '"properties": {"text": "<the time shown>"}, "bindings": {"text": {"tag": "<area>.clock"}}}, '

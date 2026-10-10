@@ -45,8 +45,8 @@ LINE_COLOURS = (("purple", "#a855f7"), ("green", "#4ade80"), ("blue", "#60a5fa")
                 ("orange", "#fb923c"), ("aqua", "#22d3ee"), ("grey", "#a1a1aa"))
 DEFAULT_ACCENT = "#a855f7"
 
-READING_TYPES = ("ShValueTile", "ShNumDisplay", "ShAutoReadout", "ShDataField", "ShTripInfo",
-                 "ShGearIndicator", "Text")
+READING_TYPES = ("ShValueTile", "ShNumDisplay", "ShAutoReadout", "ShDataField", "ShProcessValue",
+                 "ShTripInfo", "ShGearIndicator", "Text")
 LAMP_TYPES = ("ShStatDot", "ShAnnunciator", "ShLamp")
 _STATUS_ICONS = ((("hvac", "air", "climate", "cool"), "snowflake", CYAN),
                  (("pa", "announce", "audio", "speaker", "pis"), "volume", MUTED),

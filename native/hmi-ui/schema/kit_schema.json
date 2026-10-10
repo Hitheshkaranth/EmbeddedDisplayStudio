@@ -1566,6 +1566,71 @@
    "choices": {},
    "assets": []
   },
+  "ShProcessValue": {
+   "qml": "ShProcessValue",
+   "category": "Industrial",
+   "display_name": "Process value",
+   "default_width": 260,
+   "default_height": 30,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "label": {
+     "kind": "str",
+     "default": "Value"
+    },
+    "value": {
+     "kind": "str",
+     "default": 0
+    },
+    "decimals": {
+     "kind": "int",
+     "default": -1
+    },
+    "unit": {
+     "kind": "str",
+     "default": ""
+    },
+    "valueColor": {
+     "kind": "color",
+     "default": "#3ee05a"
+    },
+    "boxColor": {
+     "kind": "color",
+     "default": "#0a0d0b"
+    },
+    "trend": {
+     "kind": "bool",
+     "default": false
+    },
+    "trendColor": {
+     "kind": "color",
+     "default": "#f5a524"
+    },
+    "warnAbove": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "warnBelow": {
+     "kind": "float",
+     "default": 0.0
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
   "ShProgress": {
    "qml": "ShProgress",
    "category": "Industrial",

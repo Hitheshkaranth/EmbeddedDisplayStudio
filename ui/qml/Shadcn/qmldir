@@ -56,3 +56,4 @@ ShStationLine 1.0 ShStationLine.qml
 ShTrainConsist 1.0 ShTrainConsist.qml
 ShStatusCard 1.0 ShStatusCard.qml
 ShAnimatedImage 1.0 ShAnimatedImage.qml
+ShProcessValue 1.0 ShProcessValue.qml

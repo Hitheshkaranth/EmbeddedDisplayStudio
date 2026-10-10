@@ -35,10 +35,12 @@ class StructuredOutput(unittest.TestCase):
     def test_each_provider_gets_its_own_form(self):
         from tools.hmi_deployer.ai_design import structured_output
         from tools.hmi_deployer.ai_generator import PLAN_SCHEMA
-        self.assertEqual(structured_output("vllm", PLAN_SCHEMA), {"guided_json": PLAN_SCHEMA})
-        openai = structured_output("openai", PLAN_SCHEMA)
-        self.assertEqual(openai["response_format"]["type"], "json_schema")
-        self.assertIs(openai["response_format"]["json_schema"]["schema"], PLAN_SCHEMA)
+        # vLLM ignores guided_json now; it and OpenAI read a named json_schema.
+        for provider in ("vllm", "openai"):
+            form = structured_output(provider, PLAN_SCHEMA)
+            self.assertEqual(form["response_format"]["type"], "json_schema")
+            self.assertTrue(form["response_format"]["json_schema"]["name"])
+            self.assertIs(form["response_format"]["json_schema"]["schema"], PLAN_SCHEMA)
         self.assertEqual(structured_output("ollama", PLAN_SCHEMA), {"format": PLAN_SCHEMA})
         self.assertEqual(structured_output("anthropic", PLAN_SCHEMA), {})
         self.assertEqual(structured_output("vllm", None), {})
@@ -61,10 +63,11 @@ class StructuredOutput(unittest.TestCase):
         conn.response_schema = PLAN_SCHEMA
         url, headers, payload = conn.byok_request("brief")
         self.assertTrue(url.endswith("/v1/chat/completions"))
-        self.assertEqual(payload["guided_json"], PLAN_SCHEMA)
+        self.assertIs(payload["response_format"]["json_schema"]["schema"], PLAN_SCHEMA)
+        self.assertNotIn("guided_json", payload)
         conn.response_schema = None
         _url, _headers, payload = conn.byok_request("brief")
-        self.assertNotIn("guided_json", payload)
+        self.assertNotIn("response_format", payload)
 
 
 class Shortfall(unittest.TestCase):

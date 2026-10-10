@@ -62,7 +62,9 @@ WAVE = ["Column", "Grid", "Image", "Item", "Rectangle", "Row", "ShAlarmTable", "
         # Compared at its defaults: no source, so both kits draw the shared
         # placeholder. A playing GIF is timing-dependent; test_widgets.c and
         # tests/test_animated_image.py check the frames instead.
-        "ShAnimatedImage"]
+        "ShAnimatedImage",
+        # A SCADA reading row; at its defaults (no trend) label, box and digits.
+        "ShProcessValue"]
 
 
 # Compared nowhere at their defaults, for a reason given in the results: an

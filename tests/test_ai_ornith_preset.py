@@ -28,7 +28,8 @@ class OrnithPreset(unittest.TestCase):
         self.assertEqual(url, "http://spark-ba51:8080/v1/chat/completions")
         self.assertEqual(headers["Authorization"], "Bearer k")
         self.assertEqual(payload["model"], "ornith-1.5-35b-a3b")
-        self.assertEqual(payload["guided_json"], {"type": "object"})      # vLLM's keyword
+        # vLLM's structured output: guided_json is ignored by the lab server.
+        self.assertEqual(payload["response_format"]["json_schema"]["schema"], {"type": "object"})
         self.assertEqual(payload["chat_template_kwargs"], {"enable_thinking": False})
 
 

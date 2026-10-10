@@ -31,7 +31,7 @@ from designer.ui.alarm_extras import AlarmExtras
 from designer.ui.binding_extras import BindingExtras
 from designer.ui.screen_idle_editor import ScreenIdleEditor
 from designer.palette.widget_palette import WidgetPalette
-from designer.palette.widget_registry import PROPERTY_MINIMUMS, clamp_property
+from designer.palette.widget_registry import clamp_property, property_minimum
 from designer.palette.widget_registry import default_registry
 from schema.manifest import NAME_RE, deployable_name, theme_of
 
@@ -354,11 +354,13 @@ class PropertyEditor(QWidget):
             editor.toggled.connect(lambda v: self.propertyEdited.emit(name, v))
         elif value_type is int:
             editor = SpinBox(); _mark(editor, "propField"); editor.setButtonSymbols(QSpinBox.NoButtons)
-            editor.setRange(int(PROPERTY_MINIMUMS.get(name, -100000)), 100000); editor.setValue(int(value or 0))
+            floor = property_minimum(name, definition.type)
+            editor.setRange(int(-100000 if floor is None else floor), 100000); editor.setValue(int(value or 0))
             editor.valueChanged.connect(lambda v: self.propertyEdited.emit(name, v))
         elif value_type is float:
             try:
-                editor = DoubleSpinBox(); editor.setRange(float(PROPERTY_MINIMUMS.get(name, -1e9)), 1e9); editor.setDecimals(4); editor.setValue(float(value or 0))
+                floor = property_minimum(name, definition.type)
+                editor = DoubleSpinBox(); editor.setRange(float(-1e9 if floor is None else floor), 1e9); editor.setDecimals(4); editor.setValue(float(value or 0))
             except (ValueError, TypeError):
                 editor = QLineEdit(str(value or ""))
                 editor.editingFinished.connect(lambda e=editor: self.propertyEdited.emit(name, e.text()))
@@ -368,7 +370,9 @@ class PropertyEditor(QWidget):
                 editor.valueChanged.connect(lambda v: self.propertyEdited.emit(name, v))
             _mark(editor, "propField")
         else:
-            editor = QLineEdit(str(value or ""))
+            # A text property may hold a number (ShProcessValue's value 0):
+            # 0 is shown as "0", not as an empty field.
+            editor = QLineEdit("" if value is None else str(value))
             _mark(editor, "propField")
             editor.editingFinished.connect(lambda e=editor: self.propertyEdited.emit(name, e.text()))
             if name in ("color", "background"):
@@ -2046,7 +2050,7 @@ class DesignerWorkspace(QWidget):
         selected = self.scene.selected_models()
         if not selected: return
         model = selected[0]
-        value = clamp_property(name, value)
+        value = clamp_property(name, value, model.type)
         if name == "id":
             value = value.strip()
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value) or (self._find(value) and value != model.id):

@@ -54,6 +54,7 @@ extern const hmi_widget_ops_t hmi_widget_shstationline;
 extern const hmi_widget_ops_t hmi_widget_shtrainconsist;
 extern const hmi_widget_ops_t hmi_widget_shstatuscard;
 extern const hmi_widget_ops_t hmi_widget_shanimatedimage;
+extern const hmi_widget_ops_t hmi_widget_shprocessvalue;
 extern const hmi_widget_ops_t hmi_widget_text;
 extern const hmi_widget_ops_t hmi_widget_probe;
 
@@ -110,6 +111,7 @@ void hmi_kit_register_all(void)
     hmi_registry_register(&hmi_widget_shtrainconsist);
     hmi_registry_register(&hmi_widget_shstatuscard);
     hmi_registry_register(&hmi_widget_shanimatedimage);
+    hmi_registry_register(&hmi_widget_shprocessvalue);
     hmi_registry_register(&hmi_widget_text);
     hmi_registry_register(&hmi_widget_probe);
 }

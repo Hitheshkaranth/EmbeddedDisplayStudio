@@ -67,8 +67,8 @@ KIND_ORDER = {FACE: 0, TILE: 1, STRIP: 2, CHART: 3, TABLE: 4, LAMP: 5, CONTROL: 
 # A tile this much wider than tall (a segment bar, a progress bar) reads as a
 # strip: it takes a whole row instead of a grid cell.
 STRIP_ASPECT = 3.0
-TILE_TYPES = ("ShValueTile", "ShNumDisplay", "ShAutoReadout", "ShDataField", "ShTripInfo",
-              "ShAnalogDisplay", "ShSegmentBar", "ShProgress", "ShGearIndicator",
+TILE_TYPES = ("ShValueTile", "ShNumDisplay", "ShAutoReadout", "ShDataField", "ShProcessValue",
+              "ShTripInfo", "ShAnalogDisplay", "ShSegmentBar", "ShProgress", "ShGearIndicator",
               "ShDriveMode", "ShIconTile", "ShAlert", "Image", "Rectangle")
 LAMP_TYPES = ("ShStatDot", "ShTelltale", "ShAnnunciator")
 CONTROL_TYPES = ("ShButton", "ShToggle", "ShCheckbox", "ShSelect", "ShSlider", "ShNumInput",
@@ -2080,9 +2080,20 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
         wish = " ".join(str(d.get(k) or "") for d in (item, props) for k in ("side", "align", "position"))
         if "left" in wish.lower():
             sides[str(item.get("id") or "")] = "left"
-    # A logo with no picture is an empty white plate on the glass: leave it out.
-    header = [w for w in convert(raw_header)
-              if not (w.type == "Image" and not str(w.properties.get("source") or "").strip())]
+    # A logo that says where it sits in the reference picture is cut out of
+    # it on Apply (ai_tab.fill_pictures), as a section's picture is.
+    crops = {str(item.get("id") or ""): crop_of(item.get("crop") or
+                                                 (item.get("properties") or {}).get("crop"))
+             for item in raw_header}
+    header = convert(raw_header)
+    for widget in header:
+        if crops.get(widget.id):
+            widget.properties[CROP_MARK] = crops[widget.id]
+    # A logo with no picture (and none to cut) is an empty white plate on
+    # the glass: leave it out.
+    header = [w for w in header
+              if not (w.type == "Image" and not str(w.properties.get("source") or "").strip()
+                      and not w.properties.get(CROP_MARK))]
     for widget in header:
         if sides.get(widget.id) == "left":
             widget.properties[SIDE_MARK] = "left"

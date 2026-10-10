@@ -2,7 +2,9 @@
 //
 // Spec: ui/qml/Shadcn/ShButton.qml (the QML component is the drawing and
 // behaviour specification). Properties (kit_schema.json): text, variant, size, enabled, backgroundColor, textColor, borderColor, borderWidth, cornerRadius, opacity, visible.
-// Default size 120x40. Signals: clicked.
+// Default size 120x40. Signals: clicked. backgroundColor, textColor, borderColor
+// and borderWidth override the variant as in the QML; cornerRadius is not read.
+#include <stdio.h>
 #include <string.h>
 #include "registry.h"
 #include "theme.h"
@@ -11,7 +13,22 @@ typedef struct {
     lv_obj_t *bg;
     lv_obj_t *label;
     char variant[16];
+    // The designer's overrides, as ShButton.qml has them: an empty or
+    // transparent colour keeps the variant's.
+    char background[16], text_colour[16], border[16];
+    int border_width;
 } shbutton_state_t;
+
+// A colour override that is set: a literal with some alpha.
+static bool override_colour(const char *hex, lv_color_t *out)
+{
+    if (!hex[0] || hex[0] != '#') return false;
+    lv_opa_t opa = LV_OPA_COVER;
+    lv_color_t c = hmi_colour_hex(hex, &opa);
+    if (opa == 0) return false;
+    *out = c;
+    return true;
+}
 
 static void apply_variant_colors(shbutton_state_t *st, const char *variant)
 {
@@ -49,6 +66,29 @@ static void apply_variant_colors(shbutton_state_t *st, const char *variant)
     }
 
     lv_obj_set_style_text_color(st->label, text_color, 0);
+
+    // The designer's overrides win over the variant (ShButton.qml).
+    lv_color_t c;
+    if (override_colour(st->background, &c)) {
+        lv_obj_set_style_bg_opa(st->bg, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(st->bg, c, 0);
+    }
+    if (override_colour(st->text_colour, &c))
+        lv_obj_set_style_text_color(st->label, c, 0);
+    bool outline = strcmp(variant, "outline") == 0;
+    bool bordered = override_colour(st->border, &c);
+    if (!bordered && outline) c = hmi_colour("border");
+    int width = st->border_width > 0 ? st->border_width : (outline ? 1 : 0);
+    lv_obj_set_style_border_color(st->bg, c, 0);
+    lv_obj_set_style_border_width(st->bg, (bordered || outline) ? width : 0, 0);
+}
+
+static void read_overrides(shbutton_state_t *st, hmi_widget_t *w)
+{
+    snprintf(st->background, sizeof st->background, "%s", hmi_widget_str(w, "backgroundColor", ""));
+    snprintf(st->text_colour, sizeof st->text_colour, "%s", hmi_widget_str(w, "textColor", ""));
+    snprintf(st->border, sizeof st->border, "%s", hmi_widget_str(w, "borderColor", ""));
+    st->border_width = (int)hmi_widget_num(w, "borderWidth", 0);
 }
 
 static void shbutton_clicked_cb(lv_event_t *e)
@@ -81,6 +121,7 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     st->bg = bg;
     st->label = label;
     strncpy(st->variant, hmi_widget_str(w, "variant", "default"), sizeof(st->variant) - 1);
+    read_overrides(st, w);
 
     apply_variant_colors(st, st->variant);
 
@@ -101,6 +142,18 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
     } else if (strcmp(prop, "variant") == 0) {
         const char *v = hmi_value_as_str(value, "default");
         strncpy(st->variant, v, sizeof(st->variant) - 1);
+        apply_variant_colors(st, st->variant);
+    } else if (strcmp(prop, "backgroundColor") == 0) {
+        snprintf(st->background, sizeof st->background, "%s", hmi_value_as_str(value, ""));
+        apply_variant_colors(st, st->variant);
+    } else if (strcmp(prop, "textColor") == 0) {
+        snprintf(st->text_colour, sizeof st->text_colour, "%s", hmi_value_as_str(value, ""));
+        apply_variant_colors(st, st->variant);
+    } else if (strcmp(prop, "borderColor") == 0) {
+        snprintf(st->border, sizeof st->border, "%s", hmi_value_as_str(value, ""));
+        apply_variant_colors(st, st->variant);
+    } else if (strcmp(prop, "borderWidth") == 0) {
+        st->border_width = (int)hmi_value_as_num(value, 0);
         apply_variant_colors(st, st->variant);
     }
 }

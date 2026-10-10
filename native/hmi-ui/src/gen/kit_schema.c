@@ -362,6 +362,22 @@ static const hmi_prop_schema_t props_ShNumInput[] = {
     {NULL, HMI_KIND_STR, NULL, false}
 };
 static const char *const signals_ShNumInput[] = {"valueChanged", NULL};
+static const hmi_prop_schema_t props_ShProcessValue[] = {
+    {"label", HMI_KIND_STR, "Value", false},
+    {"value", HMI_KIND_STR, "0", true},
+    {"decimals", HMI_KIND_INT, "-1", false},
+    {"unit", HMI_KIND_STR, "", false},
+    {"valueColor", HMI_KIND_COLOR, "#3ee05a", false},
+    {"boxColor", HMI_KIND_COLOR, "#0a0d0b", false},
+    {"trend", HMI_KIND_BOOL, "false", false},
+    {"trendColor", HMI_KIND_COLOR, "#f5a524", false},
+    {"warnAbove", HMI_KIND_FLOAT, "0.0", false},
+    {"warnBelow", HMI_KIND_FLOAT, "0.0", false},
+    {"opacity", HMI_KIND_FLOAT, "1.0", false},
+    {"visible", HMI_KIND_BOOL, "true", false},
+    {NULL, HMI_KIND_STR, NULL, false}
+};
+static const char *const signals_ShProcessValue[] = { NULL};
 static const hmi_prop_schema_t props_ShProgress[] = {
     {"value", HMI_KIND_FLOAT, "0.0", true},
     {"indeterminate", HMI_KIND_BOOL, "false", false},
@@ -647,6 +663,7 @@ const hmi_type_schema_t hmi_kit_types[] = {
     {"ShInput", "Basic", 180, 40, false, "text", props_ShInput, 6, signals_ShInput, 1},
     {"ShNumDisplay", "Industrial", 180, 80, false, "", props_ShNumDisplay, 13, signals_ShNumDisplay, 0},
     {"ShNumInput", "Industrial", 240, 64, false, "value", props_ShNumInput, 10, signals_ShNumInput, 1},
+    {"ShProcessValue", "Industrial", 260, 30, false, "", props_ShProcessValue, 12, signals_ShProcessValue, 0},
     {"ShProgress", "Industrial", 200, 24, false, "", props_ShProgress, 4, signals_ShProgress, 0},
     {"ShSegmentBar", "Automotive", 320, 36, false, "", props_ShSegmentBar, 10, signals_ShSegmentBar, 0},
     {"ShSelect", "Industrial", 200, 56, false, "currentIndex", props_ShSelect, 7, signals_ShSelect, 1},
@@ -669,7 +686,7 @@ const hmi_type_schema_t hmi_kit_types[] = {
     {"ShVehicleStatus", "Automotive", 150, 190, false, "", props_ShVehicleStatus, 13, signals_ShVehicleStatus, 0},
     {"Text", "Basic", 140, 32, false, "", props_Text, 9, signals_Text, 0},
 };
-const size_t hmi_kit_type_count = 52;
+const size_t hmi_kit_type_count = 53;
 
 const hmi_theme_colour_t hmi_theme_colours[] = {
     {"background", "#ffffff", "#09090b"},

@@ -1289,6 +1289,97 @@ def paint_animated_image(painter, rect, props, ctx):
           "GIF", size=text_px, color=ink, weight=WEIGHT_SEMIBOLD, flags=Qt.AlignCenter, elide=False)
 
 
+def process_value_text(props):
+    """ShProcessValue's box text: toFixed(decimals) for a number (or a
+    numeric string) when decimals >= 0, else the value as given."""
+    value = props.get("value", 0)
+    if value is None:
+        return "--"
+    try:
+        decimals = int(props.get("decimals", -1))
+    except (TypeError, ValueError):
+        decimals = -1
+    number = None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        number = float(value)
+    elif isinstance(value, str) and value.strip():
+        try:
+            number = float(value)
+        except ValueError:
+            number = None
+    if number is not None and not math.isfinite(number):
+        number = None
+    if decimals >= 0 and number is not None:
+        return f"{number:.{decimals}f}"
+    if isinstance(value, float) and value.is_integer() and abs(value) < 1e15:
+        return str(int(value))
+    return str(value)
+
+
+def paint_process_value(painter, rect, props, ctx):
+    """ShProcessValue: a SCADA reading row -- label, optional sparkline box,
+    dark inset value box with right-aligned digits, unit column. The column
+    shares are ShProcessValue.qml's / w_shprocessvalue.c's."""
+    painter.setRenderHint(painter.RenderHint.Antialiasing, True)
+    w, h = max(1.0, rect.width()), max(1.0, rect.height())
+    px = lambda v: int(math.floor(v + 0.5))           # Math.round
+    value_px = max(9, min(18, px(h * 0.56)))
+    label_px = max(8, min(15, px(h * 0.46)))
+    unit_px = max(8, min(14, px(h * 0.42)))
+    inset = max(1, px(h * 0.08))
+    box_h = max(6, px(h) - 2 * inset)
+    unit = str(props.get("unit") or "")
+    trend = bool(props.get("trend", False))
+    unit_w = px(w * 0.22) if unit else 0
+    unit_gap = 6 if unit else 0
+    text = process_value_text(props)
+    font = QFont(painter.font())
+    font.setPixelSize(value_px)
+    font.setWeight(WEIGHT_SEMIBOLD)
+    digits_w = math.ceil(QFontMetricsF(font).horizontalAdvance(text))
+    box_w = min(max(digits_w + 16, px(w * 0.26)), max(16, px(w) - unit_w - unit_gap))
+    box_x = px(w) - unit_w - unit_gap - box_w
+    spark_w = px(w * 0.18) if trend else 0
+    spark_x = box_x - 6 - spark_w
+    label_w = max(0, (spark_x if trend else box_x) - 6)
+    box_colour = _override_colour(props, "boxColor") or QColor("#0a0d0b")
+    border = QColor("#3a3f45")
+    left, top = rect.left(), rect.top()
+
+    if label_w > 0:
+        _text(painter, QRectF(left, top, label_w, h), props.get("label", "Value"), size=label_px,
+              color=token("foreground"))
+    if trend:
+        spark = QRectF(left + spark_x + 0.5, top + inset + 0.5, spark_w - 1, box_h - 1)
+        _rounded(painter, spark, box_colour, 3, border, 1)
+        ys = (0.30, 0.52, 0.40, 0.62, 0.48, 0.70, 0.58, 0.80)
+        pad_x, pad_y = 4, max(3, px(box_h * 0.16))
+        pw, ph = spark_w - 2 * pad_x, box_h - 2 * pad_y
+        if pw > 0 and ph > 0:
+            points = [QPointF(left + spark_x + pad_x + pw * i / (len(ys) - 1),
+                              top + inset + pad_y + ph * (1 - y)) for i, y in enumerate(ys)]
+            pen = QPen(_override_colour(props, "trendColor") or QColor("#f5a524"), 2)
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPolyline(QPolygonF(points))
+    _rounded(painter, QRectF(left + box_x + 0.5, top + inset + 0.5, box_w - 1, box_h - 1),
+             box_colour, 3, border, 1)
+    try:
+        number = float(text) if text != "--" else None
+    except ValueError:
+        number = None
+    above, below = _number(props, "warnAbove", 0.0), _number(props, "warnBelow", 0.0)
+    warns = number is not None and ((above != 0 and number > above) or (below != 0 and number < below))
+    colour = token("warning") if warns else (_override_colour(props, "valueColor") or QColor("#3ee05a"))
+    _text(painter, QRectF(left + box_x + 4, top, max(1, box_w - 12), h), text, size=value_px,
+          color=colour, weight=WEIGHT_SEMIBOLD, flags=Qt.AlignRight | Qt.AlignVCenter)
+    if unit:
+        _text(painter, QRectF(left + box_x + box_w + unit_gap, top, unit_w, h), unit, size=unit_px,
+              color=token("mutedForeground"))
+
+
 _PAINTERS = {
     "Text": paint_text,
     "ShButton": paint_button,
@@ -1326,6 +1417,7 @@ _PAINTERS = {
     "ShAnalogDisplay": paint_analog_display,
     "ShTrendChart": paint_trend_chart,
     "ShAlarmTable": paint_alarm_table,
+    "ShProcessValue": paint_process_value,
     # The placeholder only; the canvas item plays the GIF itself.
     "ShAnimatedImage": paint_animated_image,
 }

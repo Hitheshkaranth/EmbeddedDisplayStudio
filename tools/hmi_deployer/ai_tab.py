@@ -73,6 +73,9 @@ logger = logging.getLogger(__name__)
 _CONN_PREFIX = "conn:"
 _MANAGE_KEY = "__manage__"
 
+# The provider a first run starts on: Ornith on the lab vLLM server.
+DEFAULT_PROVIDER = "ornith"
+
 
 def _rgba(hex_color: str, alpha: float) -> str:
     """``#rrggbb`` token + alpha -> ``rgba(r,g,b,a)`` for QSS tints."""
@@ -2225,9 +2228,10 @@ class AIDesignTab(QWidget):
         self.auto_apply.setChecked(self.settings.value("ai/autoApply", True, type=bool))
         saved = self.settings.value("ai/provider", "", type=str)
         if not saved:
-            # No pick yet: the connection set "Use for Design" in Manage connections.
+            # No pick yet: the connection set "Use for Design" in Manage
+            # connections, else the default preset.
             default = self._connections_store().default_for("design")
-            saved = _CONN_PREFIX + default.name if default is not None else ""
+            saved = _CONN_PREFIX + default.name if default is not None else DEFAULT_PROVIDER
         index = self.provider_combo.findData(saved) if saved else -1
         if index >= 0:
             self.provider_combo.setCurrentIndex(index)

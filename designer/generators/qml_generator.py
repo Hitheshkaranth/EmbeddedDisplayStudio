@@ -412,7 +412,7 @@ class QmlGenerator:
                     continue
             # A project file may carry a size below its floor (a 0 px font
             # is invisible and warns on every repaint); it is raised here.
-            value = clamp_property(key, value)
+            value = clamp_property(key, value, widget.type)
             lines.append(f"{indent}    {qml_key}: {_literal(value)}")
         for key, value in derived.items():
             lines.append(f"{indent}    {key}: {value}")

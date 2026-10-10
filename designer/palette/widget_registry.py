@@ -41,10 +41,24 @@ PROPERTY_MINIMUMS = {
     "speed": 1,
 }
 
+# Per-type exceptions to the floors above, keyed (type, property). A
+# ShProcessValue's ``decimals`` of -1 means "show the value as given", so its
+# floor is -1, not 0.
+TYPE_PROPERTY_MINIMUMS = {
+    ("ShProcessValue", "decimals"): -1,
+}
 
-def clamp_property(name, value):
+
+def property_minimum(name, widget_type=None):
+    """The floor for ``name`` on ``widget_type``, or None when it has none."""
+    if (widget_type, name) in TYPE_PROPERTY_MINIMUMS:
+        return TYPE_PROPERTY_MINIMUMS[(widget_type, name)]
+    return PROPERTY_MINIMUMS.get(name)
+
+
+def clamp_property(name, value, widget_type=None):
     """``value`` raised to the property's floor when it has one."""
-    floor = PROPERTY_MINIMUMS.get(name)
+    floor = property_minimum(name, widget_type)
     if floor is None or isinstance(value, bool):
         return value
     try:
@@ -348,6 +362,19 @@ def default_registry() -> WidgetRegistry:
          "warnHigh": 90.0, "normalColor": "#22c55e", "warnColor": "#f59e0b",
          "faultColor": "#ef4444", "trackColor": "#27272a", "vertical": False, **common_defaults},
         ("value",), False, {}, ("normalColor", "warnColor", "faultColor", "trackColor"))
+    # A SCADA reading row: "Hot Blast Temp  [~~]  [ 1185 ]  °C" -- a label, an
+    # optional sparkline of the recent values, a dark inset box with bright
+    # right-aligned digits, and a unit column. ``value`` is a number or a
+    # string ("76,600"); ``decimals`` -1 shows it as given. warnAbove /
+    # warnBelow of 0 are off, as on ShAutoReadout.
+    add("ShProcessValue", "Process value", "Industrial", "ShProcessValue", 260, 30,
+        {"label": str, "value": str, "decimals": int, "unit": str, "valueColor": str,
+         "boxColor": str, "trend": bool, "trendColor": str, "warnAbove": float,
+         "warnBelow": float, **common},
+        {"label": "Value", "value": 0, "decimals": -1, "unit": "", "valueColor": "#3ee05a",
+         "boxColor": "#0a0d0b", "trend": False, "trendColor": "#f5a524", "warnAbove": 0.0,
+         "warnBelow": 0.0, **common_defaults}, ("value",), False,
+        {}, ("valueColor", "boxColor", "trendColor"))
     add("ShTrendChart", "Trend Chart", "Industrial", "ShTrendChart", 300, 180,
         {"minValue": float, "maxValue": float, "warningLow": float,
          "warningHigh": float, "maxPoints": int, "label": str, "unit": str,

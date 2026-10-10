@@ -26,6 +26,15 @@ Left, center and bottom sections are frameless, as instruments on the glass
 are in such pictures; the rail and the right column keep their cards. A
 section's accent tints its card and fills its widgets' empty colours.
 
+A plant overview (SCADA) is drawn differently, and three plan shapes say so:
+- a clock that shows a date, or none at all, with a title: the title sits
+  in a box in the middle of the strip and the clock joins the right end;
+- bottom sections that are bars across the screen (a status banner, a row
+  of navigation buttons): full-width bands under everything, the right
+  column included, each only as tall as a banner or a button;
+- a card of reading lines (ShProcessValue, ShDataField side by side): one
+  row each, as a picture's process cards are.
+
 Like the rest of the compiler this never reads model geometry: the regions,
 accents and side marks are on the widgets, so a recompile ("Tidy up", Size on
 screen) rebuilds the same screen.
@@ -52,6 +61,12 @@ ACCENT_PROPERTIES = ("accentColor", "barColor", "outerColor", "innerColor")
 #: (the panel's colour parser takes hex only: "transparent" draws magenta).
 CLEAR = "#00000000"
 _LAMPS = ("ShStatDot", "ShTelltale")
+#: The types a reference's pictures are cut into.
+_PICTURES = ("Image", "ShAnimatedImage")
+#: Widgets drawn as one line each in a card: a reading line of a process card.
+_ROW_TYPES = ("ShProcessValue",)
+#: A date in a clock's text ("12-10-2026", "2026/10/12").
+_DATE_RE = re.compile(r"\d{1,4}[-/.]\d{1,2}[-/.]\d{2,4}")
 
 
 def _applies(sections, header, width, height) -> bool:
@@ -155,6 +170,9 @@ def _need(registry, section, width, tokens) -> float:
     total = 2 * tokens.pad + (tokens.card_title if section.title else 0)
     if _bar_rows(section):
         return total + len(section.widgets) * _bar_row_h(tokens) + tokens.gap * (len(section.widgets) - 1)
+    if _reading_rows(section):
+        return total + len(section.widgets) * _reading_row_h(tokens) \
+            + tokens.gap * 0.5 * (len(section.widgets) - 1)
     bands = c._bands(registry, section.widgets)
     for index, (kind, widgets) in enumerate(bands):
         natural = c._natural(registry, kind, widgets, inner, tokens)
@@ -177,6 +195,35 @@ def _bar_rows(section) -> bool:
 
 def _bar_row_h(tokens) -> float:
     return tokens.label_font * 2.4
+
+
+def _reading_rows(section) -> bool:
+    """True when the section is reading lines, one row each (a process
+    card's "Hot Blast Temp: [1185] °C")."""
+    return bool(section.widgets) and all(
+        w.type in _ROW_TYPES or (w.type == "ShDataField" and w.properties.get("stacked") is False)
+        for w in section.widgets)
+
+
+def _reading_row_h(tokens) -> float:
+    return max(24.0, tokens.label_font * 2.0)
+
+
+def _band_kind(section) -> str:
+    """"banner" for a status bar across the screen, "buttons" for a row of
+    navigation buttons, "" for anything else."""
+    widgets = section.widgets
+    if widgets and len(widgets) <= 3 and all(w.type == "ShAnnunciator" for w in widgets):
+        return "banner"
+    if len(widgets) >= 3 and all(w.type in ("ShButton", "ShIconTile") for w in widgets):
+        return "buttons"
+    return ""
+
+
+def _band_h(kind, tokens) -> float:
+    if kind == "banner":
+        return max(28.0, tokens.label_font * 2.5)
+    return max(float(tokens.control_h), tokens.label_font * 3.4)
 
 
 def _water_fill(needs, room):
@@ -213,7 +260,7 @@ def _shares(total, needs, gap, floor=0.0):
 
 # -- the strip -----------------------------------------------------------------
 
-def _strip(project, registry, title, items, tokens, width, report):
+def _strip(project, registry, title, items, tokens, width, report, height=0):
     """The status strip across the top: its chrome and the planned items placed."""
     from . import compiler as c
     out = []
@@ -225,6 +272,16 @@ def _strip(project, registry, title, items, tokens, width, report):
     out.append(c._new(project, "Rectangle", "topStrip",
                       {"x": x0, "y": y0, "width": x1 - x0, "height": h}, strip_props))
     clock = next((w for w in items if _is_clock(w)), None)
+    # A plant overview's strip leads with its title in a box in the middle;
+    # its clock shows the date too and is one more reading at the right end.
+    boxed = bool(title) and (clock is None or bool(_DATE_RE.search(str(clock.properties.get("text") or ""))))
+    dated = clock if boxed else None
+    if boxed and clock is not None:
+        clock.properties.update({"fontSize": int(tokens.label_font + 1), "bold": False,
+                                 "color": c._theme(project, "foreground"),
+                                 "horizontalAlignment": "Text.AlignHCenter",
+                                 "verticalAlignment": "Text.AlignVCenter", "wrapMode": "Text.NoWrap"})
+        clock = None
     for widget in items:
         # A header reading's unit is its binding's or none, never the kit's
         # sample unit (ShDataField draws "KTS" by default).
@@ -233,6 +290,28 @@ def _strip(project, registry, title, items, tokens, width, report):
             c._explicit_unit(definition, widget)
     left = [w for w in items if w is not clock and w.properties.get(c.SIDE_MARK) == "left"]
     right = [w for w in items if w is not clock and w not in left]
+    # The date goes under the status reading beside it, two lines in one
+    # column at the right end, as a plant overview's strip draws them.
+    if boxed:
+        # The strip's left end is the plant's: its name and logo lead, before
+        # the title box, whether or not the plan said "side".
+        named = [w for w in right if w is not dated and (w.type == "Text" or w.type in _PICTURES)]
+        left += named
+        right = [w for w in right if w not in named]
+    partner = None
+    if dated is not None and dated in right:
+        partner = next((w for w in right if w.type in ("ShDataField", "ShAnnunciator")), None)
+        if partner is not None:
+            right.remove(dated)
+    if boxed:
+        for widget in left:
+            text = str(widget.properties.get("text") or "")
+            if widget.type == "Text" and "\n" not in text and len(text) > 14 and " " in text:
+                # A plant's name on two lines, as it is printed beside its logo.
+                mid = len(text) / 2.0
+                cut_at = min((i for i, ch in enumerate(text) if ch == " "), key=lambda i: abs(i - mid))
+                widget.properties["text"] = text[:cut_at] + "\n" + text[cut_at + 1:]
+                widget.properties.setdefault("bold", True)
     placed = []
     clock_left = clock_right = width / 2.0
     if clock is not None:
@@ -275,10 +354,25 @@ def _strip(project, registry, title, items, tokens, width, report):
         _set(widget, x, y0 + (h - dot) / 2.0, dot, dot)
         return x
 
+    def text_size(widget):
+        return int(widget.properties.get("fontSize") or tokens.label_font + 1)
+
     def field_w(widget, design_w, ih):
         """A header reading is as wide as its text, never wider than its
         design: at the kit's 150 px a driver's name and the outside
         temperature left no room beside the clock."""
+        if widget.type == "Text":
+            lines = str(widget.properties.get("text") or "").split("\n")
+            per = 0.68 if widget.properties.get("bold") else 0.6     # capitals in bold run wide
+            return max(len(line) for line in lines) * text_size(widget) * per + 8
+        if widget.type == "ShAnnunciator":
+            return len(str(widget.properties.get("text") or "")) * tokens.label_font * 0.62 + 20
+        if widget.type in ("Image", "ShAnimatedImage") and widget.properties.get(c.CROP_MARK):
+            # A logo cut from the picture keeps the crop's proportion (the
+            # reference is drawn at about the screen's).
+            left_, top_, right_, bottom_ = widget.properties[c.CROP_MARK]
+            aspect = (right_ - left_) / max(0.01, bottom_ - top_) * width / max(1.0, float(height))
+            return ih * max(0.5, min(4.0, aspect))
         if widget.type != "ShDataField":
             return design_w
         props = widget.properties
@@ -291,6 +385,18 @@ def _strip(project, registry, title, items, tokens, width, report):
         return min(design_w, max(48.0, need + 12))
 
     def other(widget, x, towards_right):
+        if widget.type == "Text":
+            # A name or the date: one line, as wide as its words.
+            size = text_size(widget)
+            widget.properties.update({"fontSize": size, "verticalAlignment": "Text.AlignVCenter",
+                                      "wrapMode": "Text.NoWrap"})
+            widget.properties.setdefault("color", c._theme(project, "foreground"))
+            lines = str(widget.properties.get("text") or "").count("\n") + 1
+            tw, th = field_w(widget, 0, 0), size * 1.3 * lines
+            if not towards_right:
+                x -= tw
+            _set(widget, x, y0 + (h - th) / 2.0, tw, th)
+            return x + tw if towards_right else x
         design_w, design_h = c._design(registry, widget)
         definition = registry.get(widget.type) if registry is not None else None
         if design_h > h - 8 and widget.type == "ShDataField" and definition is not None \
@@ -306,8 +412,29 @@ def _strip(project, registry, title, items, tokens, width, report):
         _set(widget, x, y0 + (h - ih) / 2.0, iw, ih)
         return x + iw if towards_right else x
 
-    def span(widget):
+    def pair(widget, end):
+        """The status reading over the date, right-aligned at `end`; returns
+        the left edge reached."""
+        col = max(span(widget, alone=True), field_w(dated, 0, 0))
+        x = end - col
+        half = h / 2.0
+        if widget.type == "ShDataField":
+            widget.properties["stacked"] = False
+        top_h = min(c._design(registry, widget)[1], half - 3)
+        _set(widget, x, y0 + 3 + (half - 3 - top_h) / 2.0, col, top_h)
+        size = text_size(dated)
+        line = size * 1.3
+        dated.properties["horizontalAlignment"] = "Text.AlignHCenter"
+        _set(dated, x, y0 + half + (half - 3 - line) / 2.0, col, line)
+        placed.append(dated)
+        return x
+
+    def span(widget, alone=False):
         """How wide an item is drawn in the strip (as lamp/other place it)."""
+        if widget is partner and not alone:
+            return max(span(widget, alone=True), field_w(dated, 0, 0))
+        if widget.type == "Text":
+            return field_w(widget, 0, 0)
         if widget.type in _LAMPS:
             dot = 16 if widget.type == "ShStatDot" else 28
             return dot + 6 + max(32, len(c._lamp_label(widget)) * tokens.label_font * 0.62)
@@ -342,12 +469,39 @@ def _strip(project, registry, title, items, tokens, width, report):
         placed.append(widget)
     end = x1 - tokens.pad
     for widget in keep:
-        end = (lamp if widget.type in _LAMPS else other)(widget, end, False) - tokens.gap
+        if widget is partner:
+            end = pair(widget, end) - tokens.gap
+        else:
+            end = (lamp if widget.type in _LAMPS else other)(widget, end, False) - tokens.gap
         placed.append(widget)
+    if partner is not None and dated not in placed:
+        # Its status reading went elsewhere: the date stands on its own.
+        end = other(dated, end, False) - tokens.gap
+        placed.append(dated)
+    if boxed:
+        # The title box fills the strip between the two ends' items.
+        left_end, right_end = x, end
+        if right_end - left_end >= 120:
+            inset = max(4, int(round(h * 0.1)))
+            out.append(c._new(project, "Rectangle", "titleBox",
+                              {"x": left_end, "y": y0 + inset, "width": right_end - left_end,
+                               "height": h - 2 * inset},
+                              {"color": c._theme(project, "background"),
+                               "borderColor": c._theme(project, "border"), "borderWidth": 1,
+                               "radius": max(4, tokens.radius // 2)}))
+            room = right_end - left_end - 2 * tokens.pad
+            size = int(max(11, min(tokens.title_font * 0.8, room / max(1, len(title) * 0.6))))
+            heading = c._text(project, "screenTitle", (left_end, y0, right_end - left_end, h), title,
+                              size, c._theme(project, "foreground"), bold=True,
+                              align="Text.AlignHCenter")
+            heading.properties[c.SECTION_MARK] = "|title"
+            out.append(heading)
+        else:
+            report.notes.append(f"title '{title}' left off: the strip is full")
     # The title: in the strip's left end when it is free, small after the
     # left items when there is room before the clock, else left off -- a
     # picture's status strip has no title, and the clock is what it leads with.
-    if title:
+    elif title:
         room_end = limit if clock is not None else end
         small = int(round(tokens.title_font * 0.7))
         for size in ((small,) if left else (tokens.title_font, small)):
@@ -458,6 +612,14 @@ def _section_card(project, registry, section, rect, tokens, framed, report):
         # the tile layout it shrank to a thumbnail beside two numbers.
         faces = [wd for wd in section.widgets if _is_dial(registry, wd)]
         _picture_with_readings(project, registry, card, faces, section, inner, tokens, fit=True)
+    elif _reading_rows(section):
+        # Reading lines, one row each, spread down the card at a line's
+        # height: label, value box and unit read across, as the picture's.
+        n = len(section.widgets)
+        slot = inner[3] / n
+        row_h = min(slot, _reading_row_h(tokens) * 1.25)
+        for index, widget in enumerate(section.widgets):
+            _set(widget, inner[0], inner[1] + index * slot + (slot - row_h) / 2.0, inner[2], row_h)
     elif _bar_rows(section):
         # Bars lying down, one row each across the card (a picture's vitals).
         rows = _shares(inner[3], [1.0] * len(section.widgets), tokens.gap)
@@ -479,7 +641,7 @@ def _section_card(project, registry, section, rect, tokens, framed, report):
 
 
 #: Small readings that ride above a dial or a picture in their section.
-_READINGS = ("ShDataField", "ShValueTile", "ShNumDisplay", "ShAutoReadout", "Text",
+_READINGS = ("ShDataField", "ShProcessValue", "ShValueTile", "ShNumDisplay", "ShAutoReadout", "Text",
              "ShStatDot", "ShTelltale")
 
 
@@ -616,6 +778,115 @@ def _row(project, registry, sections, rect, tokens, framed, report):
     return out
 
 
+def _band(project, registry, section, rect, tokens, report):
+    """A bar across the screen: a status banner filling it, or buttons side
+    by side in one row, equal widths (a picture's navigation row)."""
+    from . import compiler as c
+    x, y, w, h = rect
+    # Not c._card: its padding leaves a banner's height no room, and the
+    # banner was dropped from its own band.
+    card = c._new(project, "ShCard", (c._slug(section.title) or section.role) + "Card",
+                  {"x": x, "y": y, "width": w, "height": h}, {"radius": tokens.radius})
+    _frameless(card)
+    kind = _band_kind(section)
+    gap = tokens.gap if kind == "buttons" else tokens.gap // 2
+    widths = _shares(w, [1.0] * len(section.widgets), gap)
+    left = 0.0
+    for widget, cw in zip(section.widgets, widths):
+        if kind == "buttons" and not str(widget.properties.get("backgroundColor") or "").strip() \
+                and str(widget.properties.get("variant") or "default") == "default":
+            # A navigation row is a set of tabs, not calls to action: the
+            # kit's primary blue on all seven read as seven alarms.
+            widget.properties["variant"] = "secondary"
+        if kind == "buttons" and str(widget.properties.get("borderColor") or "").strip() \
+                and not widget.properties.get("borderWidth"):
+            # The highlighted tab (the page shown): its colour needs a width
+            # to be drawn at all.
+            widget.properties["borderWidth"] = 2
+        _set(widget, left, 0, cw, h)
+        card.children.append(widget)
+        left += cw + gap
+    report.sections.append((section.title, section.role, tuple(int(round(v)) for v in rect)))
+    return card
+
+
+def _cut(crop, box):
+    """`crop` inside `box` (both fractions of the picture), or None when
+    hardly anything of it is left."""
+    l, t, r, b = max(crop[0], box[0]), max(crop[1], box[1]), min(crop[2], box[2]), min(crop[3], box[3])
+    return [round(l, 4), round(t, 4), round(r, 4), round(b, 4)] if r - l >= 0.02 and b - t >= 0.02 else None
+
+
+def _cuttable(widget) -> bool:
+    from . import compiler as c
+    return widget.type in _PICTURES and bool(widget.properties.get(c.CROP_MARK))         and not str(widget.properties.get("source") or "").strip()
+
+
+def _strip_pictures(items, strip_bottom, height, notes):
+    """The strip's items less any logo whose crop is not in the picture's top
+    strip at all: it names some other part of the picture (Ornith put a
+    plant's logo in the middle of its drawing), and a wrong picture is worse
+    than none. A crop that only runs past the strip is cut back to it."""
+    from . import compiler as c
+    strip = (0.0, 0.0, 1.0, min(1.0, strip_bottom / float(height) + 0.03))
+    kept = []
+    for widget in items:
+        if _cuttable(widget):
+            crop = widget.properties[c.CROP_MARK]
+            inside = _cut(crop, strip)
+            if inside is None or inside[3] - inside[1] < 0.5 * (crop[3] - crop[1]):
+                notes.append(f"{widget.id}: its crop is not in the top strip; left out")
+                continue
+            widget.properties[c.CROP_MARK] = inside
+        kept.append(widget)
+    return kept
+
+
+def _clamp_crops(by_region, width, height, strip_bottom, right_x, foot):
+    """Each body picture's crop kept out of the other blocks.
+
+    The layout mirrors the reference's regions, so a block's place on the
+    glass says roughly where it is in the picture too. A side of a crop that
+    runs well into a neighbour's region (Ornith cropped a blast furnace's
+    drawing as the whole screenshot, cards and all) is cut back to that
+    region's edge; one that only reaches a little past it is the picture's
+    own proportions differing from the layout's, and is kept.
+    """
+    from . import compiler as c
+    W, H = float(width), float(height)
+    reach = 0.05
+    # A little short of the neighbours' edges: their frames are not part of it.
+    top_edge = max(0.0, strip_bottom / H - 0.015) if strip_bottom else 0.0
+    right_edge = min(1.0, right_x / W)
+    foot_edge = min(1.0, foot / H - 0.02)
+    body = [s for name in ("left", "center") for s in by_region.get(name, ())]
+    if len(body) == 1 and len(body[0].widgets) == 1 and _cuttable(body[0].widgets[0]):
+        # The body is one picture (a plant's process drawing): it sits where
+        # the layout's body does, and that box is a better crop than the
+        # model's guess unless the guess is nearly it. Ornith's guesses for
+        # one furnace ran from the whole screenshot to a box 13 % too low.
+        widget = body[0].widgets[0]
+        box = [0.0, round(top_edge, 4), round(right_edge, 4), round(foot_edge, 4)]
+        crop = _cut(widget.properties[c.CROP_MARK], box)
+        area = (lambda b: (b[2] - b[0]) * (b[3] - b[1]))
+        widget.properties[c.CROP_MARK] = crop if crop and area(crop) >= 0.9 * area(box) else box
+        return
+    for name in ("left", "center"):
+        for section in by_region.get(name, ()):
+            for widget in section.widgets:
+                if not _cuttable(widget):
+                    continue
+                l, t, r, b = widget.properties[c.CROP_MARK]
+                if t < top_edge - reach:
+                    t = top_edge
+                if r > right_edge + reach:
+                    r = right_edge
+                if b > foot_edge + reach:
+                    b = foot_edge
+                widget.properties[c.CROP_MARK] = _cut([l, t, r, b], (0.0, 0.0, 1.0, 1.0)) \
+                    or [0.0, round(top_edge, 4), round(right_edge, 4), round(foot_edge, 4)]
+
+
 def compile_reference(project, page, registry, sections, title, header_widgets, report,
                       width, height):
     """Lay `page` out by its sections' regions; replaces page.widgets in place."""
@@ -632,6 +903,12 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
             if widget.type == "ShSpeedArc" and "target" not in widget.properties \
                     and "target" not in (widget.bindings or {}) and "showTarget" not in widget.properties:
                 widget.properties["showTarget"] = False
+        if section.region == "right" and len(section.widgets) >= 2 and all(
+                w.type == "ShDataField" for w in section.widgets):
+            # A card of readouts in the column reads as lines, label beside
+            # value, as a process card's do; stacked they overran the card.
+            for widget in section.widgets:
+                widget.properties["stacked"] = False
         if section.region == "right" and any(w.type == "ShEngineBar" for w in section.widgets) and all(
                 w.type == "ShEngineBar" or w in _captions(section) for w in section.widgets):
             # In a column of cards, bars lie down, one row each, when the
@@ -653,14 +930,21 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
             continue
         bucket.append(section)
 
+    plant = bool(by_region["bottom"]) and all(_band_kind(s) for s in by_region["bottom"])
+    if plant:
+        # A plant overview is drawn to its edges: four cards of reading lines
+        # beside a process drawing need the room a cockpit's margins take.
+        tokens = dataclasses.replace(tokens, margin=max(8, tokens.margin // 2),
+                                     gap=max(6, tokens.gap // 2))
     widgets = []
     strip_items = list(header_widgets or []) + [w for s in by_region["top"] for w in s.widgets]
+    strip_items = _strip_pictures(strip_items, tokens.margin + tokens.header, height, report.notes)
     has_strip = bool(title or strip_items)
     for section in by_region["top"]:
         report.sections.append((section.title, section.role,
                                 (tokens.margin, tokens.margin, width - 2 * tokens.margin, tokens.header)))
     if has_strip:
-        widgets += _strip(project, registry, title, strip_items, tokens, width, report)
+        widgets += _strip(project, registry, title, strip_items, tokens, width, report, height)
 
     m, gap = tokens.margin, tokens.gap
     bx0, bx1 = m, width - m
@@ -670,6 +954,18 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
     rail, left, center = by_region["rail"], by_region["left"], by_region["center"]
     right, bottom = by_region["right"], by_region["bottom"]
 
+    # Bars across the foot of the screen (a status banner, a navigation row)
+    # run under everything, the right column too, each a bar's height.
+    bands = [s for s in bottom if _band_kind(s)] if bottom and all(_band_kind(s) for s in bottom) else []
+    if bands:
+        band_hs = [_band_h(_band_kind(s), tokens) for s in bands]
+        band_y = by1 - sum(band_hs) - gap * (len(bands) - 1)
+        for section, bh in zip(bands, band_hs):
+            widgets.append(_band(project, registry, section, (bx0, band_y, body_w, bh), tokens, report))
+            band_y += bh + gap
+        by1 -= sum(band_hs) + gap * len(bands)
+        body_h = by1 - by0
+        bottom = []
     right_w = round(body_w * RIGHT_SHARE) if right else 0
     rail_w = max(44, round(width * RAIL_SHARE)) if rail else 0
     main_x1 = bx1 - (right_w + gap if right else 0)
@@ -721,6 +1017,8 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
         widgets += _row(project, registry, bottom, (bx0, by1 - bottom_h, main_x1 - bx0, bottom_h),
                         tokens, False, report)
 
+    _clamp_crops(by_region, width, height, strip_bottom=m + tokens.header if has_strip else 0,
+                 right_x=bx1 - right_w if right else width, foot=by1 + gap if bands else height)
     page.widgets[:] = widgets
     report.layout = FAMILY_NAME
     c._tidy_scales(page, registry, report.notes)
