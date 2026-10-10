@@ -291,7 +291,14 @@ def apply_review(project, fixes, registry, page=None, findings=None) -> list:
                 made.append(f"removed {wid}")
         elif op == "crop" and widget.type in _PICTURES and widget.properties.get(CROP_MARK):
             crop = crop_of(fix.get("crop"))
-            if crop and crop != widget.properties.get(CROP_MARK):
+            old = widget.properties.get(CROP_MARK)
+            area = (lambda b: (b[2] - b[0]) * (b[3] - b[1]))
+            if crop and wid == main_picture and area(crop) < 0.65 * area(old):
+                # A trim, never a different picture: the flash model cut a kiln's
+                # whole process drawing down to its top-middle sixth, and the
+                # readings laid over the rest had nowhere to go.
+                continue
+            if crop and crop != old:
                 widget.properties[CROP_MARK] = crop
                 widget.properties["source"] = ""
                 made.append(f"re-cropped {wid}")

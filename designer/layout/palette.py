@@ -186,6 +186,7 @@ def apply_reference_palette(project, references, registry=None) -> dict:
     # furnace's flames would make the whole screen orange.
     exclude = [tuple(w.properties[CROP_MARK]) for page in project.pages for w in page.walk()
                if w.properties.get(CROP_MARK)]
+    snap_spots(image, project)
     palette = palette_from_image(image, exclude)
     if not palette:
         return {}
@@ -195,3 +196,89 @@ def apply_reference_palette(project, references, registry=None) -> dict:
         if is_planned(page):
             compile_page(project, page, registry)
     return palette
+
+
+def snap_spots(image, project) -> int:
+    """Each reading laid over a picture moved onto the value box the picture
+    prints for it; returns how many moved.
+
+    A model places a drawing's live values a few percent off (a kiln's zone
+    temperatures sat half a box above their printed ones, both showing). In
+    a process picture a value is printed in a dark box, so the darkest box
+    around the model's spot is the one: grown from the spot's middle while
+    the rows and columns it takes in are mostly dark.
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QImage
+    from .compiler import WIDGET_BOX_MARK
+    if image is None or image.isNull():
+        return 0
+    W, H = image.width(), image.height()
+    moved = 0
+    for page in project.pages:
+        for widget in page.walk():
+            spot = widget.properties.get(WIDGET_BOX_MARK)
+            if not spot:
+                continue
+            l, t, r, b = spot
+            bw, bh = (r - l), (b - t)
+            # The window: the spot and as much again around it.
+            wl, wt = max(0.0, l - bw), max(0.0, t - bh)
+            wr, wb = min(1.0, r + bw), min(1.0, b + bh)
+            px, py = int(wl * W), int(wt * H)
+            pw, ph = max(4, int((wr - wl) * W)), max(4, int((wb - wt) * H))
+            window = image.copy(px, py, pw, ph)
+            scale = min(1.0, 120.0 / max(pw, ph))
+            if scale < 1.0:
+                window = window.scaled(max(4, int(pw * scale)), max(4, int(ph * scale)),
+                                       Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            window = window.convertToFormat(QImage.Format_RGB32)
+            cw, ch = window.width(), window.height()
+            lum = [[0.0] * cw for _ in range(ch)]
+            values = []
+            for y in range(ch):
+                for x in range(cw):
+                    p = window.pixel(x, y)
+                    v = 0.2126 * ((p >> 16) & 255) + 0.7152 * ((p >> 8) & 255) + 0.0722 * (p & 255)
+                    lum[y][x] = v
+                    values.append(v)
+            values.sort()
+            median = values[len(values) // 2]
+            limit = min(70.0, median * 0.6)
+            dark = [[lum[y][x] < limit for x in range(cw)] for y in range(ch)]
+            cx = int((((l + r) / 2.0) - wl) / max(1e-6, wr - wl) * cw)
+            cy = int((((t + b) / 2.0) - wt) / max(1e-6, wb - wt) * ch)
+            cx, cy = min(max(cx, 0), cw - 1), min(max(cy, 0), ch - 1)
+            x0, x1, y0, y1 = cx, cx, cy, cy
+
+            def share_col(x):
+                return sum(dark[y][x] for y in range(y0, y1 + 1)) / float(y1 - y0 + 1)
+
+            def share_row(y):
+                return sum(dark[y][x] for x in range(x0, x1 + 1)) / float(x1 - x0 + 1)
+
+            grown = True
+            while grown:
+                grown = False
+                if x0 > 0 and share_col(x0 - 1) > 0.55:
+                    x0 -= 1
+                    grown = True
+                if x1 < cw - 1 and share_col(x1 + 1) > 0.55:
+                    x1 += 1
+                    grown = True
+                if y0 > 0 and share_row(y0 - 1) > 0.55:
+                    y0 -= 1
+                    grown = True
+                if y1 < ch - 1 and share_row(y1 + 1) > 0.55:
+                    y1 += 1
+                    grown = True
+            fw = (x1 - x0 + 1) / float(cw) * (wr - wl)
+            fh = (y1 - y0 + 1) / float(ch) * (wb - wt)
+            if not (0.35 * bw <= fw <= 2.5 * bw and 0.35 * bh <= fh <= 2.5 * bh):
+                continue            # no box of the reading's size there: keep the model's
+            nl = wl + x0 / float(cw) * (wr - wl)
+            nt = wt + y0 / float(ch) * (wb - wt)
+            widget.properties[WIDGET_BOX_MARK] = [round(nl, 4), round(nt, 4),
+                                                  round(nl + fw, 4), round(nt + fh, 4)]
+            moved += 1
+    return moved

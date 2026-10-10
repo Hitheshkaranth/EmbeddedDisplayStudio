@@ -598,8 +598,11 @@ class Signal:
         """This tag's value for the aeroplane's current state."""
         if self.kind == "clock":
             # The wall clock, as the design's sample shows it (a date or not).
-            return time.strftime("%d-%m-%Y %H:%M:%S" if re.search(r"\d[-/.]\d", self.state_key)
-                                 else "%H:%M")
+            if re.search(r"\d[-/.]\d", self.state_key):
+                return time.strftime("%d-%m-%Y %H:%M:%S")
+            if re.search(r"\d\s+[A-Za-z]{3}", self.state_key):          # 26 Apr 2024
+                return time.strftime("%d %b %Y  %H:%M:%S")
+            return time.strftime("%H:%M")
         if self.kind == "process":
             # A plant reading: a slow straight ramp up and down around the
             # value the design shows (lo), by hi of it either way.

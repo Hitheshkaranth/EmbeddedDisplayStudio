@@ -35,6 +35,8 @@ _PLAN_WIDGET = _open_object({
     "id": {"type": "string"},
     "size": {"type": "string"},
     "side": {"type": "string"},
+    # A reading drawn over a picture: where it sits in the reference (0..1000).
+    "box": {"type": "array", "items": {"type": "number"}},
     "properties": _FREE_OBJECT,
     "bindings": _FREE_OBJECT,
     "actions": _FREE_OBJECT,
@@ -711,7 +713,10 @@ def _reference_process_guide(registry) -> str:
         "arrow, the labels printed on it (\"IRON ORE ->\", \"TUYERES\") and the headings over "
         "it (\"MATERIALS INPUT\"), and no further -- stop before the cards beside it. Those "
         "labels are part of the picture: never readouts, Text widgets or sections. Its section "
-        "has role \"hero\", region \"center\" and nothing else.\n"
+        "has role \"hero\" and region \"center\". The LIVE values drawn on it (a number in a box "
+        "beside a unit: \"260 tph\", \"880 °C\") are readings: put each in the drawing's section "
+        "as a ShProcessValue (or ShDataField) with its own \"box\", where that value sits in the "
+        "picture (0..1000) -- the Studio lays them over the drawing there.\n"
         "- the screen's name in a box in the top strip -> the page \"title\", as printed.\n"
         "- a plant or company name and logo at the top-left -> header items with \"side\": "
         "\"left\": an Image with \"source\": \"\" and the logo's \"crop\", and a Text with the "

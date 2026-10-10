@@ -121,6 +121,9 @@ CROP_MARK = "_crop"
 # layout sizes its columns, rows and cards in the picture's proportions.
 # Carried on the section's widgets like REGION_MARK.
 BOX_MARK = "_box"
+# Where one widget sits in the reference picture (its own "box"): a live
+# reading drawn over a process drawing is laid over the picture there.
+WIDGET_BOX_MARK = "_wbox"
 #: The screen's regions, as a reference picture divides it:
 #:   top    -- the status strip across the top (clock, connectivity, weather)
 #:   rail   -- a narrow column at the left edge (a gear selector, mode lamps)
@@ -2086,6 +2089,9 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
         crops = {str(item.get("id") or ""): crop_of(item.get("crop") or
                                                      (item.get("properties") or {}).get("crop"))
                  for item in raw if isinstance(item, dict)}
+        spots = {str(item.get("id") or ""): crop_of(item.get("box") or
+                                                     (item.get("properties") or {}).get("box"))
+                 for item in raw if isinstance(item, dict)}
         widgets = convert(raw)
         _no_web_pictures(widgets)
         if len(widgets) == len(wishes):
@@ -2095,6 +2101,8 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
         for widget in widgets:
             if crops.get(widget.id):
                 widget.properties[CROP_MARK] = crops[widget.id]
+            if spots.get(widget.id) and widget.type not in ("Image", "ShAnimatedImage"):
+                widget.properties[WIDGET_BOX_MARK] = spots[widget.id]
         if not widgets:
             continue
         role = role_of(entry.get("role") or entry.get("kind") or "")

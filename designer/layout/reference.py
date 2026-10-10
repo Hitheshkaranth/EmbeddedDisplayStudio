@@ -42,6 +42,7 @@ screen) rebuilds the same screen.
 from __future__ import annotations
 
 import dataclasses
+import math
 import re
 
 #: The name this family is registered under in designer.layout.families.
@@ -66,7 +67,9 @@ _PICTURES = ("Image", "ShAnimatedImage")
 #: Widgets drawn as one line each in a card: a reading line of a process card.
 _ROW_TYPES = ("ShProcessValue",)
 #: A date in a clock's text ("12-10-2026", "2026/10/12").
-_DATE_RE = re.compile(r"\d{1,4}[-/.]\d{1,2}[-/.]\d{2,4}")
+_DATE_RE = re.compile(r"\d{1,4}[-/.]\d{1,2}[-/.]\d{2,4}"
+                      r"|\d{1,2}\s+[A-Za-z]{3,9}\.?\s+\d{2,4}"         # 26 Apr 2024
+                      r"|[A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4}")        # Apr 26, 2024
 
 
 def _applies(sections, header, width, height) -> bool:
@@ -616,6 +619,7 @@ def _section_card(project, registry, section, rect, tokens, framed, report):
     top = pad + (tokens.card_title if heading else 0)
     inner = (pad, top, w - 2 * pad, h - top - pad)
     kind = c.kind_of(registry, lone) if lone is not None else ""
+    laid = True              # False when only c._card's layout placed them
     if lone is not None and (kind == c.FACE or lone.type == "Image" or
                              min(c._design(registry, lone)) >= 200):
         # One instrument fills its region at its own proportion.
@@ -624,6 +628,8 @@ def _section_card(project, registry, section, rect, tokens, framed, report):
         else:
             fw, fh = _fit(registry, lone, inner[2], inner[3])
         _set(lone, inner[0] + (inner[2] - fw) / 2.0, inner[1] + (inner[3] - fh) / 2.0, fw, fh)
+    elif pictures and len(pictures) < len(section.widgets) and _overlays(section, pictures):
+        _picture_overlays(project, registry, card, pictures[0], section, inner, tokens, report)
     elif pictures and len(pictures) < len(section.widgets):
         _picture_with_readings(project, registry, card, pictures, section, inner, tokens)
     elif not framed and _face_with_readings(registry, section):
@@ -653,11 +659,131 @@ def _section_card(project, registry, section, rect, tokens, framed, report):
         # height a fuel bar's cells became thin vertical lines.
         bar_h = min(inner[3], c._design(registry, lone)[1] * 1.3)
         _set(lone, inner[0], inner[1] + (inner[3] - bar_h) / 2.0, inner[2], bar_h)
+    else:
+        laid = False
+    missing = [wd for wd in section.widgets if not any(wd is ch for ch in card.children)]
+    spill = [wd for wd in section.widgets if any(wd is ch for ch in card.children)
+             and wd.geometry.get("y", 0) + wd.geometry.get("height", 0) > h + 2]
+    if spill and not laid:
+        # Placed below the card's foot (a control panel's buttons under its
+        # setpoints): the same as left out.
+        missing = section.widgets
+    if missing and laid:
+        card.children.extend(missing)
+    elif missing:
+        # The card's layout leaves out what does not fit: a KPI tile drawn
+        # at the picture's 55 px kept its heading and lost its readings, and
+        # the next recompile never saw them again. Nothing is lost: all of
+        # them, in a grid that fits.
+        _squeeze(project, registry, card, section, (x, y, w, h), tokens, pad, heading)
     if not framed:
         _frameless(card)
     _accent_card(card, section.accent if framed else "", tokens)
     report.sections.append((section.title, section.role, tuple(int(round(v)) for v in rect)))
     return card
+
+
+def _overlays(section, pictures) -> list:
+    """The section's readings that say where they sit on its picture (their
+    own box inside the picture's crop): a process drawing's live values."""
+    from . import compiler as c
+    crop = pictures[0].properties.get(c.CROP_MARK) if len(pictures) == 1 else None
+    if not crop:
+        return []
+    out = []
+    for widget in section.widgets:
+        spot = widget.properties.get(c.WIDGET_BOX_MARK)
+        if widget in pictures or not spot:
+            continue
+        mid_x, mid_y = (spot[0] + spot[2]) / 2.0, (spot[1] + spot[3]) / 2.0
+        if crop[0] <= mid_x <= crop[2] and crop[1] <= mid_y <= crop[3]:
+            out.append(widget)
+    return out
+
+
+def _picture_overlays(project, registry, card, picture, section, inner, tokens, report=None):
+    """The picture filling the card at its crop's proportion, each reading
+    with a box laid over it where the picture draws it -- the live value
+    over the printed one; readings without a box ride in a row above."""
+    from . import compiler as c
+    ix, iy, iw, ih = inner
+    over = _overlays(section, [picture])
+    rest = [wd for wd in section.widgets if wd is not picture and wd not in over]
+    if len(rest) > 4:
+        # The drawing prints them, and a row of twenty cells is noise.
+        if report is not None:
+            report.notes.append("left out, the picture prints them: " + ", ".join(wd.id for wd in rest))
+        section.widgets[:] = [wd for wd in section.widgets if wd not in rest]
+        rest = []
+    for widget in over:
+        if widget.type == "ShProcessValue":
+            # Over the drawing it is the value box and its unit: the drawing
+            # prints the label.
+            widget.properties["label"] = ""
+            widget.properties["trend"] = False
+    if rest:
+        row_h = min(ih * 0.2, max(c._design(registry, wd)[1] for wd in rest) * 1.1)
+        cell = (iw - tokens.gap * (len(rest) - 1)) / len(rest)
+        for index, widget in enumerate(rest):
+            fw, fh = c._fit_in_cell(registry, widget, cell, row_h)
+            _set(widget, ix + index * (cell + tokens.gap), iy, fw, fh)
+        iy, ih = iy + row_h + tokens.gap, ih - row_h - tokens.gap
+    l, t, r, b = picture.properties[c.CROP_MARK]
+    # The reference is drawn at about the screen's proportions.
+    aspect = (r - l) / max(0.01, b - t) * project.screen.width / max(1.0, float(project.screen.height))
+    pw, ph = (ih * aspect, ih) if iw / max(1.0, ih) > aspect else (iw, iw / aspect)
+    px, py = ix + (iw - pw) / 2.0, iy + (ih - ph) / 2.0
+    _set(picture, px, py, pw, ph)
+    picture.properties["fillMode"] = "Image.Stretch"     # the mapping below is exact
+    sx, sy = pw / max(0.01, r - l), ph / max(0.01, b - t)
+    for widget in over:
+        spot = widget.properties[c.WIDGET_BOX_MARK]
+        ww = max(48.0, (spot[2] - spot[0]) * sx)
+        wh = max(18.0, (spot[3] - spot[1]) * sy)
+        wx = min(max(px, px + (spot[0] - l) * sx), px + pw - ww)
+        wy = min(max(py, py + (spot[1] - t) * sy), py + ph - wh)
+        _set(widget, wx, wy, ww, wh)
+    # The card's own chrome, then the picture, then what lies over it
+    # (children paint in order); the captions the card layout drew for the
+    # readings no longer line up with them.
+    placed = [picture] + rest + over
+    chrome = [ch for ch in card.children
+              if not any(ch is wd for wd in placed)
+              and not (ch.properties.get(c.CHROME_MARK) and ch.type == "Text"
+                       and any(ch.id.startswith(wd.id) for wd in rest + over))]
+    card.children[:] = chrome + placed
+
+
+def _squeeze(project, registry, card, section, rect, tokens, pad, heading):
+    """Every widget of the section in `card`, in a grid of the columns that
+    suit them best; the heading goes when the card is too short for it."""
+    from . import compiler as c
+    x, y, w, h = rect
+    keep = [ch for ch in card.children if ch.type == "Text" and ch.properties.get(c.CHROME_MARK)
+            and re.search(r"Heading\d*$", ch.id or "")]
+    top = pad + (tokens.card_title if keep else 0)
+    if keep and h - top - pad < 22:
+        keep, top = [], pad                     # no room for a heading and content
+    card.children[:] = keep
+    widgets = section.widgets
+    iw, ih = max(1.0, w - 2 * pad), max(1.0, h - top - pad)
+    aspects = [max(0.3, c._aspect(registry, wd)) for wd in widgets]
+    want = sum(aspects) / len(aspects)
+    best = None
+    for cols in range(1, len(widgets) + 1):
+        rows = -(-len(widgets) // cols)
+        cell = (iw / cols) / (ih / rows)
+        score = abs(math.log(cell / want))
+        if best is None or score < best[0]:
+            best = (score, cols, rows)
+    _score, cols, rows = best
+    gap = max(2.0, tokens.gap / 2.0)
+    cw = (iw - gap * (cols - 1)) / cols
+    rh = (ih - gap * (rows - 1)) / rows
+    for index, widget in enumerate(widgets):
+        r, col = divmod(index, cols)
+        _set(widget, pad + col * (cw + gap), top + r * (rh + gap), cw, rh)
+        card.children.append(widget)
 
 
 #: Small readings that ride above a dial or a picture in their section.
@@ -1039,6 +1165,135 @@ def _clamp_crops(by_region, width, height, strip_bottom, right_x, foot):
                     or [0.0, round(top_edge, 4), round(right_edge, 4), round(foot_edge, 4)]
 
 
+def _snap(values, tolerance):
+    """Values within `tolerance` of each other replaced by their mean, so
+    blocks the picture draws edge to edge share an edge."""
+    order = sorted(set(values))
+    groups, out = [], {}
+    for value in order:
+        if groups and value - groups[-1][-1] <= tolerance:
+            groups[-1].append(value)
+        else:
+            groups.append([value])
+    for group in groups:
+        mean = sum(group) / len(group)
+        for value in group:
+            out[value] = mean
+    return out
+
+
+def _box_rects(sections, rect, gap):
+    """Each section's box mapped from the picture onto `rect` (x, y, w, h),
+    edges snapped into a grid, gutters cut between neighbours and overlaps
+    taken off the later block. [(section, (x, y, w, h))]."""
+    whole = _union(sections)
+    rx, ry, rw, rh = rect
+    sx = rw / max(0.05, whole[2] - whole[0])
+    sy = rh / max(0.05, whole[3] - whole[1])
+    raw = [(s, [rx + (s.box[0] - whole[0]) * sx, ry + (s.box[1] - whole[1]) * sy,
+                rx + (s.box[2] - whole[0]) * sx, ry + (s.box[3] - whole[1]) * sy]) for s in sections]
+    xs = _snap([v for _s, b in raw for v in (b[0], b[2])], rw * 0.02)
+    ys = _snap([v for _s, b in raw for v in (b[1], b[3])], rh * 0.02)
+    boxes = []
+    for section, (x0, y0, x1, y1) in raw:
+        x0, x1, y0, y1 = xs[x0], xs[x1], ys[y0], ys[y1]
+        # Half a gutter off every side that has a neighbour, none at the rect's edge.
+        x0 += gap / 2.0 if x0 > rx + 1 else 0
+        x1 -= gap / 2.0 if x1 < rx + rw - 1 else 0
+        y0 += gap / 2.0 if y0 > ry + 1 else 0
+        y1 -= gap / 2.0 if y1 < ry + rh - 1 else 0
+        boxes.append([section, [x0, y0, x1, y1]])
+    for i, (_a, a) in enumerate(boxes):
+        for _b, b in boxes[i + 1:]:
+            ix = min(a[2], b[2]) - max(a[0], b[0])
+            iy = min(a[3], b[3]) - max(a[1], b[1])
+            if ix <= 0 or iy <= 0:
+                continue
+            # Cut along the axis of least overlap, from whichever block loses
+            # the smaller share of itself: a navigation rail drawn 5 % too
+            # tall gives way to the alarm table under it, which would lose a
+            # third of its height.
+            if ix < iy:
+                lose_a, lose_b = ix / max(1.0, a[2] - a[0]), ix / max(1.0, b[2] - b[0])
+                giver, keeper = (a, b) if lose_a < lose_b else (b, a)
+                if giver[0] >= keeper[0]:
+                    giver[0] = keeper[2] + gap
+                else:
+                    giver[2] = keeper[0] - gap
+            else:
+                lose_a, lose_b = iy / max(1.0, a[3] - a[1]), iy / max(1.0, b[3] - b[1])
+                giver, keeper = (a, b) if lose_a < lose_b else (b, a)
+                if giver[1] >= keeper[1]:
+                    giver[1] = keeper[3] + gap
+                else:
+                    giver[3] = keeper[1] - gap
+    return [(s, (b[0], b[1], max(1.0, b[2] - b[0]), max(1.0, b[3] - b[1]))) for s, b in boxes]
+
+
+def _nav_rail(project, registry, section, rect, tokens, report, title=""):
+    """A column of navigation items down the screen's edge (Overview, Raw
+    Mill, Alarms ...): full-width items stacked from the top, a list's
+    height each; the page shown highlighted. Not the gear selector's pill:
+    there ten items were squeezed to "Over", "Raw", "Coal"."""
+    from . import compiler as c
+    x, y, w, h = rect
+    palette = getattr(project.screen, "palette", None) or {}
+    card = c._new(project, "ShCard", (c._slug(section.title) or "nav") + "Card",
+                  {"x": x, "y": y, "width": w, "height": h},
+                  {"color": palette.get("card", c._theme(project, "card")),
+                   "borderColor": palette.get("border", c._theme(project, "border")),
+                   "borderWidth": 1, "radius": max(6, tokens.radius // 2)})
+    items = section.widgets
+    pad = max(4, tokens.gap // 2)
+    item_h = min((h - 2 * pad) / max(1, len(items)), tokens.control_h * 1.35)
+    lit = [wd for wd in items if str(wd.properties.get("borderColor") or wd.properties.get("backgroundColor") or "").strip()]
+    if not lit and items:
+        words = set(re.findall(r"[a-z0-9]+", title.lower()))
+        named = [wd for wd in items if set(re.findall(r"[a-z0-9]+", str(wd.properties.get("text") or wd.properties.get("label") or "").lower())) & words]
+        lit = named[:1] or items[:1]
+    accent = section.accent or palette.get("success") or c._theme(project, "primary")
+    for index, widget in enumerate(items):
+        props = widget.properties
+        if widget.type == "ShButton":
+            props.setdefault("variant", "ghost")
+            if widget in lit and not str(props.get("backgroundColor") or "").strip():
+                props["backgroundColor"] = accent
+                props.setdefault("textColor", "#ffffff")
+        _set(widget, pad, pad + index * item_h, w - 2 * pad, item_h - 2)
+        card.children.append(widget)
+    report.sections.append((section.title, section.role, tuple(int(round(v)) for v in rect)))
+    return card
+
+
+def _is_nav(section) -> bool:
+    """A rail of three or more navigation items."""
+    return len(section.widgets) >= 3 and all(
+        w.type in ("ShButton", "ShIconTile") for w in section.widgets)
+
+
+def _compile_boxes(project, registry, sections, rect, tokens, report, title=""):
+    """The body laid out where the picture's blocks are: every section at
+    its box, mapped onto `rect` (a dashboard's rows of tiles, panels and
+    tables, which the region columns cannot hold)."""
+    out = []
+    for section, box in _box_rects(sections, rect, tokens.gap):
+        if section.region == "rail" and _is_nav(section):
+            out.append(_nav_rail(project, registry, section, box, tokens, report, title=title))
+        elif section.region == "rail":
+            # A gear selector or mode lamps: the rail's pill, as in the regions.
+            out.append(_rail_card(project, registry, section, box, tokens, report))
+        elif _band_kind(section):
+            out.append(_band(project, registry, section, box, tokens, report, title=title))
+        else:
+            lone = section.widgets[0] if len(section.widgets) == 1 else None
+            bare = lone is not None and (lone.type in _PICTURES or _is_dial(registry, lone))
+            # The right column's blocks are cards whatever they hold (a tyre
+            # diagram's), as the region layout draws them.
+            framed = section.region == "right" or (not bare and section.role != "hero")
+            out.append(_section_card(project, registry, section, box, tokens, framed, report))
+    return out
+
+
 def _has(registry, widget_type, prop) -> bool:
     definition = registry.get(widget_type) if registry is not None else None
     return definition is not None and prop in definition.properties
@@ -1158,8 +1413,15 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
                     by_region[name][index] = dataclasses.replace(
                         section, widgets=[w for w in section.widgets if w not in printed])
 
+    # The body's sections as bucketed (captions may have been folded in), in
+    # plan order: in the box layout a later block gives way to an earlier one.
+    order = {id(s.widgets[0]): i for i, s in enumerate(sections) if s.widgets}
+    body_sections = sorted((b for name in ("rail", "left", "center", "right", "bottom")
+                            for b in by_region[name] if b.widgets),
+                           key=lambda s: order.get(id(s.widgets[0]), 0))
+    boxed = len(body_sections) >= 2 and all(s.box for s in body_sections)
     plant = bool(by_region["bottom"]) and all(_band_kind(s) for s in by_region["bottom"])
-    if plant:
+    if plant or boxed:
         # A plant overview is drawn to its edges: four cards of reading lines
         # beside a process drawing need the room a cockpit's margins take.
         tokens = dataclasses.replace(tokens, margin=max(8, tokens.margin // 2),
@@ -1181,6 +1443,25 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
     body_w, body_h = bx1 - bx0, by1 - by0
     rail, left, center = by_region["rail"], by_region["left"], by_region["center"]
     right, bottom = by_region["right"], by_region["bottom"]
+
+    if boxed:
+        # Every block says where it sits: the picture's own arrangement,
+        # whatever its rows and columns are.
+        for section in body_sections:
+            pad = (-0.02, -0.02, 0.02, 0.02)
+            around = tuple(_clamp(v + d, 0.0, 1.0) for v, d in zip(section.box, pad))
+            for widget in section.widgets:
+                if _cuttable(widget):
+                    widget.properties[c.CROP_MARK] = _cut(widget.properties[c.CROP_MARK], around) \
+                        or [round(v, 4) for v in around]
+        widgets += _compile_boxes(project, registry, body_sections, (bx0, by0, body_w, body_h),
+                                  tokens, report, title=title)
+        report.notes.append("layout from the picture's boxes")
+        _dress(project, registry, widgets, tokens)
+        page.widgets[:] = widgets
+        report.layout = FAMILY_NAME
+        c._tidy_scales(page, registry, report.notes)
+        return report
 
     # Bars across the foot of the screen (a status banner, a navigation row)
     # run under everything, the right column too, each a bar's height.
