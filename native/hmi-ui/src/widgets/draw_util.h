@@ -157,5 +157,78 @@ static inline void hmi_set_glow(lv_obj_t *o, lv_color_t colour, lv_opa_t opa)
     lv_obj_set_style_shadow_opa(o, opa, 0);
 }
 
+// -- the "neon" instrument look (ShClusterGauge/ShSpeedArc style "neon") -----
+// A thick round-capped arc whose colour runs along a two-stop gradient, and
+// a soft glow of translucent wider copies under it. NeonPaint.js in the QML
+// kit draws the same segments, caps and layers on a Canvas.
+//
+// LVGL draws arcs between whole degrees (LV_USE_FLOAT 0), and lv_draw_arc
+// has no gradient: the arc is cut into segments of about seg_deg degrees,
+// each in the gradient's colour at its middle. The gradient runs over
+// [g0, g1] degrees (the whole scale), so a value's colour does not depend on
+// how far the arc is lit. An opaque arc overlaps its segments by a degree
+// and caps its ends with discs; a translucent one (a glow layer) butts them
+// edge to edge and caps with half discs, so nothing is blended twice.
+// caps: HMI_CAP_START | HMI_CAP_END (a piece that continues another one,
+// e.g. the red part past a redline, leaves its joint square).
+#define HMI_CAP_START 1
+#define HMI_CAP_END 2
+#define HMI_CAPS (HMI_CAP_START | HMI_CAP_END)
+static inline lv_color_t hmi_ramp(lv_color_t c0, lv_color_t c1, double g0, double g1, double a)
+{
+    double t = g1 > g0 ? (a - g0) / (g1 - g0) : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    return lv_color_mix(c1, c0, (lv_opa_t)lround(255.0 * t));
+}
+
+static inline void hmi_draw_neon_arc(const hmi_draw_t *d, double cx, double cy, double r, double w,
+                                     double a0, double a1, double g0, double g1,
+                                     lv_color_t c0, lv_color_t c1, lv_opa_t opa, int seg_deg, int caps)
+{
+    int ia0 = (int)lround(a0), ia1 = (int)lround(a1);
+    if (ia1 <= ia0 || w < 1 || r <= 0 || opa == 0) return;
+    int span = ia1 - ia0;
+    int n = span / (seg_deg > 0 ? seg_deg : 5);
+    n = n < 1 ? 1 : n > 48 ? 48 : n;
+    bool solid = opa >= LV_OPA_COVER;
+    for (int i = 0; i < n; ++i) {
+        int b0 = ia0 + span * i / n, b1 = ia0 + span * (i + 1) / n;
+        lv_color_t c = hmi_ramp(c0, c1, g0, g1, (b0 + b1) / 2.0);
+        int e1 = solid && i < n - 1 ? b1 + 1 : b1;
+        int s0 = (b0 % 360 + 360) % 360;   // LVGL wants 0 <= start < 360
+        hmi_draw_arc(d, cx, cy, r, w, s0, s0 + (e1 - b0), c, opa);
+    }
+    // round caps, in the colour at each end
+    for (int end = 0; end < 2; ++end) {
+        if (!(caps & (end ? HMI_CAP_END : HMI_CAP_START))) continue;
+        int a = end ? ia1 : ia0;
+        double ar = a * M_PI / 180;
+        double px = cx + r * cos(ar), py = cy + r * sin(ar);
+        lv_color_t c = hmi_ramp(c0, c1, g0, g1, a);
+        if (solid) {
+            hmi_draw_disc(d, px, py, w / 2, c, opa);
+        } else {
+            // the half facing away from the arc; LVGL wants 0 <= start < 360
+            int from = ((end ? a : a - 180) % 360 + 360) % 360;
+            hmi_draw_arc(d, px, py, w / 4, w / 2, from, from + 180, c, opa);
+        }
+    }
+}
+
+// The glow: HMI_NEON_GLOW_LAYERS copies, widest first, each `reach` px x
+// k / layers wider on both sides, at HMI_NEON_GLOW_OPA each; stacked they
+// fade from about 63 % of the colour at the stroke's edge to nothing at reach.
+#define HMI_NEON_GLOW_LAYERS 8
+#define HMI_NEON_GLOW_OPA 30
+static inline double hmi_neon_glow_reach(double dim) { return fmax(4, fmin(16, 0.04 * dim)); }
+static inline void hmi_draw_neon_glow(const hmi_draw_t *d, double cx, double cy, double r, double w,
+                                      double a0, double a1, double g0, double g1,
+                                      lv_color_t c0, lv_color_t c1, double reach, int caps)
+{
+    for (int k = HMI_NEON_GLOW_LAYERS; k >= 1; --k)
+        hmi_draw_neon_arc(d, cx, cy, r, w + 2 * reach * k / HMI_NEON_GLOW_LAYERS, a0, a1, g0, g1,
+                          c0, c1, HMI_NEON_GLOW_OPA, 10, caps);
+}
+
 static inline int hmi_px(double v) { return (int)lround(v); }
 static inline int hmi_px_min(double v, int floor_px) { int p = hmi_px(v); return p < floor_px ? floor_px : p; }

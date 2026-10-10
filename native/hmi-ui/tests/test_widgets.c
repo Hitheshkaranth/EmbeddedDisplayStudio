@@ -543,6 +543,285 @@ static void test_process_value_bevel(void)
     anim_free(p, w);
 }
 
+// -- the neon look: gradient arcs with a glow, solid glowing bars -------------
+
+// A widget drawn into its own buffer (its box plus the ext draw margin all
+// round). px(x, y) is the pixel at widget coordinates as 0xAARRGGBB.
+typedef struct { lv_draw_buf_t *buf; int32_t ext; } snap_t;
+
+static snap_t snap(hmi_widget_t *w)
+{
+    lv_obj_update_layout(lv_screen_active());
+    snap_t s = {lv_snapshot_take(w->native, LV_COLOR_FORMAT_ARGB8888), lv_obj_get_ext_draw_size(w->native)};
+    return s;
+}
+
+static uint32_t px(const snap_t *s, double x, double y)
+{
+    if (!s->buf) return 0;
+    int32_t ix = (int32_t)lround(x) + s->ext, iy = (int32_t)lround(y) + s->ext;
+    if (ix < 0 || iy < 0 || ix >= (int32_t)s->buf->header.w || iy >= (int32_t)s->buf->header.h) return 0;
+    const uint8_t *p = (const uint8_t *)s->buf->data + (size_t)iy * s->buf->header.stride + (size_t)ix * 4;
+    return ((uint32_t)p[3] << 24) | ((uint32_t)p[2] << 16) | ((uint32_t)p[1] << 8) | p[0];   // B, G, R, A
+}
+
+static uint32_t polar(const snap_t *s, double cx, double cy, double r, double deg)
+{
+    double a = deg * M_PI / 180;
+    return px(s, cx + r * cos(a), cy + r * sin(a));
+}
+
+static unsigned alpha_of(uint32_t argb) { return argb >> 24; }
+
+// rgb within tol per channel
+static bool near_rgb(uint32_t argb, lv_color_t c, int tol)
+{
+    int r = (argb >> 16) & 255, g = (argb >> 8) & 255, b = argb & 255;
+    return abs(r - c.red) <= tol && abs(g - c.green) <= tol && abs(b - c.blue) <= tol;
+}
+
+static void unsnap(snap_t *s)
+{
+    if (s->buf) lv_draw_buf_destroy(s->buf);
+    s->buf = NULL;
+}
+
+static void test_neon_ramp(void)
+{
+    lv_color_t a = lv_color_hex(0x000000), b = lv_color_hex(0xff8000);
+    CHECK(rgb(hmi_ramp(a, b, 100, 200, 100)) == 0x000000);
+    CHECK(rgb(hmi_ramp(a, b, 100, 200, 250)) == 0xff8000);     // clamped past the end
+    CHECK(rgb(hmi_ramp(a, b, 100, 200, 50)) == 0x000000);      // and before the start
+    uint32_t mid = rgb(hmi_ramp(a, b, 100, 200, 150));
+    CHECK(((mid >> 16) & 255) >= 126 && ((mid >> 16) & 255) <= 129);
+}
+
+// style "neon": no scale numbers; a dim track, the value arc shaded from
+// accentColor to accentColor2 along the scale, red past the redline, a glow
+// around it; the caption in the accent, the value bold.
+static void test_cluster_gauge_neon(void)
+{
+    hmi_project_t *p = one_widget_sized("ShClusterGauge", "{\"style\":\"neon\",\"accentColor\":\"#ff8a1f\","
+                                        "\"accentColor2\":\"#ffd23f\",\"value\":4.2,\"caption\":\"RPM\"}",
+                                        240, 240);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    lv_obj_t *face = w->native;
+    lv_obj_t *readout = lv_obj_get_child(face, 0), *unit = lv_obj_get_child(face, 1);
+    lv_obj_t *caption = lv_obj_get_child(face, 2);
+    // texts: readout, unit, caption, label; no scale numbers are shown
+    uint32_t n = lv_obj_get_child_count(face);
+    bool anyScale = false;
+    for (uint32_t i = 4; i < n; ++i)
+        anyScale |= !lv_obj_has_flag(lv_obj_get_child(face, (int32_t)i), LV_OBJ_FLAG_HIDDEN);
+    CHECK(!anyScale);
+    // "137": min(0.30 d, 0.62 d / (3 x 0.6)) = 72 px, bold
+    CHECK(lv_obj_get_style_text_font(readout, 0) == hmi_font(72, 700));
+    CHECK(rgb(lv_obj_get_style_text_color(caption, 0)) == 0xff8a1f);
+    CHECK(!lv_obj_has_flag(unit, LV_OBJ_FLAG_HIDDEN));
+    // caption above the value, unit under it, all centred
+    lv_area_t ra, ca, ua;
+    lv_obj_get_coords(readout, &ra);
+    lv_obj_get_coords(caption, &ca);
+    lv_obj_get_coords(unit, &ua);
+    CHECK(ca.y2 < ra.y2 && ua.y1 > ra.y1);
+    CHECK(abs((ra.x1 + ra.x2) / 2 - 120) <= 1 && abs((ua.x1 + ua.x2) / 2 - 120) <= 1);
+
+    // the arc: centre 120,120, radius 0.40 d = 96, stroke 0.085 d = 20.4,
+    // 150 .. 390 degrees; value 4.2 of 8 -> 276; redline 7 -> 360
+    lv_color_t c0 = lv_color_hex(0xff8a1f), c1 = lv_color_hex(0xffd23f), red = hmi_colour("autoRedline");
+    snap_t s = snap(w);
+    CHECK(s.buf != NULL);
+    uint32_t v = polar(&s, 120, 120, 96, 160);
+    CHECK(alpha_of(v) == 255 && near_rgb(v, hmi_ramp(c0, c1, 150, 390, 160), 8));
+    v = polar(&s, 120, 120, 96, 265);
+    CHECK(alpha_of(v) == 255 && near_rgb(v, hmi_ramp(c0, c1, 150, 390, 265), 8));
+    // past the value: the dim track, translucent, in the scale's colour
+    v = polar(&s, 120, 120, 96, 320);
+    CHECK(alpha_of(v) >= 20 && alpha_of(v) <= 45 && near_rgb(v, hmi_ramp(c0, c1, 150, 390, 320), 12));
+    // past the redline: a dim red track
+    v = polar(&s, 120, 120, 96, 375);
+    CHECK(alpha_of(v) >= 20 && alpha_of(v) <= 45 && near_rgb(v, red, 12));
+    // the glow: just outside the stroke, partly covered, the accent's hue
+    v = polar(&s, 120, 120, 96 + 10.2 + 3, 200);
+    CHECK(alpha_of(v) >= 60 && alpha_of(v) <= 220);
+    CHECK(((v >> 16) & 255) > (v & 255));
+    // and gone a glow's reach beyond it
+    CHECK(alpha_of(polar(&s, 120, 120, 96 + 10.2 + 12, 200)) == 0);
+    // the start is round-capped: the disc beyond the start angle is lit
+    v = polar(&s, 120, 120, 96, 146);
+    CHECK(alpha_of(v) == 255);
+    unsnap(&s);
+
+    // into the red: the part past 360 is red
+    anim_set(w, "value", hmi_value_num(7.6));
+    s = snap(w);
+    v = polar(&s, 120, 120, 96, 372);
+    CHECK(alpha_of(v) == 255 && near_rgb(v, red, 4));
+    v = polar(&s, 120, 120, 96, 350);
+    CHECK(alpha_of(v) == 255 && near_rgb(v, hmi_ramp(c0, c1, 150, 390, 350), 8));
+    unsnap(&s);
+
+    // accentColor2 unset: the accent 35 % lighter at the scale's end
+    anim_set(w, "accentColor2", hmi_value_str(""));
+    s = snap(w);
+    v = polar(&s, 120, 120, 96, 355);
+    CHECK(near_rgb(v, hmi_ramp(c0, hmi_shade(c0, 35), 150, 390, 355), 8));
+    unsnap(&s);
+
+    // classic again: the scale numbers and the amber caption are back
+    anim_set(w, "style", hmi_value_str("classic"));
+    CHECK(!lv_obj_has_flag(lv_obj_get_child(face, 4), LV_OBJ_FLAG_HIDDEN));
+    CHECK(rgb(lv_obj_get_style_text_color(caption, 0)) == rgb(hmi_colour("autoAmber")));
+    CHECK(lv_obj_get_style_text_font(readout, 0) == hmi_font(hmi_px(0.28 * 240), 600));
+    anim_free(p, w);
+
+    // a redline at the minimum: the whole arc is red, capped at both ends
+    p = one_widget_sized("ShClusterGauge", "{\"style\":\"neon\",\"redlineFrom\":0,\"value\":4}", 240, 240);
+    CHECK(p != NULL);
+    if (!p) return;
+    w = build(p);
+    s = snap(w);
+    v = polar(&s, 120, 120, 96, 160);
+    CHECK(alpha_of(v) == 255 && near_rgb(v, red, 4));
+    CHECK(alpha_of(polar(&s, 120, 120, 96, 146)) == 255);
+    unsnap(&s);
+    anim_free(p, w);
+}
+
+// style "neon": three concentric arcs to the value, the outer one glowing; no
+// callout; the unit in a light grey under the value.
+static void test_speed_arc_neon(void)
+{
+    hmi_project_t *p = one_widget_sized("ShSpeedArc", "{\"style\":\"neon\",\"outerColor\":\"#2f8bff\","
+                                        "\"innerColor\":\"#1d4ed8\",\"value\":32,\"maximumValue\":60,"
+                                        "\"unit\":\"km/h\",\"showTarget\":true,\"target\":50}", 260, 260);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    lv_obj_t *readout = lv_obj_get_child(w->native, 0), *unit = lv_obj_get_child(w->native, 1);
+    lv_obj_t *callout = lv_obj_get_child(w->native, 2);
+    CHECK(lv_obj_has_flag(callout, LV_OBJ_FLAG_HIDDEN));
+    CHECK(rgb(lv_obj_get_style_text_color(unit, 0)) == 0xb4bfcc);
+    CHECK(lv_obj_get_style_text_font(readout, 0) == hmi_font(hmi_px(0.28 * 260), 700));
+    // 90 .. 330 degrees, value 32 of 60 -> 218; radii 104, 84.5, 67.6
+    lv_color_t outer = lv_color_hex(0x2f8bff), inner = lv_color_hex(0x1d4ed8);
+    snap_t s = snap(w);
+    uint32_t v = polar(&s, 130, 130, 104, 100);
+    CHECK(alpha_of(v) == 255 && near_rgb(v, hmi_ramp(hmi_shade(outer, -10), hmi_shade(outer, 40), 90, 330, 100), 8));
+    v = polar(&s, 130, 130, 84.5, 150);
+    CHECK(alpha_of(v) >= 200 && alpha_of(v) <= 230);
+    v = polar(&s, 130, 130, 67.6, 150);
+    CHECK(alpha_of(v) >= 140 && alpha_of(v) <= 165 && near_rgb(v, inner, 10));
+    // past the value: the outer track only, dim; nothing inside
+    v = polar(&s, 130, 130, 104, 300);
+    CHECK(alpha_of(v) >= 25 && alpha_of(v) <= 45);
+    CHECK(alpha_of(polar(&s, 130, 130, 67.6, 300)) == 0);
+    CHECK(alpha_of(polar(&s, 130, 130, 84.5, 300)) == 0);
+    // the glow outside the outer arc, by the lit part only
+    CHECK(alpha_of(polar(&s, 130, 130, 104 + 7.2 + 3, 150)) >= 60);
+    unsnap(&s);
+    anim_set(w, "style", hmi_value_str("classic"));
+    CHECK(!lv_obj_has_flag(callout, LV_OBJ_FLAG_HIDDEN));
+    CHECK(rgb(lv_obj_get_style_text_color(unit, 0)) == 0x2f8bff);
+    anim_free(p, w);
+}
+
+// style "solid": a rounded track with a rim and one inset fill shaded along
+// its length, glowing; red at or below lowLevel.
+static void test_segment_bar_solid(void)
+{
+    hmi_project_t *p = one_widget_sized("ShSegmentBar", "{\"style\":\"solid\",\"barColor\":\"#3ee05a\","
+                                        "\"value\":78,\"label\":\"\"}", 300, 70);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    lv_obj_t *percent = lv_obj_get_child(w->native, 1);
+    CHECK_EQ_STR(lv_label_get_text(percent), "78%");
+    lv_obj_update_layout(lv_screen_active());
+    // bar 42 px tall from y 14; inset 4; right end at 300 - percent - 21
+    double right = 300 - lv_obj_get_width(percent) - 21;
+    lv_color_t c = lv_color_hex(0x3ee05a), track = hmi_colour("autoTrack");
+    double fillEnd = 4 + round((right - 8) * 0.78);
+    snap_t s = snap(w);
+    uint32_t v = px(&s, 8, 35);
+    CHECK(alpha_of(v) == 255 && near_rgb(v, hmi_shade(c, -25), 14));
+    v = px(&s, fillEnd - 3, 35);
+    CHECK(near_rgb(v, hmi_shade(c, 20), 14));
+    // the empty part of the track, clear of the glow
+    v = px(&s, right - 6, 35);
+    CHECK(alpha_of(v) == 255 && near_rgb(v, track, 3));
+    // the glow over the track between the fill and the rim
+    v = px(&s, fillEnd + 2, 35);
+    CHECK(((v >> 8) & 255) > track.green + 20);
+    // the rim, along the top
+    v = px(&s, right / 2, 14);
+    CHECK(((v >> 8) & 255) > 150);
+    unsnap(&s);
+    anim_set(w, "value", hmi_value_num(12));
+    s = snap(w);
+    CHECK(near_rgb(px(&s, 8, 35), hmi_shade(hmi_colour("autoRedline"), -25), 14));
+    unsnap(&s);
+    // segments again: 12 cells, the last one (empty) in the track colour
+    anim_set(w, "value", hmi_value_num(78));
+    anim_set(w, "style", hmi_value_str("segments"));
+    double cellW = (right - 8 * 11) / 12;
+    s = snap(w);
+    v = px(&s, right - cellW / 2, 35);
+    CHECK(alpha_of(v) == 255 && near_rgb(v, track, 3));
+    v = px(&s, cellW / 2, 35);
+    CHECK(alpha_of(v) == 255 && near_rgb(v, c, 3));
+    unsnap(&s);
+    anim_free(p, w);
+}
+
+// glow: the fill's shadow in its colour, let out of the track.
+static void test_engine_bar_glow(void)
+{
+    hmi_project_t *p = one_widget_sized("ShEngineBar", "{\"orientation\":\"horizontal\",\"glow\":true,"
+                                        "\"barColor\":\"#ff3b3b\",\"value\":82,\"label\":\"Coolant\"}", 300, 28);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    lv_obj_t *well = lv_obj_get_child(w->native, 1), *fill = lv_obj_get_child(well, 0);
+    CHECK(lv_obj_get_style_shadow_width(fill, 0) == HMI_GLOW_BLUR);
+    CHECK(lv_obj_get_style_shadow_opa(fill, 0) == HMI_GLOW_OPA);
+    CHECK(rgb(lv_obj_get_style_shadow_color(fill, 0)) == 0xff3b3b);
+    CHECK(lv_obj_has_flag(well, LV_OBJ_FLAG_OVERFLOW_VISIBLE));
+    CHECK(lv_obj_get_ext_draw_size(well) >= HMI_GLOW_BLUR);
+    // the glow shows above the thin bar
+    lv_area_t fa, root;
+    lv_obj_get_coords(fill, &fa);
+    lv_obj_get_coords(w->native, &root);
+    snap_t s = snap(w);
+    uint32_t v = px(&s, (fa.x1 + fa.x2) / 2 - root.x1, fa.y1 - root.y1 - 2);
+    CHECK(((v >> 16) & 255) > 60 && alpha_of(v) > 0);
+    unsnap(&s);
+    anim_set(w, "glow", hmi_value_bool(false));
+    CHECK(lv_obj_get_style_shadow_width(fill, 0) == 0);
+    CHECK(!lv_obj_has_flag(well, LV_OBJ_FLAG_OVERFLOW_VISIBLE));
+    anim_free(p, w);
+
+    // vertical: glowing, the fill sits 2 px above the well's bottom (as the QML)
+    p = one_widget_sized("ShEngineBar", "{\"glow\":true}", 76, 190);
+    CHECK(p != NULL);
+    if (!p) return;
+    w = build(p);
+    well = lv_obj_get_child(w->native, 1);
+    fill = lv_obj_get_child(well, 0);
+    lv_area_t wa;
+    lv_obj_get_coords(well, &wa);
+    lv_obj_get_coords(fill, &fa);
+    CHECK(wa.y2 - fa.y2 == 2);
+    CHECK(lv_obj_get_style_shadow_width(fill, 0) == HMI_GLOW_BLUR);
+    anim_set(w, "glow", hmi_value_bool(false));
+    lv_obj_update_layout(lv_screen_active());
+    lv_obj_get_coords(fill, &fa);
+    CHECK(fa.y2 - wa.y2 == 1);   // unset: as it always was (clipped by the well)
+    anim_free(p, w);
+}
+
 int main(void)
 {
     lv_init();
@@ -566,5 +845,10 @@ int main(void)
     test_button_gradient_and_glow();
     test_annunciator_lit_colour_and_glow();
     test_process_value_bevel();
+    test_neon_ramp();
+    test_cluster_gauge_neon();
+    test_speed_arc_neon();
+    test_segment_bar_solid();
+    test_engine_bar_glow();
     return check_summary("test_widgets");
 }

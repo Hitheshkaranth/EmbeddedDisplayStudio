@@ -4,6 +4,10 @@
 // them (height 0.6 h, gap round(0.12 h), radius round(0.1 h)); filled cells
 // accent (the first accentDeep), redline when low, autoTrack otherwise;
 // a set barColor fills every cell in that colour instead of the accent.
+// style "solid": one rounded track (autoTrack, a rim of the fill colour at
+// 80 %, max(1, 0.04 x its height) px) and, inset in it, one rounded fill up to the value, shaded along
+// its length from 25 % darker to 20 % lighter, with the kit's soft glow
+// (hmi_set_glow's shadow; ShGlow in the QML).
 #include <stdio.h>
 #include <string.h>
 
@@ -13,7 +17,7 @@
 typedef struct {
     double value, minimumValue, maximumValue, lowLevel;
     int segments;
-    bool showPercent;
+    bool showPercent, solid;
     char barColor[32];   // "" = the accent
     lv_obj_t *face, *caption, *percent;
 } state_t;
@@ -42,6 +46,42 @@ static void draw_cb(lv_event_t *e)
     lv_opa_t barOpa = 0;
     lv_color_t bar = st->barColor[0] ? hmi_colour_hex(st->barColor, &barOpa) : lv_color_black();
     bool custom = st->barColor[0] && barOpa > 0;
+    if (st->solid) {
+        lv_color_t c = low ? hmi_colour("autoRedline") : custom ? bar : hmi_colour("autoAccent");
+        int rad = (int)round(cellsH * 0.25), rim = (int)fmax(1, round(cellsH * 0.04));
+        int inset = (int)fmax(2, round(cellsH * 0.1));
+        lv_draw_rect_dsc_t dsc;
+        lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = hmi_colour("autoTrack");
+        dsc.radius = rad;
+        dsc.border_width = rim;
+        dsc.border_color = c;
+        dsc.border_opa = (lv_opa_t)(0.80 * 255);
+        lv_area_t a = {(int32_t)lround(d.coords.x1 + left), (int32_t)lround(d.coords.y1 + y),
+                       (int32_t)lround(d.coords.x1 + left + width) - 1, (int32_t)lround(d.coords.y1 + y + cellsH) - 1};
+        lv_draw_rect(d.layer, &dsc, &a);
+        double fillW = round((width - 2 * inset) * fraction);
+        if (fillW >= 1) {
+            lv_draw_rect_dsc_init(&dsc);
+            dsc.radius = (int)fmax(0, rad - inset);
+            dsc.bg_grad.dir = LV_GRAD_DIR_HOR;
+            dsc.bg_grad.stops_count = 2;
+            dsc.bg_grad.stops[0].color = hmi_shade(c, -25);
+            dsc.bg_grad.stops[0].opa = LV_OPA_COVER;
+            dsc.bg_grad.stops[0].frac = 0;
+            dsc.bg_grad.stops[1].color = hmi_shade(c, 20);
+            dsc.bg_grad.stops[1].opa = LV_OPA_COVER;
+            dsc.bg_grad.stops[1].frac = 255;
+            dsc.border_width = 0;
+            dsc.shadow_width = HMI_GLOW_BLUR;
+            dsc.shadow_spread = HMI_GLOW_SPREAD;
+            dsc.shadow_color = c;
+            dsc.shadow_opa = HMI_GLOW_OPA;
+            lv_area_t f = {a.x1 + inset, a.y1 + inset, a.x1 + inset + (int32_t)fillW - 1, a.y2 - inset};
+            lv_draw_rect(d.layer, &dsc, &f);
+        }
+        return;
+    }
     for (int i = 0; i < count; ++i) {
         lv_color_t c = i >= filled ? hmi_colour("autoTrack")
                      : low ? hmi_colour("autoRedline")
@@ -82,6 +122,7 @@ static void read_model(hmi_widget_t *w)
     st->lowLevel = hmi_widget_num(w, "lowLevel", 20);
     st->showPercent = hmi_widget_bool(w, "showPercent", true);
     snprintf(st->barColor, sizeof st->barColor, "%s", hmi_widget_str(w, "barColor", ""));
+    st->solid = strcmp(hmi_widget_str(w, "style", "segments"), "solid") == 0;
 }
 
 static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
@@ -113,6 +154,8 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
     else if (strcmp(prop, "showPercent") == 0) st->showPercent = hmi_value_as_bool(value, st->showPercent);
     else if (strcmp(prop, "barColor") == 0)
         snprintf(st->barColor, sizeof st->barColor, "%s", hmi_value_as_str(value, ""));
+    else if (strcmp(prop, "style") == 0)
+        st->solid = strcmp(hmi_value_as_str(value, "segments"), "solid") == 0;
     else if (strcmp(prop, "label") != 0) return;
     layout(w);
 }

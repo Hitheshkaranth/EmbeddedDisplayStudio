@@ -20,6 +20,7 @@ reported as skips, so the gate is honest about stubs.
     HMI_UI_TYPES=ShClusterGauge,ShButton restricts the run.
 """
 import copy
+import dataclasses
 import json
 import os
 import subprocess
@@ -83,6 +84,25 @@ STYLE_SAMPLES = [
     ("ShAnnunciator", "litColorUnlit", {"text": "RUNNING", "litColor": "#22d34a", "lit": False}),
     ("ShProcessValue", "bevel", {"label": "Hot Blast Temp", "value": 1185, "unit": "\u00b0C",
                                  "trend": True, "bevel": True}),
+    # The neon instrument look (a haul-truck cockpit picture): thick glowing
+    # gradient arcs, solid glowing bars. An optional fourth element is the
+    # size to compare at instead of the type's default.
+    ("ShClusterGauge", "neon", {"style": "neon", "accentColor": "#ff8a1f", "value": 1.6,
+                                "maximumValue": 3, "majorStep": 0.5, "redlineFrom": 2.5, "readout": "",
+                                "decimals": 1, "caption": "RPM", "readoutUnit": "x1000"}),
+    ("ShClusterGauge", "neonGradient", {"style": "neon", "accentColor": "#ffd23f", "accentColor2": "#ff3b1f",
+                                        "value": 342, "maximumValue": 400, "majorStep": 50,
+                                        "redlineFrom": 400, "readout": "342", "readoutUnit": "t",
+                                        "caption": "PAYLOAD", "label": "400 t max"}, (300, 300)),
+    ("ShClusterGauge", "neonRedline", {"style": "neon", "value": 7.6, "readout": "", "decimals": 1}),
+    ("ShSpeedArc", "neon", {"style": "neon", "outerColor": "#2f8bff", "innerColor": "#1d4ed8", "value": 32,
+                            "maximumValue": 60, "unit": "km/h"}, (260, 260)),
+    ("ShSegmentBar", "solid", {"style": "solid", "barColor": "#3ee05a", "value": 78, "label": "FUEL"},
+     (300, 70)),
+    ("ShSegmentBar", "solidLow", {"style": "solid", "value": 12}),
+    ("ShEngineBar", "glowRow", {"orientation": "horizontal", "glow": True, "barColor": "#ff3b3b",
+                                "value": 82, "label": "Coolant", "units": "\u00b0C"}, (300, 28)),
+    ("ShEngineBar", "glow", {"glow": True}),
 ]
 
 
@@ -230,11 +250,14 @@ class ParityTests(unittest.TestCase):
         self.addCleanup(lambda: sys.stderr.write(
             "\nparity (QML vs hmi-ui, dark, style options set):\n" + "\n".join(results) + "\n"))
         selected = set(_selected())
-        for type_name, sample, overrides in STYLE_SAMPLES:
+        for type_name, sample, overrides, *size in STYLE_SAMPLES:
             if os.environ.get("HMI_UI_TYPES") and type_name not in selected:
                 continue
             definition = self.registry.get(type_name)
             props = copy.deepcopy(definition.defaults)
+            if size:
+                definition = dataclasses.replace(definition, default_width=size[0][0],
+                                                 default_height=size[0][1])
             props.update(overrides)
             with self.subTest(widget=f"{type_name}-{sample}"):
                 self._compare(f"{type_name}-{sample}", definition, props, results)

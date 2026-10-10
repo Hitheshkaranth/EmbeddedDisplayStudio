@@ -4,6 +4,12 @@
 // ui/qml/Shadcn/faces/canvas/ClusterGaugeFace.qml (the face, step by step).
 // Every dimension is relative to d = min(width, height); the centre is
 // (width/2, height/2) exactly as the Canvas uses cx/cy.
+//
+// style "neon" (ShClusterGauge.qml's neon Canvas, NeonPaint.js): no ticks,
+// scale numbers or inner dial; a dim track and a thick round-capped value
+// arc coloured along the scale from accentColor to accentColor2, red past
+// redlineFrom, over a soft glow; caption / big bold value / unit / label
+// stacked in the centre.
 #include <stdio.h>
 #include <string.h>
 
@@ -21,6 +27,8 @@ typedef struct {
     lv_obj_t *scale[MAX_MAJORS];
     int nscale;
     char accentColor[32];   // "" = Theme.autoAccent
+    char accentColor2[32];  // neon: the gradient's far end; "" = the accent 35 % lighter
+    bool neon;
 } state_t;
 
 static double clamp(double v, double lo, double hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -45,11 +53,68 @@ static bool accent_colours(const state_t *st, lv_color_t *accent, lv_color_t *de
     return true;
 }
 
+/* The neon arc's two ends: accentColor (or autoAccent) at the scale's
+   start, accentColor2 (or that colour 35 % lighter) at its end. */
+static void neon_colours(const state_t *st, lv_color_t *c0, lv_color_t *c1)
+{
+    lv_color_t deep, glow;
+    accent_colours(st, c0, &deep, &glow);
+    lv_opa_t opa = LV_OPA_COVER;
+    lv_color_t c = st->accentColor2[0] ? hmi_colour_hex(st->accentColor2, &opa) : lv_color_black();
+    *c1 = st->accentColor2[0] && opa > 0 ? c : hmi_shade(*c0, 35);
+}
+
+#define NEON_TRACK_OPA 31      // 12 %
+#define NEON_ARC_R 0.40        // x d, the stroke's middle
+#define NEON_STROKE 0.085      // x d
+
+static void draw_neon(hmi_widget_t *w, hmi_draw_t *d)
+{
+    state_t *st = w->state;
+    double W = w->width, H = w->height;
+    double cx = W / 2, cy = H / 2;
+    double dim = W < H ? W : H;
+    double span = fmax(0.0001, st->maximumValue - st->minimumValue);
+    double clamped = clamp(st->value, st->minimumValue, st->maximumValue);
+    double a0 = 90 + (360 - st->sweep) / 2, a1 = a0 + st->sweep;
+    double arcR = NEON_ARC_R * dim, strokeW = NEON_STROKE * dim, reach = hmi_neon_glow_reach(dim);
+    lv_color_t c0, c1, red = hmi_colour("autoRedline");
+    neon_colours(st, &c0, &c1);
+    // whole degrees, as the arcs are drawn: the pieces meet exactly
+    double redA = st->redlineFrom < st->maximumValue
+        ? lround(a0 + st->sweep * clamp((st->redlineFrom - st->minimumValue) / span, 0, 1)) : lround(a1);
+    double valueA = lround(a0 + st->sweep * (clamped - st->minimumValue) / span);
+    bool redStart = redA <= lround(a0), redEnd = redA >= lround(a1);
+
+    // 1. the dim track, in the scale's colours, red past the redline
+    hmi_draw_neon_arc(d, cx, cy, arcR, strokeW, a0, redA, a0, a1, c0, c1, NEON_TRACK_OPA, 10,
+                      redEnd ? HMI_CAPS : HMI_CAP_START);
+    hmi_draw_neon_arc(d, cx, cy, arcR, strokeW, redA, a1, a0, a1, red, red, NEON_TRACK_OPA, 10,
+                      redStart ? HMI_CAPS : HMI_CAP_END);
+    // 2. the value's glow, then 3. the value
+    double vEnd = fmin(valueA, redA);
+    bool intoRed = valueA > redA;
+    hmi_draw_neon_glow(d, cx, cy, arcR, strokeW, a0, vEnd, a0, a1, c0, c1, reach,
+                       intoRed ? HMI_CAP_START : HMI_CAPS);
+    if (intoRed)
+        hmi_draw_neon_glow(d, cx, cy, arcR, strokeW, redA, valueA, a0, a1, red, red, reach,
+                           redStart ? HMI_CAPS : HMI_CAP_END);
+    hmi_draw_neon_arc(d, cx, cy, arcR, strokeW, a0, vEnd, a0, a1, c0, c1, LV_OPA_COVER, 5,
+                      intoRed ? HMI_CAP_START : HMI_CAPS);
+    if (intoRed)
+        hmi_draw_neon_arc(d, cx, cy, arcR, strokeW, redA, valueA, a0, a1, red, red, LV_OPA_COVER, 5,
+                          redStart ? HMI_CAPS : HMI_CAP_END);
+}
+
 static void draw_cb(lv_event_t *e)
 {
     hmi_widget_t *w = lv_event_get_user_data(e);
     state_t *st = w->state;
     hmi_draw_t d = hmi_draw_begin(e);
+    if (st->neon) {
+        draw_neon(w, &d);
+        return;
+    }
     double W = w->width, H = w->height;
     double cx = W / 2, cy = H / 2;
     double dim = W < H ? W : H;
@@ -112,9 +177,57 @@ static void draw_cb(lv_event_t *e)
     }
 }
 
+/* Neon texts, centred: the value bold, about 0.30 d (smaller when long, to
+   stay inside the arc); the caption above it in the accent colour; the unit
+   and then the label under it, muted. The big face's line box has room
+   above the digits and below the baseline, so the neighbours tuck into it
+   by 0.10 and 0.12 of the value's size. */
+static void layout_neon(hmi_widget_t *w)
+{
+    state_t *st = w->state;
+    double W = w->width, H = w->height;
+    double dim = fmax(1, W < H ? W : H);
+    for (int i = 0; i < MAX_MAJORS; ++i)
+        if (st->scale[i]) lv_obj_add_flag(st->scale[i], LV_OBJ_FLAG_HIDDEN);
+    lv_color_t c0, c1;
+    neon_colours(st, &c0, &c1);
+
+    size_t chars = strlen(lv_label_get_text(st->readout));
+    int fs = hmi_px_min(fmin(0.30 * dim, 0.62 * dim / (fmax(1, chars) * 0.6)), 8);
+    lv_obj_set_style_text_font(st->readout, hmi_font(fs, 700), 0);
+    lv_obj_align(st->readout, LV_ALIGN_CENTER, 0, -hmi_px(0.03 * dim));
+
+    double chord = 0.56 * dim;
+    const char *cap = lv_label_get_text(st->caption);
+    size_t capLen = cap ? strlen(cap) : 0;
+    double capFs = 0.075 * dim;
+    if (capLen > 0 && capLen * capFs * 0.62 > chord) capFs = chord / (capLen * 0.62);
+    lv_obj_set_style_text_font(st->caption, hmi_font(hmi_px_min(capFs, 7), 600), 0);
+    lv_obj_set_style_text_color(st->caption, c0, 0);
+    lv_obj_set_width(st->caption, hmi_px(chord));
+    lv_label_set_long_mode(st->caption, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(st->caption, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align_to(st->caption, st->readout, LV_ALIGN_OUT_TOP_MID, 0, hmi_px(0.10 * fs));
+
+    const char *unit = lv_label_get_text(st->unit);
+    bool hasUnit = unit && unit[0];
+    lv_obj_set_style_text_font(st->unit, hmi_font(hmi_px_min(0.075 * dim, 7), 500), 0);
+    lv_obj_align_to(st->unit, st->readout, LV_ALIGN_OUT_BOTTOM_MID, 0, -hmi_px(0.12 * fs));
+    if (hasUnit) lv_obj_remove_flag(st->unit, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(st->unit, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_text_font(st->label, hmi_font(hmi_px_min(0.06 * dim, 7), 400), 0);
+    if (hasUnit) lv_obj_align_to(st->label, st->unit, LV_ALIGN_OUT_BOTTOM_MID, 0, 0);
+    else lv_obj_align_to(st->label, st->readout, LV_ALIGN_OUT_BOTTOM_MID, 0, -hmi_px(0.12 * fs));
+}
+
 static void layout(hmi_widget_t *w)
 {
     state_t *st = w->state;
+    if (st->neon) {
+        layout_neon(w);
+        return;
+    }
+    lv_obj_remove_flag(st->unit, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_text_color(st->caption, hmi_colour("autoAmber"), 0);
     double W = w->width, H = w->height;
     double dim = fmax(1, W < H ? W : H);
     double span = fmax(0.0001, st->maximumValue - st->minimumValue);
@@ -206,6 +319,8 @@ static void read_model(hmi_widget_t *w)
     st->showInnerDial = hmi_widget_bool(w, "showInnerDial", true);
     st->decimals = (int)hmi_widget_num(w, "decimals", 0);
     snprintf(st->accentColor, sizeof st->accentColor, "%s", hmi_widget_str(w, "accentColor", ""));
+    snprintf(st->accentColor2, sizeof st->accentColor2, "%s", hmi_widget_str(w, "accentColor2", ""));
+    st->neon = strcmp(hmi_widget_str(w, "style", "classic"), "neon") == 0;
 }
 
 static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
@@ -245,6 +360,10 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
     else if (strcmp(prop, "decimals") == 0) st->decimals = (int)hmi_value_as_num(value, st->decimals);
     else if (strcmp(prop, "accentColor") == 0)
         snprintf(st->accentColor, sizeof st->accentColor, "%s", hmi_value_as_str(value, ""));
+    else if (strcmp(prop, "accentColor2") == 0)
+        snprintf(st->accentColor2, sizeof st->accentColor2, "%s", hmi_value_as_str(value, ""));
+    else if (strcmp(prop, "style") == 0)
+        st->neon = strcmp(hmi_value_as_str(value, "classic"), "neon") == 0;
     else if (strcmp(prop, "readout") == 0 || strcmp(prop, "readoutUnit") == 0 ||
              strcmp(prop, "caption") == 0 || strcmp(prop, "label") == 0) {
         // text props: read back through the model (bound text arrives as the value)

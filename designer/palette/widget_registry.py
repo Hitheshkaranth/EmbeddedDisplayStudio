@@ -247,10 +247,15 @@ def default_registry() -> WidgetRegistry:
     # Instrument cluster widgets after the two reference dashboards; colours
     # come from Theme.qml's auto* block. An accent override (accentColor,
     # barColor; "" keeps the theme's) is the only colour they expose.
+    # ``style`` "neon" (the look of a glowing cockpit picture): no ticks,
+    # numbers or needle; a dim track and a thick round-capped value arc
+    # shaded along the scale from accentColor to ``accentColor2`` ("" = the
+    # accent lighter), red past redlineFrom, with a soft glow; caption, a big
+    # bold value, then unit and label in the centre.
     add("ShClusterGauge", "Cluster Gauge", "Automotive", "ShClusterGauge", 240, 240,
-        {"value": float, "minimumValue": float, "maximumValue": float, "majorStep": float, "redlineFrom": float, "sweep": float, "readout": str, "readoutUnit": str, "caption": str, "label": str, "decimals": int, "showInnerDial": bool, "accentColor": str, **common},
-        {"value": 4.2, "minimumValue": 0.0, "maximumValue": 8.0, "majorStep": 1.0, "redlineFrom": 7.0, "sweep": 240.0, "readout": '137', "readoutUnit": 'km/h', "caption": '', "label": 'x1000 RPM', "decimals": 0, "showInnerDial": True, "accentColor": "", **common_defaults},
-        ('value', 'readout', 'caption'), False, {}, ("accentColor",))
+        {"value": float, "minimumValue": float, "maximumValue": float, "majorStep": float, "redlineFrom": float, "sweep": float, "readout": str, "readoutUnit": str, "caption": str, "label": str, "decimals": int, "showInnerDial": bool, "accentColor": str, "style": str, "accentColor2": str, **common},
+        {"value": 4.2, "minimumValue": 0.0, "maximumValue": 8.0, "majorStep": 1.0, "redlineFrom": 7.0, "sweep": 240.0, "readout": '137', "readoutUnit": 'km/h', "caption": '', "label": 'x1000 RPM', "decimals": 0, "showInnerDial": True, "accentColor": "", "style": "classic", "accentColor2": "", **common_defaults},
+        ('value', 'readout', 'caption'), False, {"style": ("classic", "neon")}, ("accentColor", "accentColor2"))
     add("ShGearIndicator", "Gear Indicator", "Automotive", "ShGearIndicator", 120, 70,
         {"gears": str, "gear": str, "modeNumber": int, "showAll": bool, "orientation": str, **common},
         {"gears": 'P,R,N,D', "gear": 'D', "modeNumber": 4, "showAll": True, "orientation": 'horizontal', **common_defaults},
@@ -275,10 +280,12 @@ def default_registry() -> WidgetRegistry:
         {"title": str, "row1Label": str, "row1Value": str, "row1Unit": str, "row2Label": str, "row2Value": str, "row2Unit": str, **common},
         {"title": 'Distance', "row1Label": 'Day', "row1Value": '352', "row1Unit": 'km', "row2Label": 'Total', "row2Value": '110 593', "row2Unit": 'km', **common_defaults},
         ('row1Value', 'row2Value'))
+    # ``style`` "solid": one rounded bar filled in barColor (shaded along its
+    # length, with a soft glow) instead of cells -- a glowing fuel gauge.
     add("ShSegmentBar", "Segment Bar", "Automotive", "ShSegmentBar", 320, 36,
-        {"value": float, "minimumValue": float, "maximumValue": float, "segments": int, "label": str, "showPercent": bool, "lowLevel": float, "barColor": str, **common},
-        {"value": 60.0, "minimumValue": 0.0, "maximumValue": 100.0, "segments": 12, "label": 'SOC', "showPercent": True, "lowLevel": 20.0, "barColor": "", **common_defaults},
-        ('value',), False, {}, ("barColor",))
+        {"value": float, "minimumValue": float, "maximumValue": float, "segments": int, "label": str, "showPercent": bool, "lowLevel": float, "barColor": str, "style": str, **common},
+        {"value": 60.0, "minimumValue": 0.0, "maximumValue": 100.0, "segments": 12, "label": 'SOC', "showPercent": True, "lowLevel": 20.0, "barColor": "", "style": "segments", **common_defaults},
+        ('value',), False, {"style": ("segments", "solid")}, ("barColor",))
     add("ShIconTile", "Icon Tile", "Automotive", "ShIconTile", 100, 110,
         {"icon": str, "label": str, "enabled": bool, "active": bool, **common},
         {"icon": 'phone', "label": 'BT', "enabled": True, "active": False, **common_defaults},
@@ -288,13 +295,17 @@ def default_registry() -> WidgetRegistry:
         {"frontLeft": 2.6, "frontRight": 2.5, "rearLeft": 1.6, "rearRight": 2.2, "unit": 'bar', "warnBelow": 1.8, "decimals": 1, "label": 'TPMS', "axles": 2, "midLeft": 2.4, "midRight": 2.4, **common_defaults},
         ('frontLeft', 'frontRight', 'rearLeft', 'rearRight', 'midLeft', 'midRight'))
     # -- Rail (metro cab and control-room faces) ---------------------------
+    # ``style`` "neon": the value as three concentric thick arcs (outerColor
+    # brightest and glowing outermost, dimmer and thinner inwards towards
+    # innerColor), a big bold value with the unit under it, no needle.
     add("ShSpeedArc", "Speed Arc", "Rail", "ShSpeedArc", 420, 420,
         {"value": float, "maximumValue": float, "target": float, "showTarget": bool, "unit": str,
-         "targetLabel": str, "decimals": int, "outerColor": str, "innerColor": str, **common},
+         "targetLabel": str, "decimals": int, "outerColor": str, "innerColor": str, "style": str,
+         **common},
         {"value": 55.0, "maximumValue": 100.0, "target": 60.0, "showTarget": True, "unit": 'KM/H',
          "targetLabel": 'TARGET', "decimals": 0, "outerColor": '#22d3ee', "innerColor": '#a855f7',
-         **common_defaults},
-        ('value', 'target'), False, {}, ('outerColor', 'innerColor'))
+         "style": "classic", **common_defaults},
+        ('value', 'target'), False, {"style": ("classic", "neon")}, ('outerColor', 'innerColor'))
     add("ShTractionBar", "Traction / Brake", "Rail", "ShTractionBar", 140, 640,
         {"value": float, "title": str, "powerLabel": str, "brakeLabel": str,
          "propulsionText": str, "brakingText": str, **common},
@@ -411,13 +422,15 @@ def default_registry() -> WidgetRegistry:
          "slipLimit": float, **common},
         {"turnRate": 0.0, "slip": 0.0, "standardRate": 3.0,
          "slipLimit": 1.0, **common_defaults}, ("turnRate", "slip"))
+    # ``glow``: a soft glow around the fill in its colour (a vitals row).
     add("ShEngineBar", "Engine Bar", "Avionics", "ShEngineBar", 76, 190,
         {"value": float, "minimumValue": float, "maximumValue": float,
          "cautionValue": float, "warningValue": float, "label": str,
-         "units": str, "orientation": str, "barColor": str, **common},
+         "units": str, "orientation": str, "barColor": str, "glow": bool, **common},
         {"value": 68.0, "minimumValue": 0.0, "maximumValue": 100.0,
          "cautionValue": 80.0, "warningValue": 90.0, "label": "N1",
-         "units": "%", "orientation": "vertical", "barColor": "", **common_defaults}, ("value",),
+         "units": "%", "orientation": "vertical", "barColor": "", "glow": False,
+         **common_defaults}, ("value",),
         False, {"orientation": ("vertical", "horizontal")}, ("barColor",))
     add("ShFuelQuantity", "Fuel Quantity", "Avionics", "ShFuelQuantity", 190, 130,
         {"leftValue": float, "rightValue": float, "capacity": float,

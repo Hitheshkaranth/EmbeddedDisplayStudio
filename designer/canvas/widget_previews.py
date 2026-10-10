@@ -943,13 +943,18 @@ def paint_engine_bar(painter, rect, props, ctx):
         _rounded(painter, track, line, bar_h / 2)
         fill = QRectF(track.left(), track.top(), round(track.width() * (value - minimum) / span), bar_h)
         if fill.width() > 0:
+            if _prop(props, "glow", False) in (True, "true", "True", 1, "1"):
+                _glow(painter, fill, colour, bar_h / 2)
             _rounded(painter, fill, colour, bar_h / 2)
         return
     _rounded(painter, rect, efis("panel"), RADIUS["sm"])
     _text(painter,QRectF(rect.left(),rect.top(),rect.width(),22),_prop(props,"label","N1"),size=FONT["sm"],color=efis("text"),weight=WEIGHT_SEMIBOLD,flags=Qt.AlignCenter)
     well=QRectF(rect.center().x()-9,rect.top()+25,18,max(10,rect.height()-50))
     painter.setPen(QPen(efis("line"),1)); painter.setBrush(Qt.NoBrush); painter.drawRect(well)
-    fraction=(value-minimum)/span; painter.fillRect(QRectF(well.left()+2,well.bottom()-2-(well.height()-4)*fraction,well.width()-4,(well.height()-4)*fraction),colour)
+    fraction=(value-minimum)/span
+    if _prop(props, "glow", False) in (True, "true", "True", 1, "1") and fraction > 0:
+        _glow(painter, QRectF(well.left()+2,well.bottom()-2-(well.height()-4)*fraction,well.width()-4,(well.height()-4)*fraction), colour, 0)
+    painter.fillRect(QRectF(well.left()+2,well.bottom()-2-(well.height()-4)*fraction,well.width()-4,(well.height()-4)*fraction),colour)
     reading=f"{value:.0f}{_prop(props,'units','')}"; _text(painter,QRectF(rect.left(),rect.bottom()-22,rect.width(),20),reading,size=FONT["xs"],color=colour,weight=WEIGHT_SEMIBOLD,flags=Qt.AlignCenter)
 
 

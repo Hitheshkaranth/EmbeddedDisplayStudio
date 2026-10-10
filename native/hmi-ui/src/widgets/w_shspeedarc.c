@@ -10,6 +10,13 @@
 // Every dimension is relative to d = min(width, height); the centre is
 // (width/2, height/2) exactly as the Canvas uses cx/cy. Angles are degrees,
 // clockwise, 0 at 3 o'clock.
+//
+// style "neon": the value as three concentric thick round-capped arcs, the
+// outermost in outerColor (10 % deeper at the start, 40 % lighter towards
+// the end of the scale) over a dim track and a soft glow, the two inside it
+// thinner and dimmer (outerColor halfway to innerColor, then innerColor);
+// the value big and bold in the centre with the unit under it; the target
+// a white tick only (no callout).
 #include <stdio.h>
 #include <string.h>
 
@@ -21,7 +28,7 @@
 
 typedef struct {
     double value, maximumValue, target;
-    bool showTarget;
+    bool showTarget, neon;
     int decimals;
     char unit[32], targetLabel[48], outerColor[16], innerColor[16];
     lv_obj_t *face;
@@ -71,11 +78,50 @@ static void wedge(const hmi_draw_t *d, double cx, double cy, double r, double a0
     hmi_draw_arc(d, cx, cy, r / 2, r, a0, a1, c, opa);
 }
 
+// Neon geometry, x d: radius (stroke middle) and stroke of the three arcs.
+static const double NEON_R[3] = {0.40, 0.325, 0.26};
+static const double NEON_W[3] = {0.055, 0.04, 0.028};
+#define NEON_UNIT_COLOUR 0xb4bfcc
+
+static void draw_neon(hmi_widget_t *w, hmi_draw_t *d)
+{
+    state_t *st = w->state;
+    double W = w->width, H = w->height;
+    double cx = W / 2, cy = H / 2;
+    double dim = fmax(1, W < H ? W : H);
+    lv_color_t outer = hmi_colour_hex(st->outerColor, NULL);
+    lv_color_t inner = hmi_colour_hex(st->innerColor, NULL);
+    lv_color_t mid = lv_color_mix(inner, outer, 128);
+    double a0 = START_ANGLE, a1 = START_ANGLE + SWEEP;
+    double av = lround(angle_of(st, st->value));
+    double r0 = NEON_R[0] * dim, w0 = NEON_W[0] * dim;
+    lv_color_t deep = hmi_shade(outer, -10), light = hmi_shade(outer, 40);
+
+    // the outer arc's dim track, its glow and the value
+    arc_round(d, cx, cy, r0, w0, a0, a1, outer, (lv_opa_t)(0.14 * 255));
+    hmi_draw_neon_glow(d, cx, cy, r0, w0, a0, av, a0, a1, outer, outer, hmi_neon_glow_reach(dim), HMI_CAPS);
+    hmi_draw_neon_arc(d, cx, cy, r0, w0, a0, av, a0, a1, deep, light, LV_OPA_COVER, 5, HMI_CAPS);
+    // the two inside it, thinner and dimmer
+    arc_round(d, cx, cy, NEON_R[1] * dim, NEON_W[1] * dim, a0, av, mid, (lv_opa_t)(0.85 * 255));
+    arc_round(d, cx, cy, NEON_R[2] * dim, NEON_W[2] * dim, a0, av, inner, (lv_opa_t)(0.60 * 255));
+    // the target: a white tick across the outer arc
+    if (st->showTarget) {
+        double at = angle_of(st, st->target) * M_PI / 180;
+        double t0 = r0 - w0 / 2 - 0.015 * dim, t1 = r0 + w0 / 2 + 0.015 * dim;
+        hmi_draw_line(d, cx + t0 * cos(at), cy + t0 * sin(at), cx + t1 * cos(at), cy + t1 * sin(at),
+                      fmax(2, 0.010 * dim), lv_color_white(), LV_OPA_COVER);
+    }
+}
+
 static void draw_cb(lv_event_t *e)
 {
     hmi_widget_t *w = lv_event_get_user_data(e);
     state_t *st = w->state;
     hmi_draw_t d = hmi_draw_begin(e);
+    if (st->neon) {
+        draw_neon(w, &d);
+        return;
+    }
     double W = w->width, H = w->height;
     double cx = W / 2, cy = H / 2;
     double dim = fmax(1, W < H ? W : H);
@@ -124,7 +170,8 @@ static void update_texts(hmi_widget_t *w)
     int dp = decimals_of(st);
     lv_label_set_text_fmt(st->readout, "%.*f", dp, clamp(st->value, 0, st->maximumValue));
     lv_label_set_text(st->unitLabel, st->unit);
-    lv_obj_set_style_text_color(st->unitLabel, hmi_colour_hex(st->outerColor, NULL), 0);
+    lv_obj_set_style_text_color(st->unitLabel, st->neon ? lv_color_hex(NEON_UNIT_COLOUR)
+                                                        : hmi_colour_hex(st->outerColor, NULL), 0);
 
     // "<targetLabel>: <target> <unit in lower case>", e.g. "TARGET: 60 km/h"
     char unit[32];
@@ -146,9 +193,22 @@ static void layout(hmi_widget_t *w)
     double cx = W / 2, cy = H / 2;
     double dim = fmax(1, W < H ? W : H);
 
+    size_t chars = strlen(lv_label_get_text(st->readout));
+    if (st->neon) {
+        // bold, about 0.28 d, smaller when long to stay inside the innermost
+        // arc (about 0.49 d across); the unit under it, tucked into the big
+        // face's descender room
+        int fs = hmi_px_min(fmin(0.28 * dim, 0.46 * dim / (fmax(1, chars) * 0.6)), 8);
+        lv_obj_set_style_text_font(st->readout, hmi_font(fs, 700), 0);
+        lv_obj_align(st->readout, LV_ALIGN_CENTER, 0, -hmi_px(0.035 * dim));
+        lv_obj_set_style_text_font(st->unitLabel, hmi_font(hmi_px_min(0.08 * dim, 7), 500), 0);
+        lv_obj_align_to(st->unitLabel, st->readout, LV_ALIGN_OUT_BOTTOM_MID, 0, -hmi_px(0.12 * fs));
+        lv_obj_add_flag(st->callout, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_invalidate(st->face);
+        return;
+    }
     // centre readout and unit; a long readout ("100.0") takes a smaller face
     // so it stays inside the inner arc (about 0.58 d wide)
-    size_t chars = strlen(lv_label_get_text(st->readout));
     double fs = fmin(0.226 * dim, 0.58 * dim / (fmax(1, chars) * 0.62));
     lv_obj_set_style_text_font(st->readout, hmi_font(hmi_px_min(fs, 8), 700), 0);
     lv_obj_align(st->readout, LV_ALIGN_CENTER, 0, -hmi_px(0.045 * dim));
@@ -213,6 +273,7 @@ static void read_model(hmi_widget_t *w)
     copy_str(st->targetLabel, sizeof st->targetLabel, hmi_widget_str(w, "targetLabel", "TARGET"));
     copy_str(st->outerColor, sizeof st->outerColor, hmi_widget_str(w, "outerColor", "#22d3ee"));
     copy_str(st->innerColor, sizeof st->innerColor, hmi_widget_str(w, "innerColor", "#a855f7"));
+    st->neon = strcmp(hmi_widget_str(w, "style", "classic"), "neon") == 0;
 }
 
 static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
@@ -263,6 +324,8 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
         copy_str(st->outerColor, sizeof st->outerColor, hmi_value_as_str(value, st->outerColor));
     else if (strcmp(prop, "innerColor") == 0)
         copy_str(st->innerColor, sizeof st->innerColor, hmi_value_as_str(value, st->innerColor));
+    else if (strcmp(prop, "style") == 0)
+        st->neon = strcmp(hmi_value_as_str(value, "classic"), "neon") == 0;
     else return;
     update_texts(w);
     layout(w);

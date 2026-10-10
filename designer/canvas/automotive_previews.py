@@ -12,7 +12,8 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetrics, QLinearGradient,
                            QPainterPath, QPen, QPolygonF, QRadialGradient)
 
 from designer.canvas.widget_previews import (
-    FONT, WEIGHT_MEDIUM, WEIGHT_SEMIBOLD, _number, _override_colour, _prop, _rounded, _text, auto, token,
+    FONT, WEIGHT_MEDIUM, WEIGHT_SEMIBOLD, _glow, _number, _override_colour, _prop, _rounded, _text, auto,
+    shade, token,
 )
 
 
@@ -40,6 +41,9 @@ def _stub(painter, rect, props, display_name):
 
 def paint_cluster_gauge(painter, rect, props, ctx):
     """ShClusterGauge: arc-based automotive cluster instrument."""
+    if str(props.get("style") or "classic") == "neon":
+        from designer.canvas import neon_previews
+        return neon_previews.paint_cluster_gauge(painter, rect, props, ctx)
     value = _number(props, "value", 4.2)
     minimum = _number(props, "minimumValue", 0.0)
     maximum = _number(props, "maximumValue", 8.0)
@@ -644,6 +648,29 @@ def paint_segment_bar(painter, rect, props, ctx):
     cell_h = round(h * 0.6)
     cell_y = top + (h - cell_h) / 2.0
     x = left + label_width
+
+    if str(props.get("style") or "segments") == "solid":
+        # One rounded track with a rim, an inset rounded fill shaded along
+        # its length and a soft glow (ShSegmentBar.qml style "solid").
+        colour = auto("redline") if low else bar or auto("accent")
+        bar_w = avail
+        rad = round(cell_h * 0.25)
+        inset = max(2, round(cell_h * 0.1))
+        rim = QColor(colour)
+        rim.setAlphaF(0.8)
+        _rounded(painter, QRectF(x, cell_y, bar_w, cell_h), auto("track"), rad, rim,
+                 max(1, round(cell_h * 0.04)))
+        fill_w = round((bar_w - 2 * inset) * frac)
+        if fill_w >= 1:
+            fill = QRectF(x + inset, cell_y + inset, fill_w, cell_h - 2 * inset)
+            _glow(painter, fill, colour, max(0, rad - inset))
+            grad = QLinearGradient(fill.left(), 0, fill.right(), 0)
+            grad.setColorAt(0, shade(colour, -25))
+            grad.setColorAt(1, shade(colour, 20))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(grad))
+            painter.drawRoundedRect(fill, max(0, rad - inset), max(0, rad - inset))
+        return
 
     for i in range(seg_count):
         if i < total_full:

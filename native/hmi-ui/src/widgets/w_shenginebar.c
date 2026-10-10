@@ -3,7 +3,8 @@
 // Spec: ui/qml/Shadcn/ShEngineBar.qml -- a vertical bar gauge with caution
 // and warning markers, label and readout.  orientation "horizontal" is a
 // vitals row (label | thin rounded bar | value), barColor overrides the
-// normal/caution/warning fill colour.
+// normal/caution/warning fill colour; glow puts the kit's soft glow
+// (hmi_set_glow; ShGlow in the QML) around the fill in its colour.
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -18,7 +19,7 @@ typedef struct {
     char label_text[32];
     char units_text[16];
     char barColor[32];      // "" = colour by value
-    bool horizontal;
+    bool horizontal, glow;
 } state_t;
 
 static double clamp_val(double v, double lo, double hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -91,6 +92,24 @@ static void layout_horizontal(hmi_widget_t *w, double clamped, double fraction, 
     else lv_obj_add_flag(st->valueBar, LV_OBJ_FLAG_HIDDEN);
 }
 
+/* glow: the fill's soft glow, let out of the track's box. LVGL clips an
+   OVERFLOW_VISIBLE parent's children to its own ext draw size, so the track
+   claims the glow's reach while it glows. */
+static void well_ext_draw_cb(lv_event_t *e)
+{
+    state_t *st = lv_event_get_user_data(e);
+    int32_t *cur = lv_event_get_param(e);
+    if (st->glow && cur && *cur < HMI_GLOW_BLUR) *cur = HMI_GLOW_BLUR;
+}
+
+static void apply_glow(state_t *st, lv_color_t colour)
+{
+    hmi_set_glow(st->valueBar, colour, st->glow ? HMI_GLOW_OPA : 0);
+    if (st->glow) lv_obj_add_flag(st->well_frame, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    else lv_obj_remove_flag(st->well_frame, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    lv_obj_refresh_ext_draw_size(st->well_frame);
+}
+
 static void layout(hmi_widget_t *w)
 {
     state_t *st = w->state;
@@ -107,6 +126,7 @@ static void layout(hmi_widget_t *w)
     else if (st->value >= st->cautionValue) barColor = hmi_colour("efisCaution");
     else barColor = hmi_colour("efisNormal");
 
+    apply_glow(st, barColor);
     if (st->horizontal) {
         layout_horizontal(w, clamped, fraction, barColor);
         return;
@@ -167,7 +187,10 @@ static void layout(hmi_widget_t *w)
     lv_obj_set_size(st->valueBar, wellW - 4, valBarH);
     lv_obj_set_style_bg_color(st->valueBar, barColor, 0);
     lv_obj_set_style_bg_opa(st->valueBar, LV_OPA_COVER, 0);
-    lv_obj_align(st->valueBar, LV_ALIGN_BOTTOM_MID, 0, 2);
+    // Aligned in the well's content box (inside its 1 px border): 1 px past
+    // the well's bottom, clipped by it -- unless the glow lets it out of the
+    // well, when it ends 2 px above the bottom as in the QML.
+    lv_obj_align(st->valueBar, LV_ALIGN_BOTTOM_MID, 0, st->glow ? -1 : 2);
 
     /* Caution line */
     double cautionFrac = (st->cautionValue - st->minimumValue) / span;
@@ -211,6 +234,8 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     lv_obj_remove_style_all(st->well_frame);
     lv_obj_remove_flag(st->well_frame, LV_OBJ_FLAG_SCROLLABLE);
 
+    lv_obj_add_event_cb(st->well_frame, well_ext_draw_cb, LV_EVENT_REFR_EXT_DRAW_SIZE, st);
+
     st->valueBar = lv_obj_create(st->well_frame);
     lv_obj_remove_style_all(st->valueBar);
     lv_obj_remove_flag(st->valueBar, LV_OBJ_FLAG_SCROLLABLE);
@@ -236,6 +261,7 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     snprintf(st->units_text, sizeof st->units_text, "%s", hmi_widget_str(w, "units", "%"));
     snprintf(st->barColor, sizeof st->barColor, "%s", hmi_widget_str(w, "barColor", ""));
     st->horizontal = strcmp(hmi_widget_str(w, "orientation", "vertical"), "horizontal") == 0;
+    st->glow = hmi_widget_bool(w, "glow", false);
 
     layout(w);
     return face;
@@ -255,6 +281,8 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
         snprintf(st->units_text, sizeof st->units_text, "%s", hmi_value_as_str(value, ""));
     else if (strcmp(prop, "barColor") == 0)
         snprintf(st->barColor, sizeof st->barColor, "%s", hmi_value_as_str(value, ""));
+    else if (strcmp(prop, "glow") == 0)
+        st->glow = hmi_value_as_bool(value, st->glow);
     else if (strcmp(prop, "orientation") == 0)
         st->horizontal = strcmp(hmi_value_as_str(value, "vertical"), "horizontal") == 0;
     else if (strcmp(prop, "label") == 0)   // through layout(), which fits it to the bar

@@ -14,8 +14,18 @@
  * 7. Readout / readoutUnit  – crisp Text elements centred in the item
  * 8. Caption             – Amber text above the readout
  * 9. label               – bottom-right muted text
+ *
+ * style "neon" (default "classic"): no ticks, scale numbers, needle or
+ * inner dial. A dim track (12 %) and a thick round-capped value arc
+ * (radius 0.40d, stroke 0.085d) shaded along the scale from accentColor to
+ * accentColor2 (unset: the accent 35 % lighter), autoRedline past
+ * redlineFrom, over a soft glow (NeonPaint.js). Centre: the caption
+ * (0.075d, semibold, accent), the value bold ~0.30d (smaller when long),
+ * the unit (0.075d) and the label (0.06d) under it, muted.
+ * native/hmi-ui/src/widgets/w_shclustergauge.c draws the same.
  */
 import QtQuick 2.15
+import "NeonPaint.js" as Neon
 
 Item {
     id: root
@@ -37,6 +47,10 @@ Item {
      *  of the gradient is this colour 35 % of the way to black, the glow
      *  line 35 % of the way to white (hmi-ui mixes the same). */
     property color accentColor: "transparent"
+    /** "classic" | "neon" */
+    property string style: "classic"
+    /** neon: the gradient's far end (the scale's end); unset = the accent 35 % lighter. */
+    property color accentColor2: "transparent"
 
     implicitWidth: 240
     implicitHeight: 240
@@ -68,6 +82,12 @@ Item {
                                                       : Theme.autoAccentDeep
     readonly property color _glow: root._custom ? Qt.tint(root.accentColor, Qt.rgba(1, 1, 1, 0.35))
                                                 : Theme.autoGlow
+    readonly property bool _neon: root.style === "neon"
+    readonly property color _accent2: root.accentColor2.a > 0 ? root.accentColor2 : Theme.shade(root._accent, 35)
+    readonly property string _readoutText: root.readout !== "" ? root.readout : root._clamped.toFixed(root.decimals)
+    /** neon value face: ~0.30 d, smaller when long so it stays inside the arc */
+    readonly property int _neonFs: Math.max(8, Math.round(Math.min(0.30 * root._d,
+                                   0.62 * root._d / (Math.max(1, root._readoutText.length) * 0.6))))
 
     // Everything the face painter needs, values and colours alike; the
     // painter (faces/canvas or faces/native) never reads Theme itself.
@@ -88,13 +108,58 @@ Item {
     Loader {
         id: face
         anchors.fill: parent
+        visible: !root._neon
         source: Theme.face("ClusterGauge")
         onLoaded: item.spec = Qt.binding(function() { return root._spec })
     }
 
+    // -- neon: track, glow and value arc --
+    Canvas {
+        id: neonFace
+        anchors.fill: parent
+        visible: root._neon
+        readonly property var spec: root._neon ? [root.value, root.minimumValue, root.maximumValue,
+                                                  root.redlineFrom, root.sweep, root._accent, root._accent2,
+                                                  root.width, root.height] : []
+        onSpecChanged: requestPaint()
+        onPaint: {
+            var ctx = getContext("2d");
+            ctx.reset();
+            if (!root._neon) return;
+            var d = Math.min(width, height), cx = width / 2, cy = height / 2;
+            var span = Math.max(0.0001, root.maximumValue - root.minimumValue);
+            var a0 = 90 + (360 - root.sweep) / 2, a1 = a0 + root.sweep;
+            var arcR = 0.40 * d, strokeW = 0.085 * d, reach = Neon.glowReach(d);
+            var c0 = root._accent, c1 = root._accent2, red = Theme.autoRedline;
+            function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+            var redA = root.redlineFrom < root.maximumValue
+                ? Math.round(a0 + root.sweep * clamp((root.redlineFrom - root.minimumValue) / span, 0, 1))
+                : Math.round(a1);
+            var valueA = Math.round(a0 + root.sweep * (root._clamped - root.minimumValue) / span);
+            var redStart = redA <= Math.round(a0), redEnd = redA >= Math.round(a1);
+            // 1. dim track, red past the redline
+            Neon.neonArc(ctx, cx, cy, arcR, strokeW, a0, redA, a0, a1, c0, c1, 31, 10,
+                         redEnd ? Neon.CAPS : Neon.CAP_START);
+            Neon.neonArc(ctx, cx, cy, arcR, strokeW, redA, a1, a0, a1, red, red, 31, 10,
+                         redStart ? Neon.CAPS : Neon.CAP_END);
+            // 2. glow, 3. value
+            var vEnd = Math.min(valueA, redA), intoRed = valueA > redA;
+            Neon.neonGlow(ctx, cx, cy, arcR, strokeW, a0, vEnd, a0, a1, c0, c1, reach,
+                          intoRed ? Neon.CAP_START : Neon.CAPS);
+            if (intoRed)
+                Neon.neonGlow(ctx, cx, cy, arcR, strokeW, redA, valueA, a0, a1, red, red, reach,
+                              redStart ? Neon.CAPS : Neon.CAP_END);
+            Neon.neonArc(ctx, cx, cy, arcR, strokeW, a0, vEnd, a0, a1, c0, c1, 255, 5,
+                         intoRed ? Neon.CAP_START : Neon.CAPS);
+            if (intoRed)
+                Neon.neonArc(ctx, cx, cy, arcR, strokeW, redA, valueA, a0, a1, red, red, 255, 5,
+                             redStart ? Neon.CAPS : Neon.CAP_END);
+        }
+    }
+
     // -- 4b. Scale labels, as Text so they stay crisp at any size --
     Repeater {
-        model: root._majors
+        model: root._neon ? [] : root._majors
         delegate: Text {
             readonly property real angle: (root._startAngle + root.sweep * ((modelData - root.minimumValue) / root._span)) * Math.PI / 180
             x: width / 2 + root.width / 2 + 0.47 * root._d * Math.cos(angle) - width
@@ -114,18 +179,22 @@ Item {
         id: captionText
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: readoutText.top
-        anchors.bottomMargin: 4
+        anchors.bottomMargin: root._neon ? -Math.round(0.10 * root._neonFs) : 4
         text: root.caption
-        color: Theme.autoAmber
+        color: root._neon ? root._accent : Theme.autoAmber
         font.family: Theme.fontFamily
         // Inside the ring of scale numbers: the chord at the caption's
         // height, and a smaller face for a long caption (as hmi-ui does).
-        width: 2 * Math.sqrt(0.40 * 0.40 - 0.26 * 0.26) * root._d
+        // Neon: 0.56 d wide, 0.075 d.
+        width: root._neon ? Math.round(0.56 * root._d) : 2 * Math.sqrt(0.40 * 0.40 - 0.26 * 0.26) * root._d
         horizontalAlignment: Text.AlignHCenter
         elide: Text.ElideRight
-        font.pixelSize: Math.max(7, Math.round(Math.min(0.07 * root._d,
-                                 width / Math.max(1, root.caption.length * 0.56))))
-        font.weight: Theme.fontMedium
+        font.pixelSize: root._neon
+            ? Math.max(7, Math.round(Math.min(0.075 * root._d,
+                       0.56 * root._d / Math.max(1, root.caption.length * 0.62))))
+            : Math.max(7, Math.round(Math.min(0.07 * root._d,
+                       width / Math.max(1, root.caption.length * 0.56))))
+        font.weight: root._neon ? Theme.fontSemibold : Theme.fontMedium
         visible: root.caption !== ""
     }
 
@@ -133,33 +202,38 @@ Item {
         id: readoutText
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.verticalCenter: parent.verticalCenter
-        anchors.verticalCenterOffset: -(0.07 * root._d)
-        text: root.readout !== "" ? root.readout : root._clamped.toFixed(root.decimals)
+        anchors.verticalCenterOffset: root._neon ? -Math.round(0.03 * root._d) : -(0.07 * root._d)
+        text: root._readoutText
         color: Theme.autoText
         font.family: Theme.fontFamily
-        font.pixelSize: Math.round(0.28 * root._d)
-        font.weight: Theme.fontSemibold
+        font.pixelSize: root._neon ? root._neonFs : Math.round(0.28 * root._d)
+        font.weight: root._neon ? Font.Bold : Theme.fontSemibold
     }
 
     Text {
+        id: unitText
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.top: readoutText.bottom
-        anchors.topMargin: 2
+        anchors.topMargin: root._neon ? -Math.round(0.12 * root._neonFs) : 2
         text: root.readoutUnit
         color: Theme.autoMuted
         font.family: Theme.fontFamily
-        font.pixelSize: Math.round(0.08 * root._d)
+        font.pixelSize: root._neon ? Math.max(7, Math.round(0.075 * root._d)) : Math.round(0.08 * root._d)
+        font.weight: root._neon ? Theme.fontMedium : Font.Normal
+        visible: !root._neon || root.readoutUnit !== ""
     }
 
-    // -- 9. Label (bottom-right) --
+    // -- 9. Label (bottom-right; neon: under the unit) --
     Text {
         // At the foot of the arc's opening, beside the last scale label.
-        x: root.width / 2 + 0.2 * root._d
-        y: root.height / 2 + 0.33 * root._d - height / 2
+        x: root._neon ? Math.floor((root.width - width) / 2) : root.width / 2 + 0.2 * root._d
+        y: !root._neon ? root.height / 2 + 0.33 * root._d - height / 2
+           : unitText.visible ? unitText.y + unitText.height
+           : readoutText.y + readoutText.height - Math.round(0.12 * root._neonFs)
         text: root.label
         color: Theme.autoMuted
         font.family: Theme.fontFamily
-        font.pixelSize: Math.max(7, Math.round(0.045 * root._d))
+        font.pixelSize: Math.max(7, Math.round((root._neon ? 0.06 : 0.045) * root._d))
         visible: root.label !== ""
     }
 }

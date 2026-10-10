@@ -9,6 +9,7 @@
  * (no panel, no markers: it sits in a card).
  * barColor: the fill colour; unset (transparent, the Designer's "") keeps
  * the normal/caution/warning colouring by value.
+ * glow: the kit's soft glow (ShGlow) around the fill in its colour.
  */
 import QtQuick 2.15
 
@@ -23,6 +24,7 @@ Item {
     property string units: "%"
     property string orientation: "vertical"   // "vertical" | "horizontal"
     property color barColor: "transparent"
+    property bool glow: false
     implicitWidth: 76
     implicitHeight: 190
     readonly property real _span: Math.max(.0001, maximumValue-minimumValue)
@@ -40,7 +42,8 @@ Item {
         Rectangle {
             id: well; width: 18; anchors.top: parent.top; anchors.topMargin: 25; anchors.bottom: valueText.top; anchors.bottomMargin: 5
             anchors.horizontalCenter: parent.horizontalCenter; color: "transparent"; border.color: Theme.efisLine
-            Rectangle { width: parent.width-4; height: (parent.height-4)*root._fraction; anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 2; color: root._color }
+            ShGlow { anchors.fill: vFill; color: root._color; visible: root.glow && vFill.height > 0 }
+            Rectangle { id: vFill; width: parent.width-4; height: (parent.height-4)*root._fraction; anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 2; color: root._color }
             Rectangle { width: parent.width+8; height: 2; y: (parent.height-height)*(1-(root.cautionValue-root.minimumValue)/root._span); x: -4; color: Theme.efisCaution; visible: parent.height >= 20 }
             Rectangle { width: parent.width+8; height: 2; y: (parent.height-height)*(1-(root.warningValue-root.minimumValue)/root._span); x: -4; color: Theme.efisWarning; visible: parent.height >= 20 }
         }
@@ -92,7 +95,14 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             radius: height / 2
             color: Qt.rgba(Theme.efisLine.r, Theme.efisLine.g, Theme.efisLine.b, 0.18)
+            ShGlow {
+                anchors.fill: hFill
+                color: root._color
+                radius: hFill.radius
+                visible: root.glow && hFill.visible
+            }
             Rectangle {
+                id: hFill
                 width: Math.round(parent.width * root._fraction)
                 height: parent.height
                 radius: parent.radius

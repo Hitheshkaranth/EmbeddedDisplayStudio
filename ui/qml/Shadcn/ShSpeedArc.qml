@@ -22,8 +22,17 @@
  *                  pushed outwards elsewhere, never over the readout
  * Values outside 0..maximumValue clamp. The hmi-ui twin is
  * native/hmi-ui/src/widgets/w_shspeedarc.c.
+ *
+ * style "neon" (default "classic"): no wedge, needle or callout. The value
+ * as three concentric round-capped arcs over the same 240 degrees: the
+ * outermost (radius 0.40d, stroke 0.055d) over a 14 % track and a soft
+ * glow, shaded from outerColor 10 % darker to 40 % lighter along the scale;
+ * inside it 0.325d / 0.04d in outerColor halfway to innerColor at 85 %, and
+ * 0.26d / 0.028d in innerColor at 60 %. The value bold ~0.28d (smaller when
+ * long), the unit (0.08d, #b4bfcc) under it; the target a white tick.
  */
 import QtQuick 2.15
+import "NeonPaint.js" as Neon
 
 Item {
     id: root
@@ -38,6 +47,9 @@ Item {
     property int decimals: 0
     property string outerColor: '#22d3ee'
     property string innerColor: '#a855f7'
+    /** "classic" | "neon" */
+    property string style: 'classic'
+    readonly property bool _neon: style === 'neon'
 
     readonly property real _d: Math.max(1, Math.min(width, height))
     readonly property real _cx: width / 2
@@ -59,6 +71,10 @@ Item {
         onPaint: {
             var ctx = getContext("2d");
             ctx.reset();
+            if (root._neon) {
+                root._paintNeon(ctx);
+                return;
+            }
             var d = root._d, cx = root._cx, cy = root._cy;
             var rad = Math.PI / 180;
             var a0 = 90, a1 = 330, av = root._angle(root.value);
@@ -123,6 +139,28 @@ Item {
         }
     }
 
+    function _paintNeon(ctx) {
+        var d = root._d, cx = root._cx, cy = root._cy;
+        var outer = Qt.tint(root.outerColor, "transparent"), inner = Qt.tint(root.innerColor, "transparent");
+        var mid = Neon.mix(outer, inner, 128 / 255);   // lv_color_mix(inner, outer, 128)
+        var a0 = 90, a1 = 330, av = Math.round(root._angle(root.value));
+        var r0 = 0.40 * d, w0 = 0.055 * d;
+        Neon.arcRound(ctx, cx, cy, r0, w0, a0, a1, outer, 35);
+        Neon.neonGlow(ctx, cx, cy, r0, w0, a0, av, a0, a1, outer, outer, Neon.glowReach(d), Neon.CAPS);
+        Neon.neonArc(ctx, cx, cy, r0, w0, a0, av, a0, a1, Theme.shade(outer, -10), Theme.shade(outer, 40),
+                     255, 5, Neon.CAPS);
+        Neon.arcRound(ctx, cx, cy, 0.325 * d, 0.04 * d, a0, av, mid, 216);
+        Neon.arcRound(ctx, cx, cy, 0.26 * d, 0.028 * d, a0, av, inner, 153);
+        if (root.showTarget) {
+            var at = root._angle(root.target) * Math.PI / 180;
+            var t0 = r0 - w0 / 2 - 0.015 * d, t1 = r0 + w0 / 2 + 0.015 * d;
+            Neon.line(ctx, cx + t0 * Math.cos(at), cy + t0 * Math.sin(at), cx + t1 * Math.cos(at),
+                      cy + t1 * Math.sin(at), Math.max(2, 0.010 * d), "#ffffff", 255);
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    onStyleChanged: canvas.requestPaint()
     onValueChanged: canvas.requestPaint()
     onMaximumValueChanged: canvas.requestPaint()
     onTargetChanged: canvas.requestPaint()
@@ -137,13 +175,15 @@ Item {
         id: readoutText
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.verticalCenter: parent.verticalCenter
-        anchors.verticalCenterOffset: -Math.round(0.045 * root._d)
+        anchors.verticalCenterOffset: -Math.round((root._neon ? 0.035 : 0.045) * root._d)
         text: root._clamp(root.value).toFixed(root._dp)
         color: "#ffffff"
         font.family: Theme.fontFamily
         // a long readout ("100.0") takes a smaller face so it stays inside the inner arc
-        font.pixelSize: Math.max(8, Math.round(Math.min(0.226 * root._d,
-                                 0.58 * root._d / (Math.max(1, text.length) * 0.62))))
+        font.pixelSize: root._neon
+            ? Math.max(8, Math.round(Math.min(0.28 * root._d, 0.46 * root._d / (Math.max(1, text.length) * 0.6))))
+            : Math.max(8, Math.round(Math.min(0.226 * root._d,
+                       0.58 * root._d / (Math.max(1, text.length) * 0.62))))
         font.weight: 700
     }
 
@@ -151,18 +191,18 @@ Item {
         id: unitText
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.top: readoutText.bottom
-        anchors.topMargin: -Math.round(0.03 * root._d)
+        anchors.topMargin: root._neon ? -Math.round(0.12 * readoutText.font.pixelSize) : -Math.round(0.03 * root._d)
         text: root.unit
-        color: root.outerColor
+        color: root._neon ? "#b4bfcc" : root.outerColor
         font.family: Theme.fontFamily
-        font.pixelSize: Math.max(7, Math.round(0.071 * root._d))
+        font.pixelSize: Math.max(7, Math.round((root._neon ? 0.08 : 0.071) * root._d))
         font.weight: 500
     }
 
     // -- 7. target callout --
     Rectangle {
         id: callout
-        visible: root.showTarget
+        visible: root.showTarget && !root._neon
         readonly property real _padH: Math.round(0.026 * root._d)
         readonly property real _padV: Math.round(0.012 * root._d)
         width: calloutText.implicitWidth + 2 * _padH + 2

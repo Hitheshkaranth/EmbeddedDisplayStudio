@@ -904,6 +904,14 @@
      "kind": "color",
      "default": ""
     },
+    "style": {
+     "kind": "str",
+     "default": "classic"
+    },
+    "accentColor2": {
+     "kind": "color",
+     "default": ""
+    },
     "opacity": {
      "kind": "float",
      "default": 1.0
@@ -919,7 +927,12 @@
     "caption"
    ],
    "signals": [],
-   "choices": {},
+   "choices": {
+    "style": [
+     "classic",
+     "neon"
+    ]
+   },
    "assets": []
   },
   "ShCompass": {
@@ -1099,6 +1112,10 @@
     "barColor": {
      "kind": "color",
      "default": ""
+    },
+    "glow": {
+     "kind": "bool",
+     "default": false
     },
     "opacity": {
      "kind": "float",
@@ -1737,6 +1754,10 @@
      "kind": "color",
      "default": ""
     },
+    "style": {
+     "kind": "str",
+     "default": "segments"
+    },
     "opacity": {
      "kind": "float",
      "default": 1.0
@@ -1750,7 +1771,12 @@
     "value"
    ],
    "signals": [],
-   "choices": {},
+   "choices": {
+    "style": [
+     "segments",
+     "solid"
+    ]
+   },
    "assets": []
   },
   "ShSelect": {
@@ -1924,6 +1950,10 @@
      "kind": "color",
      "default": "#a855f7"
     },
+    "style": {
+     "kind": "str",
+     "default": "classic"
+    },
     "opacity": {
      "kind": "float",
      "default": 1.0
@@ -1938,7 +1968,12 @@
     "target"
    ],
    "signals": [],
-   "choices": {},
+   "choices": {
+    "style": [
+     "classic",
+     "neon"
+    ]
+   },
    "assets": []
   },
   "ShStatDot": {

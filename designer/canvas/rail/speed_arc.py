@@ -37,6 +37,9 @@ def _given(props, key, default):
 
 
 def paint(painter, rect, props, ctx):
+    if str(props.get("style") or "classic") == "neon":
+        from designer.canvas import neon_previews
+        return neon_previews.paint_speed_arc(painter, rect, props, ctx)
     value = _number(props, "value", 55.0)
     maximum = _number(props, "maximumValue", 100.0)
     target = _number(props, "target", 60.0)

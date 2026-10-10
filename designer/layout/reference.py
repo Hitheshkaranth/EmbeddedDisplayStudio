@@ -1058,8 +1058,21 @@ def _dress(project, registry, widgets, tokens) -> None:
         if value and _has(registry, widget.type, prop) and not str(widget.properties.get(prop) or "").strip():
             widget.properties[prop] = value
 
+    # A picture whose chrome carries vivid accents (a cockpit's glowing blue
+    # speed arc and orange RPM dial) draws its dials and bars in the kit's
+    # neon style, and so does one drawn on near-black glass (the truck's
+    # thin arcs are under 1 % of its pixels); a flat SCADA picture on grey
+    # keeps the classic ones. The plan's own "style" wins.
+    from .palette import _lum, _rgb
+    neon = bool(palette.get("primary")) or _lum(_rgb(palette.get("background", "#ffffff"))) < 0.008
     for widget in c._walk(widgets):
         props = widget.properties
+        if neon and widget.type in ("ShClusterGauge", "ShSpeedArc") and _has(registry, widget.type, "style"):
+            props.setdefault("style", "neon")
+        elif neon and widget.type == "ShSegmentBar" and _has(registry, widget.type, "style"):
+            props.setdefault("style", "solid")
+        elif neon and widget.type == "ShEngineBar" and _has(registry, widget.type, "glow"):
+            props.setdefault("glow", True)
         if widget.id == "titleBox" and props.get(c.CHROME_MARK):
             props["color"] = palette.get("inset", props.get("color"))
         elif widget.type == "Text" and props.get(c.CHROME_MARK) and re.search(r"Heading\d*$", widget.id or ""):
