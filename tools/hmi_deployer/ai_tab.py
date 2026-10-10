@@ -2934,6 +2934,15 @@ class AIDesignTab(QWidget):
                         # A picture's screen is never a handful of widgets:
                         # Ornith once elided every card ("widgets: [...]").
                         shortfall = f"the reply held only {widgets} widgets for the picture"
+                    if not shortfall and getattr(self, "_root_images", None):
+                        from designer.layout.compiler import REGION_MARK
+                        regions = {w.properties.get(REGION_MARK) for w in project.all_widgets()} - {None, ""}
+                        if len(regions) < 2:
+                            # Not a reproduction: the generic card grid (Ornith
+                            # once answered the furnace with "Instruments",
+                            # "Readings", "Trend" and "Controls" cards).
+                            shortfall = ("no section said where it sits in the picture; give every "
+                                         "section its \"region\" and follow the picture's layout")
                 if shortfall and not self._shortfall_retried:
                     # Once per brief, never a loop: the same brief again with a
                     # one-line note of what was missing.

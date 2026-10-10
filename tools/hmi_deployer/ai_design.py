@@ -61,6 +61,9 @@ DEFAULT_DAEMON_PORT = 7456
 # OpenAI-compatible servers count that against max_tokens -- 8k cut bigger
 # briefs off mid-payload, which the UI then reported as "no design parsed".
 MAX_OUTPUT_TOKENS = 16384
+
+#: Sampling temperature for a structured (plan or review) request.
+PLAN_TEMPERATURE = 0.2
 ANTHROPIC_MAX_OUTPUT_TOKENS = 8192
 
 # How many prior turns ride along with a new brief so "make the gauge bigger"
@@ -206,6 +209,8 @@ def structured_output(provider: str, schema: Optional[dict]) -> dict:
 #: every provider's structured-output keyword. A 400 on a request carrying any
 #: of them gets one retry without them (ODConnector._stream_events).
 _OPTIONAL_REQUEST_FIELDS = ("chat_template_kwargs", "guided_json", "response_format", "format")
+#: The structured-output ones among them, dropped first.
+_STRUCTURED_FIELDS = ("guided_json", "response_format", "format")
 
 
 # A placeholder only: AIDesignTab sets ai_generator.build_system_prompt(),
@@ -1041,6 +1046,12 @@ class ODConnector:
                 # Ask for the trailing usage chunk so token counts are exact.
                 "stream_options": {"include_usage": True},
             }
+            if getattr(self, "response_schema", None) is not None:
+                # A plan is structure, not prose: at the server's default
+                # temperature one furnace picture came back as its blocks in
+                # their places in one run and as a generic card grid of empty
+                # columns in the next.
+                payload["temperature"] = PLAN_TEMPERATURE
             if not self.byok.thinking:
                 # Qwen-style templates render a reasoning pass unless told
                 # otherwise; vLLM forwards these kwargs to the template.
@@ -1140,15 +1151,26 @@ class ODConnector:
                 resp = _post(payload)
             except urllib.error.HTTPError as exc:
                 # A server that rejects a field (the chat template kwargs, or
-                # the structured-output schema) answers 400; the request is
-                # worth one retry in its plainest form, without any of the
-                # optional fields byok_request may have put on top.
+                # the structured-output schema) answers 400. The schema goes
+                # first and alone: an engine without structured output
+                # (qwen3.8-flash-next-tf, 2026-10-10) still takes the
+                # thinking switch, and without it the reasoning pass spends
+                # the reply. Then, once, the plainest form.
                 optional = [k for k in payload if k in _OPTIONAL_REQUEST_FIELDS]
                 if exc.code != 400 or not optional:
                     raise
-                logger.info("retrying without %s", ", ".join(optional))
-                plain = {k: v for k, v in payload.items() if k not in optional}
-                resp = _post(plain)
+                schema_keys = [k for k in optional if k in _STRUCTURED_FIELDS]
+                resp = None
+                if schema_keys and len(schema_keys) < len(optional):
+                    logger.info("retrying without %s", ", ".join(schema_keys))
+                    try:
+                        resp = _post({k: v for k, v in payload.items() if k not in schema_keys})
+                    except urllib.error.HTTPError as again:
+                        if again.code != 400:
+                            raise
+                if resp is None:
+                    logger.info("retrying without %s", ", ".join(optional))
+                    resp = _post({k: v for k, v in payload.items() if k not in optional})
         except urllib.error.HTTPError as exc:
             body = ""
             try:

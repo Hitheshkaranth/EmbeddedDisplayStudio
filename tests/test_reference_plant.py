@@ -215,6 +215,55 @@ class StudioRun(unittest.TestCase):
         self.assertLess(rects["siteName"][0], box[0])
 
 
+class GenericAnswers(unittest.TestCase):
+    """What Ornith answered the furnace with in one Studio run (12:53): no
+    regions, the readings wrapped in Columns -- four empty dashed boxes."""
+
+    def test_containers_give_up_their_widgets(self):
+        from designer.layout.compiler import _flatten_containers
+        items = [{"type": "Column", "id": "section1", "children": [
+                     {"type": "ShProcessValue", "id": "a"},
+                     {"type": "Row", "items": [{"type": "ShProcessValue", "id": "b"}]}]},
+                 {"type": "Column", "id": "empty"},
+                 {"type": "ShButton", "id": "c"}]
+        self.assertEqual([w["id"] for w in _flatten_containers(items)], ["a", "b", "c"])
+
+    def test_a_plan_with_columns_keeps_its_readings(self):
+        plan = _plan()
+        right = [s for s in plan["pages"][0]["sections"] if s.get("region") == "right"]
+        right[0]["widgets"] = [{"type": "Column", "id": "col", "children": right[0]["widgets"]}]
+        ids = {w.id for w, _r in _walk(_generate(plan).pages[0].widgets)}
+        self.assertIn("hotBlastTemp", ids)
+        self.assertNotIn("col", ids)
+
+    def test_a_reference_reply_without_regions_is_asked_for_again(self):
+        from PySide6.QtWidgets import QApplication
+        QApplication.instance() or QApplication([])
+        from tools.hmi_deployer.ai_tab import AIDesignTab
+        import inspect
+        source = inspect.getsource(AIDesignTab._conclude_turn)
+        self.assertIn("REGION_MARK", source)
+        self.assertIn("follow the picture's layout", source)
+
+    def test_plans_are_asked_for_cool(self):
+        from tools.hmi_deployer.ai_design import BYOK_PRESETS, ODConnector, ProviderConfig, PLAN_TEMPERATURE
+        conn = ODConnector(mode="byok", byok=ProviderConfig.from_dict(
+            dict(BYOK_PRESETS["ornith"], provider="ornith", apiKey="k", model="m")))
+        _u, _h, payload = conn.byok_request("brief")
+        self.assertNotIn("temperature", payload, "a chat keeps the server's default")
+        conn.response_schema = {"type": "object"}
+        _u, _h, payload = conn.byok_request("brief")
+        self.assertEqual(payload["temperature"], PLAN_TEMPERATURE)
+
+    def test_the_reference_prompt_asks_for_the_inventory_first(self):
+        from tools.hmi_deployer.ai_generator import PLAN_SCHEMA, build_plan_prompt
+        prompt = build_plan_prompt(None, W, H, brief="x", reference=True)
+        self.assertIn('"inventory"', prompt)
+        self.assertLess(prompt.index('"inventory": ['), prompt.index('"pages": ['))
+        self.assertIn("never part of it", prompt)
+        self.assertIn("inventory", PLAN_SCHEMA["properties"])
+
+
 class LampStates(unittest.TestCase):
     def test_a_models_status_words_light_the_lamp(self):
         # Ornith's alarm lamp said "warning"; the kit's word is "warn", and the

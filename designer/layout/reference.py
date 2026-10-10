@@ -966,6 +966,12 @@ def _dress(project, registry, widgets, tokens) -> None:
                 props["headerHeight"] = int(max(ch.geometry["y"] + ch.geometry["height"] for ch in headings) + 3)
                 props["headerColor"] = palette.get("header", "")
         elif widget.type == "ShProcessValue":
+            value = props.get("value")
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and "decimals" in props:
+                # As many decimals as the picture's reading shows: a plan's
+                # decimals 3 drew its "4,500 tpd" as 4500.000.
+                text = repr(value)                     # 4500 -> 0, 63.0 -> 1, 0.033 -> 3
+                props["decimals"] = len(text.split(".", 1)[1]) if "." in text and "e" not in text else 0
             fill(widget, "boxColor", palette.get("inset"))
             fill(widget, "valueColor", palette.get("success"))
             if _has(registry, widget.type, "bevel"):

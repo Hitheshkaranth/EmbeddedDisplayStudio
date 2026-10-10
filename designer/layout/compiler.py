@@ -2006,6 +2006,30 @@ def _distribute(section: dict, widgets: list) -> None:
             if index < len(widgets) and not widgets[index].get(key):
                 widgets[index][key] = {match.group(1): value}
 
+#: Layout containers a model wraps a section's widgets in; the compiler
+#: does the layout, so a plan's container is only the widgets inside it.
+_CONTAINERS = ("Column", "Row", "Grid", "Item", "Flow", "Stack", "Group", "Container", "Box")
+
+
+def _flatten_containers(items: list) -> list:
+    """A section's widgets with layout containers replaced by their contents.
+
+    Ornith wrapped a furnace's readings in four Columns ("children" or
+    "items"); the converter keeps a container's own properties only, and
+    the screen showed four empty dashed boxes where the readings were.
+    """
+    out = []
+    for item in items:
+        inner = next((item.get(k) for k in ("children", "items", "widgets")
+                      if isinstance(item.get(k), list)), None)
+        if str(item.get("type") or "") in _CONTAINERS:
+            if inner:
+                out.extend(_flatten_containers([dict(w) for w in inner if isinstance(w, dict)]))
+            continue
+        out.append(item)
+    return out
+
+
 def _no_web_pictures(widgets) -> None:
     """A picture's source that is a web address is no picture: the panel
     loads files from its bundle only. Ornith filled a blast furnace's drawing
@@ -2036,7 +2060,7 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
         entries.extend(d for d in entry.get("__spill__") or []
                        if isinstance(d, dict) and d.get("widgets"))
     for entry in entries:
-        raw = [dict(w) for w in entry.get("widgets") or [] if isinstance(w, dict)]
+        raw = _flatten_containers([dict(w) for w in entry.get("widgets") or [] if isinstance(w, dict)])
         _distribute(entry, raw)
         # "size": "compact" | "normal" | "large", on the section or a widget.
         # Popped before conversion: ShButton has a "size" property of its own

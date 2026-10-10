@@ -47,6 +47,10 @@ _PLAN_WIDGET = _open_object({
 #: required, so the schema never rejects a plan the compiler would accept.
 PLAN_SCHEMA = _open_object({
     "name": {"type": "string"},
+    # Reference mode: the blocks the model sees, written before the pages --
+    # the "look first" step structured output otherwise leaves no room for
+    # (the reply is JSON from its first token).
+    "inventory": {"type": "array", "items": {"type": "string"}},
     "section": _open_object({
         "index": {"type": "integer"},
         "complete": {"type": "boolean"},
@@ -796,10 +800,15 @@ def build_reference_plan_prompt(registry: Optional[WidgetRegistry] = None,
         "the left edge, the left column, the middle, the right column, the bottom row) and "
         "list every visual block in it: every dial, arc, bar group, card, picture, selector "
         "and readout, and in the top strip every icon, the clock, the weather, check marks and "
-        "any name badge. Do this silently or in a few short lines before the JSON.\n"
+        "any name badge. Write it as the plan's \"inventory\", before \"pages\": one line per "
+        "block, \"<region>: <what it is> -> <the widgets for it>\" (\"right: card 'Blast / Air "
+        "Supply', 4 reading lines -> 4 ShProcessValue\"). A picture is only ever a drawing, a "
+        "photo or a logo: the cards, readouts, banners and buttons around it are blocks of "
+        "their own, never part of it.\n"
         "Step 2 -- plan. Each block becomes one section of the page (10 sections at most), in "
         "reading order within its region (top to bottom, then left to right). Never merge two "
-        "blocks into one section and never leave one out; a titled card in the picture is one "
+        "blocks into one section and never leave one out -- every line of the inventory is a "
+        "section; a titled card in the picture is one "
         "section with that title, and it holds one widget for EVERY instrument drawn in it (a "
         "card with a compass and a pitch/roll scale is a ShCompass and a ShAttitude).\n\n"
         "Regions -- every section carries \"region\", one of:\n" + _reference_regions() + "\n"
@@ -867,6 +876,7 @@ def build_reference_plan_prompt(registry: Optional[WidgetRegistry] = None,
         "section's \"accent\". Leave a colour out where the picture shows none.\n\n"
         "Reply with ONE fenced ```json block and nothing after it:\n"
         '{"name": "<short name>", "section": {"index": 1, "complete": true, "label": "", "next": ""}, '
+        '"inventory": ["<region>: <block> -> <widgets>", <one line for every block of the picture>], '
         '"pages": [{"id": "main", "name": "Main", "title": "<the screen title as the picture prints it, else 2-5 words>", '
         '"header": [{"type": "ShTelltale", "id": "wifi", "side": "left", "properties": '
         '{"icon": "wifi", "label": "WiFi", "lit": true}}, {"type": "Text", "id": "clock", '
