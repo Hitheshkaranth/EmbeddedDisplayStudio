@@ -517,5 +517,44 @@ def _free_port():
     return port
 
 
+class PlantTests(unittest.TestCase):
+    """A plant overview's readings have no dial to sweep: they move about the
+    value the design shows, and its clock tells the time. On the flight's
+    scale a blast furnace's blast volume of 76 600 read 0..0.5."""
+
+    def _design(self):
+        reading = lambda wid, tag, value, **props: {
+            "type": "ShProcessValue", "id": wid, "properties": dict(value=value, **props),
+            "bindings": {"value": {"tag": tag}}}
+        return {"pages": [{"widgets": [
+            reading("blastVol", "furnace.blast_vol", "76,600"),
+            reading("sinter", "furnace.sinter_pellet", 63.0),
+            reading("sulphur", "furnace.hm_sulphur", 0.033, decimals=3),
+            {"type": "Text", "id": "clock", "properties": {"text": "12-10-2026 10:46:02"},
+             "bindings": {"text": {"tag": "furnace.clock"}}},
+            {"type": "ShClusterGauge", "id": "rpm", "properties": {"minimumValue": 0, "maximumValue": 3},
+             "bindings": {"value": {"tag": "truck.rpm"}}}]}]}
+
+    def test_readings_ramp_about_the_designs_values(self):
+        signals = tagsim.plan(self._design())
+        frames = [tagsim.values_at(signals, t, 240.0) for t in range(0, 41, 2)]
+        vol = [f["furnace.blast_vol"] for f in frames]
+        self.assertTrue(all(76600 * 0.969 <= v <= 76600 * 1.031 for v in vol), vol)
+        self.assertGreater(max(vol) - min(vol), 76600 * 0.04, "it moves")
+        self.assertTrue(all(abs(f["furnace.hm_sulphur"] - 0.033) < 0.002 for f in frames))
+        self.assertEqual(frames[0]["furnace.hm_sulphur"], round(frames[0]["furnace.hm_sulphur"], 3))
+        self.assertTrue(all(f["furnace.sinter_pellet"] == round(f["furnace.sinter_pellet"], 1) for f in frames))
+        # Not in lockstep.
+        self.assertNotEqual([round(f["furnace.blast_vol"] / 76600, 3) for f in frames[:5]],
+                            [round(f["furnace.sinter_pellet"] / 63.0, 3) for f in frames[:5]])
+
+    def test_a_dial_still_sweeps_its_own_scale_and_the_clock_tells_the_time(self):
+        signals = tagsim.plan(self._design())
+        values = tagsim.values_at(signals, 60.0, 240.0)
+        self.assertEqual(signals["truck.rpm"].kind, "number")
+        self.assertTrue(0 <= values["truck.rpm"] <= 3)
+        self.assertRegex(values["furnace.clock"], r"^\d\d-\d\d-\d{4} \d\d:\d\d:\d\d$")
+
+
 if __name__ == "__main__":
     unittest.main()

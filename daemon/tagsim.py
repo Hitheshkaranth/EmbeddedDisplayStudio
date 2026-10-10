@@ -38,9 +38,11 @@ import argparse
 import json
 import logging
 import os
+import re
 import socket
 import sys
 import time
+import zlib
 
 logger = logging.getLogger("tagsim")
 
@@ -515,6 +517,37 @@ def _leaf(tag: str) -> str:
     return tag.rsplit(".", 1)[-1].lower()
 
 
+#: Readings drawn as a plant's numbers (a label, a value, a unit): with no
+#: range of their own they move about the design's value (signal_for).
+PROCESS_TYPES = {"ShProcessValue", "ShNumDisplay", "ShAutoReadout"}
+#: How far a plant reading ramps either side of its value, and how long one
+#: ramp up and down takes.
+PROCESS_SWING = 0.03
+PROCESS_PERIOD_S = 40.0
+
+
+def _sample(props: dict):
+    """The design's own numeric value for the widget ("76,600" counts), or None."""
+    value = props.get("value")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.replace(",", "").replace(" ", ""))
+        except ValueError:
+            return None
+    return None
+
+
+def _decimals_of(value) -> int:
+    """As many decimals as the design's value shows (63.0 -> 1, 4500 -> 0)."""
+    text = value if isinstance(value, str) else repr(value)
+    text = text.replace(",", "").strip()
+    return len(text.split(".", 1)[1]) if "." in text and "e" not in text.lower() else 0
+
+
 def _explicit_range(props: dict, prop: str):
     """A range the design itself states, in any of the kit's spellings."""
     for lo_key, hi_key in (("minimumValue", "maximumValue"),
@@ -551,17 +584,28 @@ def quantity_for(tag: str, prop: str) -> str:
 class Signal:
     """One tag: the part of the flight it reports, on the dial that draws it."""
 
-    __slots__ = ("tag", "kind", "quantity", "lo", "hi", "decimals", "state_key", "stations")
+    __slots__ = ("tag", "kind", "quantity", "lo", "hi", "decimals", "state_key", "stations", "phase")
 
     def __init__(self, tag, kind, quantity="progress", lo=0.0, hi=1.0,
-                 decimals=1, state_key="", stations=None):
+                 decimals=1, state_key="", stations=None, phase=0.0):
         self.tag, self.kind, self.quantity = tag, kind, quantity
         self.lo, self.hi = lo, hi
         self.decimals, self.state_key = decimals, state_key
         self.stations = stations
+        self.phase = phase
 
     def at(self, state: dict):
         """This tag's value for the aeroplane's current state."""
+        if self.kind == "clock":
+            # The wall clock, as the design's sample shows it (a date or not).
+            return time.strftime("%d-%m-%Y %H:%M:%S" if re.search(r"\d[-/.]\d", self.state_key)
+                                 else "%H:%M")
+        if self.kind == "process":
+            # A plant reading: a slow straight ramp up and down around the
+            # value the design shows (lo), by hi of it either way.
+            x = (float(state.get("_t", 0.0)) / PROCESS_PERIOD_S + self.phase) % 1.0
+            ramp = 4.0 * x - 1.0 if x < 0.5 else 3.0 - 4.0 * x
+            return round(self.lo * (1.0 + self.hi * ramp), self.decimals)
         if self.kind == "bool":
             # No state key means a lamp that reports trouble: nothing is
             # going wrong on this flight, so it stays dark.
@@ -675,6 +719,19 @@ def signal_for(tag: str, widget_type: str, prop: str, props: dict, stations=None
             quantity = "altitude"
         return Signal(tag, "colour", quantity, 0.0, SKY_FULL_FT)
 
+    if widget_type == "Text" and prop == "text" and re.search(r"clock|time|date", _leaf(tag)):
+        return Signal(tag, "clock", state_key=str(props.get("text") or ""))
+    sample = _sample(props) if prop == "value" else None
+    if sample and not _explicit_range(props, prop) and (
+            widget_type in PROCESS_TYPES or quantity_for(tag, prop) == "progress"):
+        # A plant's reading with nothing to sweep (no dial, no range): it moves
+        # about the value the design shows. On a flight's scale a furnace's
+        # blast volume of 76 600 read 0..0.5 and its coke rate 0..2 433.
+        decimals = props.get("decimals")
+        if not isinstance(decimals, int) or isinstance(decimals, bool) or decimals < 0:
+            decimals = _decimals_of(props.get("value"))
+        return Signal(tag, "process", "progress", sample, PROCESS_SWING, decimals,
+                      phase=(zlib.crc32(tag.encode("utf-8")) % 997) / 997.0)
     quantity = quantity_for(tag, prop)
     span = (_explicit_range(props, prop)
             or TYPE_RANGES.get(widget_type, {}).get(prop)
@@ -735,6 +792,7 @@ def values_at(signals: dict, t: float, duration: float, alarms: list = None) -> 
     filled in from that.
     """
     state = dict(state_at(t, duration))
+    state["_t"] = t                       # a plant reading ramps on the clock
     rail = next((sig for sig in signals.values() if sig.kind == "rail"), None)
     if rail is not None:
         state.update(journey_at(t, rail.stations))
