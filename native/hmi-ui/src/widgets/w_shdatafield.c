@@ -87,10 +87,17 @@ static void layout(hmi_widget_t *w)
             lv_obj_set_pos(st->unitEl, valueW + spacing4, labelH + 2 + valueH - hmi_font(unitFs, 400)->line_height - 3);
         }
     } else {
-        /* Label on left, value+unit on right */
+        /* Label on left, value+unit on right. The label is as wide as its
+         * words, at most half the field (ShDataField.qml: Math.min(
+         * implicitWidth, parent.width * 0.5)); a fixed half pushed a long
+         * value ("OPERATIONAL (ON-LINE)") off the field's end. */
         int maxLabelW = (int)(W * 0.5);
-        lv_obj_set_width(st->labelEl, (int32_t)maxLabelW);
+        lv_obj_set_width(st->labelEl, LV_SIZE_CONTENT);
         lv_obj_update_layout(st->labelEl);
+        if (lv_obj_get_width(st->labelEl) > maxLabelW) {
+            lv_obj_set_width(st->labelEl, (int32_t)maxLabelW);
+            lv_obj_update_layout(st->labelEl);
+        }
         labelW = lv_obj_get_width(st->labelEl);
 
         lv_obj_set_pos(st->labelEl, 0, 0);

@@ -26,6 +26,7 @@ to the UI through a signal so the canvas stays responsive while a local
 model streams.
 """
 import copy
+import functools
 import logging
 import os
 import re
@@ -1260,6 +1261,19 @@ class TurnWidget(QWidget):
         self.apply_btn.setIcon(_icon("device-desktop", 14, _token("foreground", self._theme)))
         self.card.setVisible(bool(prose) or bool(chips) or self.variant_strip.isVisible())
 
+    def note_review(self, text: str, tone: str):
+        """The review pass's chip (AIDesignTab._start_review): one, updated."""
+        chip = getattr(self, "_review_chip", None)
+        if chip is None:
+            chip = self._review_chip = Chip(text, tone)
+            self.chip_row.addWidget(chip)
+            self._chips.append(chip)
+        chip.setText(text)
+        chip.set_tone(tone)
+        chip.setToolTip(text)
+        self.chip_host.setVisible(True)
+        self.card.setVisible(True)
+
     def retheme(self, theme):
         self._theme = theme
         self.shell.retheme(theme)
@@ -1554,6 +1568,9 @@ class AIDesignTab(QWidget):
     """AI-powered design tab: model picker, generation console, canvas hand-off."""
 
     MAX_SECTION_RUNS = 8
+    #: A reference run that yields fewer widgets than this dropped part of
+    #: the picture, and is asked for once more (_conclude_turn).
+    REFERENCE_MIN_WIDGETS = 8
     SECTION_REQUEST = (
         "Build this design in sections. Return section 1 now as one complete, valid JSON "
         "design section containing at most 8 widgets. Include the section object with index, "
@@ -1581,6 +1598,10 @@ class AIDesignTab(QWidget):
         self.turns: list[TurnWidget] = []
         self._worker = None
         self._active_turn = None
+        # The review pass after a reference run (_start_review): its worker
+        # and what it is reviewing.
+        self._review_worker = None
+        self._review = None
         self._probe = None
         self._probe_pending = False
         self._probe_ok = None
@@ -2899,6 +2920,12 @@ class AIDesignTab(QWidget):
                 planned_run = self.settings.value("ai/layoutEngine", "compile", type=str) != "polish"
                 if planned_run and not (sectioned and (was_truncated or not section_complete)):
                     shortfall = plan_shortfall(project, previous=self._plan_previous)
+                    widgets = sum(1 for _ in project.all_widgets())
+                    if not shortfall and getattr(self, "_root_images", None) \
+                            and widgets < self.REFERENCE_MIN_WIDGETS:
+                        # A picture's screen is never a handful of widgets:
+                        # Ornith once elided every card ("widgets: [...]").
+                        shortfall = f"the reply held only {widgets} widgets for the picture"
                 if shortfall and not self._shortfall_retried:
                     # Once per brief, never a loop: the same brief again with a
                     # one-line note of what was missing.
@@ -2963,6 +2990,100 @@ class AIDesignTab(QWidget):
         # OpenDesign folds the record once the conclusion lands; the reader can reopen it.
         shell.set_lifecycle_open(False)
         self._account_session(m, stopped or failed)
+        if project is not None and not (stopped or failed) and self._review_wanted(project):
+            # After the worker has exited (_on_worker_done runs next).
+            QTimer.singleShot(0, functools.partial(self._start_review, turn, project, 1))
+
+    # -- the review pass ---------------------------------------------------
+
+    def _review_wanted(self, project) -> bool:
+        """A reference run on the canvas, reviewed against its picture
+        (ai/referenceReview, on by default) by a model the tab talks to."""
+        return (bool(getattr(project, "_reference_images", None))
+                and self.settings.value("ai/referenceReview", True, type=bool)
+                and self.auto_apply.isChecked()
+                and getattr(self.connector, "mode", "") == "byok"
+                and getattr(self.connector, "byok", None) is not None)
+
+    def _start_review(self, turn, project, round_: int):
+        """Show the model the reference and the screen as built, with what the
+        layout measures, and ask for fixes (tools.hmi_deployer.ai_review)."""
+        from tools.hmi_deployer.ai_review import (
+            REVIEW_SCHEMA, cut_images, layout_findings, review_brief, review_prompt, strip_pictures)
+        if (self.streaming or self._worker is not None or self._review_worker is not None
+                or self._queued_section_request or self._queued_retry
+                or project is not self.last_project):
+            return
+        renderer = self._variant_renderer()
+        if renderer is None:
+            return
+        renderer.project_dir = getattr(self.workspace, "bundle_dir", "") or None
+        image = renderer.render_page_sync(project, project.pages[0], project.screen.theme or "dark")
+        if image is None or image.isNull():
+            return
+        registry = getattr(self.generator, "registry", None)
+        findings = layout_findings(project, project.pages[0], registry)
+        references = project._reference_images
+        shown = strip_pictures(project)
+        try:
+            images = [references[0], encode_brief_image(image, "render.png")] + cut_images(references[0], shown)
+        except Exception:
+            logger.exception("review: could not encode the render")
+            return
+        from tools.hmi_deployer.ai_design import ODConnector
+        connector = ODConnector(mode="byok", byok=copy.deepcopy(self.connector.byok))
+        connector.system_prompt = review_prompt()
+        connector.response_schema = REVIEW_SCHEMA
+        self._review = {"turn": turn, "project": project, "round": round_,
+                        "findings": findings, "text": []}
+        worker = GenerationWorker(connector, review_brief(project, project.pages[0], findings, shown),
+                                  self.model_combo.currentText().strip() or None, self, images=images)
+        worker.event.connect(self._on_review_event)
+        worker.finished.connect(self._on_review_done)
+        worker.finished.connect(worker.deleteLater)
+        self._review_worker = worker
+        turn.note_review(f"Reviewing against the picture ({round_})\u2026", "info")
+        self.statusMessage.emit("AI Design: reviewing the screen against the reference picture")
+        worker.start()
+
+    def _on_review_event(self, ev: dict):
+        if self._review is not None and ev.get("type") == "delta":
+            self._review["text"].append(ev.get("text") or ev.get("delta") or "")
+        elif self._review is not None and ev.get("type") == "error":
+            self._review["error"] = str(ev.get("message") or "error")
+
+    def _on_review_done(self):
+        """Apply the review's fixes when they leave the layout no worse."""
+        from tools.hmi_deployer.ai_review import MAX_ROUNDS, apply_review, layout_findings, parse_review
+        state, self._review, self._review_worker = self._review, None, None
+        if state is None:
+            return
+        turn, project = state["turn"], state["project"]
+        if project is not self.last_project or self.streaming:
+            turn.note_review("Review skipped: the design changed", "neutral")
+            return
+        if state.get("error"):
+            turn.note_review("Review failed: " + state["error"][:80], "warn")
+            return
+        registry = getattr(self.generator, "registry", None)
+        candidate = copy.deepcopy(project)
+        made = apply_review(candidate, parse_review("".join(state["text"])), registry,
+                            findings=state["findings"])
+        if not made:
+            turn.note_review("Reviewed against the picture \u00b7 nothing to fix", "ok")
+            return
+        after = layout_findings(candidate, candidate.pages[0], registry)
+        if len(after) > len(state["findings"]):
+            turn.note_review("Review's fixes left more problems \u00b7 kept the design", "warn")
+            return
+        candidate._reference_images = getattr(project, "_reference_images", None)
+        self.last_project = candidate
+        turn.project = candidate
+        self.apply_to_canvas(project=candidate)
+        turn.note_review(f"Reviewed \u00b7 {len(made)} fix{'es' if len(made) != 1 else ''}: "
+                         + ", ".join(made), "ok")
+        if state["round"] < MAX_ROUNDS:
+            QTimer.singleShot(0, functools.partial(self._start_review, turn, candidate, state["round"] + 1))
 
     def _account_session(self, m: dict, aborted: bool):
         s = self.session

@@ -302,7 +302,11 @@ def _strip(project, registry, title, items, tokens, width, report, height=0):
         right = [w for w in everything if w not in left]
     partner = None
     if dated is not None and dated in right:
-        partner = next((w for w in right if w.type in ("ShDataField", "ShAnnunciator")), None)
+        # The status line, not an alarm lamp: paired with the date, a lamp
+        # left the status capped at its design width and cut off.
+        partner = next((w for w in right if w.type == "ShDataField"), None) or next(
+            (w for w in right if w.type == "ShAnnunciator"
+             and len(str(w.properties.get("text") or "")) > 8), None)
         if partner is not None:
             right.remove(dated)
     if boxed:
@@ -418,6 +422,14 @@ def _strip(project, registry, title, items, tokens, width, report, height=0):
         """The status reading over the date, right-aligned at `end`; returns
         the left edge reached."""
         col = max(span(widget, alone=True), field_w(dated, 0, 0))
+        if widget.type == "ShDataField":
+            # Side by side at the kit's sizes (a 12 px label, a 14 px
+            # semibold value), not capped at its design width: capped,
+            # "OPERATIONAL (ON-LINE)" was drawn as "OPERATIO".
+            props = widget.properties
+            value = str(props.get("value", "") or "") + str(props.get("units", "") or "")
+            col = max(col, len(str(props.get("label", "") or "")) * 12 * 0.62 + 8
+                      + len(value) * 14 * 0.72 + 14)
         x = end - col
         half = h / 2.0
         if widget.type == "ShDataField":
@@ -937,6 +949,19 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
             bucket[-1] = dataclasses.replace(bucket[-1], widgets=bucket[-1].widgets + section.widgets)
             continue
         bucket.append(section)
+    for name in ("left", "center"):
+        for index, section in enumerate(by_region[name]):
+            if any(w.type in _PICTURES and w.properties.get(c.CROP_MARK) for w in section.widgets):
+                # A picture cut from the reference already prints its labels:
+                # words planned beside it ("IRON ORE ->", "HOT AIR/PIPES") are
+                # those labels again, squeezed into a band under the picture.
+                printed = [w for w in section.widgets if w.type == "Text" and not w.bindings
+                           and not w.actions]
+                if printed:
+                    report.notes.append("left out, the picture prints them: "
+                                        + ", ".join(w.id for w in printed))
+                    by_region[name][index] = dataclasses.replace(
+                        section, widgets=[w for w in section.widgets if w not in printed])
 
     plant = bool(by_region["bottom"]) and all(_band_kind(s) for s in by_region["bottom"])
     if plant:

@@ -58,16 +58,25 @@ PLAN_SCHEMA = _open_object({
         "name": {"type": "string"},
         "title": {"type": "string"},
         "header": {"type": "array", "items": _PLAN_WIDGET},
-        "sections": {"type": "array", "items": _open_object({
-            "title": {"type": "string"},
-            "role": {"type": "string"},
-            "size": {"type": "string"},
-            # Only when the plan follows a reference picture: where on the
-            # screen the section sits (compiler.REGIONS) and its colour.
-            "region": {"type": "string"},
-            "accent": {"type": "string"},
-            "widgets": {"type": "array", "items": _PLAN_WIDGET},
-        })},
+        # A section is closed: its keys are these and it has widgets. Open,
+        # it let Ornith write a key named `widgets: [...], // one
+        # ShProcessValue per row ...` and close braces until it ran out of
+        # tokens -- guided decoding takes any string as a key.
+        "sections": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["widgets"],
+            "properties": {
+                "title": {"type": "string"},
+                "role": {"type": "string"},
+                "size": {"type": "string"},
+                # Only when the plan follows a reference picture: where on the
+                # screen the section sits (compiler.REGIONS) and its colour.
+                "region": {"type": "string"},
+                "accent": {"type": "string"},
+                "widgets": {"type": "array", "minItems": 1, "items": _PLAN_WIDGET},
+                "bindings": _FREE_OBJECT,
+                "actions": _FREE_OBJECT,
+            }}},
     })},
 }, required=("pages",))
 
