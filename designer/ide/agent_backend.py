@@ -27,7 +27,11 @@ SYSTEM_PROMPT = (
     "describes the bundle. generated/ holds QML the Studio regenerates from project.edsui for "
     "its desktop preview: never edit it (changes are overwritten); change project.edsui "
     "instead. Make focused changes with the edit tool, keep the existing style, "
-    "and say briefly what you changed and why."
+    "and say briefly what you changed and why. A command that does not exit on its own (a "
+    "server, a simulator such as daemon/plc_sim.py, a watcher, a tail -f) never runs in the "
+    "foreground: the bash tool waits for it to finish and you stop answering. Start it "
+    "detached (PowerShell: Start-Process -WindowStyle Hidden ...; sh: nohup ... &), then "
+    "check it with a short command that does exit."
 )
 
 
