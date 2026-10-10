@@ -46,6 +46,7 @@ PROPERTY_MINIMUMS = {
 # floor is -1, not 0.
 TYPE_PROPERTY_MINIMUMS = {
     ("ShProcessValue", "decimals"): -1,
+    ("ShKpiTile", "decimals"): -1,
 }
 
 
@@ -396,21 +397,57 @@ def default_registry() -> WidgetRegistry:
          "boxColor": "#0a0d0b", "trend": False, "trendColor": "#f5a524", "warnAbove": 0.0,
          "warnBelow": 0.0, "bevel": False, **common_defaults}, ("value",), False,
         {}, ("valueColor", "boxColor", "trendColor"))
+    # One tile of a plant dashboard's KPI strip: an optional icon at the left,
+    # the title, a big value with its unit beside it, a muted subtitle
+    # ("Target 3,200 tpd") and a thin progress bar along the bottom
+    # (``progress`` 0..100; negative hides it) with ``progressText`` ("94 %")
+    # at its right end. ``value`` is a number or a string ("3,015");
+    # ``decimals`` -1 shows it as given. Colours "" are the theme's
+    # (foreground, success, card).
+    add("ShKpiTile", "KPI tile", "Industrial", "ShKpiTile", 250, 96,
+        {"icon": str, "title": str, "value": str, "decimals": int, "unit": str, "subtitle": str,
+         "progress": float, "progressText": str, "valueColor": str, "barColor": str,
+         "tileColor": str, **common},
+        {"icon": "", "title": "KPI", "value": 0, "decimals": -1, "unit": "",
+         "subtitle": "", "progress": -1.0, "progressText": "", "valueColor": "",
+         "barColor": "", "tileColor": "", **common_defaults}, ("value", "progress"), False,
+        {}, ("valueColor", "barColor", "tileColor"))
+    # One line of a "Key Status" list: a lamp, a label and a status badge at
+    # the right ("RUNNING") coloured by ``state`` (ok green, warn amber, fault
+    # red, idle grey). Stacked rows line their badges up.
+    add("ShStatusRow", "Status row", "Industrial", "ShStatusRow", 280, 26,
+        {"label": str, "status": str, "state": str, **common},
+        {"label": "Main drive", "status": "RUNNING", "state": "ok", **common_defaults},
+        ("status", "state"), False, {"state": ("idle", "ok", "warn", "fault")})
+    # ``series`` "Label|#color|level;..." draws a multi-series dashboard trend
+    # (a legend at the right; until live data each series a gently noisy line
+    # about its level; ``data`` feeds the first); ``xLabels`` "12:30,13:00,..."
+    # under the x axis. Both "" = the single trace.
     add("ShTrendChart", "Trend Chart", "Industrial", "ShTrendChart", 300, 180,
         {"minValue": float, "maxValue": float, "warningLow": float,
          "warningHigh": float, "maxPoints": int, "label": str, "unit": str,
-         "lineColor": str, "fillColor": str, "lineWidth": float, **common},
+         "lineColor": str, "fillColor": str, "lineWidth": float, "series": str,
+         "xLabels": str, **common},
         {"minValue": 0.0, "maxValue": 100.0, "warningLow": 20.0,
          "warningHigh": 80.0, "maxPoints": 100, "label": "", "unit": "",
          "lineColor": "#006fee", "fillColor": "#006fee", "lineWidth": 2.0,
-         **common_defaults}, ("data",), False,
+         "series": "", "xLabels": "", **common_defaults}, ("data",), False,
         {}, ("lineColor", "fillColor"))
+    # ``columns`` "Time,Tag,Description,Priority,Status" and ``sampleRows``
+    # ("14:28:12|KILN-TEMP-HH|Kiln outlet temperature high|HIGH|ACTIVE;...")
+    # make it a table: a column header row, live alarms filled in by column
+    # name, and the sample rows drawn while no alarm is active (a design
+    # preview). HIGH/MEDIUM/LOW and ACTIVE/ACKED cells are coloured pills.
+    # ``headerColor`` colours the title bar ("" = the theme's); ``showCount``
+    # shows the count badge. With columns "Time,Description" it is an event log.
     add("ShAlarmTable", "Alarm Table", "Industrial", "ShAlarmTable", 350, 216,
         {"maxVisible": int, "title": str, "showTimestamp": bool, "rowHeight": float,
-         "mode": str, **common},
+         "mode": str, "columns": str, "sampleRows": str, "headerColor": str,
+         "showCount": bool, **common},
         {"maxVisible": 6, "title": "Active Alarms", "showTimestamp": True,
-         "rowHeight": 30.0, "mode": "active", **common_defaults}, ("alarms",), False,
-        {"mode": ("active", "history")})
+         "rowHeight": 30.0, "mode": "active", "columns": "", "sampleRows": "", "headerColor": "",
+         "showCount": True, **common_defaults}, ("alarms",), False,
+        {"mode": ("active", "history")}, ("headerColor",))
     add("ShFlightDirector", "Flight Director", "Avionics", "ShFlightDirector", 180, 120,
         {"pitchCommand": float, "rollCommand": float, "pitchLimit": float,
          "rollLimit": float, "active": bool, "mode": str, **common},

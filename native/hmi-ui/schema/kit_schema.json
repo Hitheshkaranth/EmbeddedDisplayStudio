@@ -247,6 +247,22 @@
      "kind": "str",
      "default": "active"
     },
+    "columns": {
+     "kind": "str",
+     "default": ""
+    },
+    "sampleRows": {
+     "kind": "str",
+     "default": ""
+    },
+    "headerColor": {
+     "kind": "color",
+     "default": ""
+    },
+    "showCount": {
+     "kind": "bool",
+     "default": true
+    },
     "opacity": {
      "kind": "float",
      "default": 1.0
@@ -1483,6 +1499,76 @@
    "choices": {},
    "assets": []
   },
+  "ShKpiTile": {
+   "qml": "ShKpiTile",
+   "category": "Industrial",
+   "display_name": "KPI tile",
+   "default_width": 250,
+   "default_height": 96,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "icon": {
+     "kind": "str",
+     "default": ""
+    },
+    "title": {
+     "kind": "str",
+     "default": "KPI"
+    },
+    "value": {
+     "kind": "str",
+     "default": 0
+    },
+    "decimals": {
+     "kind": "int",
+     "default": -1
+    },
+    "unit": {
+     "kind": "str",
+     "default": ""
+    },
+    "subtitle": {
+     "kind": "str",
+     "default": ""
+    },
+    "progress": {
+     "kind": "float",
+     "default": -1.0
+    },
+    "progressText": {
+     "kind": "str",
+     "default": ""
+    },
+    "valueColor": {
+     "kind": "color",
+     "default": ""
+    },
+    "barColor": {
+     "kind": "color",
+     "default": ""
+    },
+    "tileColor": {
+     "kind": "color",
+     "default": ""
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "value",
+    "progress"
+   ],
+   "signals": [],
+   "choices": {},
+   "assets": []
+  },
   "ShNumDisplay": {
    "qml": "ShNumDisplay",
    "category": "Industrial",
@@ -2111,6 +2197,51 @@
    },
    "assets": []
   },
+  "ShStatusRow": {
+   "qml": "ShStatusRow",
+   "category": "Industrial",
+   "display_name": "Status row",
+   "default_width": 280,
+   "default_height": 26,
+   "container": false,
+   "state_property": "",
+   "properties": {
+    "label": {
+     "kind": "str",
+     "default": "Main drive"
+    },
+    "status": {
+     "kind": "str",
+     "default": "RUNNING"
+    },
+    "state": {
+     "kind": "str",
+     "default": "ok"
+    },
+    "opacity": {
+     "kind": "float",
+     "default": 1.0
+    },
+    "visible": {
+     "kind": "bool",
+     "default": true
+    }
+   },
+   "bindable": [
+    "status",
+    "state"
+   ],
+   "signals": [],
+   "choices": {
+    "state": [
+     "idle",
+     "ok",
+     "warn",
+     "fault"
+    ]
+   },
+   "assets": []
+  },
   "ShTabs": {
    "qml": "ShTabs",
    "category": "Navigation",
@@ -2466,6 +2597,14 @@
     "lineWidth": {
      "kind": "float",
      "default": 2.0
+    },
+    "series": {
+     "kind": "str",
+     "default": ""
+    },
+    "xLabels": {
+     "kind": "str",
+     "default": ""
     },
     "opacity": {
      "kind": "float",

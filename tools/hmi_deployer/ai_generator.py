@@ -670,10 +670,12 @@ REFERENCE_CATALOGUE = (
     ("heading and attitude", ("ShCompass", "ShAttitude")),
     ("tyres", ("ShVehicleStatus",)),
     ("bars and levels", ("ShEngineBar", "ShSegmentBar", "ShAutoLevel", "ShTape")),
+    ("KPI tiles and status lists", ("ShKpiTile", "ShStatusRow")),
     ("readouts", ("ShProcessValue", "ShDataField", "ShValueTile", "ShTripInfo", "ShNumDisplay")),
     ("banners and alarm lamps", ("ShAnnunciator",)),
     ("pictures", ("Image", "ShAnimatedImage")),
-    ("trend, alarms, controls", ("ShTrendChart", "ShAlarmTable", "ShButton", "ShToggle")),
+    ("trend, alarms, controls", ("ShTrendChart", "ShAlarmTable", "ShButton", "ShToggle", "ShNumInput",
+                                 "ShTabs")),
 )
 _REFERENCE_SKIP_PROPERTIES = {"opacity", "visible", "enabled", "handleRadius", "size",
                               "pixelsPerDegree", "smooth", "fillMode"}
@@ -736,7 +738,35 @@ def _reference_process_guide(registry) -> str:
         "- a row of navigation buttons along the foot -> ONE section, title \"\", role "
         "\"controls\", region \"bottom\", one ShButton per button in the picture's order, each "
         "with a navigate action; the highlighted one (the current page) gets \"borderColor\" "
-        "and \"textColor\" its highlight colour.\n\n")
+        "and \"textColor\" its highlight colour.\n"
+        + _reference_dashboard_guide(registry) + "\n")
+
+
+def _reference_dashboard_guide(registry) -> str:
+    """The parts a control-room dashboard is built from, when the kit has them:
+    a kiln dashboard's KPI tiles came back as stacks of three fields, its status
+    list as text over lamps, its trend empty and its tables "No active alarms"."""
+    has = (lambda name: registry is not None and registry.get(name) is not None)
+    lines = []
+    if has("ShKpiTile"):
+        lines.append("- a KPI tile (a title, a big value with its unit, a target or set-point line, a "
+                     "thin progress bar with a percent) -> ONE ShKpiTile(title, value, unit, subtitle "
+                     "the small line, progress 0..100, progressText, icon) as a section of its own; a "
+                     "row of them is a row of sections, each with its box")
+    if has("ShStatusRow"):
+        lines.append("- a status list (a lamp, a name, a badge such as RUNNING / NORMAL / TRIPPED) -> "
+                     "one ShStatusRow(label, status, state ok|warn|fault|idle) per line, in one section")
+    lines.append("- a trend chart with several lines -> ONE ShTrendChart with minValue, maxValue, unit, "
+                 "\"series\": \"<label>|#<hex>|<the line's level>;...\" for every line in the legend and "
+                 "\"xLabels\": the time labels under it")
+    lines.append("- an alarm list or an event log -> ONE ShAlarmTable with \"title\" as printed, "
+                 "\"columns\": \"Time,Tag,Description,Priority,Status\" (the headers shown) and "
+                 "\"sampleRows\": the rows shown, \"cell|cell|...;next row\"")
+    lines.append("- a navigation column at the screen's edge -> one section, region \"rail\", one "
+                 "ShButton per item in order (\"text\" as printed)")
+    lines.append("- a control panel (mode and start/stop buttons, set-points with arrows) -> its "
+                 "ShButtons and one ShNumInput(label, value, unit, step) per set-point")
+    return "Dashboards:\n" + "".join(f"{line}.\n" for line in lines)
 
 
 def _reference_catalogue(registry) -> str:
@@ -749,7 +779,7 @@ def _reference_catalogue(registry) -> str:
                 continue
             colours = tuple(definition.color_properties)
             props = [p for p in definition.properties
-                     if p not in _REFERENCE_SKIP_PROPERTIES and p not in colours][:11]
+                     if p not in _REFERENCE_SKIP_PROPERTIES and p not in colours][:14]
             entry = f"{name}({', '.join(props)}"
             if colours:
                 entry += "; colours: " + ", ".join(colours)

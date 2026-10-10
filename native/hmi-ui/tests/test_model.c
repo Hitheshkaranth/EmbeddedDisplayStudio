@@ -55,7 +55,7 @@ int main(void)
     // Every type in the fixture is in the kit schema.
     for (size_t i = 0; i < page->nwidgets; ++i)
         CHECK(hmi_kit_find(page->widgets[i]->type) != NULL);
-    CHECK(hmi_kit_type_count == 53);
+    CHECK(hmi_kit_type_count == 55);
     CHECK(hmi_theme_colour("autoAccent", true) != NULL);
     CHECK_EQ_STR(hmi_theme_colour("autoAccent", true), "#22a8ff");
     CHECK_EQ_STR(hmi_theme_colour("background", false), "#ffffff");

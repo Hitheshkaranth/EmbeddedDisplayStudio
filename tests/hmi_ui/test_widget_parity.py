@@ -65,7 +65,10 @@ WAVE = ["Column", "Grid", "Image", "Item", "Rectangle", "Row", "ShAlarmTable", "
         # tests/test_animated_image.py check the frames instead.
         "ShAnimatedImage",
         # A SCADA reading row; at its defaults (no trend) label, box and digits.
-        "ShProcessValue"]
+        "ShProcessValue",
+        # Dashboard pieces: a KPI tile (defaults: title and value, no icon or
+        # bar) and a status row (lamp, label, RUNNING badge).
+        "ShKpiTile", "ShStatusRow"]
 
 
 # Style options compared with them set (registry defaults plus these), at the
@@ -103,6 +106,32 @@ STYLE_SAMPLES = [
     ("ShEngineBar", "glowRow", {"orientation": "horizontal", "glow": True, "barColor": "#ff3b3b",
                                 "value": 82, "label": "Coolant", "units": "\u00b0C"}, (300, 28)),
     ("ShEngineBar", "glow", {"glow": True}),
+    # Industrial dashboard pieces (a cement-kiln control picture): a KPI tile
+    # with icon, subtitle and progress bar; status rows in each state; the
+    # multi-series trend with x labels; the alarm table and the event log
+    # showing their sample rows.
+    ("ShKpiTile", "full", {"icon": "gauge", "title": "Production Rate", "value": "3,015", "unit": "tpd",
+                           "subtitle": "Target 3,200 tpd", "progress": 94, "progressText": "94 %"}),
+    ("ShKpiTile", "small", {"title": "Kiln Speed", "value": 3.2, "decimals": 2, "unit": "rpm",
+                            "subtitle": "SP 3.20 rpm", "progress": 100, "barColor": "#3ee05a"}, (180, 64)),
+    ("ShStatusRow", "warn", {"label": "Main Burner", "status": "WARNING", "state": "warn"}),
+    ("ShStatusRow", "fault", {"label": "ID Fan", "status": "TRIPPED", "state": "fault"}),
+    ("ShStatusRow", "idle", {"label": "Thrust Roller", "status": "NORMAL", "state": "idle"}),
+    ("ShTrendChart", "series", {"series": "Kiln Outlet|#ff3b3b|1150;Kiln Inlet|#ff9f1c|880;Zone 3|#ffd23f|800;"
+                                          "Zone 2|#3ee05a|580;Zone 1|#22b8ff|440",
+                                "minValue": 0, "maxValue": 1400, "unit": "°C",
+                                "xLabels": "12:30,13:00,13:30,14:00,14:30"}, (560, 200)),
+    ("ShAlarmTable", "table", {"title": "Active Alarms (3)", "headerColor": "#d32222", "showCount": False,
+                               "columns": "Time,Tag,Description,Priority,Status",
+                               "sampleRows": "14:28:12|KILN-TEMP-HH|Kiln outlet temperature high|HIGH|ACTIVE;"
+                                             "14:25:40|COAL-FLOW-LL|Coal feed rate low|MEDIUM|ACTIVE;"
+                                             "14:22:18|IDF-VFD-TRIP|ID Fan VFD trip|HIGH|ACKED"}, (860, 150)),
+    ("ShAlarmTable", "events", {"title": "Recent Events", "headerColor": "#1f2a38", "showCount": False,
+                                "columns": "Time,Description",
+                                "sampleRows": "14:31:05|Kiln speed setpoint changed to 3.20 rpm;"
+                                              "14:30:11|Coal feed rate setpoint changed to 22 tph;"
+                                              "14:18:22|Main burner started;14:15:03|Cooler fan 3 started;"
+                                              "14:10:02|Kiln in Auto mode"}, (550, 150)),
 ]
 
 

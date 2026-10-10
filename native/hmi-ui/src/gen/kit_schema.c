@@ -59,6 +59,10 @@ static const hmi_prop_schema_t props_ShAlarmTable[] = {
     {"showTimestamp", HMI_KIND_BOOL, "true", false},
     {"rowHeight", HMI_KIND_FLOAT, "30.0", false},
     {"mode", HMI_KIND_STR, "active", false},
+    {"columns", HMI_KIND_STR, "", false},
+    {"sampleRows", HMI_KIND_STR, "", false},
+    {"headerColor", HMI_KIND_COLOR, "", false},
+    {"showCount", HMI_KIND_BOOL, "true", false},
     {"opacity", HMI_KIND_FLOAT, "1.0", false},
     {"visible", HMI_KIND_BOOL, "true", false},
     {NULL, HMI_KIND_STR, NULL, false}
@@ -341,6 +345,23 @@ static const hmi_prop_schema_t props_ShInput[] = {
     {NULL, HMI_KIND_STR, NULL, false}
 };
 static const char *const signals_ShInput[] = {"accepted", NULL};
+static const hmi_prop_schema_t props_ShKpiTile[] = {
+    {"icon", HMI_KIND_STR, "", false},
+    {"title", HMI_KIND_STR, "KPI", false},
+    {"value", HMI_KIND_STR, "0", true},
+    {"decimals", HMI_KIND_INT, "-1", false},
+    {"unit", HMI_KIND_STR, "", false},
+    {"subtitle", HMI_KIND_STR, "", false},
+    {"progress", HMI_KIND_FLOAT, "-1.0", true},
+    {"progressText", HMI_KIND_STR, "", false},
+    {"valueColor", HMI_KIND_COLOR, "", false},
+    {"barColor", HMI_KIND_COLOR, "", false},
+    {"tileColor", HMI_KIND_COLOR, "", false},
+    {"opacity", HMI_KIND_FLOAT, "1.0", false},
+    {"visible", HMI_KIND_BOOL, "true", false},
+    {NULL, HMI_KIND_STR, NULL, false}
+};
+static const char *const signals_ShKpiTile[] = { NULL};
 static const hmi_prop_schema_t props_ShNumDisplay[] = {
     {"value", HMI_KIND_FLOAT, "0.0", true},
     {"unit", HMI_KIND_STR, "", false},
@@ -487,6 +508,15 @@ static const hmi_prop_schema_t props_ShStatusCard[] = {
     {NULL, HMI_KIND_STR, NULL, false}
 };
 static const char *const signals_ShStatusCard[] = { NULL};
+static const hmi_prop_schema_t props_ShStatusRow[] = {
+    {"label", HMI_KIND_STR, "Main drive", false},
+    {"status", HMI_KIND_STR, "RUNNING", true},
+    {"state", HMI_KIND_STR, "ok", true},
+    {"opacity", HMI_KIND_FLOAT, "1.0", false},
+    {"visible", HMI_KIND_BOOL, "true", false},
+    {NULL, HMI_KIND_STR, NULL, false}
+};
+static const char *const signals_ShStatusRow[] = { NULL};
 static const hmi_prop_schema_t props_ShTabs[] = {
     {"tabs", HMI_KIND_STR, "Overview, Details", false},
     {"currentIndex", HMI_KIND_INT, "0", false},
@@ -566,6 +596,8 @@ static const hmi_prop_schema_t props_ShTrendChart[] = {
     {"lineColor", HMI_KIND_COLOR, "#006fee", false},
     {"fillColor", HMI_KIND_COLOR, "#006fee", false},
     {"lineWidth", HMI_KIND_FLOAT, "2.0", false},
+    {"series", HMI_KIND_STR, "", false},
+    {"xLabels", HMI_KIND_STR, "", false},
     {"opacity", HMI_KIND_FLOAT, "1.0", false},
     {"visible", HMI_KIND_BOOL, "true", false},
     {NULL, HMI_KIND_STR, NULL, false}
@@ -651,7 +683,7 @@ const hmi_type_schema_t hmi_kit_types[] = {
     {"Item", "Navigation", 320, 240, true, "", props_Item, 3, signals_Item, 0},
     {"Rectangle", "Basic", 140, 90, false, "", props_Rectangle, 6, signals_Rectangle, 0},
     {"Row", "Containers", 300, 80, true, "", props_Row, 4, signals_Row, 0},
-    {"ShAlarmTable", "Industrial", 350, 216, false, "", props_ShAlarmTable, 7, signals_ShAlarmTable, 1},
+    {"ShAlarmTable", "Industrial", 350, 216, false, "", props_ShAlarmTable, 11, signals_ShAlarmTable, 1},
     {"ShAlert", "Industrial", 260, 90, false, "", props_ShAlert, 5, signals_ShAlert, 0},
     {"ShAnalogDisplay", "Industrial", 240, 64, false, "", props_ShAnalogDisplay, 16, signals_ShAnalogDisplay, 0},
     {"ShAnimatedImage", "Basic", 240, 160, false, "", props_ShAnimatedImage, 6, signals_ShAnimatedImage, 0},
@@ -674,6 +706,7 @@ const hmi_type_schema_t hmi_kit_types[] = {
     {"ShGearIndicator", "Automotive", 120, 70, false, "", props_ShGearIndicator, 7, signals_ShGearIndicator, 0},
     {"ShIconTile", "Automotive", 100, 110, false, "", props_ShIconTile, 6, signals_ShIconTile, 1},
     {"ShInput", "Basic", 180, 40, false, "text", props_ShInput, 6, signals_ShInput, 1},
+    {"ShKpiTile", "Industrial", 250, 96, false, "", props_ShKpiTile, 13, signals_ShKpiTile, 0},
     {"ShNumDisplay", "Industrial", 180, 80, false, "", props_ShNumDisplay, 13, signals_ShNumDisplay, 0},
     {"ShNumInput", "Industrial", 240, 64, false, "value", props_ShNumInput, 10, signals_ShNumInput, 1},
     {"ShProcessValue", "Industrial", 260, 30, false, "", props_ShProcessValue, 13, signals_ShProcessValue, 0},
@@ -685,13 +718,14 @@ const hmi_type_schema_t hmi_kit_types[] = {
     {"ShStatDot", "Industrial", 36, 36, false, "", props_ShStatDot, 4, signals_ShStatDot, 0},
     {"ShStationLine", "Rail", 520, 680, false, "", props_ShStationLine, 6, signals_ShStationLine, 0},
     {"ShStatusCard", "Rail", 240, 180, false, "", props_ShStatusCard, 7, signals_ShStatusCard, 0},
+    {"ShStatusRow", "Industrial", 280, 26, false, "", props_ShStatusRow, 5, signals_ShStatusRow, 0},
     {"ShTabs", "Navigation", 360, 240, true, "", props_ShTabs, 4, signals_ShTabs, 0},
     {"ShTape", "Avionics", 80, 260, false, "", props_ShTape, 10, signals_ShTape, 0},
     {"ShTelltale", "Automotive", 48, 48, false, "", props_ShTelltale, 7, signals_ShTelltale, 0},
     {"ShToggle", "Industrial", 160, 40, false, "checked", props_ShToggle, 7, signals_ShToggle, 1},
     {"ShTractionBar", "Rail", 140, 640, false, "", props_ShTractionBar, 8, signals_ShTractionBar, 0},
     {"ShTrainConsist", "Rail", 300, 880, false, "", props_ShTrainConsist, 8, signals_ShTrainConsist, 0},
-    {"ShTrendChart", "Industrial", 300, 180, false, "", props_ShTrendChart, 12, signals_ShTrendChart, 0},
+    {"ShTrendChart", "Industrial", 300, 180, false, "", props_ShTrendChart, 14, signals_ShTrendChart, 0},
     {"ShTripInfo", "Automotive", 200, 110, false, "", props_ShTripInfo, 9, signals_ShTripInfo, 0},
     {"ShTurnCoordinator", "Avionics", 180, 110, false, "", props_ShTurnCoordinator, 6, signals_ShTurnCoordinator, 0},
     {"ShVSI", "Avionics", 72, 220, false, "", props_ShVSI, 5, signals_ShVSI, 0},
@@ -699,7 +733,7 @@ const hmi_type_schema_t hmi_kit_types[] = {
     {"ShVehicleStatus", "Automotive", 150, 190, false, "", props_ShVehicleStatus, 13, signals_ShVehicleStatus, 0},
     {"Text", "Basic", 140, 32, false, "", props_Text, 9, signals_Text, 0},
 };
-const size_t hmi_kit_type_count = 53;
+const size_t hmi_kit_type_count = 55;
 
 const hmi_theme_colour_t hmi_theme_colours[] = {
     {"background", "#ffffff", "#09090b"},

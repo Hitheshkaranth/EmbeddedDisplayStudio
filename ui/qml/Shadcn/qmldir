@@ -58,3 +58,5 @@ ShStatusCard 1.0 ShStatusCard.qml
 ShAnimatedImage 1.0 ShAnimatedImage.qml
 ShProcessValue 1.0 ShProcessValue.qml
 ShGlow 1.0 ShGlow.qml
+ShKpiTile 1.0 ShKpiTile.qml
+ShStatusRow 1.0 ShStatusRow.qml

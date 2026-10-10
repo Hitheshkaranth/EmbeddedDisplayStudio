@@ -822,6 +822,342 @@ static void test_engine_bar_glow(void)
     anim_free(p, w);
 }
 
+// -- industrial dashboard pieces ------------------------------------------------
+
+static uint32_t bg_rgb(lv_obj_t *o) { return lv_color_to_u32(lv_obj_get_style_bg_color(o, 0)) & 0xffffff; }
+static bool shown(lv_obj_t *o) { return o && !lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN); }
+
+// The first label under `o` (depth first) whose text is `text`, or NULL.
+static lv_obj_t *find_label(lv_obj_t *o, const char *text)
+{
+    if (lv_obj_check_type(o, &lv_label_class) && strcmp(lv_label_get_text(o), text) == 0) return o;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); ++i) {
+        lv_obj_t *f = find_label(lv_obj_get_child(o, i), text);
+        if (f) return f;
+    }
+    return NULL;
+}
+
+// True when the snapshot holds a pixel within tol of c.
+static bool snap_has(const snap_t *s, lv_color_t c, int tol, int x0, int y0, int x1, int y1)
+{
+    for (int y = y0; y < y1; ++y)
+        for (int x = x0; x < x1; ++x)
+            if (near_rgb(px(s, x, y), c, tol)) return true;
+    return false;
+}
+
+// ShKpiTile: root -> [tile, icon, title, value, unit, subtitle, progressText, track -> fill]
+static lv_obj_t *kpi(hmi_widget_t *w, int i) { return lv_obj_get_child(w->native, i); }
+
+static void test_kpi_tile_defaults(void)
+{
+    hmi_project_t *p = one_widget_sized("ShKpiTile", "{}", 250, 96);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    CHECK(lv_obj_get_child_count(w->native) == 8);
+    CHECK(bg_rgb(kpi(w, 0)) == rgb(hmi_colour("card")));
+    CHECK(lv_obj_get_style_border_width(kpi(w, 0), 0) == 1);
+    CHECK(!shown(kpi(w, 1)));                              // no icon
+    CHECK_EQ_STR(lv_label_get_text(kpi(w, 2)), "KPI");
+    CHECK_EQ_STR(lv_label_get_text(kpi(w, 3)), "0");
+    CHECK(pv_rgb(kpi(w, 3)) == rgb(hmi_colour("foreground")));
+    CHECK(!shown(kpi(w, 4)) && !shown(kpi(w, 5)) && !shown(kpi(w, 6)));
+    CHECK(!shown(kpi(w, 7)));                              // progress -1: no bar
+    CHECK(lv_obj_get_x(kpi(w, 2)) == 13);                  // padX: no icon column
+    anim_free(p, w);
+}
+
+static void test_kpi_tile_full(void)
+{
+    hmi_project_t *p = one_widget_sized("ShKpiTile",
+        "{\"icon\":\"gauge\",\"title\":\"Production Rate\",\"value\":\"3,015\",\"unit\":\"tpd\","
+        "\"subtitle\":\"Target 3,200 tpd\",\"progress\":94,\"progressText\":\"94 %\"}", 250, 96);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    lv_obj_update_layout(lv_screen_active());
+    lv_obj_t *icon = kpi(w, 1), *title = kpi(w, 2), *value = kpi(w, 3), *unit = kpi(w, 4);
+    lv_obj_t *sub = kpi(w, 5), *pt = kpi(w, 6), *track = kpi(w, 7);
+    CHECK(shown(icon));
+    CHECK(lv_obj_get_x(icon) == 13 && lv_obj_get_width(icon) >= 36);
+    CHECK(lv_obj_get_x(title) > lv_obj_get_x(icon) + lv_obj_get_width(icon));   // text column after the icon
+    CHECK(lv_obj_get_x(value) == lv_obj_get_x(title) && lv_obj_get_x(sub) == lv_obj_get_x(title));
+    CHECK_EQ_STR(lv_label_get_text(value), "3,015");
+    CHECK_EQ_STR(lv_label_get_text(unit), "tpd");
+    // the unit follows the value on its baseline (its slot ends lower, it is smaller)
+    CHECK(lv_obj_get_x(unit) > lv_obj_get_x(value) + lv_obj_get_width(value));
+    CHECK(lv_obj_get_y(unit) > lv_obj_get_y(value));
+    CHECK(lv_obj_get_y(unit) + lv_obj_get_height(unit) <= lv_obj_get_y(value) + lv_obj_get_height(value) + 1);
+    // title above value above subtitle above the bar
+    CHECK(lv_obj_get_y(title) + lv_obj_get_height(title) <= lv_obj_get_y(value) + 2);
+    CHECK(lv_obj_get_y(value) + lv_obj_get_height(value) <= lv_obj_get_y(sub) + 2);
+    CHECK(lv_obj_get_y(sub) + lv_obj_get_height(sub) <= lv_obj_get_y(track));
+    CHECK(pv_rgb(sub) == rgb(hmi_colour("mutedForeground")));
+    // progress text right-aligned at the bar's right end, on the subtitle's line
+    CHECK(lv_obj_get_x(pt) + lv_obj_get_width(pt) == lv_obj_get_x(track) + lv_obj_get_width(track));
+    CHECK(lv_obj_get_y(pt) == lv_obj_get_y(sub));
+    // the bar: padX in from both sides, padY above the bottom, 94 % filled in success
+    CHECK(lv_obj_get_x(track) == 13 && lv_obj_get_width(track) == 250 - 26);
+    CHECK(lv_obj_get_y(track) + lv_obj_get_height(track) == 96 - 10);
+    lv_obj_t *fill = lv_obj_get_child(track, 0);
+    CHECK(lv_obj_get_width(fill) == (int32_t)lround(224 * 0.94));
+    CHECK(bg_rgb(fill) == rgb(hmi_colour("success")));
+    // bindings and colours
+    anim_set(w, "progress", hmi_value_num(150));
+    lv_obj_update_layout(lv_screen_active());
+    CHECK(lv_obj_get_width(lv_obj_get_child(kpi(w, 7), 0)) == 224);           // clamped at 100
+    anim_set(w, "progress", hmi_value_num(-1));
+    CHECK(!shown(kpi(w, 7)));
+    anim_set(w, "value", hmi_value_num(3.14159));
+    anim_set(w, "decimals", hmi_value_num(2));
+    CHECK_EQ_STR(lv_label_get_text(kpi(w, 3)), "3.14");
+    anim_set(w, "valueColor", hmi_value_str("#ff0000"));
+    CHECK(pv_rgb(kpi(w, 3)) == 0xff0000 && pv_rgb(kpi(w, 4)) == 0xff0000);
+    anim_set(w, "tileColor", hmi_value_str("#123456"));
+    CHECK(bg_rgb(kpi(w, 0)) == 0x123456);
+    anim_set(w, "progress", hmi_value_num(50));
+    anim_set(w, "barColor", hmi_value_str("#3ee05a"));
+    CHECK(bg_rgb(lv_obj_get_child(kpi(w, 7), 0)) == 0x3ee05a);
+    anim_free(p, w);
+}
+
+static void test_kpi_tile_scales_down(void)
+{
+    hmi_project_t *p = one_widget_sized("ShKpiTile",
+        "{\"icon\":\"gauge\",\"title\":\"Kiln Speed\",\"value\":3.2,\"decimals\":2,\"unit\":\"rpm\","
+        "\"subtitle\":\"SP 3.20 rpm\",\"progress\":100,\"progressText\":\"100 %\"}", 160, 56);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    lv_obj_update_layout(lv_screen_active());
+    CHECK_EQ_STR(lv_label_get_text(kpi(w, 3)), "3.20");
+    // every line stays above the bar and inside the tile
+    CHECK(lv_obj_get_y(kpi(w, 2)) >= 0);
+    CHECK(lv_obj_get_y(kpi(w, 5)) + lv_obj_get_height(kpi(w, 5)) <= lv_obj_get_y(kpi(w, 7)) + 1);
+    CHECK(lv_obj_get_x(kpi(w, 4)) + lv_obj_get_width(kpi(w, 4)) <= 160);
+    lv_refr_now(NULL);
+    anim_free(p, w);
+}
+
+// ShStatusRow: root -> [lamp -> highlight, label, badge -> text]
+static void test_status_row_states(void)
+{
+    hmi_project_t *p = one_widget_sized("ShStatusRow", "{\"label\":\"Main Drive\"}", 280, 26);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    lv_obj_t *lamp = lv_obj_get_child(w->native, 0), *label = lv_obj_get_child(w->native, 1);
+    lv_obj_t *badge = lv_obj_get_child(w->native, 2), *text = lv_obj_get_child(badge, 0);
+    CHECK_EQ_STR(lv_label_get_text(label), "Main Drive");
+    CHECK_EQ_STR(lv_label_get_text(text), "RUNNING");
+    CHECK(bg_rgb(badge) == rgb(hmi_colour("success")) && bg_rgb(lamp) == rgb(hmi_colour("success")));
+    CHECK(pv_rgb(text) == 0x07130b);                                  // dark text on green
+    CHECK(lv_obj_get_width(lamp) == 14 && lv_obj_get_height(lamp) == 14);
+    CHECK(lv_obj_get_x(badge) + lv_obj_get_width(badge) == 280);      // right-aligned
+    int32_t bx = lv_obj_get_x(badge), bw = lv_obj_get_width(badge);
+    CHECK(bw == (int32_t)lround(280 * 0.29));
+    anim_set(w, "status", hmi_value_str("NORMAL"));
+    CHECK(lv_obj_get_x(badge) == bx && lv_obj_get_width(badge) == bw); // stacked rows line up
+    anim_set(w, "state", hmi_value_str("warn"));
+    CHECK(bg_rgb(badge) == rgb(hmi_colour("warning")));
+    anim_set(w, "state", hmi_value_str("fault"));
+    CHECK(bg_rgb(badge) == rgb(hmi_colour("destructive")) && pv_rgb(text) == 0xffffff);
+    anim_set(w, "state", hmi_value_str("idle"));
+    CHECK(bg_rgb(badge) == rgb(hmi_colour("muted")));
+    CHECK(bg_rgb(lamp) == rgb(hmi_colour("mutedForeground")));
+    CHECK(pv_rgb(text) == rgb(hmi_colour("mutedForeground")));
+    anim_set(w, "status", hmi_value_str(""));
+    CHECK(!shown(badge));
+    lv_obj_update_layout(lv_screen_active());
+    CHECK(lv_obj_get_width(label) > 200);                             // the label takes the row
+    lv_refr_now(NULL);
+    anim_free(p, w);
+}
+
+// ShTrendChart: bg -> [label, chartBg, warnZone, unitLabel, face, sface, grid..., yLabels...]
+static void test_trend_chart_series(void)
+{
+    hmi_project_t *p = one_widget_sized("ShTrendChart",
+        "{\"series\":\"Kiln Outlet|#ff3b3b|1150;Kiln Inlet|#ff9f1c|880;Zone 1|#22b8ff|440\","
+        "\"minValue\":0,\"maxValue\":1400,\"unit\":\"C\",\"xLabels\":\"12:30,13:00,13:30\"}", 320, 120);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    lv_obj_t *sface = lv_obj_get_child(w->native, 5);
+    CHECK(shown(sface));
+    CHECK(!shown(lv_obj_get_child(w->native, 1)) && !shown(lv_obj_get_child(w->native, 4)));
+    snap_t s = snap(w);
+    CHECK(s.buf != NULL);
+    // each series is drawn, and the legend swatches too (right fifth)
+    CHECK(snap_has(&s, lv_color_hex(0xff3b3b), 24, 0, 0, 220, 120));
+    CHECK(snap_has(&s, lv_color_hex(0x22b8ff), 24, 0, 0, 220, 120));
+    CHECK(snap_has(&s, lv_color_hex(0xff9f1c), 24, 240, 0, 320, 120));
+    // the red line sits about its level: well above the blue one
+    int redY = -1, blueY = -1;
+    for (int y = 0; y < 120 && (redY < 0 || blueY < 0); ++y) {
+        if (redY < 0 && near_rgb(px(&s, 120, y), lv_color_hex(0xff3b3b), 24)) redY = y;
+        if (blueY < 0 && near_rgb(px(&s, 120, y), lv_color_hex(0x22b8ff), 24)) blueY = y;
+    }
+    CHECK(redY >= 0 && blueY > redY + 20);
+    // deterministic: a second draw is the same picture
+    snap_t s2 = snap(w);
+    CHECK(s2.buf && s.buf && memcmp(s.buf->data, s2.buf->data, s.buf->data_size) == 0);
+    unsnap(&s2);
+    unsnap(&s);
+    // live data feeds the first series
+    hmi_value_t list = hmi_value_null();
+    list.kind = HMI_V_LIST;
+    list.count = 3;
+    list.items = calloc(3, sizeof(hmi_value_t));
+    list.items[0] = hmi_value_num(100);
+    list.items[1] = hmi_value_num(110);
+    list.items[2] = hmi_value_num(105);
+    hmi_registry_find(w->type)->set_prop(w, "data", &list);
+    hmi_value_free(&list);
+    lv_refr_now(NULL);
+    // back to the classic view
+    anim_set(w, "series", hmi_value_str(""));
+    CHECK(!shown(lv_obj_get_child(w->native, 5)));
+    CHECK(shown(lv_obj_get_child(w->native, 1)) && shown(lv_obj_get_child(w->native, 4)));
+    lv_refr_now(NULL);
+    anim_free(p, w);
+}
+
+// ShAlarmTable: root -> [header -> [title, badge -> count], body -> [empty, column row, rows...]]
+static void test_alarm_table_sample_rows(void)
+{
+    hmi_project_t *p = one_widget_sized("ShAlarmTable",
+        "{\"title\":\"Active Alarms\",\"headerColor\":\"#d32222\",\"columns\":\"Time,Tag,Description,Priority,Status\","
+        "\"sampleRows\":\"14:28:12|KILN-TEMP-HH|Kiln outlet temperature high|HIGH|ACTIVE;"
+        "14:25:40|COAL-FLOW-LL|Coal feed rate low|MEDIUM|ACKED;14:22:18|IDF-VFD-TRIP|ID Fan VFD trip|LOW|ACTIVE\"}",
+        860, 150);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    lv_obj_t *header = lv_obj_get_child(w->native, 0), *body = lv_obj_get_child(w->native, 1);
+    CHECK(bg_rgb(header) == 0xd32222);
+    CHECK(pv_rgb(lv_obj_get_child(header, 0)) == 0xffffff);          // white on red
+    CHECK(lv_obj_get_height(header) == 26);                          // compact title bar
+    CHECK_EQ_STR(lv_label_get_text(lv_obj_get_child(lv_obj_get_child(header, 1), 0)), "3");
+    CHECK(!shown(lv_obj_get_child(body, 0)));                        // no "No active alarms"
+    CHECK(lv_obj_get_child_count(body) == 1 + 1 + 3);                // column row + 3 rows
+    lv_obj_t *hr = lv_obj_get_child(body, 1);
+    CHECK(find_label(hr, "Description") != NULL);
+    CHECK(bg_rgb(hr) == rgb(hmi_colour("secondary")));
+    lv_obj_t *row0 = lv_obj_get_child(body, 2), *row1 = lv_obj_get_child(body, 3);
+    CHECK(lv_obj_get_height(row0) == 30);                            // rowHeight fits
+    lv_obj_t *high = find_label(row0, "HIGH");
+    CHECK(high && bg_rgb(lv_obj_get_parent(high)) == rgb(hmi_colour("destructive")));
+    lv_obj_t *active = find_label(row0, "ACTIVE");
+    CHECK(active && lv_obj_get_style_border_width(lv_obj_get_parent(active), 0) == 1);
+    CHECK(pv_rgb(find_label(row0, "KILN-TEMP-HH")) == rgb(hmi_colour("destructive")));  // an active row
+    CHECK(pv_rgb(find_label(row1, "COAL-FLOW-LL")) == rgb(hmi_colour("foreground")));   // an acked one
+    lv_obj_t *medium = find_label(row1, "MEDIUM");
+    CHECK(medium && bg_rgb(lv_obj_get_parent(medium)) == rgb(hmi_colour("warning")));
+    // the description column is the widest
+    lv_obj_t *t = find_label(row0, "14:28:12"), *d = find_label(row0, "Kiln outlet temperature high");
+    CHECK(t && d && lv_obj_get_width(d) > 2 * lv_obj_get_width(t));
+    anim_set(w, "showCount", hmi_value_bool(false));
+    CHECK(!shown(lv_obj_get_child(header, 1)));
+    lv_refr_now(NULL);
+    anim_free(p, w);
+}
+
+static void test_alarm_table_narrow_and_events(void)
+{
+    // narrow: the short columns keep their width, the description gives way
+    hmi_project_t *p = one_widget_sized("ShAlarmTable",
+        "{\"columns\":\"Time,Tag,Description,Priority,Status\","
+        "\"sampleRows\":\"14:28:12|KILN-TEMP-HH|Kiln outlet temperature high|HIGH|ACTIVE\"}", 420, 110);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    lv_obj_t *row = lv_obj_get_child(lv_obj_get_child(w->native, 1), 2);
+    lv_obj_t *t = find_label(row, "14:28:12");
+    CHECK(t != NULL);
+    if (t) CHECK(lv_text_get_width("14:28:12", 8, lv_obj_get_style_text_font(t, 0), 0) <= lv_obj_get_width(t));
+    anim_free(p, w);
+
+    // an event log: two columns, five rows sharing the height
+    p = one_widget_sized("ShAlarmTable",
+        "{\"title\":\"Recent Events\",\"showCount\":false,\"columns\":\"Time,Description\","
+        "\"sampleRows\":\"14:31:05|a;14:30:11|b;14:18:22|c;14:15:03|d;14:10:02|e\"}", 550, 150);
+    CHECK(p != NULL);
+    if (!p) return;
+    w = build(p);
+    lv_obj_t *body = lv_obj_get_child(w->native, 1);
+    CHECK(lv_obj_get_child_count(body) == 1 + 1 + 5);
+    int32_t rh = lv_obj_get_height(lv_obj_get_child(body, 2));
+    CHECK(rh == (150 - 26 - 20) / 5);
+    lv_obj_t *last = lv_obj_get_child(body, 6);
+    CHECK(lv_obj_get_y(last) + rh <= lv_obj_get_height(body));
+    CHECK(!shown(lv_obj_get_child(lv_obj_get_child(w->native, 0), 1)));
+    CHECK(bg_rgb(lv_obj_get_child(w->native, 0)) == rgb(hmi_colour("secondary")));   // headerColor ""
+    anim_free(p, w);
+}
+
+static void test_alarm_table_live_alarms_fill_columns(void)
+{
+    hmi_project_t *p = one_widget_sized("ShAlarmTable",
+        "{\"columns\":\"Time,Tag,Description,Priority,Status\",\"sampleRows\":\"x|y|z|LOW|ACKED\"}", 600, 150);
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    // one live alarm: [tag, label, severity, value, message, timestamp, acknowledged]
+    hmi_value_t al = hmi_value_null();
+    al.kind = HMI_V_LIST;
+    al.count = 7;
+    al.items = calloc(7, sizeof(hmi_value_t));
+    al.items[0] = hmi_value_str("kiln.temp");
+    al.items[1] = hmi_value_str("Kiln");
+    al.items[2] = hmi_value_str("fault");
+    al.items[3] = hmi_value_num(1210);
+    al.items[4] = hmi_value_str("Kiln outlet temperature high");
+    al.items[5] = hmi_value_str("14:28:12");
+    al.items[6] = hmi_value_bool(false);
+    hmi_value_t list = hmi_value_null();
+    list.kind = HMI_V_LIST;
+    list.count = 1;
+    list.items = calloc(1, sizeof(hmi_value_t));
+    list.items[0] = al;
+    hmi_registry_find(w->type)->set_prop(w, "alarms", &list);
+    lv_obj_t *body = lv_obj_get_child(w->native, 1);
+    CHECK(lv_obj_get_child_count(body) == 1 + 1 + 1);                // the sample row gives way
+    lv_obj_t *row = lv_obj_get_child(body, 2);
+    // labels lay out (and drop a provisional elision) on the layout pass
+    lv_obj_update_layout(lv_screen_active());
+    CHECK(find_label(row, "kiln.temp") && find_label(row, "14:28:12"));
+    CHECK(find_label(row, "Kiln outlet temperature high") && find_label(row, "HIGH") && find_label(row, "ACTIVE"));
+    CHECK(find_label(row, "x") == NULL);
+    CHECK(lv_obj_has_flag(row, LV_OBJ_FLAG_CLICKABLE));
+    hmi_value_free(&list);
+    // cleared: the sample row is back
+    list = hmi_value_null();
+    list.kind = HMI_V_LIST;
+    hmi_registry_find(w->type)->set_prop(w, "alarms", &list);
+    lv_obj_update_layout(lv_screen_active());
+    CHECK(find_label(lv_obj_get_child(body, 2), "x") != NULL);
+    lv_refr_now(NULL);
+    anim_free(p, w);
+}
+
+static void test_alarm_table_classic_untouched(void)
+{
+    hmi_project_t *p = one_widget("ShAlarmTable", "{}");
+    CHECK(p != NULL);
+    if (!p) return;
+    hmi_widget_t *w = build(p);
+    lv_obj_t *header = lv_obj_get_child(w->native, 0), *body = lv_obj_get_child(w->native, 1);
+    CHECK(lv_obj_get_height(header) == 36);
+    CHECK(bg_rgb(header) == rgb(hmi_colour("secondary")));
+    CHECK(shown(lv_obj_get_child(body, 0)));                         // "No active alarms"
+    CHECK(lv_obj_get_child_count(body) == 1);
+    CHECK(shown(lv_obj_get_child(header, 1)));                       // the badge
+    anim_free(p, w);
+}
+
 int main(void)
 {
     lv_init();
@@ -850,5 +1186,14 @@ int main(void)
     test_speed_arc_neon();
     test_segment_bar_solid();
     test_engine_bar_glow();
+    test_kpi_tile_defaults();
+    test_kpi_tile_full();
+    test_kpi_tile_scales_down();
+    test_status_row_states();
+    test_trend_chart_series();
+    test_alarm_table_sample_rows();
+    test_alarm_table_narrow_and_events();
+    test_alarm_table_live_alarms_fill_columns();
+    test_alarm_table_classic_untouched();
     return check_summary("test_widgets");
 }

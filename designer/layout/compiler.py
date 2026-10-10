@@ -68,6 +68,7 @@ KIND_ORDER = {FACE: 0, TILE: 1, STRIP: 2, CHART: 3, TABLE: 4, LAMP: 5, CONTROL: 
 # strip: it takes a whole row instead of a grid cell.
 STRIP_ASPECT = 3.0
 TILE_TYPES = ("ShValueTile", "ShNumDisplay", "ShAutoReadout", "ShDataField", "ShProcessValue",
+              "ShKpiTile", "ShStatusRow",
               "ShTripInfo", "ShAnalogDisplay", "ShSegmentBar", "ShProgress", "ShGearIndicator",
               "ShDriveMode", "ShIconTile", "ShAlert", "Image", "Rectangle")
 LAMP_TYPES = ("ShStatDot", "ShTelltale", "ShAnnunciator")

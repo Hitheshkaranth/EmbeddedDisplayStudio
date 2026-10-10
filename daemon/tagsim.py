@@ -519,7 +519,7 @@ def _leaf(tag: str) -> str:
 
 #: Readings drawn as a plant's numbers (a label, a value, a unit): with no
 #: range of their own they move about the design's value (signal_for).
-PROCESS_TYPES = {"ShProcessValue", "ShNumDisplay", "ShAutoReadout"}
+PROCESS_TYPES = {"ShProcessValue", "ShNumDisplay", "ShAutoReadout", "ShKpiTile"}
 #: How far a plant reading ramps either side of its value, and how long one
 #: ramp up and down takes.
 PROCESS_SWING = 0.03

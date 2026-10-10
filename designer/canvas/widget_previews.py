@@ -1201,6 +1201,10 @@ def paint_analog_display(painter, rect, props, ctx):
 
 def paint_trend_chart(painter, rect, props, ctx):
     """ShTrendChart: a small line chart with area fill and grid lines."""
+    if str(props.get("series") or "").strip():
+        # The multi-series dashboard view (dashboard_previews.py).
+        from designer.canvas.dashboard_previews import paint_trend_series
+        return paint_trend_series(painter, rect, props, ctx)
     min_val = _number(props, "minValue", 0.0)
     max_val = _number(props, "maxValue", 100.0)
     warn_low = _number(props, "warningLow", 20.0)
@@ -1274,6 +1278,10 @@ def paint_trend_chart(painter, rect, props, ctx):
 
 def paint_alarm_table(painter, rect, props, ctx):
     """ShAlarmTable: an alarm list with header and sample rows."""
+    if str(props.get("columns") or "").strip() or str(props.get("sampleRows") or "").strip():
+        # The table view (dashboard_previews.py).
+        from designer.canvas.dashboard_previews import paint_alarm_table_view
+        return paint_alarm_table_view(painter, rect, props, ctx)
     title = str(_prop(props, "title", "Active Alarms"))
     max_visible = int(_number(props, "maxVisible", 6))
     row_h = max(16, min(30, (rect.height() - 36) / max(1, max_visible)))
@@ -1514,6 +1522,9 @@ _PAINTERS.update(automotive_previews.PAINTERS)
 # Rail painters: designer/canvas/rail_previews.py, one module per type.
 from designer.canvas import rail_previews  # noqa: E402
 _PAINTERS.update(rail_previews.PAINTERS)
+# Industrial dashboard painters (KPI tile, status row): dashboard_previews.py.
+from designer.canvas import dashboard_previews  # noqa: E402
+_PAINTERS.update(dashboard_previews.PAINTERS)
 
 
 def painter_for(widget_type):

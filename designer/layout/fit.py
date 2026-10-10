@@ -37,7 +37,8 @@ _PRIORITY_BY_TYPE = {
     "ShHSI": 90, "ShGauge": 85, "ShTape": 80,
     "ShAlarmTable": 88, "ShAlert": 86, "ShAnnunciator": 84, "ShMasterWarning": 90,
     "ShStatDot": 60, "ShStatusDot": 60, "ShTelltale": 62,
-    "ShNumDisplay": 55, "ShValueTile": 58, "ShDataField": 55, "ShProcessValue": 55, "ShAutoReadout": 55,
+    "ShNumDisplay": 55, "ShValueTile": 58, "ShDataField": 55, "ShProcessValue": 55,
+    "ShKpiTile": 60, "ShStatusRow": 58, "ShAutoReadout": 55,
     "ShSegmentBar": 52, "ShFuelQuantity": 70, "ShEngineBar": 65, "ShProgress": 45,
     "ShTrendChart": 40, "ShIconTile": 35, "Text": 30, "Image": 25,
 }

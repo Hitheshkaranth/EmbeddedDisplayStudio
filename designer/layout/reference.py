@@ -65,7 +65,10 @@ _LAMPS = ("ShStatDot", "ShTelltale")
 #: The types a reference's pictures are cut into.
 _PICTURES = ("Image", "ShAnimatedImage")
 #: Widgets drawn as one line each in a card: a reading line of a process card.
-_ROW_TYPES = ("ShProcessValue",)
+_ROW_TYPES = ("ShProcessValue", "ShStatusRow")
+#: Widgets that are a card of their own (a title bar, a tile): alone in a
+#: section they fill it, with no card or heading around them.
+_SELF_FRAMED = ("ShKpiTile", "ShAlarmTable", "ShStatusCard")
 #: A date in a clock's text ("12-10-2026", "2026/10/12").
 _DATE_RE = re.compile(r"\d{1,4}[-/.]\d{1,2}[-/.]\d{2,4}"
                       r"|\d{1,2}\s+[A-Za-z]{3,9}\.?\s+\d{2,4}"         # 26 Apr 2024
@@ -603,6 +606,11 @@ def _section_card(project, registry, section, rect, tokens, framed, report):
     lone = section.widgets[0] if len(section.widgets) == 1 else None
     pictures = [wd for wd in section.widgets if wd.type == "Image"]
     heading = section.title
+    if lone is not None and lone.type in _SELF_FRAMED:
+        # The tile or the table is the card: its own title bar names it.
+        heading, framed = "", False
+        if lone.type == "ShAlarmTable" and section.title and not str(lone.properties.get("title") or "").strip():
+            lone.properties["title"] = section.title
     if not framed and (section.role == "hero" or pictures or
                        (lone is not None and _labels_itself(registry, lone))):
         # On the glass a lone instrument names itself, and a picture is the
@@ -620,7 +628,9 @@ def _section_card(project, registry, section, rect, tokens, framed, report):
     inner = (pad, top, w - 2 * pad, h - top - pad)
     kind = c.kind_of(registry, lone) if lone is not None else ""
     laid = True              # False when only c._card's layout placed them
-    if lone is not None and (kind == c.FACE or lone.type == "Image" or
+    if lone is not None and lone.type in _SELF_FRAMED:
+        _set(lone, 0, 0, w, h)
+    elif lone is not None and (kind == c.FACE or lone.type == "Image" or
                              min(c._design(registry, lone)) >= 200):
         # One instrument fills its region at its own proportion.
         if lone.type == "Image":
@@ -1339,6 +1349,9 @@ def _dress(project, registry, widgets, tokens) -> None:
                 # The band under the heading, as the picture's cards have it.
                 props["headerHeight"] = int(max(ch.geometry["y"] + ch.geometry["height"] for ch in headings) + 3)
                 props["headerColor"] = palette.get("header", "")
+        elif widget.type == "ShKpiTile":
+            fill(widget, "tileColor", palette.get("card"))
+            fill(widget, "barColor", palette.get("success"))
         elif widget.type == "ShProcessValue":
             value = props.get("value")
             if isinstance(value, (int, float)) and not isinstance(value, bool) and "decimals" in props:
