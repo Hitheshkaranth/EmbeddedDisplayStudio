@@ -648,6 +648,23 @@ def _section_card(project, registry, section, rect, tokens, framed, report):
         # the tile layout it shrank to a thumbnail beside two numbers.
         faces = [wd for wd in section.widgets if _is_dial(registry, wd)]
         _picture_with_readings(project, registry, card, faces, section, inner, tokens, fit=True)
+    elif _control_panel(section):
+        # A control panel: its buttons in pairs (AUTO | MANUAL, START | STOP),
+        # then a row per set-point -- in the box layout's grid they piled up.
+        selectors = [wd for wd in section.widgets if wd.type in _SELECTOR_TYPES]
+        buttons = [wd for wd in section.widgets if wd.type in _BUTTON_TYPES]
+        others = [wd for wd in section.widgets if wd not in buttons and wd not in selectors]
+        rows = ([[wd] for wd in selectors] + [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+                + [[wd] for wd in others])
+        gap = max(3.0, tokens.gap / 2.0)
+        row_h = (inner[3] - gap * (len(rows) - 1)) / len(rows)
+        for index, row in enumerate(rows):
+            cw = (inner[2] - gap * (len(row) - 1)) / len(row)
+            for col, widget in enumerate(row):
+                _set(widget, inner[0] + col * (cw + gap), inner[1] + index * (row_h + gap), cw, row_h)
+        card.children[:] = [ch for ch in card.children
+                            if not (ch.properties.get(c.CHROME_MARK) and ch.type == "Text"
+                                    and not re.search(r"Heading\d*$", ch.id or ""))]
     elif _reading_rows(section):
         # Reading lines, one row each, spread down the card at a line's
         # height: label, value box and unit read across, as the picture's.
@@ -691,6 +708,22 @@ def _section_card(project, registry, section, rect, tokens, framed, report):
     _accent_card(card, section.accent if framed else "", tokens)
     report.sections.append((section.title, section.role, tuple(int(round(v)) for v in rect)))
     return card
+
+
+_BUTTON_TYPES = ("ShButton", "ShToggle")
+#: Mode selectors (AUTO | MANUAL): a row of their own in a control panel.
+_SELECTOR_TYPES = ("ShTabs", "ShDriveMode")
+_SETPOINT_TYPES = ("ShNumInput", "ShSelect", "ShSlider", "ShProcessValue")
+
+
+def _control_panel(section) -> bool:
+    """Buttons and set-points together (a kiln's mode, start/stop and feed
+    set-points), more than a single row of either."""
+    widgets = section.widgets
+    kinds = _BUTTON_TYPES + _SELECTOR_TYPES + _SETPOINT_TYPES
+    return (len(widgets) >= 3 and any(w.type in _BUTTON_TYPES + _SELECTOR_TYPES for w in widgets)
+            and any(w.type in _SETPOINT_TYPES for w in widgets)
+            and all(w.type in kinds for w in widgets))
 
 
 def _overlays(section, pictures) -> list:
