@@ -59,33 +59,39 @@ PLAN_SCHEMA = _open_object({
         "label": {"type": "string"},
         "next": {"type": "string"},
     }),
-    "pages": {"type": "array", "items": _open_object({
-        "id": {"type": "string"},
-        "name": {"type": "string"},
-        "title": {"type": "string"},
-        "header": {"type": "array", "items": _PLAN_WIDGET},
-        # A section is closed: its keys are these and it has widgets. Open,
-        # it let Ornith write a key named `widgets: [...], // one
-        # ShProcessValue per row ...` and close braces until it ran out of
-        # tokens -- guided decoding takes any string as a key.
-        "sections": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False,
-            "required": ["widgets"],
-            "properties": {
-                "title": {"type": "string"},
-                "role": {"type": "string"},
-                "size": {"type": "string"},
-                # Only when the plan follows a reference picture: where on the
-                # screen the section sits (compiler.REGIONS) and its colour.
-                "region": {"type": "string"},
-                "accent": {"type": "string"},
-                # ... and where the block sits in it, on the 0..1000 scale.
-                "box": {"type": "array", "items": {"type": "number"}},
-                "widgets": {"type": "array", "minItems": 1, "items": _PLAN_WIDGET},
-                "bindings": _FREE_OBJECT,
-                "actions": _FREE_OBJECT,
-            }}},
-    })},
+    # A page is closed and has sections. Open, it let Ornith answer a short
+    # brief with any JSON at all: a flat "widgets" list of "type": "gauge"
+    # (every one an empty box), a key named "sections:", properties as a
+    # list of {"id", "value"} rows.
+    "pages": {"type": "array", "minItems": 1, "items": {
+        "type": "object", "additionalProperties": False, "required": ["sections"],
+        "properties": {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "title": {"type": "string"},
+            "header": {"type": "array", "items": _PLAN_WIDGET},
+            # A section is closed: its keys are these and it has widgets. Open,
+            # it let Ornith write a key named `widgets: [...], // one
+            # ShProcessValue per row ...` and close braces until it ran out of
+            # tokens -- guided decoding takes any string as a key.
+            "sections": {"type": "array", "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["widgets"],
+                "properties": {
+                    "title": {"type": "string"},
+                    "role": {"type": "string"},
+                    "size": {"type": "string"},
+                    # Only when the plan follows a reference picture: where on the
+                    # screen the section sits (compiler.REGIONS) and its colour.
+                    "region": {"type": "string"},
+                    "accent": {"type": "string"},
+                    # ... and where the block sits in it, on the 0..1000 scale.
+                    "box": {"type": "array", "items": {"type": "number"}},
+                    "widgets": {"type": "array", "minItems": 1, "items": _PLAN_WIDGET},
+                    "bindings": _FREE_OBJECT,
+                    "actions": _FREE_OBJECT,
+                }}, "minItems": 1},
+        }}},
 }, required=("pages",))
 
 #: A reply that keeps fewer than this share of the tags the design had bound
@@ -239,6 +245,136 @@ _AI_TYPE_ALIASES = {
     "Dial": "ShGauge",
     "BarGauge": "ShEngineBar",
 }
+
+#: Plain words a model writes for a type when it ignores the kit's names
+#: ("type": "gauge", "bar", "status"); matched once case and punctuation are
+#: gone, after the aliases and the registry's own names.
+_LOOSE_TYPES = {
+    "bar": "ShEngineBar", "bargraph": "ShEngineBar", "progress": "ShProgress",
+    "progressbar": "ShProgress", "meter": "ShGauge", "radialgauge": "ShGauge",
+    "btn": "ShButton", "pushbutton": "ShButton", "text": "Text", "title": "Text",
+    "heading": "Text", "value": "ShValueTile", "display": "ShValueTile",
+    "number": "ShValueTile", "light": "ShStatDot", "status": "ShStatusRow",
+    "statusstrip": "ShStatusRow", "statusbar": "ShStatusRow", "statusrow": "ShStatusRow",
+    "alarm": "ShAlert", "banner": "ShAlert", "warning": "ShAlert", "picture": "Image",
+    "logo": "Image", "icon": "Image", "box": "Rectangle", "rectangle": "Rectangle",
+    "container": "ShCard", "group": "ShCard", "tabs": "ShTabs",
+}
+
+#: Keys a model puts a widget's tag under when it leaves out "bindings".
+_TAG_KEYS = ("bindings", "binding", "bound", "boundTo", "bind", "bindTo", "tag", "signal")
+
+
+def _type_key(name: str) -> str:
+    key = re.sub(r"[^a-z0-9]", "", str(name).lower())
+    return re.sub(r"(widget|component|control|element)$", "", key) or key
+
+
+def _limit_text(value, above=True):
+    """'> 6500' from 6500, {"high": 6500} or '> 6500'; None when unreadable."""
+    if isinstance(value, dict):
+        for key, sign in (("high", ">"), ("above", ">"), ("start", ">"), ("from", ">"),
+                          ("low", "<"), ("below", "<"), ("max", ">"), ("min", "<")):
+            if isinstance(value.get(key), (int, float)) and not isinstance(value.get(key), bool):
+                return f"{sign} {value[key]:g}"
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return f"{'>' if above else '<'} {value:g}"
+    if isinstance(value, str) and re.fullmatch(r"\s*[<>]=?\s*-?\d+(\.\d+)?\s*", value):
+        return value.strip()
+    return None
+
+
+def _limits(wdata: dict) -> dict:
+    """A limit written as an object ("warning": {"high": 6500}) as the plain
+    number the widget's threshold property takes."""
+    found = {}
+    for key in ("warning", "critical"):
+        value = wdata.get(key)
+        if isinstance(value, dict):
+            number = next((value[k] for k in ("high", "above", "start", "from", "max")
+                           if isinstance(value.get(k), (int, float)) and not isinstance(value.get(k), bool)),
+                          None)
+            if number is not None:
+                found[key] = number
+    return found
+
+
+#: "a large RPM gauge", "the main speed dial": what the brief wants biggest.
+_EMPHASIS_RE = re.compile(r"\b(?:large|big|huge|main|primary|central|prominent)\s+((?:[\w.\-/]+\s+){0,2}[\w.\-/]+)",
+                          re.I)
+_PLAIN_WORDS = {"gauge", "dial", "meter", "bar", "display", "readout", "widget", "indicator",
+                "the", "a", "an", "and", "with", "for", "to", "of", "bound", "showing", "shows"}
+
+
+def _emphasised(widgets: list, brief) -> Optional[DesignerWidget]:
+    """The one widget the brief asks to be large, when exactly one matches."""
+    for match in _EMPHASIS_RE.finditer(str(brief or "")):
+        words = [w for w in re.findall(r"[a-z0-9]+", match.group(1).lower()) if w not in _PLAIN_WORDS]
+        if not words:
+            continue
+        scores = []
+        for widget in widgets:
+            names = [widget.id] + [str(widget.properties.get(k, "")) for k in
+                                   ("label", "caption", "title", "text")]
+            names += [b.tag for b in widget.bindings.values()]
+            said = " ".join(names).lower()
+            scores.append(sum(1 for w in words if w in said))
+        best = max(scores, default=0)
+        if best and scores.count(best) == 1:
+            return widgets[scores.index(best)]
+    return None
+
+
+def _lead_with_emphasis(sections: list, brief, registry) -> None:
+    """Make the dial the brief calls large the plan's hero, when no section
+    is one: Ornith put "a large RPM gauge" in a card with the coolant
+    gauge, the same size as it."""
+    from designer.layout.compiler import CHART, FACE, Section, kind_of
+    if not sections or any(s.role == "hero" or s.region or s.box for s in sections):
+        return
+    faces = [w for s in sections for w in s.widgets if kind_of(registry, w) in (FACE, CHART)]
+    hero = _emphasised(faces, brief)
+    if hero is None:
+        return
+    home = next(s for s in sections if hero in s.widgets)
+    if len(home.widgets) == 1:
+        sections.remove(home)
+        home.role = "hero"
+    else:
+        home.widgets.remove(hero)
+        home = Section(str(hero.properties.get("label") or hero.properties.get("caption") or ""),
+                       "hero", [hero])
+    sections.insert(0, home)
+
+
+def _shorthand_binding(wdata: dict):
+    """The binding a widget's tag written beside it gives, or None."""
+    value = next((wdata.get(k) for k in _TAG_KEYS if wdata.get(k)), None)
+    if isinstance(value, dict) and "tag" not in value:
+        return None
+    if not isinstance(value, (str, dict)):
+        return None
+    try:
+        binding = DesignerBinding.from_data(value)
+    except (ValueError, TypeError):
+        return None
+    # Only a dotted tag: "signal": "start" or "tag": "RPM" is not one.
+    binding.tag = _coerce_tag(binding.tag)
+    if not TAG_RE.fullmatch(binding.tag):
+        return None
+    props = wdata.get("properties") if isinstance(wdata.get("properties"), dict) else {}
+    unit = next((src.get(k) for src in (wdata, props) for k in ("unit", "units")
+                 if isinstance(src.get(k), str) and src.get(k).strip()), None)
+    if unit and not binding.unit:
+        binding.unit = unit
+    for key in ("warning", "critical"):
+        text = _limit_text(wdata.get(key))
+        if text and not getattr(binding, key):
+            setattr(binding, key, text)
+    return binding
 
 
 # Words a model drops or adds around an enum ("TextRight" for
@@ -1475,8 +1611,19 @@ class AIDesignGenerator:
         """Convert a JSON design payload (pages, widgets) to DesignerProject."""
         widgets = []
         pages_data = design.get("pages", [])
-        if isinstance(pages_data, list) and any(isinstance(p, dict) and p.get("sections")
-                                                for p in pages_data):
+        listed = [w for p in pages_data if isinstance(p, dict) for w in (p.get("widgets") or [])
+                  if isinstance(w, dict)] if isinstance(pages_data, list) else []
+        # A page of widgets with no positions anywhere is a plan without its
+        # sections ("type": "gauge" and nothing else): laid out from geometry
+        # it got the made-up positions' grid, every dial the same size.
+        # One part of a run built in parts merges into the canvas as it is.
+        meta = design.get("section") if isinstance(design.get("section"), dict) else {}
+        whole = str(meta.get("index", 1)).strip() in ("1", "") and \
+            str(meta.get("complete", True)).strip().lower() not in ("false", "no", "0", "pending")
+        unplaced = whole and bool(listed) and not any(isinstance(w.get("geometry"), dict) or "x" in w
+                                                      for w in listed)
+        if isinstance(pages_data, list) and (unplaced or any(isinstance(p, dict) and p.get("sections")
+                                                             for p in pages_data)):
             project = self._from_plan(design, width, height)
             self._read_section_meta(project, design)
             return project
@@ -1525,6 +1672,23 @@ class AIDesignGenerator:
                 _plausible_samples(section.widgets, self.registry)
             loose = self._convert_widgets([w for w in page_data.get("widgets") or []
                                            if isinstance(w, dict)])
+            if loose and not sections:
+                # A plan that is one flat list of widgets (Ornith's "type":
+                # "gauge" replies) is grouped into cards by kind, as the
+                # compiler groups a drawn page, rather than left to be placed
+                # where its made-up positions put it. The dial drawn biggest
+                # leads; the one the brief calls "large" is drawn so.
+                from designer.layout.compiler import infer_sections
+                hero = _emphasised(loose, self.brief)
+                if hero is not None:
+                    hero.geometry.update(width=320, height=320)
+                _t, sections, more, _notes = infer_sections(
+                    DesignerPage(id="flat", name="flat", widgets=loose), self.registry)
+                header += more
+                grouped = {id(w) for s in sections for w in s.widgets} | {id(w) for w in more}
+                loose = [w for w in loose if id(w) not in grouped]
+            else:
+                _lead_with_emphasis(sections, self.brief, self.registry)
             widgets = []
             if title:
                 widgets.append(DesignerWidget(type="Text", id="screenTitle", geometry={},
@@ -1557,6 +1721,46 @@ class AIDesignGenerator:
         ensure_unique_ids(project)
         return project
 
+    def _resolve_type(self, widget_type) -> str:
+        """The registry type a model's type name means; "Rectangle" when none.
+
+        An alias ("Button"), a kit name, a kit-style name the kit lacks
+        ("ShLamp") through its bare name, then the same with case and
+        punctuation gone ("gauge", "status_strip"), and last the word it
+        ends with ("fuelLevelBar" is a bar).
+        """
+        if not isinstance(widget_type, str) or not widget_type.strip():
+            return "Rectangle"
+        aliased = _AI_TYPE_ALIASES.get(widget_type, widget_type)
+        if self.registry.get(aliased) or aliased in _AI_TYPE_ALIASES.values():
+            return aliased
+        if widget_type.startswith("Sh") and widget_type[2:] in _AI_TYPE_ALIASES:
+            return _AI_TYPE_ALIASES[widget_type[2:]]
+        loose = self._loose_types()
+        key = _type_key(widget_type)
+        if key in loose:
+            return loose[key]
+        if key.startswith("sh") and key[2:] in loose:
+            return loose[key[2:]]
+        # Not a layout box by its last letters ("arrow" is not a Row).
+        ends = [name for name, target in loose.items() if len(name) >= 3 and key.endswith(name)
+                and target not in ("Row", "Column", "Grid", "Item", "Rectangle")]
+        return loose[max(ends, key=len)] if ends else "Rectangle"
+
+    def _loose_types(self) -> dict:
+        table = getattr(self, "_loose_table", None)
+        if table is None:
+            table = {_type_key(k): v for k, v in _AI_TYPE_ALIASES.items()}
+            for definition in self.registry.definitions():
+                name = definition.type
+                table.setdefault(_type_key(name), name)
+                if name.startswith("Sh"):
+                    table.setdefault(_type_key(name[2:]), name)
+            for k, v in _LOOSE_TYPES.items():
+                table.setdefault(k, v)
+            self._loose_table = table
+        return table
+
     def _convert_widgets(self, widget_list: list) -> list:
         """Convert a list of widget dicts to DesignerWidget objects."""
         result = []
@@ -1566,18 +1770,7 @@ class AIDesignGenerator:
             # dropped rather than failing the whole section.
             if not isinstance(wdata, dict):
                 continue
-            widget_type = wdata.get("type", "Rectangle")
-            # Resolve aliases (e.g. "Button" -> "ShButton"), and a kit-style
-            # name the kit does not have ("ShLamp") through its bare name.
-            aliased = _AI_TYPE_ALIASES.get(widget_type, widget_type)
-            if isinstance(widget_type, str) and not self.registry.get(aliased)                     and widget_type.startswith("Sh"):
-                aliased = _AI_TYPE_ALIASES.get(widget_type[2:], aliased)
-            # Check if aliased type exists in registry; fall back to Rectangle
-            if aliased not in (_AI_TYPE_ALIASES.get(v, v) for v in _AI_TYPE_ALIASES.values()):
-                if not self.registry.get(aliased):
-                    # Double-check original type
-                    if not self.registry.get(widget_type):
-                        aliased = "Rectangle"
+            aliased = self._resolve_type(wdata.get("type", "Rectangle"))
             geometry = wdata.get("geometry")
             if not isinstance(geometry, dict):
                 geometry = {}
@@ -1597,6 +1790,8 @@ class AIDesignGenerator:
                 if key in _WIDGET_KEYS or key in properties or isinstance(value, (dict, list)):
                     continue
                 properties[key] = value
+            for key, value in _limits(wdata).items():
+                properties.setdefault(key, value)
             if definition is not None and "label" not in definition.properties:
                 # A lamp has no label of its own, but the words the model gave
                 # it are what the compiler writes beside it.
@@ -1615,7 +1810,10 @@ class AIDesignGenerator:
             # Bindings are what the prompt asks for ("value" -> plc tag); keep
             # every one that has a tag, in the model's own DesignerBinding type.
             bindings = {}
-            for prop, value in (wdata.get("bindings") or {}).items():
+            planned = wdata.get("bindings")
+            if not isinstance(planned, dict):
+                planned = {}
+            for prop, value in planned.items():
                 try:
                     binding = DesignerBinding.from_data(value)
                 except (ValueError, TypeError):
@@ -1632,6 +1830,12 @@ class AIDesignGenerator:
                         if prop not in declared and len(only) == 1 and only[0] not in bindings:
                             prop = only[0]
                     bindings[prop] = binding
+            if not bindings and definition is not None and definition.bindable_properties:
+                # A tag written beside the widget ("bound": "eng.rpm") instead
+                # of in a "bindings" object binds the widget's live property.
+                binding = _shorthand_binding(wdata)
+                if binding is not None:
+                    bindings[definition.bindable_properties[0]] = binding
 
             children = []
             for child_data in wdata.get("children", []):
@@ -1656,6 +1860,14 @@ class AIDesignGenerator:
                     if action.tag:
                         action.tag = _coerce_tag(action.tag)
                     actions[str(signal)] = action
+            if not actions and definition is not None and definition.action_signals \
+                    and not definition.bindable_properties:
+                # A button's tag written beside it ("bind": "eng.start") is
+                # what pressing it writes, as the prompt's own example does.
+                binding = _shorthand_binding(wdata)
+                if binding is not None:
+                    actions[next(iter(definition.action_signals))] = DesignerAction(
+                        kind="write", tag=binding.tag, value=True)
 
             # Keep the model's own id when it is a legal QML id: stable ids
             # are what make "changed" (vs added/removed) meaningful between

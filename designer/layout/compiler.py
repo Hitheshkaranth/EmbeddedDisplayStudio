@@ -1958,6 +1958,12 @@ def infer_sections(page, registry):
     for widget in body:
         groups.setdefault(kind_of(registry, widget), []).append(widget)
 
+    # A strip (a status row, a progress bar) had no group and was dropped:
+    # status rows read with the lamps, the others with the readings.
+    for widget in groups.pop(STRIP, []):
+        status = widget.type in ("ShStatusRow", "ShStatusCard")
+        groups.setdefault(LAMP if status else TILE, []).append(widget)
+
     sections = []
     faces = groups.pop(FACE, [])
     if faces:
