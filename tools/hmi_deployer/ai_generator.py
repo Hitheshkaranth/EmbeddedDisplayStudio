@@ -1140,9 +1140,24 @@ def _names_on_text_tiles(widgets, registry) -> None:
         value = widget.properties.get("value")
         if definition is not None and isinstance(definition.defaults.get("value"), (int, float)) \
                 and isinstance(value, str) and value.strip():
+            shown = value.strip()
             try:
-                float(value)
+                float(shown)
+                # A number written as text keeps its decimals: Ornith's
+                # "3.20" rpm set-point read "3".
+                if "." in shown:
+                    places = min(3, len(shown.split(".", 1)[1]))
+                    for name in ("decimals", "decimalPlaces"):
+                        if name in definition.properties and name not in widget.properties:
+                            widget.properties[name] = places
+                    if definition.properties.get("value") in (int, float):
+                        widget.properties["value"] = float(shown)
             except ValueError:
+                if re.fullmatch(r"[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?", shown):
+                    # "3,015" is a number with its thousands marked, not a
+                    # name: the KPI tile it was on stays one.
+                    _names_on_text_tiles(widget.children, registry)
+                    continue
                 label = next((widget.properties.get(k) for k in ("label", "title", "caption")
                               if widget.properties.get(k)), "")
                 kept = {k: v for k, v in widget.properties.items() if k.startswith("_")}

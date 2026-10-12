@@ -15,6 +15,11 @@
 // its nominal size in a line slot centred in the row and shrinks to fit (the
 // label to 70 %, the digits and the unit to 60 %) before it elides.
 //
+// With no label (and no sparkline) the value box fills the row. unitInside
+// prints the unit in the box after the digits, the two centred, and drops the
+// unit column: a value laid over a process drawing's printed "78 %" box.
+// When the two do not fit at the smallest size, the digits are shown alone.
+//
 // bevel (off by default) draws the value box and the sparkline box inset: a
 // 1 px line in the box colour darker by BEVEL_DARK % along the top and one
 // lighter by BEVEL_LIGHT % along the bottom, inside the border and clear of
@@ -39,7 +44,7 @@ typedef struct {
     double n;                 // its number, NAN when it is not one
     int decimals;
     double warnAbove, warnBelow;
-    bool trend, bevel;
+    bool trend, bevel, unitInside;
     char label_text[128], unit_text[48];
     char value_colour[32], box_colour[32], trend_colour[32];
     double hist[HISTORY];
@@ -171,14 +176,23 @@ static void layout(hmi_widget_t *w)
     int inset = (int)fmax(1, round(H * 0.08));
     int boxH = (int)fmax(6, (int)round(H) - 2 * inset);
     bool hasUnit = st->unit_text[0] != '\0';
-    int unitW = hasUnit ? (int)round(W * 0.22) : 0;
-    int unitGap = hasUnit ? 6 : 0;
+    bool inside = st->unitInside && hasUnit;
+    int unitW = hasUnit && !inside ? (int)round(W * 0.22) : 0;
+    int unitGap = hasUnit && !inside ? 6 : 0;
 
-    char text[96];
+    char text[160];
     format_value(st, text, sizeof text);
+    if (inside) {
+        size_t used = strlen(text);
+        snprintf(text + used, sizeof text - used, " %s", st->unit_text);
+    }
     int digitsW = text_w(text, valuePx, 600);
-    int boxW = (int)fmin(fmax(digitsW + 16, round(W * 0.26)), fmax(16, Wi - unitW - unitGap));
+    bool fills = st->label_text[0] == '\0' && !st->trend;
+    int boxW = fills ? (int)fmax(16, Wi - unitW - unitGap)
+                     : (int)fmin(fmax(digitsW + 16, round(W * 0.26)), fmax(16, Wi - unitW - unitGap));
     int boxX = Wi - unitW - unitGap - boxW;
+    if (inside && text_w(text, (int)fmax(8, round(valuePx * 0.6)), 600) > boxW - 8)
+        format_value(st, text, sizeof text);
     int sparkW = st->trend ? (int)round(W * 0.18) : 0;
     int sparkX = boxX - 6 - sparkW;
     int labelW = (int)fmax(0, (st->trend ? sparkX : boxX) - 6);
@@ -214,11 +228,12 @@ static void layout(hmi_widget_t *w)
     lv_color_t vc = warns ? hmi_colour("warning") : colour_or(st->value_colour, "#3ee05a", NULL);
     // The digits end 8 px inside the box; their slot starts 4 px in, so a
     // value the box was sized for never meets the slot's edge and elides.
-    place_line(st->value, text, valuePx, 600, 0.6, boxX + 4, (int)fmax(1, boxW - 12), H, vc,
-               LV_TEXT_ALIGN_RIGHT);
+    // With the unit inside, the slot is 4 px in on both sides, centred.
+    place_line(st->value, text, valuePx, 600, 0.6, boxX + 4, (int)fmax(1, boxW - (inside ? 8 : 12)), H, vc,
+               inside ? LV_TEXT_ALIGN_CENTER : LV_TEXT_ALIGN_RIGHT);
 
     // unit column
-    if (hasUnit) {
+    if (hasUnit && !inside) {
         place_line(st->unit, st->unit_text, unitPx, 400, 0.6, boxX + boxW + unitGap, (int)fmax(1, unitW), H,
                    hmi_colour("mutedForeground"), LV_TEXT_ALIGN_LEFT);
         lv_obj_remove_flag(st->unit, LV_OBJ_FLAG_HIDDEN);
@@ -317,6 +332,7 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     st->warnBelow = hmi_widget_num(w, "warnBelow", 0);
     st->trend = hmi_widget_bool(w, "trend", false);
     st->bevel = hmi_widget_bool(w, "bevel", false);
+    st->unitInside = hmi_widget_bool(w, "unitInside", false);
     snprintf(st->label_text, sizeof st->label_text, "%s", hmi_widget_str(w, "label", "Value"));
     snprintf(st->unit_text, sizeof st->unit_text, "%s", hmi_widget_str(w, "unit", ""));
     snprintf(st->value_colour, sizeof st->value_colour, "%s", hmi_widget_str(w, "valueColor", "#3ee05a"));
@@ -348,6 +364,7 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
     else if (strcmp(prop, "warnBelow") == 0) st->warnBelow = hmi_value_as_num(value, st->warnBelow);
     else if (strcmp(prop, "trend") == 0) st->trend = hmi_value_as_bool(value, st->trend);
     else if (strcmp(prop, "bevel") == 0) st->bevel = hmi_value_as_bool(value, st->bevel);
+    else if (strcmp(prop, "unitInside") == 0) st->unitInside = hmi_value_as_bool(value, st->unitInside);
     else if (strcmp(prop, "label") == 0) copy_str(st->label_text, sizeof st->label_text, value, "");
     else if (strcmp(prop, "unit") == 0) copy_str(st->unit_text, sizeof st->unit_text, value, "");
     else if (strcmp(prop, "valueColor") == 0)

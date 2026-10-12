@@ -48,6 +48,11 @@ REVIEW_SCHEMA = {
 
 #: Review rounds after a reference run, at most.
 MAX_ROUNDS = 2
+#: A review's reply is a short list of fixes: its output limit, and how long
+#: a round may take before it is given up (a looping reply at the plan's
+#: 16k tokens held the AI Design tab for over ten minutes).
+MAX_REVIEW_TOKENS = 3000
+REVIEW_DEADLINE_S = 150
 
 _PICTURES = ("Image", "ShAnimatedImage")
 #: What the review may remove: words and pictures, never a reading, a lamp, a

@@ -1750,6 +1750,10 @@
      "kind": "bool",
      "default": false
     },
+    "unitInside": {
+     "kind": "bool",
+     "default": false
+    },
     "opacity": {
      "kind": "float",
      "default": 1.0

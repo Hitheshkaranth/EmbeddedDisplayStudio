@@ -87,6 +87,13 @@ STYLE_SAMPLES = [
     ("ShAnnunciator", "litColorUnlit", {"text": "RUNNING", "litColor": "#22d34a", "lit": False}),
     ("ShProcessValue", "bevel", {"label": "Hot Blast Temp", "value": 1185, "unit": "\u00b0C",
                                  "trend": True, "bevel": True}),
+    # A value laid over a process drawing's printed box: no label, so the box
+    # fills the row; the unit inside it, or the digits alone when both do
+    # not fit.
+    ("ShProcessValue", "unitInside", {"label": "", "value": 880, "unit": "°C", "unitInside": True,
+                                      "bevel": True}, (90, 24)),
+    ("ShProcessValue", "unitInsideTight", {"label": "", "value": -1.8, "unit": "mbar",
+                                           "unitInside": True}, (40, 18)),
     # The neon instrument look (a haul-truck cockpit picture): thick glowing
     # gradient arcs, solid glowing bars. An optional fourth element is the
     # size to compare at instead of the type's default.

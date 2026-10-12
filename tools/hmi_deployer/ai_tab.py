@@ -3026,7 +3026,8 @@ class AIDesignTab(QWidget):
         """Show the model the reference and the screen as built, with what the
         layout measures, and ask for fixes (tools.hmi_deployer.ai_review)."""
         from tools.hmi_deployer.ai_review import (
-            REVIEW_SCHEMA, cut_images, layout_findings, review_brief, review_prompt, still, strip_pictures)
+            MAX_REVIEW_TOKENS, REVIEW_DEADLINE_S, REVIEW_SCHEMA, cut_images, layout_findings,
+            review_brief, review_prompt, still, strip_pictures)
         if (self.streaming or self._worker is not None or self._review_worker is not None
                 or self._queued_section_request or self._queued_retry
                 or project is not self.last_project):
@@ -3052,8 +3053,9 @@ class AIDesignTab(QWidget):
         connector = ODConnector(mode="byok", byok=copy.deepcopy(self.connector.byok))
         connector.system_prompt = review_prompt()
         connector.response_schema = REVIEW_SCHEMA
+        connector.max_output_tokens = MAX_REVIEW_TOKENS
         self._review = {"turn": turn, "project": project, "round": round_,
-                        "findings": findings, "text": []}
+                        "findings": findings, "text": [], "connector": connector}
         worker = GenerationWorker(connector, review_brief(project, project.pages[0], findings, shown),
                                   self.model_combo.currentText().strip() or None, self, images=images)
         worker.event.connect(self._on_review_event)
@@ -3063,6 +3065,19 @@ class AIDesignTab(QWidget):
         turn.note_review(f"Reviewing against the picture ({round_})\u2026", "info")
         self.statusMessage.emit("AI Design: reviewing the screen against the reference picture")
         worker.start()
+        QTimer.singleShot(REVIEW_DEADLINE_S * 1000, functools.partial(self._review_overdue, worker))
+
+    def _review_overdue(self, worker):
+        """Give up a review round still running at its deadline: the design
+        is applied already, and the tab must not stay busy behind it."""
+        state = self._review
+        if state is None or self._review_worker is not worker:
+            return
+        state["error"] = "timed out"
+        try:
+            state["connector"].cancel()
+        except Exception:
+            logger.exception("review: could not cancel")
 
     def _on_review_event(self, ev: dict):
         if self._review is not None and ev.get("type") == "delta":

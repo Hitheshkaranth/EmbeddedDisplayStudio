@@ -710,6 +710,10 @@ class ODConnector:
         self.conversation: list[ChatMessage] = []
         self.system_prompt = DEFAULT_SYSTEM_PROMPT
         self.response_schema: Optional[dict] = None
+        # A request's own output limit, below the providers' defaults: a
+        # review's reply is a short list of fixes, and at the plan's 16k a
+        # looping reply held the tab for minutes.
+        self.max_output_tokens: Optional[int] = None
         self._available_models: list[ModelOption] = []
         self._connected = False
         self._cancel = threading.Event()
@@ -870,6 +874,10 @@ class ODConnector:
     # ------------------------------------------------------------------
     # Generation
     # ------------------------------------------------------------------
+
+    def _output_limit(self, default: int) -> int:
+        limit = self.max_output_tokens
+        return min(default, int(limit)) if limit else default
 
     def cancel(self):
         """Stop the in-flight stream.
@@ -1034,6 +1042,8 @@ class ODConnector:
         if prov == "ollama":
             url = f"{base}/api/chat"
             payload = {"model": model_name, "messages": messages, "stream": True}
+            if self.max_output_tokens:
+                payload["options"] = {"num_predict": int(self.max_output_tokens)}
         elif prov in ("openai", "vllm"):
             url = f"{base}/v1/chat/completions"
             if self.byok.apiKey:
@@ -1042,7 +1052,7 @@ class ODConnector:
                 "model": model_name,
                 "messages": messages,
                 "stream": True,
-                "max_tokens": MAX_OUTPUT_TOKENS,
+                "max_tokens": self._output_limit(MAX_OUTPUT_TOKENS),
                 # Ask for the trailing usage chunk so token counts are exact.
                 "stream_options": {"include_usage": True},
             }
@@ -1069,7 +1079,7 @@ class ODConnector:
                 "system": self.system_prompt,
                 "messages": chat_messages,
                 "stream": True,
-                "max_tokens": ANTHROPIC_MAX_OUTPUT_TOKENS,
+                "max_tokens": self._output_limit(ANTHROPIC_MAX_OUTPUT_TOKENS),
             }
         elif prov == "google":
             url = f"{base}/v1beta/models/{model_name}:streamGenerateContent?alt=sse"
@@ -1082,7 +1092,7 @@ class ODConnector:
                      "parts": [{"text": m["content"]}]}
                     for m in history
                 ] + [{"role": "user", "parts": user_message("google", brief, images)}],
-                "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS},
+                "generationConfig": {"maxOutputTokens": self._output_limit(MAX_OUTPUT_TOKENS)},
             }
         else:
             raise ValueError(f"Unsupported BYOK provider: {prov}")

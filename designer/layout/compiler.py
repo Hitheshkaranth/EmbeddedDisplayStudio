@@ -125,6 +125,10 @@ BOX_MARK = "_box"
 # Where one widget sits in the reference picture (its own "box"): a live
 # reading drawn over a process drawing is laid over the picture there.
 WIDGET_BOX_MARK = "_wbox"
+# On a picture whose crop was fitted to the reference itself (its panel's
+# edges found in the pixels, designer.layout.palette.trim_crops): the
+# layout no longer clips it back to the model's box.
+CROP_FIT_MARK = "_cropFit"
 #: The screen's regions, as a reference picture divides it:
 #:   top    -- the status strip across the top (clock, connectivity, weather)
 #:   rail   -- a narrow column at the left edge (a gear selector, mode lamps)
@@ -144,10 +148,11 @@ _REGION_ALIASES = {
 }
 
 
-def crop_of(value):
+def crop_of(value, scale=None, own=False):
     """[left, top, right, bottom] as fractions of the reference picture, from
-    what a model wrote: fractions, or Qwen's 0..1000 grounding scale. None
-    when it is not a usable box."""
+    what a model wrote: fractions, or Qwen's 0..1000 grounding scale (or the
+    plan's own scale, `scale` = (x, y), from plan_scale). None when it is
+    not a usable box."""
     if not isinstance(value, (list, tuple)) or len(value) != 4:
         return None
     try:
@@ -155,11 +160,91 @@ def crop_of(value):
     except (TypeError, ValueError):
         return None
     if max(box) > 1.5:
-        box = [v / 1000.0 for v in box]
+        sx, sy = scale or (1000.0, 1000.0)
+        if own:
+            # A picture's crop is often on the grounding scale whatever the
+            # plan's boxes are on ("crop": [0, 0, 1000, 1000], the whole
+            # picture, beside boxes measured to 1280): the plan's scale only
+            # where this crop runs past 1000.
+            sx = sx if max(box[0], box[2]) > 1005.0 else 1000.0
+            sy = sy if max(box[1], box[3]) > 1005.0 else 1000.0
+        box = [box[0] / sx, box[1] / sy, box[2] / sx, box[3] / sy]
     left, top, right, bottom = (min(1.0, max(0.0, v)) for v in box)
     if right - left < 0.02 or bottom - top < 0.02:
         return None
     return [round(left, 4), round(top, 4), round(right, 4), round(bottom, 4)]
+
+
+_SIDES = ("left", "top", "right", "bottom")
+
+
+#: Widths and heights a model may have measured a picture in, when its
+#: boxes run past the 0..1000 grounding scale.
+_SCALES = (1024.0, 1080.0, 1200.0, 1280.0, 1366.0, 1440.0, 1536.0, 1600.0, 1920.0, 2048.0)
+_BOX_KEYS = ("box", "crop", "bbox", "rect")
+
+
+def plan_scale(data) -> tuple:
+    """(x, y): the scale a plan's boxes are written in, per axis. 1000 (the
+    grounding scale) unless a box runs past it: Ornith measured a kiln
+    dashboard's x on 0..1280 and its y on 0..1000, and the right-hand tile,
+    clamped at 1000, lost its box and with it the page its box layout."""
+    most = [0.0, 0.0]
+
+    def visit(node):
+        if isinstance(node, dict):
+            split = {re.sub(r"[^a-z]", "", str(k).lower()): v for k, v in node.items()}
+            for key in _BOX_KEYS:
+                value = node.get(key)
+                if not isinstance(value, (list, tuple)):
+                    value = [split.get(key + side) for side in _SIDES]
+                try:
+                    box = [float(v) for v in value]
+                except (TypeError, ValueError):
+                    continue
+                if len(box) == 4:
+                    most[0] = max(most[0], box[0], box[2])
+                    most[1] = max(most[1], box[1], box[3])
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value)
+
+    visit(data)
+    return tuple(1000.0 if m <= 1005.0 else next((s for s in _SCALES if s >= m), m) for m in most)
+
+
+def item_box(item, key="box", scale=None):
+    """crop_of a plan item's `key` ("box" or "crop"), wherever the model put
+    it: on the item or in its properties, as a list, as {"left": .., ...},
+    or split into keys (Ornith wrote "boxLeft", "boxTop", "boxRight",
+    "boxBottom" beside "properties", and every reading's place was lost)."""
+    if not isinstance(item, dict):
+        return None
+    props = item.get("properties") if isinstance(item.get("properties"), dict) else {}
+    for holder in (item, props):
+        value = holder.get(key)
+        if isinstance(value, dict):
+            value = [value.get(side, value.get(side[0])) for side in _SIDES]
+        own = key == "crop"
+        box = crop_of(value, scale, own)
+        if box:
+            return box
+        split = {re.sub(r"[^a-z]", "", str(k).lower()): v for k, v in holder.items()}
+        box = crop_of([split.get(key + side) for side in _SIDES], scale, own)
+        if box:
+            return box
+        for name in holder:
+            # The box written into a key: Ornith once closed a widget's
+            # "box" with a brace inside the string, '"box [192, 232, 280,
+            # 300] },, ": {...}', and every reading lost its place.
+            found = re.match(r"\s*" + key + r"\b[^\[\]]*\[([-\d.,\s]+)\]", str(name), re.IGNORECASE)
+            if found:
+                box = crop_of([v for v in re.split(r"[,\s]+", found.group(1).strip()) if v], scale, own)
+                if box:
+                    return box
+    return None
 
 
 def region_of(text) -> str:
@@ -2052,6 +2137,23 @@ def _no_web_pictures(widgets) -> None:
             widget.properties["source"] = ""
 
 
+def _lift_colours(items) -> list:
+    """Widget dicts with a "colours" object (Ornith's, beside "properties")
+    folded into their properties; a colour the properties give wins. Left
+    beside them, a kiln's red page button and green KPI bars were lost."""
+    out = []
+    for item in items:
+        extra = next((item[k] for k in ("colours", "colors", "style") if isinstance(item.get(k), dict)), None)
+        if extra:
+            item = dict(item)
+            props = dict(item.get("properties") or {}) if isinstance(item.get("properties"), dict) else {}
+            for key, value in extra.items():
+                props.setdefault(key, value)
+            item["properties"] = props
+        out.append(item)
+    return out
+
+
 def sections_from_plan(page_data: dict, convert) -> tuple:
     """(title, [Section], header_widgets) from a planned page.
 
@@ -2060,6 +2162,7 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
     same as in a geometry design).
     """
     title = str(page_data.get("title") or page_data.get("name") or "").strip()
+    scale = plan_scale(page_data)
     sections = []
     entries = []
     for entry in page_data.get("sections") or []:
@@ -2071,7 +2174,8 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
         entries.extend(d for d in entry.get("__spill__") or []
                        if isinstance(d, dict) and d.get("widgets"))
     for entry in entries:
-        raw = _flatten_containers([dict(w) for w in entry.get("widgets") or [] if isinstance(w, dict)])
+        raw = _lift_colours(_flatten_containers([dict(w) for w in entry.get("widgets") or []
+                                                 if isinstance(w, dict)]))
         _distribute(entry, raw)
         # "size": "compact" | "normal" | "large", on the section or a widget.
         # Popped before conversion: ShButton has a "size" property of its own
@@ -2087,11 +2191,9 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
             wishes.append(wish or (section_wish if section_wish in SIZE_FACTORS else ""))
         # A picture's place in the reference ("crop"): read here, since the
         # converter keeps only the properties the kit declares.
-        crops = {str(item.get("id") or ""): crop_of(item.get("crop") or
-                                                     (item.get("properties") or {}).get("crop"))
+        crops = {str(item.get("id") or ""): item_box(item, "crop", scale)
                  for item in raw if isinstance(item, dict)}
-        spots = {str(item.get("id") or ""): crop_of(item.get("box") or
-                                                     (item.get("properties") or {}).get("box"))
+        spots = {str(item.get("id") or ""): item_box(item, scale=scale)
                  for item in raw if isinstance(item, dict)}
         widgets = convert(raw)
         _no_web_pictures(widgets)
@@ -2119,13 +2221,13 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
             # into the page (and a recompile) with the section's other marks.
             for widget in widgets:
                 widget.properties[ACCENT_MARK] = accent
-        box = crop_of(entry.get("box") or entry.get("bbox") or entry.get("rect"))
+        box = item_box(entry, scale=scale) or crop_of(entry.get("bbox") or entry.get("rect"), scale)
         if box:
             for widget in widgets:
                 widget.properties[BOX_MARK] = box
         sections.append(Section(heading, role, widgets, region=region, accent=accent,
                                 box=tuple(box or ())))
-    raw_header = [w for w in page_data.get("header") or [] if isinstance(w, dict)]
+    raw_header = _lift_colours([dict(w) for w in page_data.get("header") or [] if isinstance(w, dict)])
     # A logo -- or any header item -- may ask for the left end ("side":
     # "left", beside or inside its properties); the converter drops keys the
     # kit does not declare, so the wish is read here and carried as a mark.
@@ -2139,9 +2241,7 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
             sides[str(item.get("id") or "")] = "left"
     # A logo that says where it sits in the reference picture is cut out of
     # it on Apply (ai_tab.fill_pictures), as a section's picture is.
-    crops = {str(item.get("id") or ""): crop_of(item.get("crop") or
-                                                 (item.get("properties") or {}).get("crop"))
-             for item in raw_header}
+    crops = {str(item.get("id") or ""): item_box(item, "crop", scale) for item in raw_header}
     header = convert(raw_header)
     _no_web_pictures(header)
     for widget in header:

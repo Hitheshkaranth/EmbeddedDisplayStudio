@@ -22,6 +22,11 @@
  * like LVGL's tiny_ttf), and shrinks to fit (the label to 70 %, the digits
  * and the unit to 60 %) before it elides.
  *
+ * With no label (and no sparkline) the value box fills the row. unitInside
+ * prints the unit in the box after the digits, the two centred, and drops the
+ * unit column: a value laid over a process drawing's printed "78 %" box.
+ * When the two do not fit at the smallest size, the digits are shown alone.
+ *
  * bevel (off by default) draws the value box and the sparkline box inset: a
  * 1 px line in the box colour darker by 70 % along the top and one lighter by
  * 20 % along the bottom, inside the border and clear of its rounded corners.
@@ -44,6 +49,7 @@ Item {
     property color trendColor: "#f5a524"
     property real warnAbove: 0.0
     property real warnBelow: 0.0
+    property bool unitInside: false
 
     // -- the reading ------------------------------------------------------------
     // A number, or a string that is one ("1185", " 12.5"); NaN otherwise.
@@ -90,11 +96,18 @@ Item {
     readonly property int _unitPx: Math.max(8, Math.min(14, Math.round(_h * 0.42)))
     readonly property int _inset: Math.max(1, Math.round(_h * 0.08))
     readonly property int _boxH: Math.max(6, Math.round(_h) - 2 * _inset)
-    readonly property int _unitW: root.unit !== "" ? Math.round(_w * 0.22) : 0
-    readonly property int _unitGap: root.unit !== "" ? 6 : 0
+    readonly property bool _inside: root.unitInside && root.unit !== ""
+    readonly property string _withUnit: root._text + " " + root.unit
+    readonly property int _minPx: Math.max(8, Math.round(_valuePx * 0.6))
+    readonly property bool _unitFits: !_inside || Math.ceil(minMetrics.advanceWidth) <= _boxW - 8
+    readonly property string _shown: _inside && _unitFits ? _withUnit : root._text
+    readonly property int _unitW: root.unit !== "" && !_inside ? Math.round(_w * 0.22) : 0
+    readonly property int _unitGap: root.unit !== "" && !_inside ? 6 : 0
     readonly property int _digitsW: Math.ceil(digitsMetrics.advanceWidth)
-    readonly property int _boxW: Math.min(Math.max(_digitsW + 16, Math.round(_w * 0.26)),
-                                          Math.max(16, Math.round(_w) - _unitW - _unitGap))
+    readonly property bool _fills: root.label === "" && !root.trend
+    readonly property int _boxW: _fills ? Math.max(16, Math.round(_w) - _unitW - _unitGap)
+                                        : Math.min(Math.max(_digitsW + 16, Math.round(_w * 0.26)),
+                                                   Math.max(16, Math.round(_w) - _unitW - _unitGap))
     readonly property int _boxX: Math.round(_w) - _unitW - _unitGap - _boxW
     readonly property int _sparkW: root.trend ? Math.round(_w * 0.18) : 0
     readonly property int _sparkX: _boxX - 6 - _sparkW
@@ -103,10 +116,20 @@ Item {
 
     TextMetrics {
         id: digitsMetrics
-        text: root._text
+        text: root._inside ? root._withUnit : root._text
         font.family: Theme.fontFamily
         font.kerning: false
         font.pixelSize: root._valuePx
+        font.weight: Theme.fontSemibold
+    }
+
+    // Value and unit at the smallest size the digits shrink to.
+    TextMetrics {
+        id: minMetrics
+        text: root._withUnit
+        font.family: Theme.fontFamily
+        font.kerning: false
+        font.pixelSize: root._minPx
         font.weight: Theme.fontSemibold
     }
 
@@ -200,16 +223,17 @@ Item {
     Text {
         id: valueText
         // Ends 8 px inside the box; the slot starts 4 px in (as on the panel).
+        // With the unit inside, the slot is 4 px in on both sides, centred.
         x: root._boxX + 4
         y: root._slotTop(root._valuePx) + root._asc(root._valuePx) - baselineOffset
-        width: Math.max(1, root._boxW - 12)
-        text: root._text
+        width: Math.max(1, root._boxW - (root._inside ? 8 : 12))
+        text: root._shown
         color: root._warns ? Theme.warning : root.valueColor
         font.family: Theme.fontFamily
         font.kerning: false
         font.pixelSize: root._valuePx
         font.weight: Theme.fontSemibold
-        horizontalAlignment: Text.AlignRight
+        horizontalAlignment: root._inside ? Text.AlignHCenter : Text.AlignRight
         fontSizeMode: Text.HorizontalFit
         minimumPixelSize: Math.max(8, Math.round(root._valuePx * 0.6))
         elide: Text.ElideRight
@@ -218,7 +242,7 @@ Item {
 
     Text {
         id: unitText
-        visible: root.unit !== ""
+        visible: root.unit !== "" && !root._inside
         x: root._boxX + root._boxW + root._unitGap
         y: root._slotTop(root._unitPx) + root._asc(root._unitPx) - baselineOffset
         width: Math.max(1, root._unitW)

@@ -388,14 +388,16 @@ def default_registry() -> WidgetRegistry:
     # right-aligned digits, and a unit column. ``value`` is a number or a
     # string ("76,600"); ``decimals`` -1 shows it as given. warnAbove /
     # warnBelow of 0 are off, as on ShAutoReadout. ``bevel`` draws the boxes
-    # inset (a dark line along the top, a light one along the bottom).
+    # inset (a dark line along the top, a light one along the bottom). With no
+    # label the box fills the row; ``unitInside`` prints the unit in the box
+    # after the digits (a value laid over a drawing's printed "78 %" box).
     add("ShProcessValue", "Process value", "Industrial", "ShProcessValue", 260, 30,
         {"label": str, "value": str, "decimals": int, "unit": str, "valueColor": str,
          "boxColor": str, "trend": bool, "trendColor": str, "warnAbove": float,
-         "warnBelow": float, "bevel": bool, **common},
+         "warnBelow": float, "bevel": bool, "unitInside": bool, **common},
         {"label": "Value", "value": 0, "decimals": -1, "unit": "", "valueColor": "#3ee05a",
          "boxColor": "#0a0d0b", "trend": False, "trendColor": "#f5a524", "warnAbove": 0.0,
-         "warnBelow": 0.0, "bevel": False, **common_defaults}, ("value",), False,
+         "warnBelow": 0.0, "bevel": False, "unitInside": False, **common_defaults}, ("value",), False,
         {}, ("valueColor", "boxColor", "trendColor"))
     # One tile of a plant dashboard's KPI strip: an optional icon at the left,
     # the title, a big value with its unit beside it, a muted subtitle

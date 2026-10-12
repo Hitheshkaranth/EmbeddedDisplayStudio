@@ -8,6 +8,7 @@ design as a picture and must not colour the chrome.
 """
 import json
 import os
+import re
 import sys
 import unittest
 
@@ -104,9 +105,18 @@ class Palette(unittest.TestCase):
         self.assertTrue(cards)
         self.assertTrue(all(w.properties["color"] == palette["card"] for w in cards))
         rows = [w for w in widgets if w.type == "ShProcessValue"]
-        self.assertTrue(rows and all(w.properties.get("boxColor") == palette["inset"] for w in rows))
+        # A colour the plan gave (in "properties" or a "colours" object
+        # beside them) is the plan's; the picture fills the rest.
+        with open(RECORDED.replace(".json", "_rows.json"), encoding="utf-8") as fh:
+            reply = json.load(fh)["reply"]
+        planned = (lambda prop: {c.lower() for c in re.findall(r'"%s"\s*:\s*"(#[0-9a-fA-F]{6})"' % prop, reply)})
+        self.assertTrue(rows and all(w.properties.get("boxColor") == palette["inset"]
+                                     or str(w.properties.get("boxColor")).lower() in planned("boxColor")
+                                     for w in rows))
         buttons = [w for w in widgets if w.type == "ShButton"]
-        self.assertTrue(all(w.properties.get("backgroundColor") == palette["secondary"] for w in buttons))
+        self.assertTrue(all(w.properties.get("backgroundColor") == palette["secondary"]
+                            or str(w.properties.get("backgroundColor")).lower() in planned("backgroundColor")
+                            for w in buttons))
         # The drawing still is a picture cut from the reference.
         self.assertTrue(any(w.properties.get(CROP_MARK) for w in widgets if w.type == "Image"))
 

@@ -68,7 +68,12 @@ _PICTURES = ("Image", "ShAnimatedImage")
 _ROW_TYPES = ("ShProcessValue", "ShStatusRow")
 #: Widgets that are a card of their own (a title bar, a tile): alone in a
 #: section they fill it, with no card or heading around them.
-_SELF_FRAMED = ("ShKpiTile", "ShAlarmTable", "ShStatusCard")
+_SELF_FRAMED = ("ShKpiTile", "ShAlarmTable", "ShStatusCard", "ShTabs")
+#: Properties the kit reads as comma-separated lists.
+_COMMA_LISTS = ("xLabels", "tabs", "modes", "gears", "columns")
+#: What a top strip holds: icons, lamps, words, a name badge, a logo.
+_STRIP_TYPES = ("Text", "Image", "ShTelltale", "ShStatDot", "ShDataField", "ShAnnunciator",
+                "ShIconTile", "ShButton", "ShAutoReadout")
 #: A date in a clock's text ("12-10-2026", "2026/10/12").
 _DATE_RE = re.compile(r"\d{1,4}[-/.]\d{1,2}[-/.]\d{2,4}"
                       r"|\d{1,2}\s+[A-Za-z]{3,9}\.?\s+\d{2,4}"         # 26 Apr 2024
@@ -606,6 +611,12 @@ def _section_card(project, registry, section, rect, tokens, framed, report):
     lone = section.widgets[0] if len(section.widgets) == 1 else None
     pictures = [wd for wd in section.widgets if wd.type == "Image"]
     heading = section.title
+    tiles = len(section.widgets) > 1 and all(wd.type == "ShKpiTile" for wd in section.widgets)
+    if tiles:
+        # A row of KPI tiles planned as one block: each tile is a card of
+        # its own, so no card around them (a frame of padding around the
+        # tiles took a third of the row's height).
+        heading, framed = "", False
     if lone is not None and lone.type in _SELF_FRAMED:
         # The tile or the table is the card: its own title bar names it.
         heading, framed = "", False
@@ -630,15 +641,34 @@ def _section_card(project, registry, section, rect, tokens, framed, report):
     laid = True              # False when only c._card's layout placed them
     if lone is not None and lone.type in _SELF_FRAMED:
         _set(lone, 0, 0, w, h)
+    elif tiles:
+        n = len(section.widgets)
+        tw = (w - tokens.gap * (n - 1)) / n
+        for index, widget in enumerate(section.widgets):
+            _set(widget, index * (tw + tokens.gap), 0, tw, h)
     elif lone is not None and (kind == c.FACE or lone.type == "Image" or
                              min(c._design(registry, lone)) >= 200):
         # One instrument fills its region at its own proportion.
-        if lone.type == "Image":
+        if lone.type == "Image" and lone.properties.get(c.CROP_MARK):
+            # A cut of the reference: at the cut's proportions, stretched
+            # exactly into them (filling the box, a kiln's drawing ran over
+            # the tab bar above it).
+            l, t, r, b = lone.properties[c.CROP_MARK]
+            aspect = (r - l) / max(0.01, b - t) * project.screen.width / max(1.0, float(project.screen.height))
+            fw, fh = (inner[3] * aspect, inner[3]) if inner[2] / max(1.0, inner[3]) > aspect \
+                else (inner[2], inner[2] / aspect)
+            lone.properties["fillMode"] = "Image.Stretch"
+        elif lone.type == "Image":
             fw, fh = inner[2], inner[3]
         else:
             fw, fh = _fit(registry, lone, inner[2], inner[3])
         _set(lone, inner[0] + (inner[2] - fw) / 2.0, inner[1] + (inner[3] - fh) / 2.0, fw, fh)
-    elif pictures and len(pictures) < len(section.widgets) and _overlays(section, pictures):
+    elif pictures and len(pictures) < len(section.widgets) and (
+            _overlays(section, pictures) or (len(pictures) == 1 and pictures[0].properties.get(c.CROP_MARK)
+                                             and len(section.widgets) - 1 > 4)):
+        # Readings on a process drawing; without their boxes, more than a
+        # row holds are left to the drawing, which prints them (twenty-one
+        # were laid in a row of specks over it).
         _picture_overlays(project, registry, card, pictures[0], section, inner, tokens, report)
     elif pictures and len(pictures) < len(section.widgets):
         _picture_with_readings(project, registry, card, pictures, section, inner, tokens)
@@ -651,20 +681,61 @@ def _section_card(project, registry, section, rect, tokens, framed, report):
     elif _control_panel(section):
         # A control panel: its buttons in pairs (AUTO | MANUAL, START | STOP),
         # then a row per set-point -- in the box layout's grid they piled up.
-        selectors = [wd for wd in section.widgets if wd.type in _SELECTOR_TYPES]
-        buttons = [wd for wd in section.widgets if wd.type in _BUTTON_TYPES]
+        # A toggle is a row of its own (Mode: AUTO), buttons go in pairs.
+        selectors = [wd for wd in section.widgets if wd.type in _SELECTOR_TYPES + ("ShToggle",)]
+        buttons = [wd for wd in section.widgets if wd.type == "ShButton"]
         others = [wd for wd in section.widgets if wd not in buttons and wd not in selectors]
         rows = ([[wd] for wd in selectors] + [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
                 + [[wd] for wd in others])
         gap = max(3.0, tokens.gap / 2.0)
         row_h = (inner[3] - gap * (len(rows) - 1)) / len(rows)
-        for index, row in enumerate(rows):
-            cw = (inner[2] - gap * (len(row) - 1)) / len(row)
-            for col, widget in enumerate(row):
-                _set(widget, inner[0] + col * (cw + gap), inner[1] + index * (row_h + gap), cw, row_h)
         card.children[:] = [ch for ch in card.children
                             if not (ch.properties.get(c.CHROME_MARK) and ch.type == "Text"
                                     and not re.search(r"Heading\d*$", ch.id or ""))]
+        # Rows with a name at the left (a set-point, a selector's pair) set a
+        # column; every row of buttons keeps to it.
+        ruled = row_h < 56 and any(
+            (wd.type == "ShNumInput" and (wd.properties.get("label") or wd.properties.get(_ROW_LABEL)))
+            or (wd.type == "ShButton" and wd.properties.get(_ROW_LABEL)) for wd in section.widgets)
+        for index, row in enumerate(rows):
+            cw = (inner[2] - gap * (len(row) - 1)) / len(row)
+            ry = inner[1] + index * (row_h + gap)
+            for col, widget in enumerate(row):
+                rx, rw = inner[0] + col * (cw + gap), cw
+                label = str(widget.properties.get("label") or widget.properties.get(_ROW_LABEL) or "")
+                if widget.type == "ShButton" and ruled:
+                    words = inner[2] * 0.42
+                    cw = (inner[2] - words - gap * (len(row) - 1)) / len(row)
+                    rx, rw = inner[0] + words + col * (cw + gap), cw
+                if widget.type == "ShButton" and ruled and col == 0 and widget.properties.get(_ROW_LABEL):
+                    # A selector's pair (Mode: AUTO | MANUAL): its name at the
+                    # left of the row, the buttons in the rest of it.
+                    card.children.append(c._new(
+                        project, "Text", (widget.id or "selector") + "Label",
+                        {"x": inner[0], "y": ry, "width": words - gap, "height": row_h},
+                        {"text": widget.properties[_ROW_LABEL],
+                         "fontSize": int(max(10, min(tokens.label_font, row_h * 0.5))),
+                         "color": c._theme(project, "foreground"),
+                         "verticalAlignment": "Text.AlignVCenter", "wrapMode": "Text.NoWrap",
+                         "elide": "Text.ElideRight"}))
+                elif widget.type == "ShNumInput" and label and row_h < 56:
+                    # Too short a row for the set-point's label over its
+                    # field (they were drawn over each other): the label at
+                    # the left of the row, as a control panel prints it.
+                    widget.properties[_ROW_LABEL] = label
+                    widget.properties["label"] = ""
+                    words = rw * 0.42
+                    card.children.append(c._new(
+                        project, "Text", (widget.id or "setpoint") + "Label",
+                        {"x": rx, "y": ry, "width": words - gap, "height": row_h},
+                        {"text": label, "fontSize": int(max(10, min(tokens.label_font, row_h * 0.5))),
+                         "color": c._theme(project, "foreground"),
+                         "verticalAlignment": "Text.AlignVCenter", "wrapMode": "Text.NoWrap",
+                         "elide": "Text.ElideRight"}))
+                    rx, rw = rx + words, rw - words
+                elif widget.type == "ShNumInput" and widget.properties.get(_ROW_LABEL):
+                    widget.properties["label"] = widget.properties.pop(_ROW_LABEL)
+                _set(widget, rx, ry, rw, row_h)
     elif _reading_rows(section):
         # Reading lines, one row each, spread down the card at a line's
         # height: label, value box and unit read across, as the picture's.
@@ -714,6 +785,50 @@ _BUTTON_TYPES = ("ShButton", "ShToggle")
 #: Mode selectors (AUTO | MANUAL): a row of their own in a control panel.
 _SELECTOR_TYPES = ("ShTabs", "ShDriveMode")
 _SETPOINT_TYPES = ("ShNumInput", "ShSelect", "ShSlider", "ShProcessValue")
+#: A set-point's label while the control panel prints it beside the field,
+#: kept so a recompile into a taller row puts it back over the field.
+_ROW_LABEL = "_rowLabel"
+
+
+#: The lit one of a selector's pair of buttons, and its words.
+_LIT_BUTTON = "#22c55e"
+_LIT_TEXT = "#052e16"
+
+
+def _pair_toggles(project, widgets) -> list:
+    """A control panel's two-way toggles (Mode: AUTO / MANUAL, a kiln's
+    START / STOP) as the pair of buttons the picture draws, the current one
+    lit; each writes its side to the toggle's tag. A switch with "AUTO"
+    printed under it was not the picture's selector."""
+    from designer.model import DesignerAction, DesignerWidget
+    out = []
+    for widget in widgets:
+        props = widget.properties
+        on, off = str(props.get("onLabel") or "").strip(), str(props.get("offLabel") or "").strip()
+        if widget.type != "ShToggle" or not on or not off:
+            out.append(widget)
+            continue
+        binding = (widget.bindings or {}).get("checked")
+        acted = (widget.actions or {}).get("toggled")
+        tag = (getattr(binding, "tag", "") or getattr(acted, "tag", "") or "").strip()
+        marks = {k: v for k, v in props.items() if k.startswith("_")}
+        checked = props.get("checked", True) not in (False, "false", 0)
+        pair = []
+        for side, text, value in (("On", on, True), ("Off", off, False)):
+            button = DesignerWidget(type="ShButton", id=(widget.id or "toggle") + side,
+                                    geometry=dict(widget.geometry), properties=dict(marks, text=text))
+            if value == checked:
+                button.properties.update(backgroundColor=_LIT_BUTTON, textColor=_LIT_TEXT)
+            else:
+                button.properties["variant"] = "secondary"
+            if tag:
+                button.actions["clicked"] = DesignerAction(kind="write", tag=tag, value=value)
+            pair.append(button)
+        label = str(props.get("label") or "").strip()
+        if label:
+            pair[0].properties[_ROW_LABEL] = label
+        out.extend(pair)
+    return out
 
 
 def _control_panel(section) -> bool:
@@ -752,18 +867,20 @@ def _picture_overlays(project, registry, card, picture, section, inner, tokens, 
     ix, iy, iw, ih = inner
     over = _overlays(section, [picture])
     rest = [wd for wd in section.widgets if wd is not picture and wd not in over]
+    dropped = []
     if len(rest) > 4:
         # The drawing prints them, and a row of twenty cells is noise.
         if report is not None:
             report.notes.append("left out, the picture prints them: " + ", ".join(wd.id for wd in rest))
         section.widgets[:] = [wd for wd in section.widgets if wd not in rest]
-        rest = []
+        dropped, rest = rest, []
     for widget in over:
         if widget.type == "ShProcessValue":
-            # Over the drawing it is the value box and its unit: the drawing
-            # prints the label.
+            # Over the drawing it is the printed box again: the drawing
+            # prints the label, and the value with its unit in one box.
             widget.properties["label"] = ""
             widget.properties["trend"] = False
+            widget.properties["unitInside"] = True
     if rest:
         row_h = min(ih * 0.2, max(c._design(registry, wd)[1] for wd in rest) * 1.1)
         cell = (iw - tokens.gap * (len(rest) - 1)) / len(rest)
@@ -781,19 +898,21 @@ def _picture_overlays(project, registry, card, picture, section, inner, tokens, 
     sx, sy = pw / max(0.01, r - l), ph / max(0.01, b - t)
     for widget in over:
         spot = widget.properties[c.WIDGET_BOX_MARK]
-        ww = max(48.0, (spot[2] - spot[0]) * sx)
-        wh = max(18.0, (spot[3] - spot[1]) * sy)
-        wx = min(max(px, px + (spot[0] - l) * sx), px + pw - ww)
-        wy = min(max(py, py + (spot[1] - t) * sy), py + ph - wh)
+        # Over the printed box, a pixel larger all round to cover its edge.
+        ww = max(28.0, (spot[2] - spot[0]) * sx + 2)
+        wh = max(16.0, (spot[3] - spot[1]) * sy + 2)
+        cx, cy = px + ((spot[0] + spot[2]) / 2.0 - l) * sx, py + ((spot[1] + spot[3]) / 2.0 - t) * sy
+        wx = min(max(px, cx - ww / 2.0), px + pw - ww)
+        wy = min(max(py, cy - wh / 2.0), py + ph - wh)
         _set(widget, wx, wy, ww, wh)
     # The card's own chrome, then the picture, then what lies over it
     # (children paint in order); the captions the card layout drew for the
     # readings no longer line up with them.
     placed = [picture] + rest + over
     chrome = [ch for ch in card.children
-              if not any(ch is wd for wd in placed)
+              if not any(ch is wd for wd in placed + dropped)
               and not (ch.properties.get(c.CHROME_MARK) and ch.type == "Text"
-                       and any(ch.id.startswith(wd.id) for wd in rest + over))]
+                       and any(ch.id.startswith(wd.id) for wd in rest + over + dropped))]
     card.children[:] = chrome + placed
 
 
@@ -1134,7 +1253,8 @@ def _cut(crop, box):
 
 def _cuttable(widget) -> bool:
     from . import compiler as c
-    return widget.type in _PICTURES and bool(widget.properties.get(c.CROP_MARK))         and not str(widget.properties.get("source") or "").strip()
+    # A crop fitted to the picture's own edges is kept as it is.
+    return widget.type in _PICTURES and bool(widget.properties.get(c.CROP_MARK))         and not str(widget.properties.get("source") or "").strip()         and not widget.properties.get(c.CROP_FIT_MARK)
 
 
 def _strip_pictures(items, strip_bottom, height, notes):
@@ -1298,6 +1418,10 @@ def _nav_rail(project, registry, section, rect, tokens, report, title=""):
     for index, widget in enumerate(items):
         props = widget.properties
         if widget.type == "ShButton":
+            if widget not in lit and str(props.get("variant") or "default") in ("default", "primary"):
+                # The kit's default is a filled blue button: a column of ten
+                # was a wall of blue where the picture lists the pages.
+                props["variant"] = "ghost"
             props.setdefault("variant", "ghost")
             if widget in lit and not str(props.get("backgroundColor") or "").strip():
                 props["backgroundColor"] = accent
@@ -1314,12 +1438,147 @@ def _is_nav(section) -> bool:
         w.type in ("ShButton", "ShIconTile") for w in section.widgets)
 
 
+def _least_height(registry, section, width, tokens) -> float:
+    """The least height (px) a block's content reads at, in the box layout:
+    0 for what gives way (a picture, a rail)."""
+    if section.region == "rail" or any(wd.type in _PICTURES for wd in section.widgets):
+        return 0.0
+    widgets = section.widgets
+    title = tokens.card_title if section.title else 0
+    chrome = 1.5 * tokens.pad + title
+    line = max(14.0, tokens.label_font * 1.05)
+    if len(widgets) == 1 and widgets[0].type == "ShAlarmTable":
+        rows = [r for r in str(widgets[0].properties.get("sampleRows") or "").split(";") if r.strip()]
+        # Its title bar, the column headers, then the rows.
+        return (len(rows or [0, 0, 0]) + 2) * max(15.0, tokens.label_font * 1.15)
+    if all(wd.type == "ShKpiTile" for wd in widgets):
+        return max(56.0, tokens.label_font * 4.2)
+    if _control_panel(section):
+        buttons = sum(1 for wd in widgets if wd.type == "ShButton")
+        rows = len(widgets) - buttons + (buttons + 1) // 2
+        return chrome + rows * max(22.0, tokens.control_h * 0.46) + (rows - 1) * max(3.0, tokens.gap / 2.0)
+    if _reading_rows(section):
+        return chrome + len(widgets) * line
+    if len(widgets) == 1 and widgets[0].type == "ShTrendChart":
+        return chrome + 100.0
+    # Dials, pictures and tiles scale to the box they get.
+    return 0.0
+
+
+def _make_room(registry, sections, rect, tokens, report):
+    """The sections with their boxes' heights moved so each block gets the
+    least height its content reads at, taken from blocks with room to spare
+    (the process drawing). A model's boxes are rough: Ornith drew a kiln's
+    control panel a tenth of the screen tall and its five controls were laid
+    5 px high each."""
+    whole = _union(sections)
+    rx, ry, rw, rh = rect
+    sx = rw / max(0.05, whole[2] - whole[0])
+    sy = rh / max(0.05, whole[3] - whole[1])
+    snapped = _snap([v for s in sections for v in (s.box[1], s.box[3])], 0.02)
+    edges = sorted(set(snapped.values()))
+    if len(edges) < 3:
+        return sections
+    size = [b - a for a, b in zip(edges, edges[1:])]
+    spans = []
+    for s in sections:
+        top, bottom = edges.index(snapped[s.box[1]]), edges.index(snapped[s.box[3]])
+        spans.append(set(range(top, bottom)))
+    least = [_least_height(registry, s, (s.box[2] - s.box[0]) * sx, tokens) for s in sections]
+    drawn = [sum(size[i] for i in span) for span in spans]
+    # A block grows to at most three times what the picture drew.
+    needs = [min((px + tokens.gap) / sy, 3.0 * d) if px else 0.0 for px, d in zip(least, drawn)]
+    # A block gives at most what it can spare and keeps over half its height:
+    # without a floor a kiln's drawing gave all of itself to the panels.
+    floor = [0.55 * v for v in size]
+    have = lambda k: sum(size[i] for i in spans[k])
+    moved = False
+    for _round in range(60):
+        short = max(range(len(sections)), key=lambda k: needs[k] - have(k))
+        deficit = needs[short] - have(short)
+        if deficit <= 1e-4 or not spans[short]:
+            break
+        takers = spans[short]
+        best, room = None, 0.0
+        for j in range(len(size)):
+            if j in takers:
+                continue
+            spare = size[j] - floor[j]
+            for k, span in enumerate(spans):
+                if j in span:
+                    if span & takers:
+                        continue          # it gains back what it gives
+                    spare = min(spare, have(k) - needs[k])
+            if spare > room:
+                best, room = j, spare
+        if best is None or room <= 1e-4:
+            break
+        take = min(deficit, room)
+        size[best] -= take
+        grown = sum(size[i] for i in takers) or 1.0
+        for i in takers:
+            size[i] += take * size[i] / grown
+        moved = True
+    if not moved:
+        return sections
+    at = [edges[0]]
+    for s in size:
+        at.append(at[-1] + s)
+    out = []
+    for s in sections:
+        top, bottom = edges.index(snapped[s.box[1]]), edges.index(snapped[s.box[3]])
+        out.append(dataclasses.replace(s, box=(s.box[0], at[top], s.box[2], at[bottom])))
+    report.notes.append("boxes made room for their content")
+    return out
+
+
+def _even_rows(sections):
+    """A row of three or more blocks that are each one tile of one kind (a
+    dashboard's KPI strip) shares its span evenly: a model draws such a row
+    unevenly (Ornith's fifth KPI tile was a third as wide as the rest)."""
+    lone = lambda s: s.widgets[0].type if len(s.widgets) == 1 and s.widgets[0].type in _SELF_FRAMED else ""
+    rows = []
+    for section in sections:
+        kind = lone(section)
+        if not kind or not section.box:
+            continue
+        row = next((r for r in rows if r[0] == kind and abs(r[1][0].box[1] - section.box[1]) < 0.03
+                    and abs(r[1][0].box[3] - section.box[3]) < 0.03), None)
+        if row:
+            row[1].append(section)
+        else:
+            rows.append((kind, [section]))
+    even = {}
+    for _kind, row in rows:
+        if len(row) < 3:
+            continue
+        row.sort(key=lambda s: s.box[0])
+        left, right = row[0].box[0], max(s.box[2] for s in row)
+        step = (right - left) / len(row)
+        for index, section in enumerate(row):
+            even[id(section)] = (left + index * step, section.box[1], left + (index + 1) * step, section.box[3])
+    return [dataclasses.replace(s, box=even[id(s)]) if id(s) in even else s for s in sections]
+
+
 def _compile_boxes(project, registry, sections, rect, tokens, report, title=""):
     """The body laid out where the picture's blocks are: every section at
     its box, mapped onto `rect` (a dashboard's rows of tiles, panels and
     tables, which the region columns cannot hold)."""
     out = []
-    for section, box in _box_rects(sections, rect, tokens.gap):
+    sections = _even_rows(_make_room(registry, sections, rect, tokens, report))
+    placed = _box_rects(sections, rect, tokens.gap)
+    for index, (section, box) in enumerate(placed):
+        if section.region != "rail":
+            continue
+        # A rail runs down the screen's edge: drawn short of the foot with
+        # nothing under it, it left a hole at the bottom-left corner.
+        x, y, w, h = box
+        below = [b[1] for s, b in placed if s is not section and b[1] >= y + h - 1
+                 and b[0] < x + w and b[0] + b[2] > x]
+        foot = (min(below) - tokens.gap) if below else rect[1] + rect[3]
+        if foot > y + h:
+            placed[index] = (section, (x, y, w, foot - y))
+    for section, box in placed:
         if section.region == "rail" and _is_nav(section):
             out.append(_nav_rail(project, registry, section, box, tokens, report, title=title))
         elif section.region == "rail":
@@ -1410,9 +1669,33 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
     tokens = c.tokens_for(width, height)
     sections = [s for s in sections if s.widgets]
     for section in sections:
+        if _control_panel(section):
+            section.widgets[:] = _pair_toggles(project, section.widgets)
+        for widget in section.widgets:
+            if widget.type == "ShNumInput" and widget.properties.get(_ROW_LABEL)                     and not widget.properties.get("label"):
+                # Printed beside the field last time: the field's own again,
+                # before the compiler names an unlabelled field by its id.
+                widget.properties["label"] = widget.properties.pop(_ROW_LABEL)
         c._prepare(registry, section, report.notes)
         _apply_accent(registry, section)
         for widget in section.widgets:
+            if widget.type == "ShNumInput" and "decimalPlaces" not in widget.properties:
+                # A set-point of 3.2 rpm read "3": the field shows as many
+                # decimals as its step or its value has.
+                places = max((len(str(v).split(".")[1].rstrip("0")) for v in
+                              (widget.properties.get("step"), widget.properties.get("value"))
+                              if isinstance(v, float) and "." in str(v)), default=0)
+                if places:
+                    widget.properties["decimalPlaces"] = min(3, places)
+            for name in _COMMA_LISTS:
+                # The kit splits these on commas; Ornith wrote "12:30;13:00"
+                # and "Process Overview|Temperature Profile", and the axis
+                # showed one long label, the tab bar nothing.
+                items = widget.properties.get(name)
+                if isinstance(items, (list, tuple)):
+                    widget.properties[name] = ",".join(str(v) for v in items)
+                elif isinstance(items, str) and "," not in items:
+                    widget.properties[name] = re.sub(r"\s*[;|]\s*", ",", items)
             # A speed arc with no target in the plan is a vehicle's
             # speedometer, not a cab's: the kit's sample "TARGET: 60" flag
             # would be a target nobody set.
@@ -1435,7 +1718,13 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
                         and not widget.properties.get("orientation"):
                     widget.properties["orientation"] = "horizontal"
     by_region = {name: [] for name in c.REGIONS}
-    for section in sections:
+    for index, section in enumerate(sections):
+        if section.region == "top" and any(w.type not in _STRIP_TYPES for w in section.widgets):
+            # A row of KPI tiles under the title bar, planned as "top": the
+            # strip is one line of icons and words, and the tiles packed into
+            # it ran off the screen's edge. It is the body's first row.
+            report.notes.append(f"'{section.title or section.role}' is below the strip, not in it")
+            sections[index] = section = dataclasses.replace(section, region="center")
         bucket = by_region[section.region if section.region in c.REGIONS else "center"]
         plain = section.widgets and all(w.type == "Text" and not w.bindings and not w.actions
                                         for w in section.widgets)
@@ -1497,7 +1786,14 @@ def compile_reference(project, page, registry, sections, title, header_widgets, 
             pad = (-0.02, -0.02, 0.02, 0.02)
             around = tuple(_clamp(v + d, 0.0, 1.0) for v, d in zip(section.box, pad))
             for widget in section.widgets:
-                if _cuttable(widget):
+                if widget.type in _PICTURES and not widget.properties.get(c.CROP_MARK) \
+                        and not str(widget.properties.get("source") or "").strip():
+                    # A picture with no crop and no file (Ornith left a
+                    # kiln drawing's crop out): its block's place in the
+                    # reference is the best cut there is, and an empty
+                    # "Image" frame the worst.
+                    widget.properties[c.CROP_MARK] = [round(v, 4) for v in around]
+                elif _cuttable(widget):
                     widget.properties[c.CROP_MARK] = _cut(widget.properties[c.CROP_MARK], around) \
                         or [round(v, 4) for v in around]
         widgets += _compile_boxes(project, registry, body_sections, (bx0, by0, body_w, body_h),

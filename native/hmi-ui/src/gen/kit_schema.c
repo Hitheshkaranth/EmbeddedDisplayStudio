@@ -405,6 +405,7 @@ static const hmi_prop_schema_t props_ShProcessValue[] = {
     {"warnAbove", HMI_KIND_FLOAT, "0.0", false},
     {"warnBelow", HMI_KIND_FLOAT, "0.0", false},
     {"bevel", HMI_KIND_BOOL, "false", false},
+    {"unitInside", HMI_KIND_BOOL, "false", false},
     {"opacity", HMI_KIND_FLOAT, "1.0", false},
     {"visible", HMI_KIND_BOOL, "true", false},
     {NULL, HMI_KIND_STR, NULL, false}
@@ -709,7 +710,7 @@ const hmi_type_schema_t hmi_kit_types[] = {
     {"ShKpiTile", "Industrial", 250, 96, false, "", props_ShKpiTile, 13, signals_ShKpiTile, 0},
     {"ShNumDisplay", "Industrial", 180, 80, false, "", props_ShNumDisplay, 13, signals_ShNumDisplay, 0},
     {"ShNumInput", "Industrial", 240, 64, false, "value", props_ShNumInput, 10, signals_ShNumInput, 1},
-    {"ShProcessValue", "Industrial", 260, 30, false, "", props_ShProcessValue, 13, signals_ShProcessValue, 0},
+    {"ShProcessValue", "Industrial", 260, 30, false, "", props_ShProcessValue, 14, signals_ShProcessValue, 0},
     {"ShProgress", "Industrial", 200, 24, false, "", props_ShProgress, 4, signals_ShProgress, 0},
     {"ShSegmentBar", "Automotive", 320, 36, false, "", props_ShSegmentBar, 11, signals_ShSegmentBar, 0},
     {"ShSelect", "Industrial", 200, 56, false, "currentIndex", props_ShSelect, 7, signals_ShSelect, 1},

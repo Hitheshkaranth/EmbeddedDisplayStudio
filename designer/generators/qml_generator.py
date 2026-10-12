@@ -389,7 +389,9 @@ class QmlGenerator:
         derived, state_prop = self._derived_properties(widget, definition)
         known = definition.properties
         for key, value in widget.properties.items():
-            if key in widget.bindings or key in derived or value == "":
+            if key in widget.bindings or key in derived:
+                continue
+            if value == "" and not self._blank_text(definition, key):
                 continue
             # A key the registry does not declare (a hand-edited or
             # model-invented one) would be "Cannot assign to non-existent
@@ -512,6 +514,25 @@ class QmlGenerator:
             return "Bus.activeAlarms"
         points = widget.properties.get("maxPoints", 100)
         return f"(Bus.historyVersion, Bus.history({_literal(binding.tag)}, {int(points)}))"
+
+    #: Words a widget prints. Blank, they are blank on purpose: a reading
+    #: laid over a drawing that prints its label has label "", and left out
+    #: of the QML it fell back to the kit's "Value" (the panel drew none).
+    _WORDS = ("label", "title", "caption", "subtitle", "unit", "units", "text")
+
+    @classmethod
+    def _blank_text(cls, definition, key) -> bool:
+        """True when "" for `key` is to be written out: a word property
+        whose kit default is not empty. Colours, enums and the rest keep
+        their defaults when blank."""
+        if definition is None or key not in cls._WORDS:
+            return False
+        if definition.properties.get(key) is not str or key in (definition.color_properties or ()):
+            return False
+        if definition.choices and key in definition.choices:
+            return False
+        default = (definition.defaults or {}).get(key)
+        return isinstance(default, str) and default != ""
 
     def _derived_properties(self, widget, definition):
         """Properties decided by the bindings' thresholds and units.
