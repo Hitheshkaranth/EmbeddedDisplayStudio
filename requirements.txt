@@ -14,6 +14,10 @@
 # component gallery and the render tests.
 PySide6==6.8.1
 
+# Host AI Designer: measured image OCR preparation and raster artwork cleanup.
+Pillow==12.3.0
+numpy==2.2.6
+
 # Optional: the daemon's UART feature. Absent, the feature disables itself
 # with a warning (CONTRACT section 7), so it is not required to run the suite.
 pyserial==3.5

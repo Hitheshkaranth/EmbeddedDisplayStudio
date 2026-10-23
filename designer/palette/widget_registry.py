@@ -198,14 +198,14 @@ def default_registry() -> WidgetRegistry:
     # -- Avionics -------------------------------------------------------
     # Instrument colours do not follow the light/dark theme; they are the
     # conventions a crew is trained to read, so they expose no colour
-    # properties (ShEngineBar's optional barColor, for a vehicle's vitals row,
-    # is the one exception). What they expose is the reading, which is what
+    # properties except optional ShEngineBar.barColor and ShDataField.valueColor
+    # for non-avionics surfaces. What they expose is the reading, which is what
     # gets bound to a tag.
     add("ShDataField", "Data Field", "Avionics", "ShDataField", 150, 46,
         {"label": str, "value": str, "units": str, "severity": str,
-         "stacked": bool, **common},
+         "stacked": bool, "valueColor": str, **common},
         {"label": "GROUND SPEED", "value": "130", "units": "KTS",
-         "severity": "advisory", "stacked": True, **common_defaults},
+         "severity": "advisory", "stacked": True, "valueColor": "", **common_defaults},
         ("value", "severity"), False,
         {"severity": ("advisory", "caution", "warning")})
     add("ShAttitude", "Attitude Indicator", "Avionics", "ShAttitude", 220, 220,

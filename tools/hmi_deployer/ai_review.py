@@ -34,9 +34,10 @@ REVIEW_SCHEMA = {
         "fixes": {"type": "array", "items": {
             "type": "object",
             "properties": {
-                "op": {"type": "string", "enum": ["remove", "crop", "set"]},
+                "op": {"type": "string", "enum": ["remove", "crop", "set", "box"]},
                 "id": {"type": "string"},
                 "crop": {"type": "array", "items": {"type": "number"}},
+                "box": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4},
                 "property": {"type": "string"},
                 "value": {},
             },
@@ -117,6 +118,19 @@ def layout_findings(project, page=None, registry=None) -> list:
             if ix <= 2 or iy <= 2:
                 continue
             small = min(ra[2] * ra[3], rb[2] * rb[3])
+            # In measured reproductions a panel background or artwork may
+            # intentionally sit behind an editable label/state/readout. That
+            # containment is not a collision to "repair" by removing content.
+            def backdrop(back, back_rect, front_rect):
+                return (back.type in ("Rectangle", "Image") and not back.actions
+                        and isinstance(back.properties.get("_reference"), dict)
+                        and back.properties["_reference"].get("layout") == "measured"
+                        and back_rect[0] <= front_rect[0] + 1
+                        and back_rect[1] <= front_rect[1] + 1
+                        and back_rect[0] + back_rect[2] >= front_rect[0] + front_rect[2] - 1
+                        and back_rect[1] + back_rect[3] >= front_rect[1] + front_rect[3] - 1)
+            if backdrop(a, ra, rb) or backdrop(b, rb, ra):
+                continue
             if ix * iy >= max(40.0, 0.08 * small):
                 found.append({"kind": "overlap", "ids": [a.id, b.id],
                               "message": f"{a.id} and {b.id} overlap ({int(ix)}x{int(iy)} px)"})
@@ -154,12 +168,19 @@ def review_prompt() -> str:
         "remove them.\n"
         "- a picture whose crop shows parts of other blocks (a card, the top strip, the "
         "banner): give its crop around that picture alone, tighter than before.\n"
-        "- text cut off: shorten it with \"set\" (\"STATUS: ONLINE\"), never by removing it.\n"
-        "The measured findings below are facts about image 2; use them.\n"
+        "- text cut off: preserve the reference wording. For measured layouts correct its "
+        "box to match the reference, or set a suitable declared fontSize. Do not abbreviate labels.\n"
+        "Font/icon/radius sizes for measured layouts are SOURCE IMAGE pixels, not target pixels.\n"
+        "- incorrect positions or sizes in measured layouts: use op box with the widget's "
+        "[left, top, right, bottom] in 0..1000 FULL reference-image coordinates. Never use "
+        "rendered target pixels for this operation.\n"
+        "The findings below include approximate text-fit checks and intentional overlaps; "
+        "confirm each against the images before changing it.\n"
         "Never remove a reading, a button, a dial or the main picture. Ids from the list only. "
         "When nothing is wrong, answer with no fixes.\n"
         'Reply as JSON: {"issues": ["<one line each>"], "fixes": [{"op": "remove", "id": "<id>"}, '
         '{"op": "crop", "id": "<picture id>", "crop": [left, top, right, bottom]}, '
+        '{"op": "box", "id": "<id>", "box": [left, top, right, bottom]}, '
         '{"op": "set", "id": "<id>", "property": "<name>", "value": <value>}]}. Crops are on a '
         "0..1000 scale of image 1's width and height.")
 
@@ -210,7 +231,7 @@ def review_brief(project, page=None, findings=None, shown=()) -> str:
     """The review's user message: the widgets (id, type, box, words, crop)
     and the measured findings. `shown`: the strip pictures sent as images 3
     and on (strip_pictures), each asked about by name."""
-    from designer.layout.compiler import CROP_MARK
+    from designer.layout.compiler import CROP_MARK, WIDGET_BOX_MARK, REFERENCE_MARK
     page = page or project.pages[0]
     lines = []
     for widget, r, _p in _walk(page.widgets):
@@ -223,11 +244,18 @@ def review_brief(project, page=None, findings=None, shown=()) -> str:
         crop = widget.properties.get(CROP_MARK)
         if crop:
             line += " cut from the reference at " + json.dumps([int(round(v * 1000)) for v in crop])
+        box = widget.properties.get(WIDGET_BOX_MARK)
+        if box:
+            line += " source box " + json.dumps([round(v * 1000, 2) for v in box])
         if widget.bindings:
             line += " (live)"
         lines.append(line)
     text = (f"The screen is {project.screen.width}x{project.screen.height}. Widgets:\n"
             + "\n".join(lines))
+    reference = next((w.properties[REFERENCE_MARK] for w, _r, _p in _walk(page.widgets)
+                      if isinstance(w.properties.get(REFERENCE_MARK), dict)), None)
+    if reference:
+        text += "\nSource-image geometry: " + json.dumps(reference)
     findings = findings if findings is not None else layout_findings(project, page)
     if findings:
         text += "\n\nMeasured findings:\n" + "\n".join("- " + f["message"] for f in findings)
@@ -269,7 +297,7 @@ def apply_review(project, fixes, registry, page=None, findings=None) -> list:
     reference, re-cut on Apply (its source is cleared). set: a property the
     widget's type declares, never a geometry or a compiler mark.
     """
-    from designer.layout.compiler import CROP_MARK, compile_page, crop_of
+    from designer.layout.compiler import CROP_MARK, WIDGET_BOX_MARK, REFERENCE_MARK, compile_page, crop_of
     page = page or project.pages[0]
     findings = findings if findings is not None else layout_findings(project, page, registry)
     named = {wid for f in findings if f["kind"] in ("overlap", "twice") for wid in f["ids"]}
@@ -307,6 +335,12 @@ def apply_review(project, fixes, registry, page=None, findings=None) -> list:
                 widget.properties[CROP_MARK] = crop
                 widget.properties["source"] = ""
                 made.append(f"re-cropped {wid}")
+        elif (op == "box" and isinstance(widget.properties.get(REFERENCE_MARK), dict)
+              and widget.properties[REFERENCE_MARK].get("layout") == "measured"):
+            box = crop_of(fix.get("box"), minimum=0.00001)
+            if box and box != widget.properties.get(WIDGET_BOX_MARK):
+                widget.properties[WIDGET_BOX_MARK] = box
+                made.append(f"positioned {wid}")
         elif op == "set":
             prop = str(fix.get("property") or "")
             definition = registry.get(widget.type) if registry is not None else None
@@ -314,7 +348,16 @@ def apply_review(project, fixes, registry, page=None, findings=None) -> list:
             if definition is None or prop.startswith("_") or prop not in definition.properties \
                     or prop in ("x", "y", "width", "height") or isinstance(value, (dict, list)):
                 continue
-            if widget.properties.get(prop) != value:
+            metrics = widget.properties.get("_referenceMetrics")
+            if isinstance(metrics, dict) and prop in metrics:
+                # Measured layouts store font/radius/icon sizes in source-image
+                # pixels. Keep that source value authoritative on recompile.
+                if metrics[prop] == value:
+                    continue
+                metrics[prop] = value
+                widget.properties[prop] = value
+                made.append(f"set {wid}.{prop}")
+            elif widget.properties.get(prop) != value:
                 widget.properties[prop] = value
                 made.append(f"set {wid}.{prop}")
     if made:

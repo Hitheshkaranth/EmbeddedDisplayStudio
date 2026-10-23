@@ -19,6 +19,8 @@ Item {
     property string severity: "advisory"
     /** Label above the value, or beside it. */
     property bool stacked: true
+    /** Optional normal-reading colour for non-avionics surfaces. */
+    property string valueColor: ""
 
     implicitWidth: 140
     implicitHeight: stacked ? 44 : 24
@@ -26,6 +28,7 @@ Item {
     readonly property color _valueColor: {
         if (root.severity === "warning") return Theme.efisWarning
         if (root.severity === "caution") return Theme.efisCaution
+        if (root.valueColor !== "") return root.valueColor
         return Theme.efisText
     }
 

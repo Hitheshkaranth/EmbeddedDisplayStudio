@@ -3960,6 +3960,19 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
 
     def closeEvent(self, event):
         """Release every local/remote telemetry source before closing."""
+        ai_tab = getattr(self, "_ai_tab", None)
+        ai_worker = getattr(ai_tab, "_worker", None)
+        if (ai_worker is not None and getattr(ai_worker, "reference_target", None)
+                and ai_worker.isRunning()):
+            # OCR/native rendering have bounded subprocess calls. Let them
+            # return and observe interruption before Qt destroys their thread.
+            # Retrying close from finished keeps the UI responsive meanwhile.
+            event.ignore()
+            if not getattr(self, "_closing_reference_worker", False):
+                self._closing_reference_worker = True
+                ai_worker.finished.connect(self._finish_reference_close)
+                ai_tab.stop_generation()
+            return
         if hasattr(self, "_code_tab"):
             if not self._code_tab.confirm_close():
                 event.ignore()
@@ -3973,3 +3986,7 @@ class MainWindow(QtRuntimeDeployMixin, QMainWindow):
         if getattr(self, "_live_preview", None) is not None:
             self._live_preview.close()
         super().closeEvent(event)
+
+    def _finish_reference_close(self):
+        self._closing_reference_worker = False
+        self.close()

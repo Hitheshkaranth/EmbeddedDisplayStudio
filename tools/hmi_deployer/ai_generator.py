@@ -49,6 +49,8 @@ _PLAN_WIDGET = _open_object({
 #: required, so the schema never rejects a plan the compiler would accept.
 PLAN_SCHEMA = _open_object({
     "name": {"type": "string"},
+    "theme": {"type": "string", "enum": ["light", "dark"]},
+    "background": {"type": "string"},
     # Reference mode: the blocks the model sees, written before the pages --
     # the "look first" step structured output otherwise leaves no room for
     # (the reply is JSON from its first token).
@@ -69,6 +71,12 @@ PLAN_SCHEMA = _open_object({
             "id": {"type": "string"},
             "name": {"type": "string"},
             "title": {"type": "string"},
+            "reference": _open_object({
+                "layout": {"type": "string", "enum": ["measured"]},
+                "viewport": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4},
+                "width": {"type": "number"}, "height": {"type": "number"},
+                "coordinateScale": {"type": "number", "enum": [100, 1000]},
+            }),
             "header": {"type": "array", "items": _PLAN_WIDGET},
             # A section is closed: its keys are these and it has widgets. Open,
             # it let Ornith write a key named `widgets: [...], // one
@@ -93,6 +101,27 @@ PLAN_SCHEMA = _open_object({
                 }}, "minItems": 1},
         }}},
 }, required=("pages",))
+
+# Reference decoding must enforce the measurement contract. Merely describing
+# optional geometry in the prompt lets guided decoders emit the legacy plan.
+REFERENCE_PLAN_SCHEMA = copy.deepcopy(PLAN_SCHEMA)
+REFERENCE_PLAN_SCHEMA["required"] = ["theme", "pages"]
+_REFERENCE_BOX_SCHEMA = {"type": "array", "minItems": 4, "maxItems": 4,
+                         "items": {"type": "number", "minimum": 0, "maximum": 1000}}
+_reference_page_schema = REFERENCE_PLAN_SCHEMA["properties"]["pages"]["items"]
+_reference_page_schema["required"] = ["reference", "sections"]
+_reference_meta_schema = _reference_page_schema["properties"]["reference"]
+_reference_meta_schema["required"] = ["layout", "viewport", "width", "height"]
+_reference_meta_schema["properties"]["viewport"] = copy.deepcopy(_REFERENCE_BOX_SCHEMA)
+for _dimension in ("width", "height"):
+    _reference_meta_schema["properties"][_dimension] = {"type": "number", "exclusiveMinimum": 0}
+_reference_section_schema = _reference_page_schema["properties"]["sections"]["items"]
+_reference_section_schema["required"] = ["box", "widgets"]
+_reference_section_schema["properties"]["box"] = copy.deepcopy(_REFERENCE_BOX_SCHEMA)
+for _widget_schema in (_reference_page_schema["properties"]["header"]["items"],
+                       _reference_section_schema["properties"]["widgets"]["items"]):
+    _widget_schema["required"] = ["id", "type", "box"]
+    _widget_schema["properties"]["box"] = copy.deepcopy(_REFERENCE_BOX_SCHEMA)
 
 #: A reply that keeps fewer than this share of the tags the design had bound
 #: has dropped part of the screen (the canvas guard in mainwindow counts the
@@ -846,7 +875,7 @@ def _reference_process_guide(registry) -> str:
         line = "one ShDataField per line (label, value, units) with \"stacked\": false"
     return (
         "Industrial and process screens (a plant overview, SCADA):\n"
-        "- a process drawing (a furnace, tanks, pipes, a flow diagram, a mimic) -> ONE Image "
+        "- a decorative-only process drawing (a furnace, tanks, pipes, a flow diagram, a mimic) -> ONE Image "
         "with \"source\": \"\" and a \"crop\" around the whole drawing: every unit, pipe and "
         "arrow, the labels printed on it (\"IRON ORE ->\", \"TUYERES\") and the headings over "
         "it (\"MATERIALS INPUT\"), and no further -- stop before the cards beside it. Those "
@@ -854,11 +883,14 @@ def _reference_process_guide(registry) -> str:
         "has role \"hero\" and region \"center\". The LIVE values drawn on it (a number in a box "
         "beside a unit: \"260 tph\", \"880 °C\") are readings: put each in the drawing's section "
         "as a ShProcessValue (or ShDataField) with its own \"box\", where that value sits in the "
-        "picture (0..1000) -- the Studio lays them over the drawing there.\n"
-        "- the screen's name in a box in the top strip -> the page \"title\", as printed.\n"
+        "picture (0..1000) -- the Studio lays them over the drawing there. If equipment changes "
+        "state or is controlled, build each tank, valve, vessel and pipe as individual widgets "
+        "with bindings/actions instead; never bake interactive equipment into one image.\n"
+        "- the screen's name in a box in the top strip -> a measured header Text, as printed; "
+        "page title is metadata and is not automatically rendered in measured mode.\n"
         "- a plant or company name and logo at the top-left -> header items with \"side\": "
         "\"left\": an Image with \"source\": \"\" and the logo's \"crop\", and a Text with the "
-        "name.\n"
+        "name only when the logo crop does not already contain the name.\n"
         "- a status line (\"STATUS: OPERATIONAL\") -> a header ShDataField, \"label\": "
         "\"Status\", \"value\" the words, \"stacked\": false; a date and time is the clock "
         "Text; an ALARM lamp -> a header ShAnnunciator(text, \"severity\": \"warning\", "
@@ -873,7 +905,9 @@ def _reference_process_guide(registry) -> str:
         "\"warning\" red.\n"
         "- a row of navigation buttons along the foot -> ONE section, title \"\", role "
         "\"controls\", region \"bottom\", one ShButton per button in the picture's order, each "
-        "with a navigate action; the highlighted one (the current page) gets \"borderColor\" "
+        "with a navigate action only to a page actually emitted in this plan. Disable "
+        "unavailable destinations (enabled: false); never invent missing page ids. "
+        "The highlighted one (the current page) gets \"borderColor\" "
         "and \"textColor\" its highlight colour.\n"
         + _reference_dashboard_guide(registry) + "\n")
 
@@ -966,9 +1000,19 @@ def build_reference_plan_prompt(registry: Optional[WidgetRegistry] = None,
         "picture: the same blocks in the same places, the same kinds of widgets, the same "
         "labels, sample values and colours. Do not fall back to a generic title-and-card-grid "
         "dashboard, and do not drop blocks to keep the page short.\n\n"
-        "You decide WHAT each block shows and WHERE in the picture it sits (its region); the "
-        "Studio's layout compiler turns the regions into the layout. Do not write x, y, width, "
-        "height or font sizes.\n\n"
+        "Use measured reproduction: set root theme to light or dark from the APPLICATION, "
+        "not its device bezel, and background to its hex colour. Each page carries reference: "
+        "{\"layout\":\"measured\",\"viewport\":[left,top,right,bottom],\"width\":source_image_width,"
+        "\"height\":source_image_height}. The viewport excludes the device bezel. All section "
+        "boxes, widget boxes and image crops use the SAME 0..1000 coordinates relative to the "
+        "FULL ORIGINAL image, including header widgets. Give EVERY widget its own tight box. "
+        "The compiler uniformly fits that viewport into the panel without rearranging widgets. "
+        "Use real Rectangle/Text widgets for measured backgrounds and headings; no automatic "
+        "cards or headings are inserted. Source width/height are image pixel dimensions, not "
+        "the target panel dimensions. Do not write pixel geometry x/y/width/height on widgets.\n\n"
+        "Font sizes, icon sizes, corner radii and border widths are measured in ORIGINAL "
+        "SOURCE IMAGE pixels; the compiler scales them uniformly with the image. Child "
+        "widget boxes are also absolute source-image coordinates, never parent-relative.\n\n"
         "Step 1 -- inventory. Look at the picture region by region (the top strip, the rail at "
         "the left edge, the left column, the middle, the right column, the bottom row) and "
         "list every visual block in it: every dial, arc, bar group, card, picture, selector "
@@ -978,7 +1022,7 @@ def build_reference_plan_prompt(registry: Optional[WidgetRegistry] = None,
         "Supply', 4 reading lines -> 4 ShProcessValue\"). A picture is only ever a drawing, a "
         "photo or a logo: the cards, readouts, banners and buttons around it are blocks of "
         "their own, never part of it.\n"
-        "Step 2 -- plan. Each block becomes one section of the page (10 sections at most), in "
+        "Step 2 -- plan. Each block becomes one section of the page, in "
         "reading order within its region (top to bottom, then left to right). Never merge two "
         "blocks into one section and never leave one out -- every line of the inventory is a "
         "section; a titled card in the picture is one "
@@ -1057,19 +1101,22 @@ def build_reference_plan_prompt(registry: Optional[WidgetRegistry] = None,
         "\"colours:\" in the list below, and accentColor/barColor where named above) and as the "
         "section's \"accent\". Leave a colour out where the picture shows none.\n\n"
         "Reply with ONE fenced ```json block and nothing after it:\n"
-        '{"name": "<short name>", "section": {"index": 1, "complete": true, "label": "", "next": ""}, '
+        '{"name": "<short name>", "theme": "light", "section": {"index": 1, "complete": true, "label": "", "next": ""}, '
         '"inventory": ["<region>: <block> -> <widgets>", <one line for every block of the picture>], '
-        '"pages": [{"id": "main", "name": "Main", "title": "<the screen title as the picture prints it, else 2-5 words>", '
-        '"header": [{"type": "ShTelltale", "id": "wifi", "side": "left", "properties": '
-        '{"icon": "wifi", "label": "WiFi", "lit": true}}, {"type": "Text", "id": "clock", '
+        '"pages": [{"id": "main", "name": "Main", "reference": {"layout": "measured", '
+        '"viewport": [<contentLeft>, <contentTop>, <contentRight>, <contentBottom>], '
+        '"width": <sourceWidthPixels>, "height": <sourceHeightPixels>}, '
+        '"title": "<the screen title as the picture prints it, else 2-5 words>", '
+        '"header": [{"type": "ShTelltale", "id": "wifi", "box": [<l>, <t>, <r>, <b>], "side": "left", "properties": '
+        '{"icon": "wifi", "label": "WiFi", "lit": true}}, {"type": "Text", "id": "clock", "box": [<l>, <t>, <r>, <b>], '
         '"properties": {"text": "<the time shown>"}, "bindings": {"text": {"tag": "<area>.clock"}}}, '
-        '{"type": "ShDataField", "id": "driver", "properties": {"label": "Driver", "value": '
+        '{"type": "ShDataField", "id": "driver", "box": [<l>, <t>, <r>, <b>], "properties": {"label": "Driver", "value": '
         '"<the name on the badge>"}}, <the rest of the top strip: weather, the status check>], '
         '"sections": [{"title": "Gear", "role": "status", "region": "rail", "box": [<l>, <t>, <r>, <b>], "widgets": ['
-        '{"type": "ShGearIndicator", "id": "gear", "properties": {"gears": "P,R,N,D", "gear": "D", '
+        '{"type": "ShGearIndicator", "id": "gear", "box": [<l>, <t>, <r>, <b>], "properties": {"gears": "P,R,N,D", "gear": "D", '
         '"orientation": "vertical"}, "bindings": {"gear": {"tag": "<area>.gear"}}}]}, '
         '{"title": "", "role": "hero", "region": "left", "box": [<l>, <t>, <r>, <b>], "accent": "#<hex>", "widgets": ['
-        '{"type": "ShSpeedArc", "id": "speed", "properties": {"value": <shown>, "maximumValue": '
+        '{"type": "ShSpeedArc", "id": "speed", "box": [<l>, <t>, <r>, <b>], "properties": {"value": <shown>, "maximumValue": '
         '<full scale>, "unit": "km/h", "outerColor": "#<hex>", "innerColor": "#<hex>"}, '
         '"bindings": {"value": {"tag": "<area>.speed", "unit": "km/h"}}}]}, '
         '<one section per remaining block of the picture, each with its "region" and "box">]}]}\n'
@@ -1087,8 +1134,12 @@ def build_reference_plan_prompt(registry: Optional[WidgetRegistry] = None,
         + _reference_catalogue(registry) + "\n"
         + _plan_brand(brand) +
         "Other allowed types: " + ", ".join(types) + ".\n\n"
-        "Every widget states what it is: the label the picture shows (Title-case, at most 18 "
-        "characters) in the property its type uses for it, and its unit. Ranges are in "
+        "Keep complete visible labels exactly as shown; never shorten them to fit. Give all "
+        "interactive controls real actions on supported signals and live readouts tag bindings. "
+        "Create destination pages for navigation; do not invent device addresses or claim a "
+        "screenshot proves plant connectivity. Equipment must be individual editable widgets "
+        "when interaction is required; a decorative image must not swallow live controls. "
+        "Every widget states its unit. Ranges are in "
         "engineering units with warning and critical thresholds where the process has them.\n"
         "Every reading carries the value the picture shows as its sample \"value\" (a gauge "
         "reading 342 t has \"value\": 342); a healthy lamp gets \"state\": \"ok\".\n"
@@ -1327,6 +1378,9 @@ def _merge_small_plan(pages_data: list, width: int, height: int) -> list:
     buttons between the merged pages go with them.
     """
     pages = _fold_stray_sections(pages_data)
+    if any(isinstance(p.get("reference"), dict) and p["reference"].get("layout") == "measured"
+           for p in pages):
+        return pages
     if len(pages) < 2:
         return pages
 
@@ -1658,18 +1712,20 @@ class AIDesignGenerator:
         The marks (compiler.SECTION_MARK) are what compose() compiles from, so
         they survive a sectioned run's merge and a later "Tidy up".
         """
-        from designer.layout.compiler import (BOX_MARK, REGION_MARK, SECTION_ID_MARK, SECTION_MARK,
-                                              sections_from_plan)
+        from designer.layout.compiler import (BOX_MARK, REGION_MARK, SECTION_ID_MARK, SECTION_MARK, REFERENCE_MARK,
+                                              sections_from_plan, measured_coordinate_scale)
         from designer.model import DesignerScreen
         pages, taken = [], set()
         for index, page_data in enumerate(_merge_small_plan(design.get("pages") or [], width, height)):
             if not isinstance(page_data, dict):
                 continue
             title, sections, header = sections_from_plan(page_data, self._convert_widgets)
-            header = _named_logos_only(header, self.brief)
-            for section in sections:
-                _names_on_text_tiles(section.widgets, self.registry)
-                _plausible_samples(section.widgets, self.registry)
+            measured = isinstance(page_data.get("reference"), dict) and page_data["reference"].get("layout") == "measured"
+            if not measured:
+                header = _named_logos_only(header, self.brief)
+                for section in sections:
+                    _names_on_text_tiles(section.widgets, self.registry)
+                    _plausible_samples(section.widgets, self.registry)
             loose = self._convert_widgets([w for w in page_data.get("widgets") or []
                                            if isinstance(w, dict)])
             if loose and not sections:
@@ -1687,10 +1743,11 @@ class AIDesignGenerator:
                 header += more
                 grouped = {id(w) for s in sections for w in s.widgets} | {id(w) for w in more}
                 loose = [w for w in loose if id(w) not in grouped]
-            else:
+            elif not measured:
                 _lead_with_emphasis(sections, self.brief, self.registry)
             widgets = []
-            if title:
+            measured = isinstance(page_data.get("reference"), dict) and page_data["reference"].get("layout") == "measured"
+            if title and not measured:
                 widgets.append(DesignerWidget(type="Text", id="screenTitle", geometry={},
                                               properties={"text": title, SECTION_MARK: "|title"}))
             for widget in header:
@@ -1706,6 +1763,13 @@ class AIDesignGenerator:
                         widget.properties[BOX_MARK] = list(section.box)
                     widgets.append(widget)
             widgets.extend(loose)
+            if measured:
+                _coordinate_scale, _coordinate_note = measured_coordinate_scale(page_data)
+                for widget in widgets:
+                    widget.properties[REFERENCE_MARK] = dict(page_data["reference"])
+                    if _coordinate_note:
+                        widget.properties[REFERENCE_MARK]["coordinateScaleInference"] = _coordinate_note
+                        widget.properties[REFERENCE_MARK]["resolvedCoordinateScale"] = list(_coordinate_scale)
             page_id = str(page_data.get("id") or ("main" if index == 0 else f"page{index + 1}"))
             page_id = re.sub(r"[^A-Za-z0-9_]", "_", page_id) or f"page{index + 1}"
             while page_id in taken:
@@ -1717,6 +1781,13 @@ class AIDesignGenerator:
             pages = [DesignerPage(id="main", name="Main", widgets=[])]
         project = DesignerProject(version=1, name=design.get("name", "AI Design"),
                                   screen=DesignerScreen(width=width, height=height), pages=pages)
+        theme = str(design.get("theme") or "").lower()
+        if theme in ("light", "dark"):
+            project.screen.theme = theme
+            project.screen.background = "#f4f7fb" if theme == "light" else "#101418"
+        background = str(design.get("background") or "")
+        if re.fullmatch(r"#[0-9a-fA-F]{6}", background):
+            project.screen.background = background
         from designer.model.project import ensure_unique_ids
         ensure_unique_ids(project)
         return project

@@ -16,13 +16,16 @@ typedef struct {
     char value_text[64];
     char units_text[32];
     char severity[16];
+    char value_colour[32];
     bool stacked;
 } state_t;
 
-static lv_color_t value_color_for(const char *severity)
+static lv_color_t value_color_for(const state_t *st)
 {
+    const char *severity = st->severity;
     if (strcmp(severity, "warning") == 0) return hmi_colour("efisWarning");
     if (strcmp(severity, "caution") == 0) return hmi_colour("efisCaution");
+    if (st->value_colour[0] == '#') return hmi_colour_hex(st->value_colour, NULL);
     return hmi_colour("efisText");
 }
 
@@ -45,7 +48,7 @@ static void layout(hmi_widget_t *w)
     /* Value */
     lv_label_set_text(st->valueEl, st->value_text);
     lv_obj_set_style_text_font(st->valueEl, hmi_font(valueFs, 600), 0);
-    lv_obj_set_style_text_color(st->valueEl, value_color_for(st->severity), 0);
+    lv_obj_set_style_text_color(st->valueEl, value_color_for(st), 0);
     lv_obj_set_style_text_align(st->valueEl, LV_TEXT_ALIGN_LEFT, 0);
 
     /* Unit */
@@ -139,6 +142,7 @@ static lv_obj_t *create(hmi_widget_t *w, lv_obj_t *parent)
     snprintf(st->value_text, sizeof st->value_text, "%s", hmi_widget_str(w, "value", "---"));
     snprintf(st->units_text, sizeof st->units_text, "%s", hmi_widget_str(w, "units", ""));
     snprintf(st->severity, sizeof st->severity, "%s", hmi_widget_str(w, "severity", "advisory"));
+    snprintf(st->value_colour, sizeof st->value_colour, "%s", hmi_widget_str(w, "valueColor", ""));
     st->stacked = hmi_widget_bool(w, "stacked", true);
 
     layout(w);
@@ -162,7 +166,10 @@ static void set_prop(hmi_widget_t *w, const char *prop, const hmi_value_t *value
         layout(w);
     } else if (strcmp(prop, "severity") == 0) {
         snprintf(st->severity, sizeof st->severity, "%s", hmi_value_as_str(value, "advisory"));
-        lv_obj_set_style_text_color(st->valueEl, value_color_for(st->severity), 0);
+        lv_obj_set_style_text_color(st->valueEl, value_color_for(st), 0);
+    } else if (strcmp(prop, "valueColor") == 0) {
+        snprintf(st->value_colour, sizeof st->value_colour, "%s", hmi_value_as_str(value, ""));
+        lv_obj_set_style_text_color(st->valueEl, value_color_for(st), 0);
     } else if (strcmp(prop, "stacked") == 0) {
         st->stacked = hmi_value_as_bool(value, st->stacked);
         layout(w);

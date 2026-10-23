@@ -8,7 +8,7 @@ It provides a commercial-grade desktop experience for engineers to import their 
 ## Installation
 
 ```bash
-pip install PySide6
+pip install -r requirements.txt
 ```
 
 ## Running the Deployer
@@ -139,6 +139,31 @@ number is only shown when it is known.
    `Not connected · <reason>`.  Models the endpoint actually serves are merged
    into the **Model** list; the field is editable for anything not listed.
    The refresh button re-probes.
+
+### Building from a reference image
+
+1. Set the target panel resolution, then paste, drop, or attach the screenshot
+   with the paperclip in **AI Design**. Use a model that accepts images.
+2. Optionally describe the required behavior, for example: “Recreate this light ChemVista
+   screen. Keep every section and label. Use editable controls and simulated
+   tags for readings; wire the heater toggle.” The image alone is enough to start generation.
+3. Windows OCR measures text positions; the model classifies those text IDs as
+   labels, readings or controls. The compiler preserves their source positions
+   and aspect ratio. Text becomes editable; decorative artwork remains raster.
+4. Inspect the generated native candidate shown inside AI Designer, then use
+   **Apply**. Failed checks stay visible and block automatic preview. OCR and
+   artwork cleanup can be imperfect; this is not pixel-identical certification.
+5. Review `reference-acceptance.json` and the saved image/OCR evidence. Check
+   disabled controls and inferred simulation tags, then use **Simulate → Tag Lab →
+   Simulate the design → Start** to exercise values and controls.
+6. For a real plant, configure the actual tag source/PLC map and verify it on
+   the target before treating the screen as operational. An image provides no
+   PLC addresses or equipment behavior. A successful preview or configuration
+   check does not certify deployment or live operation.
+
+Artwork crops remain images; controls, values, and any equipment that must be
+editable need separate widgets. The first attached image supplies the geometry
+and crop coordinate system. Additional images are supporting references.
 
 ### Reading the run log
 

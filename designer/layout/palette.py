@@ -29,6 +29,45 @@ PALETTE_TOKENS = ("background", "card", "border", "header", "inset", "foreground
 _SAMPLE_W, _SAMPLE_H = 128, 96
 
 
+def reference_content_rect(image):
+    """Conservative pixel viewport for a light screen inside a dark device.
+
+    All four dark margins must end at a predominantly light interior. Plain
+    screenshots and ambiguous/dark screens retain their entire image. Coordinates
+    use exclusive right/bottom edges, matching QImage.copy and crop fractions.
+    """
+    if image is None or image.isNull():
+        return (0, 0, 0, 0)
+    width, height = image.width(), image.height()
+    if min(width, height) < 64:
+        return (0, 0, width, height)
+    from PySide6.QtCore import Qt
+    small = image.scaled(240, 180, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+    def light(x, y):
+        c = small.pixelColor(x, y)
+        return min(c.red(), c.green(), c.blue()) > 135
+    # Ignore rounded corners and camera notches when measuring each edge.
+    rows = [sum(light(x, y) for x in range(24, 216)) / 192 for y in range(180)]
+    cols = [sum(light(x, y) for y in range(18, 162)) / 144 for x in range(240)]
+    def margin(values):
+        if values[1] > .15:
+            return None
+        for i in range(2, int(len(values) * .15)):
+            if all(v > .72 for v in values[i:i + 3]):
+                return i
+        return None
+    left, top, right, bottom = (margin(cols), margin(rows), margin(cols[::-1]), margin(rows[::-1]))
+    if any(v is None for v in (left, top, right, bottom)):
+        return (0, 0, width, height)
+    return (round(left / 240 * width), round(top / 180 * height),
+            round((240 - right) / 240 * width), round((180 - bottom) / 180 * height))
+
+
+def _measured(widget):
+    reference = widget.properties.get("_reference", {})
+    return isinstance(reference, dict) and reference.get("layout") == "measured"
+
+
 def _hex(rgb) -> str:
     return "#%02x%02x%02x" % tuple(max(0, min(255, int(round(c)))) for c in rgb)
 
@@ -126,11 +165,35 @@ def palette_from_image(image, exclude=()) -> dict:
         return {}
     # A little past each excluded box: the copy's edge pixels blend it with
     # its surroundings (a furnace's orange came back as a brown accent).
+    left, top, right, bottom = reference_content_rect(image)
+    if (left, top, right, bottom) != (0, 0, image.width(), image.height()):
+        width, height = image.width(), image.height()
+        exclude = [((l * width - left) / (right - left), (t * height - top) / (bottom - top),
+                    (r * width - left) / (right - left), (b * height - top) / (bottom - top))
+                   for l, t, r, b in exclude]
+        image = image.copy(left, top, right - left, bottom - top)
     pad = 1.5 / min(_SAMPLE_W, _SAMPLE_H)
     colours = _bins(image, [(l - pad, t - pad, r + pad, b + pad) for l, t, r, b in exclude])
     if not colours:
         return {}
     neutrals = _merge([c for c in colours if c["neutral"]])
+    light_surfaces = [c for c in colours if c["lum"] > .55 and not c["vivid"]]
+    if sum(c["share"] for c in light_surfaces) > .55:
+        # A blank white sketch is not evidence of a designed theme.
+        if sum(c["share"] for c in colours if c["lum"] < .3 or c["vivid"]) < .005:
+            return {}
+        background = _hex(max(light_surfaces, key=lambda c: c["share"])["rgb"])
+        card = mix(background, "#ffffff", .55)
+        palette = {"background": background, "card": card, "border": shade(background, -.12),
+                   "header": card, "inset": mix(background, "#ffffff", .25),
+                   "foreground": "#172333", "mutedForeground": "#475569",
+                   "secondary": shade(background, -.035)}
+        for token, candidates in (
+                ("success", [c for c in colours if c["vivid"] and 85 <= c["hue"] <= 160]),
+                ("primary", [c for c in colours if c["vivid"] and not 85 <= c["hue"] <= 160])):
+            if candidates and sum(c["share"] for c in candidates) >= .002:
+                palette[token] = _hex(max(candidates, key=lambda c: c["share"])["rgb"])
+        return palette
     dark = sorted((c for c in neutrals if c["lum"] < 0.12 and c["share"] >= 0.01),
                   key=lambda c: -c["share"])
     if not dark:
@@ -195,6 +258,7 @@ def apply_reference_palette(project, references, registry=None) -> dict:
         return {}
     project.screen.palette = palette
     project.screen.background = palette["background"]
+    project.screen.theme = "light" if _lum(_rgb(palette["background"])) > .5 else "dark"
     for page in project.pages:
         if is_planned(page):
             compile_page(project, page, registry)
@@ -221,7 +285,7 @@ def snap_spots(image, project) -> int:
     for page in project.pages:
         for widget in page.walk():
             spot = widget.properties.get(WIDGET_BOX_MARK)
-            if not spot or widget.properties.get(_SPOT_FIT):
+            if not spot or widget.properties.get(_SPOT_FIT) or _measured(widget):
                 continue
             l, t, r, b = spot
             bw, bh = (r - l), (b - t)
@@ -328,7 +392,7 @@ def trim_crops(image, project, limit=60.0, outer=0.3) -> int:
     for page in project.pages:
         for widget in page.walk():
             crop = widget.properties.get(CROP_MARK)
-            if widget.type not in ("Image", "ShAnimatedImage") or not crop:
+            if widget.type not in ("Image", "ShAnimatedImage") or not crop or _measured(widget):
                 continue
             l, t, r, b = crop
             if (r - l) * (b - t) < 0.08 or widget.properties.get(CROP_FIT_MARK):
@@ -637,7 +701,7 @@ def align_spots(image, project) -> int:
         widgets = list(page.walk())
         for picture in widgets:
             crop = picture.properties.get(CROP_MARK)
-            if picture.type not in ("Image", "ShAnimatedImage") or not crop:
+            if picture.type not in ("Image", "ShAnimatedImage") or not crop or _measured(picture):
                 continue
             l, t, r, b = crop
             if (r - l) * (b - t) < 0.08:
@@ -645,7 +709,7 @@ def align_spots(image, project) -> int:
             spots = []
             for widget in widgets:
                 spot = widget.properties.get(WIDGET_BOX_MARK)
-                if not spot or widget is picture:
+                if not spot or widget is picture or _measured(widget):
                     continue
                 mx, my = (spot[0] + spot[2]) / 2.0, (spot[1] + spot[3]) / 2.0
                 if l - 0.03 <= mx <= r + 0.03 and t - 0.03 <= my <= b + 0.03:

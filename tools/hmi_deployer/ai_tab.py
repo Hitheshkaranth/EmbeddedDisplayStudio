@@ -49,7 +49,7 @@ from tools.hmi_deployer.ai_design import (
     encode_brief_image, load_brief_image,
 )
 from tools.hmi_deployer.ai_generator import (
-    PLAN_SCHEMA, brief_resolution, build_plan_prompt, build_system_prompt, diff_projects,
+    PLAN_SCHEMA, REFERENCE_PLAN_SCHEMA, brief_resolution, build_plan_prompt, build_system_prompt, diff_projects,
     drop_dangling_navigation, merge_project_section, plan_shortfall, summarize_widgets,
 )
 
@@ -215,10 +215,28 @@ class GenerationWorker(QThread):
         # before images (a test double, the daemon) is called as it always was.
         extra = {"images": self.images} if self.images else {}
         try:
+            if self.images and getattr(self, "reference_target", None):
+                from tools.hmi_deployer.reference_pipeline import generate_reference
+                width, height = self.reference_target
+                def emit_reference(event):
+                    if self.isInterruptionRequested():
+                        raise InterruptedError("Image generation cancelled")
+                    self.event.emit(event)
+                result = generate_reference(self.connector, self.brief, self.model, self.images,
+                                            width, height, emit_reference,
+                                            cancelled=self.isInterruptionRequested)
+                if self.isInterruptionRequested():
+                    raise InterruptedError("Image generation cancelled")
+                self.event.emit({"type": "reference_result", "result": result})
+                self.event.emit({"type": "turn_end", "stopped": False})
+                return
             for ev in self.connector.generate_events(self.brief, self.model, **extra):
                 self.event.emit(ev)
+        except InterruptedError:
+            self.event.emit({"type": "turn_end", "stopped": True})
         except Exception as exc:  # pragma: no cover - belt and braces
-            self.event.emit({"type": "error", "message": str(exc)})
+            self.event.emit({"type": "error", "message": str(exc),
+                             "reference_failure": bool(self.images and getattr(self, "reference_target", None))})
             self.event.emit({"type": "turn_end", "stopped": False})
 
 
@@ -1929,7 +1947,7 @@ class AIDesignTab(QWidget):
         self._refresh_preview_meta()
 
     def _refresh_preview_meta(self):
-        project = getattr(self.workspace, "project", None)
+        project = getattr(self, "_candidate_preview_project", None) or getattr(self.workspace, "project", None)
         if project is None:
             self.preview_meta.setText("")
             return
@@ -2465,6 +2483,39 @@ class AIDesignTab(QWidget):
     # Canvas hookup
     # ------------------------------------------------------------------
 
+    def _show_reference_candidate(self, project):
+        """Display the native candidate locally without applying or deploying it."""
+        from pathlib import Path
+        from PySide6.QtGui import QImage
+        from PySide6.QtWidgets import QGraphicsScene
+        directory = getattr(project, "_reference_artifact_dir", "")
+        image = QImage(str(Path(directory) / "native-preview.png")) if directory else QImage()
+        if image.isNull():
+            renderer = self._variant_renderer()
+            if renderer is not None:
+                from tools.hmi_deployer.ai_review import still
+                renderer.project_dir = directory or None
+                sample = still(project)
+                image = renderer.render_page_sync(sample, sample.pages[0], sample.screen.theme)
+        if image is None or image.isNull():
+            self.statusMessage.emit("AI Design: native candidate preview unavailable; see reference checks.")
+            return False
+        scene = QGraphicsScene(self)
+        scene.addPixmap(QPixmap.fromImage(image))
+        scene.setSceneRect(QRectF(0, 0, image.width(), image.height()))
+        previous = getattr(self, "_candidate_preview_scene", None)
+        self._candidate_preview_scene = scene
+        self._candidate_preview_project = project
+        self.preview_view.attach(scene)
+        if previous is not None:
+            previous.deleteLater()
+        self.preview_placeholder.setVisible(False)
+        self.preview_view.setVisible(True)
+        self.bezel_badge.setText("CANDIDATE PREVIEW")
+        self.bezel_badge.setToolTip("Native render of the generated candidate; use Apply to edit it in Designer")
+        self._refresh_preview_meta()
+        return True
+
     def set_workspace(self, workspace):
         """Give the tab the Designer so diffs and screen size are real, and
         show its scene in the preview pane."""
@@ -2505,10 +2556,33 @@ class AIDesignTab(QWidget):
             QMessageBox.information(self, "No Design", "Generate a design first.")
             return "no-workspace"
         workspace = designer_workspace or self.workspace
+        acceptance = getattr(project, "_reference_acceptance", None)
+        acceptance_failed = acceptance is not None and not acceptance.get("passed", False)
         outcome = "no-workspace"
         if workspace is not None and hasattr(workspace, "load_project"):
             references = getattr(project, "_reference_images", None)
-            if references and pictures_to_fill(project):
+            artifact_dir = getattr(project, "_reference_artifact_dir", "")
+            if artifact_dir:
+                from pathlib import Path
+                import shutil
+                if not getattr(workspace, "bundle_dir", "") and hasattr(workspace, "ensure_bundle"):
+                    workspace.ensure_bundle()
+                bundle_dir = getattr(workspace, "bundle_dir", "")
+                if not bundle_dir:
+                    self.statusMessage.emit("AI Design: create a bundle before applying image artwork.")
+                    return "no-workspace"
+                source_assets = Path(artifact_dir) / "assets"
+                if source_assets.is_dir():
+                    shutil.copytree(source_assets, Path(bundle_dir) / "assets", dirs_exist_ok=True)
+                for evidence_name in ("ocr.json", "simulation-defaults.json"):
+                    evidence_path = Path(artifact_dir) / evidence_name
+                    if evidence_path.is_file() and evidence_path.resolve() != (Path(bundle_dir) / evidence_name).resolve():
+                        Path(bundle_dir).mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(evidence_path, Path(bundle_dir) / evidence_name)
+                if acceptance is not None:
+                    from tools.hmi_deployer.reference_acceptance import save_acceptance_report
+                    save_acceptance_report(acceptance, Path(bundle_dir) / "reference-acceptance.json")
+            if references and acceptance is None and pictures_to_fill(project):
                 # The plan's pictures come out of the reference itself: they
                 # need the bundle's assets folder, made if there is none yet.
                 if not getattr(workspace, "bundle_dir", "") and hasattr(workspace, "ensure_bundle"):
@@ -2517,15 +2591,66 @@ class AIDesignTab(QWidget):
                 if filled:
                     self.statusMessage.emit(
                         f"AI Design: {filled} picture(s) cut from the reference image into assets/")
+            before_apply = project.to_dict() if acceptance is not None else None
+            if before_apply is not None:
+                before_apply.pop("name", None)  # Bundle naming does not change rendered content.
             workspace.load_project(project)
+            after_apply = project.to_dict() if acceptance is not None else None
+            if after_apply is not None:
+                after_apply.pop("name", None)
+            if acceptance is not None and before_apply != after_apply:
+                from tools.hmi_deployer.reference_acceptance import evaluate_reference
+                old_report = acceptance
+                acceptance = evaluate_reference(getattr(project, "_reference_ocr", {}), project)
+                for key, value in old_report.items():
+                    if key not in acceptance:
+                        acceptance[key] = value
+                for key, value in old_report.get("gates", {}).items():
+                    if key not in acceptance["gates"]:
+                        acceptance["gates"][key] = value
+                acceptance["gates"]["native_render"] = False
+                acceptance["native_render_available"] = False
+                acceptance["issues"].append({"gate": "native_render", "code": "render_stale_after_apply",
+                    "message": "Designer changed the target or model on Apply; render evidence must be regenerated."})
+                acceptance["passed"] = all(acceptance["gates"].values())
+                project._reference_acceptance = acceptance
+                acceptance_failed = not acceptance["passed"]
+            if acceptance is not None and getattr(workspace, "bundle_dir", ""):
+                from pathlib import Path
+                from tools.hmi_deployer.reference_acceptance import save_acceptance_report
+                save_acceptance_report(acceptance, Path(workspace.bundle_dir) / "reference-acceptance.json")
+            if getattr(self, "_candidate_preview_scene", None) is not None:
+                self._candidate_preview_project = None
+                if getattr(workspace, "scene", None) is not None:
+                    self.preview_view.attach(workspace.scene)
+                self._candidate_preview_scene.deleteLater()
+                self._candidate_preview_scene = None
+                self.bezel_badge.setText("BEZEL VIEW")
+            if references and acceptance is None:
+                from tools.hmi_deployer.reference_workflow import save_reference_audit
+                try:
+                    audit = save_reference_audit(project, getattr(workspace, "bundle_dir", ""),
+                                                 getattr(self.generator, "registry", None))
+                    self.statusMessage.emit("AI Design: " + audit.summary())
+                except (OSError, ValueError) as exc:
+                    self.statusMessage.emit(f"Could not save reference checks: {exc}")
             outcome = "applied"
-            if hasattr(workspace, "preview") and (
+            if not acceptance_failed and hasattr(workspace, "preview") and (
                     getattr(workspace, "bundle_dir", "") or hasattr(workspace, "ensure_bundle")):
                 if workspace.preview() is not False:
                     outcome = "previewed"
+            if getattr(workspace, "bundle_dir", ""):
+                from designer.ide.project_handoff import save_design_context
+                try:
+                    save_design_context(workspace.bundle_dir, getattr(self, "_root_brief", ""), references)
+                except (OSError, ValueError) as exc:
+                    self.statusMessage.emit(f"Could not save image brief for the coding agent: {exc}")
         self.preview_view.refit()
         self._refresh_preview_meta()
-        self.generateRequested.emit(project)
+        if not acceptance_failed:
+            self.generateRequested.emit(project)
+        else:
+            self.statusMessage.emit("AI Design: candidate loaded for editing; failed reference checks prevent panel preview.")
         if focus:
             self.canvasFocusRequested.emit()
         return outcome
@@ -2552,6 +2677,9 @@ class AIDesignTab(QWidget):
         show. Without the binary there is nothing honest to show: the strip
         is skipped and the turn reads exactly as it did before.
         """
+        # A supplied composition is the target, not an invitation to rearrange it.
+        if project is not None and getattr(project, "_reference_images", None):
+            return
         renderer = self._variant_renderer()
         if renderer is None or project is None or not project.pages:
             return
@@ -2653,6 +2781,8 @@ class AIDesignTab(QWidget):
         if self.connector and self.streaming:
             self._queued_section_request = None
             self._queued_retry = None
+            if getattr(self, "_worker", None) is not None:
+                self._worker.requestInterruption()
             self.connector.cancel()
             self.send_btn.setEnabled(False)
             self.send_btn.setToolTip("Stopping\u2026")
@@ -2666,7 +2796,8 @@ class AIDesignTab(QWidget):
             brief = "Design the screen shown in the attached image."
         # Every request of this run (the plan, a retry, a section follow-up)
         # carries the pictures (_start_generation).
-        self._root_images = images
+        from tools.hmi_deployer.reference_workflow import prepare_reference_images
+        self._root_images = prepare_reference_images(images)
         self._root_brief = brief
         self._resolution_noted = False
         self._section_run = 1
@@ -2700,6 +2831,8 @@ class AIDesignTab(QWidget):
         images = list(getattr(self, "_root_images", []) or [])
         if images:
             brief = f"{brief}\n\n{REFERENCE_IMAGES_NOTE}"
+            from tools.hmi_deployer.reference_workflow import reference_geometry_hint
+            brief += "\n\n" + reference_geometry_hint(images)
         # The user's own turn shows the pictures it carries; the automatic
         # follow-ups (a retry, the next section) send them without repeating them.
         turn = TurnWidget(display_brief,
@@ -2734,7 +2867,7 @@ class AIDesignTab(QWidget):
             # JSON; ai/structuredOutput=false sends the plain request.
             structured = (engine != "polish"
                           and self.settings.value("ai/structuredOutput", True, type=bool))
-            self.connector.response_schema = PLAN_SCHEMA if structured else None
+            self.connector.response_schema = (REFERENCE_PLAN_SCHEMA if images else PLAN_SCHEMA) if structured else None
             asked = brief_resolution(self._root_brief)
             if asked and asked != (width, height) and not self._resolution_noted:
                 # The brief's size is not the glass; saying so once beats a
@@ -2760,6 +2893,8 @@ class AIDesignTab(QWidget):
             # a lambda would run on the worker thread and touch widgets there.
             self._active_turn = turn
             self._worker = GenerationWorker(self.connector, brief, model, self, images=images)
+            if images:
+                self._worker.reference_target = (width, height)
             self._worker.event.connect(self._on_worker_event)
             self._worker.finished.connect(self._on_worker_done)
             self._worker.finished.connect(self._worker.deleteLater)
@@ -2819,7 +2954,7 @@ class AIDesignTab(QWidget):
             if self._probe_ok is None:
                 self._render_status("Connecting…")
         elif kind == "status":
-            shell.note_status(ev.get("label", ""))
+            shell.note_status(ev.get("label", ev.get("message", "")))
         elif kind == "thinking_start":
             shell.set_status("thinking")
         elif kind == "thinking":
@@ -2835,7 +2970,11 @@ class AIDesignTab(QWidget):
             shell.note_tool(ev)
         elif kind == "usage":
             shell.note_usage(ev)
+        elif kind == "reference_result":
+            turn._reference_result = ev["result"]
         elif kind == "error":
+            if ev.get("reference_failure"):
+                turn._reference_failure = True
             shell.note_error(ev.get("message", "unknown error"))
             if self._probe_ok is None or "reach" in ev.get("message", "").lower():
                 self._probe_ok = False
@@ -2851,14 +2990,41 @@ class AIDesignTab(QWidget):
         turn._concluding = True
         shell = turn.shell
         full_text = shell.response_pane.toPlainText() if shell.response_pane is not None else ""
-        failed = shell.error_row is not None and not full_text
+        failed = bool(getattr(turn, "_reference_failure", False)) or (shell.error_row is not None and not full_text)
         error_message = shell.error_row.title.text() if shell.error_row is not None else ""
 
         project, chips = None, []
+        reference_audit = None
+        grounded = getattr(turn, "_reference_result", None)
         if stopped:
             shell.finish("stopped")
         elif failed:
             shell.finish("failed")
+        elif grounded is not None:
+            project = grounded.get("project")
+            report = grounded.get("report", {})
+            if project is not None:
+                project._reference_acceptance = report
+                project._reference_artifact_dir = str(grounded.get("artifact_dir", ""))
+                project._reference_images = list(getattr(self, "_root_images", []) or [])
+                self.last_project = project
+                shell.note_parse(project, summarize_widgets(project))
+                shell.note_changes(diff_projects(self._canvas_project(), project), False)
+                chips.append((f"{report.get('owned_source_text_count', 0)}/{report.get('source_text_count', 0)} detected text lines reconstructed", "info"))
+                chips.append(("Source checks passed" if report.get("passed") else
+                              f"{max(len(report.get('issues', [])), sum(not value for value in report.get('gates', {}).values()))} reference checks need attention",
+                              "info" if report.get("passed") else "warn"))
+                chips.append(("Ready for explicit Apply; visual match not certified", "neutral"))
+                if report.get("rendered_text_needs_review"):
+                    chips.append(("Rendered text check needs review; inspect source and native preview", "warn"))
+                if report.get("unresolved_behavior"):
+                    chips.append((f"{len(report['unresolved_behavior'])} behavior mappings need review", "warn"))
+                self.statusMessage.emit("AI Design: image candidate generated. Review the evidence and use Apply to load it.")
+                self._show_reference_candidate(project)
+                shell.finish("done")
+            else:
+                shell.note_error("Image reconstruction produced no candidate.")
+                shell.finish("failed")
         else:
             shell.set_status("parsing")
             width, height = self._screen_size()
@@ -2910,6 +3076,13 @@ class AIDesignTab(QWidget):
                 applied = self.auto_apply.isChecked()
                 shell.note_changes(diff, applied)
                 self.last_project = project
+                if getattr(project, "_reference_images", None):
+                    from tools.hmi_deployer.reference_workflow import save_reference_audit
+                    audit = save_reference_audit(project, registry=getattr(self.generator, "registry", None))
+                    reference_audit = audit
+                    errors = sum(issue.severity == "error" for issue in audit.issues)
+                    chips.append((f"Reference checks: {errors} issue(s) to resolve", "info" if audit.configuration_ready else "warn"))
+                    self.statusMessage.emit(audit.summary())
                 n = sum(1 for _ in project.all_widgets())
                 if sectioned:
                     label = f"Section {section_index}" + (f" · {section_label}" if section_label else "")
@@ -2943,6 +3116,11 @@ class AIDesignTab(QWidget):
                             # "Readings", "Trend" and "Controls" cards).
                             shortfall = ("no section said where it sits in the picture; give every "
                                          "section its \"region\" and follow the picture's layout")
+                    if not shortfall and reference_audit is not None:
+                        unresolved = [issue.message for issue in reference_audit.issues
+                                      if issue.severity == "error"]
+                        if unresolved:
+                            shortfall = "reference configuration is incomplete: " + "; ".join(unresolved[:5])
                 if shortfall and not self._shortfall_retried:
                     # Once per brief, never a loop: the same brief again with a
                     # one-line note of what was missing.
@@ -3007,7 +3185,7 @@ class AIDesignTab(QWidget):
         # OpenDesign folds the record once the conclusion lands; the reader can reopen it.
         shell.set_lifecycle_open(False)
         self._account_session(m, stopped or failed)
-        if project is not None and not (stopped or failed) and self._review_wanted(project):
+        if grounded is None and project is not None and not (stopped or failed) and self._review_wanted(project):
             # After the worker has exited (_on_worker_done runs next).
             QTimer.singleShot(0, functools.partial(self._start_review, turn, project, 1))
 
@@ -3103,7 +3281,7 @@ class AIDesignTab(QWidget):
         made = apply_review(candidate, parse_review("".join(state["text"])), registry,
                             findings=state["findings"])
         if not made:
-            turn.note_review("Reviewed against the picture \u00b7 nothing to fix", "ok")
+            turn.note_review("Review proposed no applicable fixes; visual match is not certified", "neutral")
             return
         after = layout_findings(candidate, candidate.pages[0], registry)
         if len(after) > len(state["findings"]):

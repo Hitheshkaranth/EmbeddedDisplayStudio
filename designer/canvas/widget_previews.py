@@ -555,6 +555,8 @@ def paint_data_field(painter, rect, props, ctx):
     value = str(_prop(props, "value", "---"))
     units = str(_prop(props, "units", ""))
     colour = _severity_color(_prop(props, "severity", "advisory"))
+    if _prop(props, "severity", "advisory") not in ("warning", "caution") and props.get("valueColor"):
+        colour = QColor(props["valueColor"])
 
     if _prop(props, "stacked", True):
         caption = QRectF(rect.left(), rect.top(), rect.width(), FONT["xs"] + 4)

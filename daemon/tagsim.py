@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import re
 import socket
@@ -596,6 +597,13 @@ class Signal:
 
     def at(self, state: dict):
         """This tag's value for the aeroplane's current state."""
+        if self.kind == "constant":
+            return self.lo
+        if self.kind == "source_sample":
+            # Image-derived readings begin at the measured source value.
+            # They are a bench waveform, never an inferred physical model.
+            t = float(state.get("_t", 0.0))
+            return round(self.lo + self.hi * math.sin(2 * math.pi * t / PROCESS_PERIOD_S), self.decimals)
         if self.kind == "clock":
             # The wall clock, as the design's sample shows it (a date or not).
             if re.search(r"\d[-/.]\d", self.state_key):
@@ -666,6 +674,13 @@ def signal_for(tag: str, widget_type: str, prop: str, props: dict, stations=None
     it is drawn on, whatever the design asked for.
     """
     lowered = tag.lower()
+    if sim == "number" and "_simulationSample" in props:
+        sample = props["_simulationSample"]
+        if isinstance(sample, (int, float)) and not isinstance(sample, bool) and math.isfinite(sample):
+            decimals = props.get("_simulationDecimals", 1)
+            decimals = min(8, max(0, decimals)) if isinstance(decimals, int) else 1
+            return Signal(tag, "source_sample", lo=float(sample),
+                          hi=max(10 ** -decimals, abs(sample) * .02), decimals=decimals)
     # A binding that says what it simulates as forces that role: a rail role
     # drives the rail Signal (stations from the design's own line, whatever the
     # widget is), a flight quantity drives a number Signal of that quantity on
@@ -783,6 +798,14 @@ def plan(project: dict) -> dict:
                 continue          # "*" is the alarm table, not a value
             if tag not in signals:
                 signals[tag] = signal_for(tag, widget.get("type", ""), prop, props, stations, sim)
+        # Explicit simulation-only action defaults include controls without a
+        # display binding. Hold their state until a simulated command changes it.
+        action_tags = {a.get("tag") for a in (widget.get("actions") or {}).values() if isinstance(a, dict)}
+        defaults = props.get("_simulationDefaults", {})
+        if isinstance(defaults, dict):
+            for tag, value in defaults.items():
+                if isinstance(tag, str) and tag.startswith("sim.") and tag in action_tags and isinstance(value, bool):
+                    signals[tag] = Signal(tag, "constant", lo=value)
     return signals
 
 
@@ -876,6 +899,15 @@ def serve(signals: dict, port: int, hz: float, host: str = "127.0.0.1",
                 elif cmd == "unsubscribe":
                     subscribers.pop(addr, None)
                 elif cmd in ("set", "pulse", "uart_tx"):
+                    signal = signals.get(msg.get("tag"))
+                    if cmd == "set" and signal is not None and signal.kind == "constant" and signal.tag.startswith("sim."):
+                        value = msg.get("value")
+                        if isinstance(value, bool):
+                            signal.lo = value
+                        else:
+                            sock.sendto(json.dumps({"t": "ack", "id": msg.get("id"), "ok": False,
+                                                    "err": "Simulation control requires a boolean value"}).encode(), addr)
+                            continue
                     # Nothing here owns hardware; acknowledge so a button
                     # press on the glass does not look like a failure.
                     sock.sendto(json.dumps(

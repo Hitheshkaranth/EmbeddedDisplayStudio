@@ -125,6 +125,9 @@ BOX_MARK = "_box"
 # Where one widget sits in the reference picture (its own "box"): a live
 # reading drawn over a process drawing is laid over the picture there.
 WIDGET_BOX_MARK = "_wbox"
+REFERENCE_MARK = "_reference"
+REFERENCE_METRICS_MARK = "_referenceMetrics"
+REFERENCE_METRICS = ("fontSize", "valueFontSize", "labelFontSize", "iconSize", "radius", "borderWidth")
 # On a picture whose crop was fitted to the reference itself (its panel's
 # edges found in the pixels, designer.layout.palette.trim_crops): the
 # layout no longer clips it back to the model's box.
@@ -148,7 +151,7 @@ _REGION_ALIASES = {
 }
 
 
-def crop_of(value, scale=None, own=False):
+def crop_of(value, scale=None, own=False, minimum=0.02):
     """[left, top, right, bottom] as fractions of the reference picture, from
     what a model wrote: fractions, or Qwen's 0..1000 grounding scale (or the
     plan's own scale, `scale` = (x, y), from plan_scale). None when it is
@@ -158,6 +161,8 @@ def crop_of(value, scale=None, own=False):
     try:
         box = [float(v) for v in value]
     except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in box):
         return None
     if max(box) > 1.5:
         sx, sy = scale or (1000.0, 1000.0)
@@ -170,7 +175,7 @@ def crop_of(value, scale=None, own=False):
             sy = sy if max(box[1], box[3]) > 1005.0 else 1000.0
         box = [box[0] / sx, box[1] / sy, box[2] / sx, box[3] / sy]
     left, top, right, bottom = (min(1.0, max(0.0, v)) for v in box)
-    if right - left < 0.02 or bottom - top < 0.02:
+    if right - left < minimum or bottom - top < minimum:
         return None
     return [round(left, 4), round(top, 4), round(right, 4), round(bottom, 4)]
 
@@ -1167,6 +1172,68 @@ def _cost(registry, sections, layout, tokens, body):
 
 # -- the compiler -----------------------------------------------------------
 
+def _compile_measured(project, page, report):
+    """Preserve measured reference coordinates; never rearrange them as cards.
+
+    The viewport and all boxes use original-image fractions. Uniform fitting
+    preserves aspect ratio when the target panel has a different shape.
+    Marks persist in .edsui so reopening or recompiling is deterministic.
+    """
+    widgets = list(page.widgets)
+    reference = next((w.properties.get(REFERENCE_MARK) for w in widgets
+                      if isinstance(w.properties.get(REFERENCE_MARK), dict)), None)
+    if not reference or reference.get("layout") != "measured":
+        return False
+    if reference.get("coordinateScaleInference"):
+        report.notes.append(str(reference["coordinateScaleInference"]))
+    viewport = crop_of(reference.get("viewport")) or [0, 0, 1, 1]
+    try:
+        source_w, source_h = float(reference["width"]), float(reference["height"])
+        if not all(math.isfinite(v) and v > 0 for v in (source_w, source_h)):
+            raise ValueError("invalid source size")
+    except (KeyError, TypeError, ValueError):
+        source_w, source_h = float(project.screen.width), float(project.screen.height)
+        report.notes.append("reference source dimensions missing; target aspect ratio assumed")
+    l, t, r, b = viewport
+    scale = min(project.screen.width / ((r-l)*source_w), project.screen.height / ((b-t)*source_h))
+    ox = (project.screen.width - (r-l)*source_w*scale) / 2
+    oy = (project.screen.height - (b-t)*source_h*scale) / 2
+    for widget in widgets:
+        if widget.type == "ShDataField" and not str(widget.properties.get("valueColor") or "").strip():
+            from .style import theme_colour
+            widget.properties["valueColor"] = theme_colour(project, "foreground")
+        box = crop_of(widget.properties.get(WIDGET_BOX_MARK), minimum=0.00001)
+        if not box:
+            # A single-widget block may omit its redundant widget box.
+            box = crop_of(widget.properties.get(BOX_MARK))
+            report.notes.append(f"{widget.id}: missing measured widget box; section bounds used" if box
+                                else f"{widget.id}: missing measured widget box; geometry unchanged")
+        if not box:
+            continue
+        metrics = widget.properties.get(REFERENCE_METRICS_MARK)
+        if not isinstance(metrics, dict):
+            metrics = {key: widget.properties[key] for key in REFERENCE_METRICS
+                       if isinstance(widget.properties.get(key), (int, float))
+                       and not isinstance(widget.properties[key], bool)
+                       and math.isfinite(widget.properties[key]) and widget.properties[key] >= 0}
+            if metrics:
+                widget.properties[REFERENCE_METRICS_MARK] = metrics
+        for key, value in metrics.items():
+            if key in REFERENCE_METRICS and isinstance(value, (int, float)) and math.isfinite(value):
+                widget.properties[key] = max(0 if key in ("radius", "borderWidth") else 1,
+                                             int(round(value * scale)))
+        x0, y0, x1, y1 = box
+        widget.geometry.update(x=int(round(ox+(x0-l)*source_w*scale)),
+                               y=int(round(oy+(y0-t)*source_h*scale)),
+                               width=max(1, int(round((x1-x0)*source_w*scale))),
+                               height=max(1, int(round((y1-y0)*source_h*scale))))
+        if x0 < l or y0 < t or x1 > r or y1 > b:
+            report.notes.append(f"{widget.id}: measured box extends outside content viewport")
+    report.layout = "measured reference"
+    report.notes.append("reference geometry preserved with uniform aspect fit")
+    return True
+
+
 def compile_page(project, page, registry, sections=None, title: str = "",
                  header_widgets=None, rank: int = 0) -> CompileReport:
     """Lay out `page` from its sections; replaces page.widgets in place.
@@ -1179,6 +1246,8 @@ def compile_page(project, page, registry, sections=None, title: str = "",
             (rows, cols, hero-left, ...), and so on -- the variants offered.
     """
     report = CompileReport()
+    if _compile_measured(project, page, report):
+        return report
     _reserve_ids(project, page)
     if sections is None:
         inferred_title, sections, header_auto, notes = infer_sections(page, registry)
@@ -2132,6 +2201,104 @@ def _flatten_containers(items: list) -> list:
     return out
 
 
+def _flatten_measured(items):
+    """All measured boxes are source-global, including a container's children.
+
+    Keep painted containers before their children; remove layout-only wrappers.
+    This avoids applying parent offsets twice or silently dropping nested boxes.
+    """
+    out = []
+    for original in items:
+        if not isinstance(original, dict):
+            continue
+        item = dict(original)
+        if item.get("type") == "ShDataField":
+            properties = dict(item.get("properties") or {})
+            # Avionics catalogue samples (130 KTS / GROUND SPEED) are not
+            # evidence from the reference and must not fill omitted content.
+            for key, fallback in (("label", ""), ("value", "—"), ("units", "")):
+                if key not in properties and key not in item:
+                    properties[key] = fallback
+            item["properties"] = properties
+        children = []
+        for key in ("children", "items", "widgets"):
+            value = item.pop(key, None)
+            if isinstance(value, list):
+                children.extend(value)
+        if item.get("type") not in _CONTAINERS:
+            out.append(item)
+        out.extend(_flatten_measured(children))
+    return out
+
+
+def measured_coordinate_scale(page_data):
+    """Resolve an explicit scale, or a strongly evidenced percent-page reply.
+
+    Viewport is deliberately excluded: it always addresses the full source on
+    0..1000. A handful of tiny top-left objects is not evidence of percentages.
+    """
+    reference = page_data.get("reference") or {}
+    explicit = reference.get("coordinateScale")
+    if explicit is not None:
+        try:
+            values = explicit if isinstance(explicit, (list, tuple)) else [explicit, explicit]
+            sx, sy = (float(v) for v in values)
+            if all(math.isfinite(v) and v > 0 for v in (sx, sy)):
+                return (sx, sy), ""
+        except (TypeError, ValueError):
+            pass
+        return (1000.0, 1000.0), "invalid explicit reference coordinateScale; using 1000"
+    boxes = []
+    def visit(items):
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            properties = item.get("properties") if isinstance(item.get("properties"), dict) else {}
+            value = item.get("box", properties.get("box"))
+            if isinstance(value, (list, tuple)) and len(value) == 4:
+                try:
+                    box = [float(v) for v in value]
+                    if all(math.isfinite(v) and 0 <= v <= 100 for v in box):
+                        boxes.append(box)
+                    else:
+                        boxes.append([1000, 1000, 1000, 1000])
+                except (TypeError, ValueError):
+                    pass
+            for key in ("widgets", "children", "items"):
+                visit(item.get(key))
+    visit(page_data.get("header"))
+    for section in page_data.get("sections") or []:
+        if isinstance(section, dict):
+            visit(section.get("widgets"))
+    if len(boxes) >= 8:
+        xmax = max(max(b[0], b[2]) for b in boxes)
+        ymax = max(max(b[1], b[3]) for b in boxes)
+        if 70 <= xmax <= 100 and 70 <= ymax <= 100:
+            return (100.0, 100.0), ("inferred 0..100 percent coordinates from measured widget boxes; "
+                                    "section grouping coordinates may use a different scale")
+    return (1000.0, 1000.0), ""
+
+
+def measured_item_box(item, key="box", scale=(1000.0, 1000.0)):
+    """Measured coordinates, including properties.crop and thin visual elements.
+
+    Some percent-widget replies still use canonical 1000 for image crops and
+    grouping boxes. Keep those full-image crops intact for the fidelity audit.
+    """
+    properties = item.get("properties") if isinstance(item.get("properties"), dict) else {}
+    value = item.get(key, properties.get(key))
+    if isinstance(value, dict):
+        value = [value.get(side, value.get(side[0])) for side in _SIDES]
+    resolved = scale
+    if isinstance(value, (list, tuple)) and len(value) == 4 and max(scale) <= 100:
+        try:
+            if max(float(v) for v in value) > 100:
+                resolved = (1000.0, 1000.0)
+        except (TypeError, ValueError):
+            return None
+    return crop_of(value, scale=resolved, minimum=0.00001)
+
+
 def _no_web_pictures(widgets) -> None:
     """A picture's source that is a web address is no picture: the panel
     loads files from its bundle only. Ornith filled a blast furnace's drawing
@@ -2169,6 +2336,9 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
     """
     title = str(page_data.get("title") or page_data.get("name") or "").strip()
     scale = plan_scale(page_data)
+    measured = isinstance(page_data.get("reference"), dict) and page_data["reference"].get("layout") == "measured"
+    if measured:
+        scale, _scale_note = measured_coordinate_scale(page_data)
     sections = []
     entries = []
     for entry in page_data.get("sections") or []:
@@ -2180,7 +2350,8 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
         entries.extend(d for d in entry.get("__spill__") or []
                        if isinstance(d, dict) and d.get("widgets"))
     for entry in entries:
-        raw = _lift_colours(_flatten_containers([dict(w) for w in entry.get("widgets") or []
+        flatten = _flatten_measured if measured else _flatten_containers
+        raw = _lift_colours(flatten([dict(w) for w in entry.get("widgets") or []
                                                  if isinstance(w, dict)]))
         _distribute(entry, raw)
         # "size": "compact" | "normal" | "large", on the section or a widget.
@@ -2201,6 +2372,11 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
                  for item in raw if isinstance(item, dict)}
         spots = {str(item.get("id") or ""): item_box(item, scale=scale)
                  for item in raw if isinstance(item, dict)}
+        if measured:
+            spots = {str(item.get("id") or ""): measured_item_box(item, scale=scale)
+                     for item in raw}
+            crops = {str(item.get("id") or ""): measured_item_box(item, "crop", scale=scale)
+                     for item in raw}
         widgets = convert(raw)
         _no_web_pictures(widgets)
         if len(widgets) == len(wishes):
@@ -2210,7 +2386,7 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
         for widget in widgets:
             if crops.get(widget.id):
                 widget.properties[CROP_MARK] = crops[widget.id]
-            if spots.get(widget.id) and widget.type not in ("Image", "ShAnimatedImage"):
+            if spots.get(widget.id):
                 widget.properties[WIDGET_BOX_MARK] = spots[widget.id]
         if not widgets:
             continue
@@ -2228,12 +2404,16 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
             for widget in widgets:
                 widget.properties[ACCENT_MARK] = accent
         box = item_box(entry, scale=scale) or crop_of(entry.get("bbox") or entry.get("rect"), scale)
+        if measured:
+            box = measured_item_box(entry, scale=scale)
         if box:
             for widget in widgets:
                 widget.properties[BOX_MARK] = box
         sections.append(Section(heading, role, widgets, region=region, accent=accent,
                                 box=tuple(box or ())))
     raw_header = _lift_colours([dict(w) for w in page_data.get("header") or [] if isinstance(w, dict)])
+    if measured:
+        raw_header = _flatten_measured(raw_header)
     # A logo -- or any header item -- may ask for the left end ("side":
     # "left", beside or inside its properties); the converter drops keys the
     # kit does not declare, so the wish is read here and carried as a mark.
@@ -2248,11 +2428,17 @@ def sections_from_plan(page_data: dict, convert) -> tuple:
     # A logo that says where it sits in the reference picture is cut out of
     # it on Apply (ai_tab.fill_pictures), as a section's picture is.
     crops = {str(item.get("id") or ""): item_box(item, "crop", scale) for item in raw_header}
+    spots = {str(item.get("id") or ""): item_box(item, scale=scale) for item in raw_header}
+    if measured:
+        spots = {str(item.get("id") or ""): measured_item_box(item, scale=scale) for item in raw_header}
+        crops = {str(item.get("id") or ""): measured_item_box(item, "crop", scale=scale) for item in raw_header}
     header = convert(raw_header)
     _no_web_pictures(header)
     for widget in header:
         if crops.get(widget.id):
             widget.properties[CROP_MARK] = crops[widget.id]
+        if spots.get(widget.id):
+            widget.properties[WIDGET_BOX_MARK] = spots[widget.id]
     # A logo with no picture (and none to cut) is an empty white plate on
     # the glass: leave it out.
     header = [w for w in header

@@ -462,7 +462,8 @@ class QmlGenerator:
                     fallback = '""'
                 else:
                     fallback = "0"
-                expression = self._value_expression(binding, fallback)
+                expression = self._value_expression(
+                    binding, fallback, text_property=definition.properties.get(key) is str)
             # ShTripInfo needs string values for row1Value/row2Value; a raw
             # Bus.value() number would produce "52.31000000000001" which is
             # unreadable.  Format it with toFixed() so the trip box shows
@@ -495,10 +496,15 @@ class QmlGenerator:
             expression = f"({expression} + {binding.offset})"
         return expression
 
-    def _value_expression(self, binding, fallback: str = "0") -> str:
+    def _value_expression(self, binding, fallback: str = "0", text_property: bool = False) -> str:
         expression = self._numeric_expression(binding)
         if fallback != "0":
             expression = expression.replace(", 0)", f", {fallback})", 1)
+        # Native bind.c formats the scaled number before substituting %1.
+        # Keep trailing zeros and suppress floating-point noise in QML too,
+        # without turning numeric gauge/input properties into strings.
+        if binding.decimals >= 0 and (binding.format or text_property):
+            expression = f"Number({expression}).toFixed({min(binding.decimals, 6)})"
         if binding.format:
             expression = f'{_literal(binding.format)}.arg({expression})'
         return expression
