@@ -103,6 +103,21 @@ class ReferencePipelineTests(unittest.TestCase):
         self.assertIn('"id":"value"', connector.calls[1][3])
         self.assert_restored(connector)
 
+    def test_readings_with_unit_exponents_pass_without_classification_retry(self):
+        for text, sample in [("76,600 Nm3/min", 76600),
+                             ("2.39 kg/cm2", 2.39), ("1.23 kg/cm2", 1.23)]:
+            with self.subTest(text=text):
+                self.extract.return_value["lines"][1]["text"] = text
+                connector = Connector([self.valid])
+                # Each run writes its own evidence and backing asset.
+                self.folder = self.folder / str(sample)
+                result = self.run_pipeline(connector)
+                self.assertEqual(len(connector.calls), 1)
+                self.assertTrue(result["report"]["passed"], result["report"])
+                defaults = json.loads((self.folder / "simulation-defaults.json").read_text())
+                self.assertEqual(defaults["sim.vessel.pressure"]["value"], sample)
+                self.assert_restored(connector)
+
     def test_duplicate_id_fails_after_bounded_retry_without_render(self):
         duplicate = deepcopy(self.valid)
         duplicate["elements"].append(deepcopy(duplicate["elements"][0]))

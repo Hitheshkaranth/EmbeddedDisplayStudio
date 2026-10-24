@@ -86,6 +86,9 @@ class NumericReading(NamedTuple):
 # Spaces around a comma account for OCR token spacing without accepting a
 # decimal comma (ambiguous locale) or ranges/two unrelated numeric values.
 _NUMBER = re.compile(r"[-+\u2212]?(?:\d{1,3}(?:(?:[ \t\u00a0\u202f]*,[ \t\u00a0\u202f]*|[ \t\u00a0\u202f]+)\d{3})+|\d+)(?:\.\d+)?")
+# OCR commonly flattens squared/cubed length units to ASCII digits. Match
+# complete unit tokens only: arbitrary equipment IDs must remain ambiguous.
+_UNIT_POWER = re.compile(r"(?<![\w.])(?:Nm|mm|cm|dm|km|m)\^?[23](?![\w.])")
 
 
 def numeric_reading(text: str) -> NumericReading | None:
@@ -94,7 +97,10 @@ def numeric_reading(text: str) -> NumericReading | None:
     ``1,050``, ``1 ,050`` and ``1 050`` mean 1050. Prefix/suffix are
     untouched for binding format construction. Multiple numbers return None.
     """
-    matches = list(_NUMBER.finditer(text))
+    unit_spans = [unit.span() for unit in _UNIT_POWER.finditer(text)]
+    matches = [match for match in _NUMBER.finditer(text)
+               if not any(start <= match.start() and match.end() <= end
+                          for start, end in unit_spans)]
     if len(matches) != 1:
         return None
     match = matches[0]

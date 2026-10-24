@@ -53,6 +53,27 @@ def test_ambiguous_readout_preserved_and_reported():
     assert report["unresolved"]
 
 
+def test_unit_exponents_are_preserved_without_becoming_readings():
+    from tools.hmi_deployer.reference_grounding import numeric_reading
+    for text, sample, suffix in [
+        ("76,600 Nm3/min", 76600, " Nm3/min"),
+        ("2.39 kg/cm2", 2.39, " kg/cm2"),
+        ("1.23 kg/cm2", 1.23, " kg/cm2"),
+        ("4.5 m^3/h", 4.5, " m^3/h"),
+    ]:
+        doc = source()
+        doc["lines"][1]["text"] = text
+        project, report = compile_grounded_reference(
+            doc, {"elements": [{"ocr_id": "b", "role": "readout"}]})
+        assert not report["unresolved"]
+        widget = project.pages[0].widgets[1]
+        assert widget.properties["_simulationSample"] == sample
+        assert widget.bindings["text"].format == "%1" + suffix
+    for text in ["70 - 85 kg/cm2", "2.39 1.23 kg/cm2", "Pump2 7.25 bar",
+                 "7.25 Xm3", "7.25 cm23", "7.25 cm2.5", "m3"]:
+        assert numeric_reading(text) is None, text
+
+
 def test_controls_never_invent_navigation_or_physical_actions():
     doc = source()
     project, report = compile_grounded_reference(doc, {"elements": [{"ocr_id": "c", "role": "button", "action": "navigate", "page": "missing"}]})
